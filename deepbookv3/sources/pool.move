@@ -220,26 +220,26 @@ module deepbookv3::pool {
     public fun compare_ascii_strings(str1: &String, str2: &String): bool {
         let len1 = str1.length();
         let len2 = str2.length();
-        if (len1 < len2) {
-            return true
-        } else if (len1 > len2) {
-            return false
-        };
+        let min_len = if (len1 < len2) { len1 } else { len2 };
 
         let bytes1 = str1.as_bytes();
         let bytes2 = str2.as_bytes();
 
         let mut i: u64 = 0;
-        while (i < len1) {
+        while (i < min_len) {
             if (bytes1[i] < bytes2[i]) {
                 return true
             } else if (bytes1[i] > bytes2[i]) {
                 return false
             };
-            i = i + 1;
+            i = i + 1
         };
 
-        true
+        if (len1 <= len2) {
+            return true
+        } else {
+            return false
+        }
     }
 
     /// Append two ASCII strings and return the result
