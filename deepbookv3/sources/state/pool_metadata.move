@@ -9,4 +9,12 @@ module deepbookv3::pool_metadata {
         is_stable: bool,
         proposals: vector<Proposal>
     }
+
+    public(package) fun get_last_refresh_epoch(pool_metadata: &PoolMetadata): u64 {
+        pool_metadata.last_refresh_epoch
+    }
+
+    public(package) fun clear_proposals(pool_metadata: &mut PoolMetadata) {
+        pool_metadata.proposals = vector::empty();
+    }
 }
