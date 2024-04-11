@@ -5,6 +5,7 @@ module deepbookv3::pool {
     use sui::sui::SUI;
     use sui::event;
     use sui::coin;
+    use std::type_name::TypeName;
     use sui::linked_table::{Self, LinkedTable};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
 
@@ -79,6 +80,8 @@ module deepbookv3::pool {
         next_ask_order_id: u64,
         deep_config: DeepPrice,
         users: Table<address, UserData>,
+        base_type: TypeName,
+        quote_type: TypeName,
 
         // Where funds will be held while order is live
         base_balances: Balance<BaseAsset>,
@@ -178,8 +181,6 @@ module deepbookv3::pool {
             next_ask_order_id: 0,
             users: table::new(ctx),
             deep_config: deepprice,
-            // taker_fee,
-            // maker_fee,
             tick_size,
             lot_size,
             base_balances: balance::zero(),
@@ -190,10 +191,19 @@ module deepbookv3::pool {
             historical_pool_data: vector::empty(),
             pool_data: pooldata,
             next_pool_data: pooldata,
+            base_type: base_type_name,
+            quote_type: quote_type_name,
         });
 
         transfer::public_transfer(coin::from_balance(creation_fee, ctx), @0x0); //TODO: update to treasury address
         transfer::share_object(pool);
+    }
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
+    
+    /// Get the id of pool
+    public fun get_id<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (TypeName, TypeName) {
+        (pool.base_type, pool.quote_type)
     }
 
     // // Creates a new pool through the manager using defaults stored in the manager.
