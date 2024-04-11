@@ -22,8 +22,8 @@ jobs:
 
     - name: Run move tests in all package subdirectories, with exclusions
       run: |
-        exclude_dirs=("day_one") # Add excluded directories to this array
-        for dir in packages/*; do
+        exclude_dirs=() # Add excluded directories to this array
+        for dir in *; do
           dir_name=$(basename "$dir")
           if [[ ! " ${exclude_dirs[@]} " =~ " ${dir_name} " ]] && [ -d "$dir" ]; then
             echo "Running sui move test in $dir"
