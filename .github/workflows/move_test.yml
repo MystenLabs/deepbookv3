@@ -1,0 +1,32 @@
+name: Move Test CI
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Install Homebrew
+      run: |
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+
+    - name: Install Sui using Homebrew
+      run: brew install sui
+
+    - name: Run move tests in all package subdirectories, with exclusions
+      run: |
+        exclude_dirs=("day_one") # Add excluded directories to this array
+        for dir in packages/*; do
+          dir_name=$(basename "$dir")
+          if [[ ! " ${exclude_dirs[@]} " =~ " ${dir_name} " ]] && [ -d "$dir" ]; then
+            echo "Running sui move test in $dir"
+            (cd "$dir" && sui move test)
+          fi
+        done
