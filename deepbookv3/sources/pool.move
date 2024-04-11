@@ -201,11 +201,12 @@ module deepbookv3::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
     
-    /// Get the base and quote asset of pool
+    /// Get the base and quote asset of pool, return as ascii strings
     public fun get_base_quote_types<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
         (pool.base_type.into_string(), pool.quote_type.into_string())
     }
 
+    /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
     public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
        let (base, quote) = get_base_quote_types(pool);
        if (compare_ascii_strings(&base, &quote)) {
@@ -214,6 +215,8 @@ module deepbookv3::pool {
        append_strings(&quote, &base)
     }
 
+    // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
+    /// Compare two ASCII strings, return True if first string is less than to equal to the second string in lexicographic order
     public fun compare_ascii_strings(str1: &String, str2: &String): bool {
         let len1 = str1.length();
         let len2 = str2.length();
@@ -239,6 +242,7 @@ module deepbookv3::pool {
         true
     }
 
+    /// Append two ASCII strings and return the result
     public fun append_strings(str1: &String, str2: &String): String {
         let mut result_bytes = vector::empty<u8>();
 
