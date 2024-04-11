@@ -5,7 +5,6 @@ module deepbookv3::pool {
     use sui::sui::SUI;
     use sui::event;
     use sui::coin;
-    use std::type_name::TypeName;
     use std::ascii::String;
     use sui::linked_table::{Self, LinkedTable};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
