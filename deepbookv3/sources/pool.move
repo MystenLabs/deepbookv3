@@ -1,19 +1,80 @@
 // Pool structure and creation (1)
 module deepbookv3::pool {
-    use sui::balance::{Balance};
-    use sui::table::{Table};
+    use sui::balance::{Self,Balance};
+    use sui::table::{Self, Table};
+    use sui::sui::SUI;
+    use sui::event;
+    use sui::coin;
+    use sui::linked_table::{Self, LinkedTable};
+    use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
+
+    use deepbookv3::math::Self as clob_math;
+    use std::type_name::{Self, TypeName};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
+    const EInvalidFee: u64 = 1;
+    const ESameBaseAndQuote: u64 = 2;
+    const EInvalidTickSizeLotSize: u64 = 3;
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
+    const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
+    /// Emitted when a new pool is created
+    public struct PoolCreated has copy, store, drop {
+        /// object ID of the newly created pool
+        pool_id: ID,
+        base_asset: TypeName,
+        quote_asset: TypeName,
+        // 10^9 scaling
+        taker_fee: u64,
+        maker_fee: u64,
+        tick_size: u64,
+        lot_size: u64,
+    }
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
     // Temporary, remove after structs all available
     public struct UserData has store {}
     public struct DEEP has store {}
 
+    public struct Order has store, drop {
+        // For each pool, order id is incremental and unique for each opening order.
+        // Orders that are submitted earlier has lower order ids.
+        // 64 bits are sufficient for order ids whereas 32 bits are not.
+        // Assuming a maximum TPS of 100K/s of Sui chain, it would take (1<<63) / 100000 / 3600 / 24 / 365 = 2924712 years to reach the full capacity.
+        // The highest bit of the order id is used to denote the order type, 0 for bid, 1 for ask.
+        order_id: u64,
+        client_order_id: u64,
+        // Only used for limit orders.
+        price: u64,
+        // quantity when the order first placed in
+        original_quantity: u64,
+        // quantity of the order currently held
+        quantity: u64,
+        is_bid: bool,
+        /// Order can only be canceled by the `AccountCap` with this owner ID
+        owner: address,
+        // Expiration timestamp in ms.
+        expire_timestamp: u64,
+        // reserved field for prevent self_matching
+        self_matching_prevention: u8
+    }
+
+    public struct TickLevel has store {
+        price: u64,
+        // The key is order's order_id.
+        open_orders: LinkedTable<u64, Order>,
+    }
+
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key, store {
         id: UID,
         tick_size: u64,
         lot_size: u64,
-        // bids: BigVec<TickLevel>,
-        // asks: BigVec<TickLevel>,
+        bids: CritbitTree<TickLevel>,
+        asks: CritbitTree<TickLevel>,
         next_bid_order_id: u64,
         next_ask_order_id: u64,
         deep_config: DeepPrice,
@@ -55,6 +116,85 @@ module deepbookv3::pool {
 		deep_per_base: u64,
 		deep_per_quote: u64,
 	}
+
+    public fun create_pool<BaseAsset, QuoteAsset>(
+        taker_fee: u64,
+        maker_fee: u64,
+        tick_size: u64,
+        lot_size: u64,
+        creation_fee: Balance<SUI>,
+        ctx: &mut TxContext,
+    ) {
+        assert!(creation_fee.value() == FEE_AMOUNT_FOR_CREATE_POOL, EInvalidFee);
+
+        let base_type_name = type_name::get<BaseAsset>();
+        let quote_type_name = type_name::get<QuoteAsset>();
+
+        assert!(clob_math::unsafe_mul(lot_size, tick_size) > 0, EInvalidTickSizeLotSize);
+        assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
+        
+        // TODO: Assertion for tick_size and lot_size
+
+        let pool_uid = object::new(ctx);
+        let pool_id = *object::uid_as_inner(&pool_uid);
+
+        // Creates the capability to mark a pool owner.
+
+        event::emit(PoolCreated {
+            pool_id,
+            base_asset: base_type_name,
+            quote_asset: quote_type_name,
+            taker_fee,
+            maker_fee,
+            tick_size,
+            lot_size,
+        });
+
+        let deepprice = DeepPrice{
+            id: object::new(ctx),
+            last_insert_timestamp: 0,
+            price_points_base: vector::empty(), // deque with a max size
+            price_points_quote: vector::empty(),
+            deep_per_base: 0,
+            deep_per_quote: 0,
+        };
+
+        let pooldata = PoolData{
+            pool_id,
+            epoch: ctx.epoch(),
+            total_maker_volume: 0,
+            total_staked_maker_volume: 0,
+            total_fees_collected: 0,
+            stake_required: 0,
+            taker_fee,
+            maker_fee,
+        };
+
+        let pool = (Pool<BaseAsset, QuoteAsset> {
+            id: pool_uid,
+            bids: critbit::new(ctx),
+            asks: critbit::new(ctx),
+            next_bid_order_id: 0,
+            next_ask_order_id: 0,
+            users: table::new(ctx),
+            deep_config: deepprice,
+            // taker_fee,
+            // maker_fee,
+            tick_size,
+            lot_size,
+            base_balances: balance::zero(),
+            quote_balances: balance::zero(),
+            deepbook_balance: balance::zero(),
+            burn_address: @0x0, // TODO
+            treasury: @0x0, // TODO
+            historical_pool_data: vector::empty(),
+            pool_data: pooldata,
+            next_pool_data: pooldata,
+        });
+
+        transfer::public_transfer(coin::from_balance(creation_fee, ctx), @0x0); //TODO: update to treasury address
+        transfer::share_object(pool);
+    }
 
     // // Creates a new pool through the manager using defaults stored in the manager.
     // public fun create_pool<BaseAsset, QuoteAsset>(
