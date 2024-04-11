@@ -2,7 +2,11 @@
 module deepbookv3::pool {
     use sui::balance::{Balance};
     use sui::table::{Table};
-    use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP;
+    // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
+
+    // Temporary, remove after structs all available
+    public struct UserData has store {}
+    public struct DEEP has store {}
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key, store {
         id: UID,
@@ -52,48 +56,48 @@ module deepbookv3::pool {
 		deep_per_quote: u64,
 	}
 
-    // Creates a new pool through the manager using defaults stored in the manager.
-    public fun create_pool<BaseAsset, QuoteAsset>(
-        base: BaseAsset,
-        quote: QuoteAsset,
-        state: &mut State,
-        ctx: &mut TxContext,
-    ) {
-        let my_params = state.get_defaults();
-        let pool = Pool{};
-        state.track_pool(pool);
-        transfer::public_share_object(pool);
-    }
+    // // Creates a new pool through the manager using defaults stored in the manager.
+    // public fun create_pool<BaseAsset, QuoteAsset>(
+    //     base: BaseAsset,
+    //     quote: QuoteAsset,
+    //     state: &mut State,
+    //     ctx: &mut TxContext,
+    // ) {
+    //     let my_params = state.get_defaults();
+    //     let pool = Pool;
+    //     state.track_pool(pool);
+    //     transfer::public_share_object(pool);
+    // }
 
-    // This will be automatically called if not enough assets in settled_funds
-    // User cannot manually deposit
-    // Deposit BaseAsset Tokens (2)
-    fun deposit_base<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user_account: &mut Account,
-        amount: u64,
-        ctx: &mut TxContext,
-    ) {
-        // a) Withdraw from user account
-        let coin: Coin<BaseAsset> = deepbook::account::withdraw(user_account, amount, BalanceKey<BaseAsset>{}, ctx);
-        let balance: Balance<BaseAsset> = coin.into_balance();
-        // b) merge into pool balances
-        pool_custodian.base_balances.join(balance);
-    }
+    // // This will be automatically called if not enough assets in settled_funds
+    // // User cannot manually deposit
+    // // Deposit BaseAsset Tokens (2)
+    // fun deposit_base<BaseAsset, QuoteAsset>(
+    //     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    //     user_account: &mut Account,
+    //     amount: u64,
+    //     ctx: &mut TxContext,
+    // ) {
+    //     // a) Withdraw from user account
+    //     let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, BalanceKey<BaseAsset>{}, ctx);
+    //     let balance: Balance<BaseAsset> = coin.into_balance();
+    //     // b) merge into pool balances
+    //     pool.base_balances.join(balance);
+    // }
 
-    // Deposit QuoteAsset Tokens
-    fun deposit_quote<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user_account: &mut Account,
-        amount: u64,
-        ctx: &mut TxContext,
-    ) {
-        // a) Withdraw from user account
-        let coin: Coin<QuoteAsset> = deepbook::account::withdraw(user_account, amount, BalanceKey<QuoteAsset>{}, ctx);
-        let balance: Balance<QuoteAsset> = coin.into_balance();
-        // b) merge into pool balances
-        pool_custodian.quote_balances.join(balance);
-    }
+    // // Deposit QuoteAsset Tokens
+    // fun deposit_quote<BaseAsset, QuoteAsset>(
+    //     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    //     user_account: &mut Account,
+    //     amount: u64,
+    //     ctx: &mut TxContext,
+    // ) {
+    //     // a) Withdraw from user account
+    //     let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, BalanceKey<QuoteAsset>{}, ctx);
+    //     let balance: Balance<QuoteAsset> = coin.into_balance();
+    //     // b) merge into pool balances
+    //     pool.quote_balances.join(balance);
+    // }
 
     // // Deposit DEEP Tokens
     // fun deposit_deep<BaseAsset, QuoteAsset>(
