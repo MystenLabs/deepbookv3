@@ -6,6 +6,7 @@ module deepbookv3::pool {
     use sui::event;
     use sui::coin;
     use std::type_name::TypeName;
+    use std::ascii::String;
     use sui::linked_table::{Self, LinkedTable};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
 
@@ -201,9 +202,9 @@ module deepbookv3::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
     
-    /// Get the id of pool
-    public fun get_id<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (TypeName, TypeName) {
-        (pool.base_type, pool.quote_type)
+    /// Get the base and quote asset of pool
+    public fun get_id<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
+        (pool.base_type.into_string(), pool.quote_type.into_string())
     }
 
     // // Creates a new pool through the manager using defaults stored in the manager.
