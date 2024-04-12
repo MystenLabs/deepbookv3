@@ -91,7 +91,7 @@ module deepbookv3::pool {
         deepbook_balance: Balance<DEEP>,
 
         // treasury and burn address
-        treasury: address, // Input tokens
+        treasury_address: address, // Input tokens
         burn_address: address, // DEEP tokens
 
         // Historical, current, and next PoolData.
@@ -172,7 +172,7 @@ module deepbookv3::pool {
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
             burn_address: @0x0, // TODO
-            treasury: @0x0, // TODO
+            treasury_address: @0x0, // TODO
             historical_pool_data: vector::empty(),
             pool_data: pooldata,
             next_pool_data: pooldata,
@@ -206,47 +206,30 @@ module deepbookv3::pool {
     // This will be automatically called if not enough assets in settled_funds
     // User cannot manually deposit
     // Deposit BaseAsset Tokens
-    fun deposit_base<BaseAsset, QuoteAsset>(
+    fun deposit<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
+        coin_type: u64, // 0 for base, 1 for quote, 2 for deep
         ctx: &mut TxContext,
     ) {
         // a) Withdraw from user account
-        let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
-        let balance: Balance<BaseAsset> = coin.into_balance();
-        // b) merge into pool balances
-        pool.base_balances.join(balance);
-        // TODO: Update UserData
-    }
-
-    // Deposit QuoteAsset Tokens
-    fun deposit_quote<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user_account: &mut Account,
-        amount: u64,
-        ctx: &mut TxContext,
-    ) {
-        // a) Withdraw from user account
-        let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
-        let balance: Balance<QuoteAsset> = coin.into_balance();
-        // b) merge into pool balances
-        pool.quote_balances.join(balance);
-        // TODO: Update UserData
-    }
-
-    // Deposit DEEP Tokens
-    fun deposit_deep<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user_account: &mut Account,
-        amount: u64,
-        ctx: &mut TxContext,
-    ) {
-        // a) Withdraw from user account
-        let coin: Coin<DEEP> = deepbookv3::account::withdraw(user_account, amount, ctx);
-        let balance: Balance<DEEP> = coin.into_balance();
-        // b) merge into pool balances
-        pool.deepbook_balance.join(balance);
+        if (coin_type == 0) {
+            let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let balance: Balance<BaseAsset> = coin.into_balance();
+            // b) merge into pool balances
+            pool.base_balances.join(balance);
+        } else if (coin_type == 1) {
+            let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let balance: Balance<QuoteAsset> = coin.into_balance();
+            // b) merge into pool balances
+            pool.quote_balances.join(balance);
+        } else if (coin_type == 2){
+            let coin: Coin<DEEP> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let balance: Balance<DEEP> = coin.into_balance();
+            // b) merge into pool balances
+            pool.deepbook_balance.join(balance);
+        }
         // TODO: Update UserData
     }
 
@@ -264,11 +247,25 @@ module deepbookv3::pool {
     // }
 
     // Treasury/Burn (4)
-    public fun send_to_treasury<BaseAsset, QuoteAsset, T>(
-        pool: &Pool<BaseAsset, QuoteAsset>,
+    public fun send<T>(
         fee: Coin<T>,
+        addr: address,
     ){
-        transfer::public_transfer(fee, pool.treasury)
+        transfer::public_transfer(fee, addr)
+    }
+
+    fun burn<BaseAsset, QuoteAsset>(
+        fee: Coin<DEEP>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
+    ){
+        send(fee, pool.burn_address)
+    }
+
+    fun send_treasury<BaseAsset, QuoteAsset, T>(
+        fee: Coin<T>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
+    ){
+        send(fee, pool.treasury_address)
     }
 
     // public(package) fun burn(
