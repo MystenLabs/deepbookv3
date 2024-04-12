@@ -103,7 +103,7 @@ module deepbookv3::pool {
     }
 
     // Pool Data for a specific Epoch (1)
-	public struct PoolData has copy, store {
+	public struct PoolData has copy, store, drop {
         pool_id: ID,
         epoch: u64,
         total_maker_volume: u64,
@@ -327,6 +327,27 @@ module deepbookv3::pool {
         transfer::public_transfer(fee, pool.treasury_address)
     }
 
+    // First interaction of each epoch processes this state update
+    public(package) fun refresh_state<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
+    ) {
+        let current_epoch = ctx.epoch();
+        if (pool.pool_data.epoch != current_epoch){
+            pool.historical_pool_data.push_back(pool.pool_data);
+            pool.pool_data = pool.next_pool_data;
+            pool.pool_data.epoch = current_epoch;
+        }
+    }
+
+    // Allows other modules to update the next pool state parameters
+    public(package) fun set_next_pool_data<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        update_data: PoolData,
+    ) {
+        pool.next_pool_data = update_data;
+    }
+
     // //for pool we need:
     // set_next_pool_data(Option<PoolData>)
 
@@ -363,15 +384,5 @@ module deepbookv3::pool {
 	//   pool.next_pool_state = state;
 	// }
 	
-	// // First interaction of each epoch processes this
-	// fun refresh_state(
-	//   pool: &mut Pool,
-	//   ctx: &TxContext,
-	// ) {
-	//   let current_epoch = ctx.epoch();
-	//   if (pool.current_pool_data.epoch == current_epoch) return;
-	// 	pool.historical_pool_data.push_back(pool.current_pool_state);
-	// 	pool.current_pool_data = pool.next_pool_data;
-	// 	pool.current_pool_data.epoch = current_epoch;
-	// }
+
 }
