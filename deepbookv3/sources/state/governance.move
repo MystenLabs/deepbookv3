@@ -59,9 +59,7 @@ module deepbookv3::governance {
             voting_power: voting_power,
         }
     }
-
-    // SETTERS
-
+    
     public(package) fun reset(governance: &mut Governance) {
         governance.proposals = vector::empty();
         governance.votes = vec_map::empty();

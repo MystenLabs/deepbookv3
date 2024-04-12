@@ -7,8 +7,8 @@ module deepbookv3::pool {
     use sui::coin;
     use std::ascii::{Self, String};
     use sui::linked_table::{Self, LinkedTable};
-    use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
 
+    use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
     use std::type_name::{Self, TypeName};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
@@ -120,14 +120,14 @@ module deepbookv3::pool {
 		deep_per_quote: u64,
 	}
 
-    public fun create_pool<BaseAsset, QuoteAsset>(
+    public(package) fun create_pool<BaseAsset, QuoteAsset>(
         taker_fee: u64,
         maker_fee: u64,
         tick_size: u64,
         lot_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
-    ) {
+    ): String {
         assert!(creation_fee.value() == FEE_AMOUNT_FOR_CREATE_POOL, EInvalidFee);
 
         let base_type_name = type_name::get<BaseAsset>();
@@ -196,7 +196,10 @@ module deepbookv3::pool {
         });
 
         transfer::public_transfer(coin::from_balance(creation_fee, ctx), @0x0); //TODO: update to treasury address
+        let pool_key = pool.pool_key();
         transfer::share_object(pool);
+
+        pool_key
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<

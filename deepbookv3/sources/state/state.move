@@ -1,15 +1,15 @@
 module deepbookv3::state {
+    use std::ascii::{String};
+
     use sui::balance::Balance;
     use sui::table::{Table, add};
-    use std::string::{String, utf8};
+    use sui::sui::SUI;
 
-    use deepbookv3::pool::Pool;
+    use deepbookv3::pool::{Pool, Self};
     use deepbookv3::pool_metadata::{Self, PoolMetadata};
-    use deepbookv3::governance::{Self};
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
-    const EProposalDoesNotExist: u64 = 3;
 
     public struct State has key, store {
         id: UID,
@@ -27,12 +27,16 @@ module deepbookv3::state {
         pool_metadata.refresh(ctx);
     }
 
-    public(package) fun track_pool<BaseAsset, QuoteAsset>(
+    public fun create_pool<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
+        taker_fee: u64,
+        maker_fee: u64,
+        tick_size: u64,
+        lot_size: u64,
+        creation_fee: Balance<SUI>,
+        ctx: &mut TxContext,
     ) {
-        let pool_key = utf8(b""); // TODO: pool.get_key();
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(taker_fee, maker_fee, tick_size, lot_size, creation_fee, ctx);
         assert!(!state.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
@@ -72,14 +76,14 @@ module deepbookv3::state {
         ctx: &TxContext,
     ) {
         // get user 
-        // get stake and calculate voting power
         let user = ctx.sender();
+        // get stake and calculate voting power
         let voting_power = 0; // TODO
         
         let pool_metadata = get_pool_metadata_mut(state, pool);
-        let over_quorum = governance::vote(pool_metadata, proposal_id, user, voting_power);
-        if (over_quorum) {
-            // push changes to pool
+        let winning_proposal = pool_metadata.vote(proposal_id, user, voting_power);
+        if (winning_proposal.is_some()) {
+            // TODO: set next fees
         }
     }
 
@@ -89,7 +93,7 @@ module deepbookv3::state {
         state: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>
     ): &mut PoolMetadata {
-        let pool_key = utf8(b""); // TODO: pool.get_key();
+        let pool_key = pool.pool_key();
         assert!(state.pools.contains(pool_key), EPoolDoesNotExist);
 
         state.pools.borrow_mut(pool_key)

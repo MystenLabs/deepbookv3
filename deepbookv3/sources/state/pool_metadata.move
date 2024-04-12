@@ -1,11 +1,5 @@
 module deepbookv3::pool_metadata {
-    use std::string::{String, utf8};
-    use sui::vec_map::{VecMap, Self};
-
-    use deepbookv3::pool::Pool;
     use deepbookv3::governance::{Governance, Proposal, Self};
-
-    const EProposalDoesNotExist: u64 = 0;
 
     public struct PoolMetadata has store {
         last_refresh_epoch: u64,
@@ -24,8 +18,6 @@ module deepbookv3::pool_metadata {
             new_voting_power: 0,
         }
     }
-
-    // SETTERS
 
     public(package) fun set_as_stable(pool_metadata: &mut PoolMetadata) {
         pool_metadata.is_stable = true;
@@ -60,9 +52,7 @@ module deepbookv3::pool_metadata {
         voter: address,
         voting_power: u64,
     ): Option<Proposal> {
-        // first remove any existing vote
         pool_metadata.governance.remove_vote(voter);
-
         pool_metadata.governance.vote(proposal_id, voter, voting_power)
     }
 }
