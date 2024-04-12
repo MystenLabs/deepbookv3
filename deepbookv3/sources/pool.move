@@ -289,7 +289,7 @@ module deepbookv3::pool {
         // TODO: Update UserData
     }
 
-    // Withdraw settled funds (3)
+    // Withdraw settled funds. Tx address has to own the account being withdrawn to.
     public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
