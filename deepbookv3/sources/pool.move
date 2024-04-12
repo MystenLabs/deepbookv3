@@ -1,4 +1,3 @@
-// Pool structure and creation (1)
 module deepbookv3::pool {
     use sui::balance::{Self,Balance};
     use sui::table::{Self, Table};
@@ -8,6 +7,8 @@ module deepbookv3::pool {
     use std::ascii::{Self, String};
     use sui::linked_table::{Self, LinkedTable};
 
+    use deepbookv3::deep_price::{Self, DeepPrice};
+    use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
     use std::type_name::{Self, TypeName};
@@ -109,16 +110,6 @@ module deepbookv3::pool {
         taker_fee: u64,
         maker_fee: u64,
 	}
-	
-	// DEEP price points used for trading fee calculations (2)
-	public struct DeepPrice has store{
-		id: UID,
-		last_insert_timestamp: u64,
-		price_points_base: vector<u64>, // deque with a max size
-		price_points_quote: vector<u64>,
-		deep_per_base: u64,
-		deep_per_quote: u64,
-	}
 
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         taker_fee: u64,
@@ -153,14 +144,7 @@ module deepbookv3::pool {
             lot_size,
         });
 
-        let deepprice = DeepPrice{
-            id: object::new(ctx),
-            last_insert_timestamp: 0,
-            price_points_base: vector::empty(), // deque with a max size
-            price_points_quote: vector::empty(),
-            deep_per_base: 0,
-            deep_per_quote: 0,
-        };
+        let deepprice = deep_price::initialize();
 
         let pooldata = PoolData{
             pool_id,
@@ -212,76 +196,11 @@ module deepbookv3::pool {
     /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
     public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
        let (base, quote) = get_base_quote_types(pool);
-       if (compare_ascii_strings(&base, &quote)) {
-           return append_strings(&base, &quote)
+       if (string_helper::compare_ascii_strings(&base, &quote)) {
+           return string_helper::append_strings(&base, &quote)
        };
-       append_strings(&quote, &base)
+       string_helper::append_strings(&quote, &base)
     }
-
-    // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
-    /// Compare two ASCII strings, return True if first string is less than to equal to the second string in lexicographic order
-    public fun compare_ascii_strings(str1: &String, str2: &String): bool {
-        let len1 = str1.length();
-        let len2 = str2.length();
-        let min_len = if (len1 < len2) { len1 } else { len2 };
-
-        let bytes1 = str1.as_bytes();
-        let bytes2 = str2.as_bytes();
-
-        let mut i: u64 = 0;
-        while (i < min_len) {
-            if (bytes1[i] < bytes2[i]) {
-                return true
-            } else if (bytes1[i] > bytes2[i]) {
-                return false
-            };
-            i = i + 1
-        };
-
-        if (len1 <= len2) {
-            return true
-        } else {
-            return false
-        }
-    }
-
-    /// Append two ASCII strings and return the result
-    public fun append_strings(str1: &String, str2: &String): String {
-        let mut result_bytes = vector::empty<u8>();
-
-        // Append bytes from the first string
-        let bytes1 = str1.as_bytes();
-        let len1 = bytes1.length();
-        let mut i = 0;
-        while (i < len1) {
-            result_bytes.push_back(bytes1[i]);
-            i = i + 1;
-        };
-
-        // Append bytes from the second string
-        let bytes2 = str2.as_bytes();
-        let len2 = bytes2.length();
-        i = 0;
-        while (i < len2) {
-            result_bytes.push_back(bytes2[i]);
-            i = i + 1;
-        };
-
-        ascii::string(result_bytes)
-    }
-
-    // // Creates a new pool through the manager using defaults stored in the manager.
-    // public fun create_pool<BaseAsset, QuoteAsset>(
-    //     base: BaseAsset,
-    //     quote: QuoteAsset,
-    //     state: &mut State,
-    //     ctx: &mut TxContext,
-    // ) {
-    //     let my_params = state.get_defaults();
-    //     let pool = Pool;
-    //     state.track_pool(pool);
-    //     transfer::public_share_object(pool);
-    // }
 
     // // This will be automatically called if not enough assets in settled_funds
     // // User cannot manually deposit
