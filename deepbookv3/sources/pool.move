@@ -144,7 +144,7 @@ module deepbookv3::pool {
             lot_size,
         });
 
-        let deepprice = deep_price::initialize(ctx);
+        let deepprice = deep_price::initialize();
 
         let pooldata = PoolData{
             pool_id,
