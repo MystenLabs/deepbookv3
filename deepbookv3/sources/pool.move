@@ -202,19 +202,6 @@ module deepbookv3::pool {
        string_helper::append_strings(&quote, &base)
     }
 
-    // // Creates a new pool through the manager using defaults stored in the manager.
-    // public fun create_pool<BaseAsset, QuoteAsset>(
-    //     base: BaseAsset,
-    //     quote: QuoteAsset,
-    //     state: &mut State,
-    //     ctx: &mut TxContext,
-    // ) {
-    //     let my_params = state.get_defaults();
-    //     let pool = Pool;
-    //     state.track_pool(pool);
-    //     transfer::public_share_object(pool);
-    // }
-
     // // This will be automatically called if not enough assets in settled_funds
     // // User cannot manually deposit
     // // Deposit BaseAsset Tokens (2)
