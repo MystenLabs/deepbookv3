@@ -246,27 +246,22 @@ module deepbookv3::pool {
     //     deepbook::account::deposit(account, coin);
     // }
 
-    // Treasury/Burn (4)
-    fun send<T>(
-        fee: Coin<T>,
-        addr: address,
-    ){
-        transfer::public_transfer(fee, addr)
-    }
-
     fun burn<BaseAsset, QuoteAsset>(
-        fee: Coin<DEEP>,
         pool: &Pool<BaseAsset, QuoteAsset>,
+        fee: Coin<DEEP>,
     ){
-        send(fee, pool.burn_address)
+        transfer::public_transfer(fee, pool.burn_address)
     }
 
     fun send_treasury<BaseAsset, QuoteAsset, T>(
-        fee: Coin<T>,
         pool: &Pool<BaseAsset, QuoteAsset>,
+        fee: Coin<T>,
     ){
-        send(fee, pool.treasury_address)
+        transfer::public_transfer(fee, pool.treasury_address)
     }
+
+    // //for pool we need:
+    // set_next_pool_data(Option<PoolData>)
 
     // public(package) fun burn(
     //     pool: &Pool,
