@@ -1,7 +1,7 @@
 module deepbookv3::state {
     use std::ascii::{String};
 
-    use sui::balance::{Balance, Self};
+    use sui::balance::{Balance};
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
@@ -37,7 +37,7 @@ module deepbookv3::state {
     public(package) fun set_pool_as_stable<BaseAsset, QuoteAsset>(
         // cap: DeepbookAdminCap, TODO
         state: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
@@ -50,7 +50,7 @@ module deepbookv3::state {
 
     public(package) fun stake<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         amount: Balance<DEEP>,
         ctx: &TxContext,
     ) {
@@ -64,7 +64,7 @@ module deepbookv3::state {
 
     public(package) fun unstake<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext
     ): Balance<DEEP> {
         // let user = ctx.sender();
@@ -95,7 +95,7 @@ module deepbookv3::state {
 
     public(package) fun vote<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         proposal_id: u64,
         ctx: &TxContext,
     ) {
@@ -126,6 +126,4 @@ module deepbookv3::state {
 
         pool_metadata
     }
-
-    
 }

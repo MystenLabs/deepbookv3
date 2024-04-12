@@ -63,13 +63,6 @@ module deepbookv3::pool_metadata {
         pool_metadata.governance.vote(proposal_id, voter, voting_power)
     }
 
-    public(package) fun increase_new_voting_power(
-        pool_metadata: &mut PoolMetadata,
-        voting_power: u64,
-    ) {
-        pool_metadata.new_voting_power = pool_metadata.new_voting_power + voting_power;
-    }
-
     public(package) fun add_stake(
         pool_metadata: &mut PoolMetadata,
         total_user_stake: u64,
@@ -90,13 +83,6 @@ module deepbookv3::pool_metadata {
         pool_metadata.governance.decrease_voting_power(old_voting_power);
 
         pool_metadata.vault.split(old_epoch_stake + current_epoch_stake)
-    }
-
-    public(package) fun decrease_voting_power(
-        pool_metadata: &mut PoolMetadata,
-        voting_power: u64,
-    ) {
-        pool_metadata.governance.decrease_voting_power(voting_power);
     }
 
     fun calculate_new_voting_power(
