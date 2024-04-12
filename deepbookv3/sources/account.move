@@ -9,11 +9,11 @@ module deepbookv3::account {
     const EAccountBalanceTooLow: u64 = 0;
 
     // Owned by user, this is what's passed into pools (1)
-      public struct Account has key, store {
-          id: UID,
-          owner: address,
-          // coin_balances will be represented in dynamic fields
-      }
+    public struct Account has key, store {
+        id: UID,
+        owner: address,
+        // coin_balances will be represented in dynamic fields
+    }
 
     // Create an individual account (2)
     public fun new(ctx: &mut TxContext): Account {
@@ -66,6 +66,10 @@ module deepbookv3::account {
         let withdrawn_balance = existing_balance.split(amount);
         // Take a transferable `Coin` from a `Balance`
         coin::from_balance(withdrawn_balance, ctx)
+    }
+
+    public fun get_owner(account: &Account): address {
+        account.owner
     }
 
     // Sample Usage

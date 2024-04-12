@@ -21,6 +21,7 @@ module deepbookv3::pool {
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSizeLotSize: u64 = 3;
     const EUserNotFound: u64 = 4;
+    const EIncorrectAccountOwner: u64 = 5;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -288,18 +289,29 @@ module deepbookv3::pool {
         // TODO: Update UserData
     }
 
-    // // Withdraw settled funds (3)
-    // public(package) fun withdraw_settled_funds(
-    //     account: &mut Account,
-    //     pool: &mut Pool,
-    //     ctx: &mut TxContext,
-    //     ) {
-    //     // Check user's settled, unwithdrawn amounts.
-    //     // Deposit them to the user's account.
-    //     let user_data = pool.users[account.owner];
-    //     let coin = // split coin from pool balances based on user_data
-    //     deepbook::account::deposit(account, coin);
-    // }
+    // Withdraw settled funds (3)
+    public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ) {
+        // Check user's settled, unwithdrawn amounts.
+        assert!(account.get_owner() == ctx.sender(), EIncorrectAccountOwner);
+        // Deposit them to the user's account.
+        let user_data = &mut pool.users[account.get_owner()];
+        let (base_amount, quote_amount) = user_data.get_settle_amount();
+
+        // Take the valid amounts from the pool balances
+        let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
+        let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
+
+        // Reset the user's settled amounts
+        user_data.reset_settle_amounts(ctx);
+
+        // deposit back into user account
+        deepbookv3::account::deposit(account, base_coin);
+        deepbookv3::account::deposit(account, quote_coin);
+    }
 
     fun burn(
         burn_address: address,
@@ -317,13 +329,6 @@ module deepbookv3::pool {
 
     // //for pool we need:
     // set_next_pool_data(Option<PoolData>)
-
-    // public(package) fun burn(
-    //     pool: &Pool,
-    //     fee: Coin<DEEP>,
-    // ){
-    //     transfer::transfer(fee, pool.burn_address)
-    // }
 
     // // Order management (5)
     // public(package) fun place_order(&mut Account, &mut Pool, other_params) {
