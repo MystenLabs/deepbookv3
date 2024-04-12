@@ -247,7 +247,7 @@ module deepbookv3::pool {
     // }
 
     // Treasury/Burn (4)
-    public fun send<T>(
+    fun send<T>(
         fee: Coin<T>,
         addr: address,
     ){
