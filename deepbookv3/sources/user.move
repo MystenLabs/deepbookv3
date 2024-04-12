@@ -87,7 +87,7 @@ module deepbookv3::user {
         (0, 0)
     }
 
-    public(package) fun get_settle_amount(
+    public(package) fun get_settle_amounts(
         user: &User,
     ): (u64, u64) {
         (user.settled_base_amount, user.settled_quote_amount)

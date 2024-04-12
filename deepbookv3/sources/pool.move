@@ -286,7 +286,7 @@ module deepbookv3::pool {
             // b) merge into pool balances
             pool.deepbook_balance.join(balance);
         }
-        // TODO: Update UserData
+        // TODO: Update UserData during order cancel
     }
 
     // Withdraw settled funds. Tx address has to own the account being withdrawn to.
@@ -299,18 +299,20 @@ module deepbookv3::pool {
         assert!(account.get_owner() == ctx.sender(), EIncorrectAccountOwner);
         // Deposit them to the user's account.
         let user_data = &mut pool.users[account.get_owner()];
-        let (base_amount, quote_amount) = user_data.get_settle_amount();
+        let (base_amount, quote_amount) = user_data.get_settle_amounts();
 
         // Take the valid amounts from the pool balances
-        let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
-        let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
+        if (base_amount > 0) {
+            let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
+            deepbookv3::account::deposit(account, base_coin);
+        };
+        if (quote_amount > 0) {
+            let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
+            deepbookv3::account::deposit(account, quote_coin);
+        };
 
         // Reset the user's settled amounts
         user_data.reset_settle_amounts(ctx);
-
-        // deposit back into user account
-        deepbookv3::account::deposit(account, base_coin);
-        deepbookv3::account::deposit(account, quote_coin);
     }
 
     fun burn(
@@ -333,19 +335,28 @@ module deepbookv3::pool {
         ctx: &TxContext,
     ) {
         let current_epoch = ctx.epoch();
-        if (pool.pool_data.epoch != current_epoch){
-            pool.historical_pool_data.push_back(pool.pool_data);
-            pool.pool_data = pool.next_pool_data;
-            pool.pool_data.epoch = current_epoch;
-        }
+        if (pool.pool_data.epoch == current_epoch) return;
+
+        // Update pool data
+        pool.historical_pool_data.push_back(pool.pool_data);
+        pool.pool_data = pool.next_pool_data;
+        pool.pool_data.epoch = current_epoch;
     }
 
     // Allows other modules to update the next pool state parameters
     public(package) fun set_next_pool_data<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        update_data: PoolData,
+        update_data: &mut Option<PoolData>,
     ) {
-        pool.next_pool_data = update_data;
+        if (update_data.is_some()){
+            pool.next_pool_data = update_data.extract();
+        }
+        else {
+            // We reset only the params being changed by proposals to current params
+            pool.next_pool_data.taker_fee = pool.pool_data.taker_fee;
+            pool.next_pool_data.maker_fee = pool.pool_data.maker_fee;
+            pool.next_pool_data.stake_required = pool.pool_data.stake_required;
+        };
     }
 
     // //for pool we need:
