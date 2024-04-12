@@ -8,6 +8,7 @@ module deepbookv3::pool {
     use sui::linked_table::{Self, LinkedTable};
 
     use deepbookv3::deepprice::{Self, DeepPrice};
+    use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
     use std::type_name::{Self, TypeName};
@@ -195,62 +196,10 @@ module deepbookv3::pool {
     /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
     public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
        let (base, quote) = get_base_quote_types(pool);
-       if (compare_ascii_strings(&base, &quote)) {
-           return append_strings(&base, &quote)
+       if (string_helper::compare_ascii_strings(&base, &quote)) {
+           return string_helper::append_strings(&base, &quote)
        };
-       append_strings(&quote, &base)
-    }
-
-    // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
-    /// Compare two ASCII strings, return True if first string is less than to equal to the second string in lexicographic order
-    public fun compare_ascii_strings(str1: &String, str2: &String): bool {
-        let len1 = str1.length();
-        let len2 = str2.length();
-        let min_len = if (len1 < len2) { len1 } else { len2 };
-
-        let bytes1 = str1.as_bytes();
-        let bytes2 = str2.as_bytes();
-
-        let mut i: u64 = 0;
-        while (i < min_len) {
-            if (bytes1[i] < bytes2[i]) {
-                return true
-            } else if (bytes1[i] > bytes2[i]) {
-                return false
-            };
-            i = i + 1
-        };
-
-        if (len1 <= len2) {
-            return true
-        } else {
-            return false
-        }
-    }
-
-    /// Append two ASCII strings and return the result
-    public fun append_strings(str1: &String, str2: &String): String {
-        let mut result_bytes = vector::empty<u8>();
-
-        // Append bytes from the first string
-        let bytes1 = str1.as_bytes();
-        let len1 = bytes1.length();
-        let mut i = 0;
-        while (i < len1) {
-            result_bytes.push_back(bytes1[i]);
-            i = i + 1;
-        };
-
-        // Append bytes from the second string
-        let bytes2 = str2.as_bytes();
-        let len2 = bytes2.length();
-        i = 0;
-        while (i < len2) {
-            result_bytes.push_back(bytes2[i]);
-            i = i + 1;
-        };
-
-        ascii::string(result_bytes)
+       string_helper::append_strings(&quote, &base)
     }
 
     // // Creates a new pool through the manager using defaults stored in the manager.
