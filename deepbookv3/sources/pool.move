@@ -263,13 +263,13 @@ module deepbookv3::pool {
     //     deepbook::account::deposit(account, coin);
     // }
 
-    // // Treasury/Burn (4)
-    // public fun send_to_treasury<T: key + store>(
-    //     pool: &Pool,
-    //     fee: Coin<T>,
-    // ){
-    //     transfer::transfer(fee, pool.treasury)
-    // }
+    // Treasury/Burn (4)
+    public fun send_to_treasury<BaseAsset, QuoteAsset, T>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        fee: Coin<T>,
+    ){
+        transfer::public_transfer(fee, pool.treasury)
+    }
 
     // public(package) fun burn(
     //     pool: &Pool,
