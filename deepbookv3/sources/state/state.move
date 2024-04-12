@@ -1,11 +1,11 @@
 module deepbookv3::state {
     use std::ascii::{String};
 
-    use sui::balance::Balance;
+    use sui::balance::{Balance, Self};
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
-    use deepbookv3::pool::{Pool, Self};
+    use deepbookv3::pool::{Pool, DEEP, Self};
     use deepbookv3::pool_metadata::{Self, PoolMetadata};
 
     const EPoolDoesNotExist: u64 = 1;
@@ -16,15 +16,6 @@ module deepbookv3::state {
         pools: Table<String, PoolMetadata>,
         // deep_reference_price: DeepReferencePrice, TODO
         // stake_vault: Balance<DEEP>, TODO
-    }
-
-    public fun refresh_metadata<BaseAsset, QuoteAsset>(
-        state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
-    ) {
-        let pool_metadata = get_pool_metadata_mut(state, pool);
-        pool_metadata.refresh(ctx);
     }
 
     public fun create_pool<BaseAsset, QuoteAsset>(
@@ -47,11 +38,43 @@ module deepbookv3::state {
         // cap: DeepbookAdminCap, TODO
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
     ) {
-        let pool_metadata = get_pool_metadata_mut(state, pool);
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.set_as_stable();
 
         // pool.set_fees() TODO
+    }
+
+    // STAKE
+
+    public(package) fun stake<BaseAsset, QuoteAsset>(
+        state: &mut State,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        amount: Balance<DEEP>,
+        ctx: &TxContext,
+    ) {
+        // let user = ctx.sender();
+        // let total_user_stake = pool.increase_user_stake(user, amount, ctx);
+        let total_user_stake = 0; // TODO: get total user stake so far in case this is adding to existing stake
+
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        pool_metadata.add_stake(total_user_stake, amount);
+    }
+
+    public(package) fun unstake<BaseAsset, QuoteAsset>(
+        state: &mut State,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext
+    ): Balance<DEEP> {
+        // let user = ctx.sender();
+        // let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
+        // total amount staked before this epoch, total amount staked during this epoch
+        let (user_old_stake, user_new_stake) = (0, 0); // TODO
+        
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+
+        pool_metadata.remove_stake(user_old_stake, user_new_stake)
     }
 
     // GOVERNANCE 
@@ -62,10 +85,11 @@ module deepbookv3::state {
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
+        ctx: &TxContext,
     ) {
         // get sender
         // make sure he has enough stake to submit the proposal
-        let pool_metadata = get_pool_metadata_mut(state, pool);
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.add_proposal(maker_fee, taker_fee, stake_required);
     }
 
@@ -80,7 +104,7 @@ module deepbookv3::state {
         // get stake and calculate voting power
         let voting_power = 0; // TODO
         
-        let pool_metadata = get_pool_metadata_mut(state, pool);
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, voting_power);
         if (winning_proposal.is_some()) {
             // TODO: set next fees
@@ -91,11 +115,17 @@ module deepbookv3::state {
 
     fun get_pool_metadata_mut<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext
     ): &mut PoolMetadata {
         let pool_key = pool.pool_key();
         assert!(state.pools.contains(pool_key), EPoolDoesNotExist);
 
-        &mut state.pools[pool_key]
+        let pool_metadata = &mut state.pools[pool_key];
+        pool_metadata.refresh(ctx);
+
+        pool_metadata
     }
+
+    
 }
