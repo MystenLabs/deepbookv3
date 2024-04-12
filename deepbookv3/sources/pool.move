@@ -7,7 +7,7 @@ module deepbookv3::pool {
     use std::ascii::{Self, String};
     use sui::linked_table::{Self, LinkedTable};
 
-    use deepbookv3::deepprice::{Self, DeepPrice};
+    use deepbookv3::deep_price::{Self, DeepPrice};
     use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
@@ -144,7 +144,7 @@ module deepbookv3::pool {
             lot_size,
         });
 
-        let deepprice = deepprice::initialize(ctx);
+        let deepprice = deep_price::initialize(ctx);
 
         let pooldata = PoolData{
             pool_id,

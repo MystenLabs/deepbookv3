@@ -1,4 +1,4 @@
-module deepbookv3::deepprice {
+module deepbookv3::deep_price {
     // DEEP price points used for trading fee calculations
 	public struct DeepPrice has store{
 		id: UID,
@@ -9,7 +9,7 @@ module deepbookv3::deepprice {
 		deep_per_quote: u64,
 	}
 
-    public(package) fun initialize(ctx: &mut TxContext,): DeepPrice {
+    public(package) fun initialize(ctx: &mut TxContext): DeepPrice {
         // Initialize the DEEP price points
         DeepPrice{
             id: object::new(ctx),
