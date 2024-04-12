@@ -5,19 +5,21 @@ module deepbookv3::pool {
     use sui::event;
     use sui::coin;
     use std::ascii::{Self, String};
+    use std::type_name::{Self, TypeName};
     use sui::linked_table::{Self, LinkedTable};
 
     use deepbookv3::deep_price::{Self, DeepPrice};
     use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
-    use std::type_name::{Self, TypeName};
+    use deepbookv3::user::{User};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
     const EInvalidFee: u64 = 1;
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSizeLotSize: u64 = 3;
+    const EUserNotFound: u64 = 4;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -39,7 +41,6 @@ module deepbookv3::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
     // Temporary, remove after structs all available
-    public struct UserData has store {}
     public struct DEEP has store {}
 
     public struct Order has store, drop {
@@ -80,7 +81,7 @@ module deepbookv3::pool {
         next_bid_order_id: u64,
         next_ask_order_id: u64,
         deep_config: DeepPrice,
-        users: Table<address, UserData>,
+        users: Table<address, User>,
         base_type: TypeName,
         quote_type: TypeName,
 
@@ -184,6 +185,42 @@ module deepbookv3::pool {
         transfer::share_object(pool);
 
         pool_key
+    }
+
+    // USER
+
+    public(package) fun increase_user_stake<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        amount: u64,
+        ctx: &TxContext
+    ): u64 {
+        let user = get_user_mut(pool, user, ctx);
+        
+        user.increase_stake(amount)
+    }
+
+    public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        ctx: &TxContext
+    ): (u64, u64) {
+        let user = get_user_mut(pool, user, ctx);
+        
+        user.remove_stake()
+    }
+
+    fun get_user_mut<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        ctx: &TxContext
+    ): &mut User {
+        assert!(pool.users.contains(user), EUserNotFound);
+
+        let user = pool.users.borrow_mut(user);
+        user.refresh(ctx);
+
+        user
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<

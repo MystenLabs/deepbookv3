@@ -50,13 +50,12 @@ module deepbookv3::state {
 
     public(package) fun stake<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
         amount: Balance<DEEP>,
         ctx: &TxContext,
     ) {
-        // let user = ctx.sender();
-        // let total_user_stake = pool.increase_user_stake(user, amount, ctx);
-        let total_user_stake = 0; // TODO: get total user stake so far in case this is adding to existing stake
+        let user = ctx.sender();
+        let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
 
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.add_stake(total_user_stake, amount);
@@ -64,16 +63,14 @@ module deepbookv3::state {
 
     public(package) fun unstake<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext
     ): Balance<DEEP> {
-        // let user = ctx.sender();
-        // let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
-        // total amount staked before this epoch, total amount staked during this epoch
-        let (user_old_stake, user_new_stake) = (0, 0); // TODO
-        
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let user = ctx.sender();
 
+        // total amount staked before this epoch, total amount staked during this epoch
+        let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
+        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.remove_stake(user_old_stake, user_new_stake)
     }
 
