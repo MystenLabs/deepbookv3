@@ -211,6 +211,19 @@ module deepbookv3::pool {
         user.remove_stake()
     }
 
+    public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        ctx: &mut TxContext
+    ): Coin<DEEP> {
+        let user = get_user_mut(pool, user, ctx);
+        
+        let amount = user.reset_rebates();
+        let balance = pool.deepbook_balance.split(amount);
+        
+        balance.into_coin(ctx)
+    }
+
     fun get_user_mut<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -220,7 +233,11 @@ module deepbookv3::pool {
 
         let user = pool.users.borrow_mut(user);
         let burn_amount = user.refresh(ctx);
-        if (burn_amount > 0) burn(pool, burn_amount, ctx);
+        if (burn_amount > 0) {
+            let balance = pool.deepbook_balance.split(burn_amount);
+            let coins = balance.into_coin(ctx);
+            burn(pool.burn_address, coins);
+        };
 
         user
     }
@@ -284,20 +301,17 @@ module deepbookv3::pool {
     //     deepbook::account::deposit(account, coin);
     // }
 
-    fun burn<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        deep_amount: u64,
-        ctx: &mut TxContext,
-    ){
-        let balance = pool.deepbook_balance.split(deep_amount);
-        let coins = balance.into_coin(ctx);
-        transfer::public_transfer(coins, pool.burn_address)
+    fun burn(
+        burn_address: address,
+        amount: Coin<DEEP>,
+    ) {
+        transfer::public_transfer(amount, burn_address)
     }
 
     fun send_treasury<BaseAsset, QuoteAsset, T>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         fee: Coin<T>,
-    ){
+    ) {
         transfer::public_transfer(fee, pool.treasury_address)
     }
 

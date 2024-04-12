@@ -52,7 +52,7 @@ module deepbookv3::state {
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         amount: Balance<DEEP>,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
@@ -64,7 +64,7 @@ module deepbookv3::state {
     public(package) fun unstake<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext
+        ctx: &mut TxContext
     ): Balance<DEEP> {
         let user = ctx.sender();
 

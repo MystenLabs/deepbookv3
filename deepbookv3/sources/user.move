@@ -71,8 +71,11 @@ module deepbookv3::user {
 
     public(package) fun reset_rebates(
         user: &mut User,
-    ) {
+    ): u64 {
+        let rebates = user.unclaimed_rebates;
         user.unclaimed_rebates = 0;
+
+        rebates
     }
 
     fun calculate_rebates_and_burn(
