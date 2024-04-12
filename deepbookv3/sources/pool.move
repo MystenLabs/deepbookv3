@@ -3,7 +3,7 @@ module deepbookv3::pool {
     use sui::table::{Self, Table};
     use sui::sui::SUI;
     use sui::event;
-    use sui::coin;
+    use sui::coin::{Self, Coin};
     use std::ascii::{Self, String};
     use sui::linked_table::{Self, LinkedTable};
 
@@ -11,6 +11,7 @@ module deepbookv3::pool {
     use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
     use deepbookv3::math::Self as clob_math;
+    use deepbookv3::account::{Self, Account};
     use std::type_name::{Self, TypeName};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
@@ -202,49 +203,52 @@ module deepbookv3::pool {
        string_helper::append_strings(&quote, &base)
     }
 
-    // // This will be automatically called if not enough assets in settled_funds
-    // // User cannot manually deposit
-    // // Deposit BaseAsset Tokens (2)
-    // fun deposit_base<BaseAsset, QuoteAsset>(
-    //     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    //     user_account: &mut Account,
-    //     amount: u64,
-    //     ctx: &mut TxContext,
-    // ) {
-    //     // a) Withdraw from user account
-    //     let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, BalanceKey<BaseAsset>{}, ctx);
-    //     let balance: Balance<BaseAsset> = coin.into_balance();
-    //     // b) merge into pool balances
-    //     pool.base_balances.join(balance);
-    // }
+    // This will be automatically called if not enough assets in settled_funds
+    // User cannot manually deposit
+    // Deposit BaseAsset Tokens
+    fun deposit_base<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        // a) Withdraw from user account
+        let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+        let balance: Balance<BaseAsset> = coin.into_balance();
+        // b) merge into pool balances
+        pool.base_balances.join(balance);
+        // TODO: Update UserData
+    }
 
-    // // Deposit QuoteAsset Tokens
-    // fun deposit_quote<BaseAsset, QuoteAsset>(
-    //     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    //     user_account: &mut Account,
-    //     amount: u64,
-    //     ctx: &mut TxContext,
-    // ) {
-    //     // a) Withdraw from user account
-    //     let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, BalanceKey<QuoteAsset>{}, ctx);
-    //     let balance: Balance<QuoteAsset> = coin.into_balance();
-    //     // b) merge into pool balances
-    //     pool.quote_balances.join(balance);
-    // }
+    // Deposit QuoteAsset Tokens
+    fun deposit_quote<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        // a) Withdraw from user account
+        let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+        let balance: Balance<QuoteAsset> = coin.into_balance();
+        // b) merge into pool balances
+        pool.quote_balances.join(balance);
+        // TODO: Update UserData
+    }
 
-    // // Deposit DEEP Tokens
-    // fun deposit_deep<BaseAsset, QuoteAsset>(
-    //     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    //     user_account: &mut Account,
-    //     amount: u64,
-    //     ctx: &mut TxContext,
-    // ) {
-    //     // a) Withdraw from user account
-    //     let coin: Coin<DEEP> = deepbook::account::withdraw(user_account, amount, BalanceKey<DEEP>{}, ctx);
-    //     let balance: Balance<DEEP> = coin.into_balance();
-    //     // b) merge into pool balances
-    //     pool_custodian.deepbook_balances.join(balance);
-    // }
+    // Deposit DEEP Tokens
+    fun deposit_deep<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        // a) Withdraw from user account
+        let coin: Coin<DEEP> = deepbookv3::account::withdraw(user_account, amount, ctx);
+        let balance: Balance<DEEP> = coin.into_balance();
+        // b) merge into pool balances
+        pool.deepbook_balance.join(balance);
+        // TODO: Update UserData
+    }
 
     // // Withdraw settled funds (3)
     // public(package) fun withdraw_settled_funds(
