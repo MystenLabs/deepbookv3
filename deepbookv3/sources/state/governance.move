@@ -59,7 +59,7 @@ module deepbookv3::governance {
             voting_power: voting_power,
         }
     }
-    
+
     public(package) fun reset(governance: &mut Governance) {
         governance.proposals = vector::empty();
         governance.votes = vec_map::empty();
@@ -104,7 +104,7 @@ module deepbookv3::governance {
         // we can't validate user, voting_power. they must be validated before calling this function.
         assert!(proposal_id < governance.proposals.length(), EProposalDoesNotExist);
 
-        let proposal = governance.proposals.borrow_mut(proposal_id);
+        let proposal = &mut governance.proposals[proposal_id];
         proposal.votes = proposal.votes + voting_power;
 
         let vote = new_vote(proposal_id, voting_power);
@@ -126,7 +126,7 @@ module deepbookv3::governance {
         if (!governance.votes.contains(&user)) return governance.winning_proposal;
 
         let (_, vote) = governance.votes.remove(&user);
-        let proposal = governance.proposals.borrow_mut(vote.proposal_id);
+        let proposal = &mut governance.proposals[vote.proposal_id];
         proposal.votes = proposal.votes - vote.voting_power;
 
         // this was over quorum before, now it is not

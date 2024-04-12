@@ -96,6 +96,6 @@ module deepbookv3::state {
         let pool_key = pool.pool_key();
         assert!(state.pools.contains(pool_key), EPoolDoesNotExist);
 
-        state.pools.borrow_mut(pool_key)
+        &mut state.pools[pool_key]
     }
 }
