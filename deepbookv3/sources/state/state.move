@@ -14,8 +14,8 @@ module deepbookv3::state {
     public struct State has key, store {
         id: UID,
         pools: Table<String, PoolMetadata>,
-        // deep_reference_price: DeepReferencePrice, TODO
-        // stake_vault: Balance<DEEP>, TODO
+        // deep_reference_price: DeepReferencePrice,
+        vault: Balance<DEEP>,
     }
 
     public fun create_pool<BaseAsset, QuoteAsset>(
@@ -38,10 +38,11 @@ module deepbookv3::state {
         // cap: DeepbookAdminCap, TODO
         state: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
+        stable: bool,
         ctx: &TxContext,
     ) {
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
-        pool_metadata.set_as_stable();
+        pool_metadata.set_as_stable(stable);
 
         // pool.set_fees() TODO
     }
@@ -58,7 +59,9 @@ module deepbookv3::state {
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
 
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
-        pool_metadata.add_stake(total_user_stake, amount);
+        pool_metadata.add_voting_power(total_user_stake, amount.value());
+        
+        state.vault.join(amount);
     }
 
     public(package) fun unstake<BaseAsset, QuoteAsset>(
@@ -71,7 +74,9 @@ module deepbookv3::state {
         // total amount staked before this epoch, total amount staked during this epoch
         let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
-        pool_metadata.remove_stake(user_old_stake, user_new_stake)
+        pool_metadata.remove_voting_power(user_old_stake, user_new_stake);
+
+        state.vault.split(user_old_stake + user_new_stake)
     }
 
     // GOVERNANCE 

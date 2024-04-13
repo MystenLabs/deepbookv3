@@ -6,11 +6,16 @@ module deepbookv3::pool_metadata {
 
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO: decide this
 
+    /// Details of a pool. This is refreshed every epoch by the first State level action against this pool.
     public struct PoolMetadata has store {
+        // Tracks refreshes.
         last_refresh_epoch: u64,
+        // If the pool is stable or volatile. Determines the fee structure applied.
         is_stable: bool,
+        // Governance details.
         governance: Governance,
-        vault: Balance<DEEP>,
+        // Voting power generated from stakes during this epoch. 
+        // During a refresh, this value is added to the governance and set to 0.
         new_voting_power: u64,
     }
 
@@ -21,15 +26,17 @@ module deepbookv3::pool_metadata {
             last_refresh_epoch: ctx.epoch(),
             is_stable: false,
             governance: governance::new(),
-            vault: balance::zero(),
             new_voting_power: 0,
         }
     }
 
-    public(package) fun set_as_stable(pool_metadata: &mut PoolMetadata) {
-        pool_metadata.is_stable = true;
+    /// Set the pool as stable. Called by State, validation done in State.
+    public(package) fun set_as_stable(pool_metadata: &mut PoolMetadata, stable: bool) {
+        pool_metadata.is_stable = stable;
     }
 
+    /// Refresh the pool metadata. 
+    /// This is called by every State level action, but only processed once per epoch.
     public(package) fun refresh(pool_metadata: &mut PoolMetadata, ctx: &TxContext) {
         let current_epoch = ctx.epoch();
         if (pool_metadata.last_refresh_epoch == current_epoch) return;
@@ -39,6 +46,9 @@ module deepbookv3::pool_metadata {
         pool_metadata.governance.reset();
     }
 
+    /// Add a new proposal to the governance. Called by State.
+    /// Validation of the user adding is done in State.
+    /// Validation of proposal parameters done in Goverance.
     public(package) fun add_proposal(
         pool_metadata: &mut PoolMetadata,
         maker_fee: u64,
@@ -53,6 +63,10 @@ module deepbookv3::pool_metadata {
         );
     }
 
+    /// Vote on a proposal. Called by State.
+    /// Validation of the user and voting power is done in State.
+    /// Validation of proposal id is done in Governance.
+    /// Remove any existing vote by this user and add new vote.
     public(package) fun vote(
         pool_metadata: &mut PoolMetadata,
         proposal_id: u64,
@@ -63,26 +77,31 @@ module deepbookv3::pool_metadata {
         pool_metadata.governance.vote(proposal_id, voter, voting_power)
     }
 
-    public(package) fun add_stake(
+    /// Add stake to the pool. Called by State.
+    /// Total user stake is the sum of the user's historic and current stake, including amount.
+    /// This is needed to calculate the new voting power.
+    /// Validation of the user, amount, and total_user_stake is done in State.
+    public(package) fun add_voting_power(
         pool_metadata: &mut PoolMetadata,
         total_user_stake: u64,
-        amount: Balance<DEEP>
+        new_user_stake: u64,
     ) {
-        let new_voting_power = calculate_new_voting_power(total_user_stake, amount.value());
+        let new_voting_power = calculate_new_voting_power(total_user_stake, new_user_stake);
         pool_metadata.new_voting_power = pool_metadata.new_voting_power + new_voting_power;
-        pool_metadata.vault.join(amount);
     }
 
-    public(package) fun remove_stake(
+    /// Remove stake from the pool. Called by State.
+    /// old_epoch_stake is the user's stake before the current epoch.
+    /// current_epoch_stake is the user's stake during the current epoch.
+    /// These are needed to calculate the voting power to remove in Governance and are validated in State.
+    public(package) fun remove_voting_power(
         pool_metadata: &mut PoolMetadata,
         old_epoch_stake: u64,
         current_epoch_stake: u64,
-    ): Balance<DEEP> {
+    ) {
         let (old_voting_power, new_voting_power) = calculate_voting_power_removed(old_epoch_stake, current_epoch_stake);
         pool_metadata.new_voting_power = pool_metadata.new_voting_power - new_voting_power;
         pool_metadata.governance.decrease_voting_power(old_voting_power);
-
-        pool_metadata.vault.split(old_epoch_stake + current_epoch_stake)
     }
 
     fun calculate_new_voting_power(
