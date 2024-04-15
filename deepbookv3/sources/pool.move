@@ -321,9 +321,9 @@ module deepbookv3::pool {
        string_helper::append_strings(&quote, &base)
     }
 
-    // This will be automatically called if not enough assets in settled_funds
+    // This will be automatically called if not enough assets in settled_funds for a trade
     // User cannot manually deposit
-    // Deposit BaseAsset Tokens
+    // Deposit BaseAsset, QuoteAsset, Deepbook Tokens
     fun deposit<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
@@ -331,21 +331,18 @@ module deepbookv3::pool {
         coin_type: u64, // 0 for base, 1 for quote, 2 for deep
         ctx: &mut TxContext,
     ) {
-        // a) Withdraw from user account
+        // Withdraw from user account and merge into pool balances
         if (coin_type == 0) {
             let coin: Coin<BaseAsset> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<BaseAsset> = coin.into_balance();
-            // b) merge into pool balances
             pool.base_balances.join(balance);
         } else if (coin_type == 1) {
             let coin: Coin<QuoteAsset> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<QuoteAsset> = coin.into_balance();
-            // b) merge into pool balances
             pool.quote_balances.join(balance);
         } else if (coin_type == 2){
             let coin: Coin<DEEP> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<DEEP> = coin.into_balance();
-            // b) merge into pool balances
             pool.deepbook_balance.join(balance);
         }
     }
@@ -436,10 +433,17 @@ module deepbookv3::pool {
         // Refresh state as necessary if first order of epoch
         refresh_state(pool, ctx);
 
+        let config = pool.deep_config.borrow();
+        let deep_quantity = config.deep_per_quote() * quantity;
+        // TODO: Rounding as necessary
+        let fee_quantity = deep_quantity * pool.pool_state.get_maker_fee();
+        // Deposit the deepbook fees
+        deposit(pool, account, fee_quantity, 2, ctx);
+
         if (is_bid) {
-            place_bid_maker_order(pool, account, price, quantity, ctx);
+            place_bid_maker_order(pool, account, price, quantity, fee_quantity, ctx);
         } else {
-            place_ask_maker_order(pool, account, price, quantity, ctx);
+            place_ask_maker_order(pool, account, price, quantity, fee_quantity, ctx);
         };
 
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
@@ -459,17 +463,11 @@ module deepbookv3::pool {
         account: &mut Account,
         price: u64,
         quantity: u64,
+        fee_quantity: u64,
         ctx: &mut TxContext,
     ) {
         let user_data = &mut pool.users[account.get_owner()];
         let (_, quote_amount) = user_data.get_settle_amounts();
-
-        let config = pool.deep_config.borrow();
-        let deep_quantity = config.deep_per_quote() * quantity;
-        // TODO: Rounding
-        let fee_quantity = deep_quantity * pool.pool_state.get_maker_fee();
-
-        // deposit(pool, account, fee_quantity, 2, ctx);
 
         // Deposit quote asset if there's not enough in custodian
         if (quote_amount < quantity){
@@ -489,7 +487,7 @@ module deepbookv3::pool {
             original_quantity: quantity,
             quantity,
             original_fee_quantity: fee_quantity,
-            fee_quantity: fee_quantity,
+            fee_quantity,
             is_bid: true,
             owner: account.get_owner(),
             expire_timestamp: 0, // TODO
@@ -509,16 +507,11 @@ module deepbookv3::pool {
         account: &mut Account,
         price: u64,
         quantity: u64,
+        fee_quantity: u64,
         ctx: &mut TxContext,
     ) {
         let user_data = &mut pool.users[account.get_owner()];
         let (base_amount, _) = user_data.get_settle_amounts();
-
-        let config = pool.deep_config.borrow();
-        let deep_quantity = config.deep_per_base() * quantity;
-
-        // TODO: Rounding
-        let fee_quantity = deep_quantity * pool.pool_state.get_maker_fee();
 
         // Deposit base asset if there's not enough in custodian
         if (base_amount < quantity){
@@ -538,7 +531,7 @@ module deepbookv3::pool {
             original_quantity: quantity,
             quantity,
             original_fee_quantity: fee_quantity,
-            fee_quantity: fee_quantity,
+            fee_quantity,
             is_bid: false,
             owner: account.get_owner(),
             expire_timestamp: 0, // TODO
