@@ -18,6 +18,7 @@ module deepbookv3::governance {
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
+        // Total votes for this proposal.
         votes: u64,
     }
 
@@ -26,11 +27,19 @@ module deepbookv3::governance {
         voting_power: u64,
     }
 
+    /// Governance struct that holds all the governance related data.
+    /// This will reset during every epoch change, except voting_power which will be as needed.
+    /// Participation is limited to users with staked voting power. vector and VecMap will not overflow.
     public struct Governance has store {
+        // Total eligible voting power available.
         voting_power: u64,
+        // Calculated when the governance is reset. It is half of the total voting power.
         quorum: u64,
+        // The winning proposal. None if no proposal has reached quorum.
         winning_proposal: Option<Proposal>,
+        // All proposals that have been created in the current epoch.
         proposals: vector<Proposal>,
+        // User -> Vote mapping. Used to retrieve the vote of a user.
         votes: VecMap<address, Vote>,
     }
 
@@ -60,20 +69,33 @@ module deepbookv3::governance {
         }
     }
 
+    /// Reset the governance state. This will happen after an epoch change.
+    /// Epoch validation done by the parent.
     public(package) fun reset(governance: &mut Governance) {
         governance.proposals = vector::empty();
         governance.votes = vec_map::empty();
         governance.quorum = governance.voting_power / 2;
+        governance.winning_proposal = option::none();
     }
 
+    /// Increase the voting power available.
+    /// This is called by the parent during an epoch change.
+    /// The newly staked voting power from the previous epoch is added to the governance.
+    /// Validation should be done before calling this funciton.
     public(package) fun increase_voting_power(governance: &mut Governance, voting_power: u64) {
         governance.voting_power = governance.voting_power + voting_power;
     }
 
+    /// Decrease the voting power available.
+    /// This is called by the parent when a user unstakes.
+    /// Only voting power that has been added previously can be removed. This will always be >= 0.
+    /// Validation should be done before calling this funciton.
     public(package) fun decrease_voting_power(governance: &mut Governance, voting_power: u64) {
         governance.voting_power = governance.voting_power - voting_power;
     }
 
+    /// Create a new proposal with the given parameters.
+    /// Perform validation depending on the type of pool.
     public(package) fun create_new_proposal(
         governance: &mut Governance,
         stable: bool,
@@ -93,8 +115,8 @@ module deepbookv3::governance {
         governance.proposals.push_back(proposal);
     }
 
-    // cast a vote
-    // return the winning proposal
+    /// Vote on a proposal.
+    /// Validation of user and voting power should be done before calling this function.
     public(package) fun vote(
         governance: &mut Governance,
         proposal_id: u64,
@@ -117,8 +139,9 @@ module deepbookv3::governance {
         governance.winning_proposal
     }
 
-    // remove a vote
-    // return the winning proposal
+    /// Remove a vote from a proposal.
+    /// If user hasn't not exist, do nothing.
+    /// This is called in two scenarios: a voted user changes his vote, or a user unstakes.
     public(package) fun remove_vote(
         governance: &mut Governance,
         user: address
