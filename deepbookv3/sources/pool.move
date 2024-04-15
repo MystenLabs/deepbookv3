@@ -256,6 +256,16 @@ module deepbookv3::pool {
         user
     }
 
+    // DEEP PRICE POINT
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        base_conversion_rate: u64,
+        quote_conversion_rate: u64,
+        timestamp: u64,
+    ) {
+        pool.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp)
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
     
     /// Get the base and quote asset of pool, return as ascii strings

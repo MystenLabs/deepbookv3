@@ -7,6 +7,7 @@ module deepbookv3::state {
 
     use deepbookv3::pool::{Pool, DEEP, Self};
     use deepbookv3::pool_metadata::{Self, PoolMetadata};
+    use deepbookv3::deep_reference_price::{DeepReferencePools};
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
@@ -17,7 +18,7 @@ module deepbookv3::state {
     public struct State has key, store {
         id: UID,
         pools: Table<String, PoolMetadata>,
-        // deep_reference_price: DeepReferencePrice,
+        deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
     
@@ -52,6 +53,20 @@ module deepbookv3::state {
         pool_metadata.set_as_stable(stable);
 
         // pool.set_fees() TODO
+    }
+
+    /// Insert a DEEP data point into a pool.
+    /// reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
+    /// pool is the Pool that will have the DEEP data point added.
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+        state: &State,
+        reference_pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
+    ) {
+        let (base_conversion_rate, quote_conversion_rate) = state.deep_reference_pools.get_conversion_rates(reference_pool, pool);
+        let timestamp = ctx.epoch_timestamp_ms();
+        pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
     // STAKE
