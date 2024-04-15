@@ -22,6 +22,8 @@ module deepbookv3::pool {
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSizeLotSize: u64 = 3;
     const EUserNotFound: u64 = 4;
+    const EInvalidPriceTickSize: u64 = 5;
+    const EBelowMinimumLotSize: u64 = 6;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -453,10 +455,16 @@ module deepbookv3::pool {
         // Refresh state as necessary if first order of epoch
         refresh_state(pool, ctx);
 
+        assert!(price % pool.tick_size == 0, EInvalidPriceTickSize);
+        assert!(quantity >= pool.lot_size, EBelowMinimumLotSize);
+
+        // TODO: check for quantity % min_qty_tick == 0
+
         let verified = pool.deep_config.is_some();
         let maker_fee = pool.pool_state.get_maker_fee();
         let fee_quantity;
         let mut place_quantity = quantity;
+        // If verified pool with source
         if (verified) {
             let config = pool.deep_config.borrow();
             let deep_quantity = config.deep_per_quote() * quantity;
@@ -605,11 +613,11 @@ module deepbookv3::pool {
             self_matching_prevention: 0, // TODO
         };
 
+        // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
             withdraw(pool, account, order_cancelled.quantity, 1, ctx)
-        }
-        else {
+        } else {
             // deposit base asset back into user account
             withdraw(pool, account, order_cancelled.quantity, 0, ctx)
         };
@@ -619,13 +627,13 @@ module deepbookv3::pool {
         if (verified) {
             // withdraw deepbook fees
             withdraw(pool, account, order_cancelled.fee_quantity, 2, ctx)
-        }
-        else if (order_cancelled.is_bid) {
+        } else if (order_cancelled.is_bid) {
             // withdraw quote asset fees
+            // can be combined with withdrawal above, separate now for clarity
             withdraw(pool, account, order_cancelled.fee_quantity, 1, ctx)
-        }
-        else {
-            // withdraw quote asset fees
+        } else {
+            // withdraw base asset fees
+            // can be combined with withdrawal above, separate now for clarity
             withdraw(pool, account, order_cancelled.fee_quantity, 0, ctx)
         };
 
