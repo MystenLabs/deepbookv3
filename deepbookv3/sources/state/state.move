@@ -5,8 +5,8 @@ module deepbookv3::state {
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
-    use deepbookv3::pool::{Pool, DEEP, Self, PoolData, new_pool_data};
-    use deepbookv3::governance::{Proposal};
+    use deepbookv3::pool::{Pool, DEEP, Self};
+    use deepbookv3::pool_state::{new_pool_epoch_state_with_gov_params};
     use deepbookv3::pool_metadata::{Self, PoolMetadata};
     use deepbookv3::deep_reference_price::{DeepReferencePools};
 
@@ -15,6 +15,10 @@ module deepbookv3::state {
     const ENotEnoughStake: u64 = 3;
 
     const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1000; // TODO
+    // const STABLE_TAKER_FEE: u64 = 100;
+    // const STABLE_MAKER_FEE: u64 = 50;
+    const VOLATILE_TAKER_FEE: u64 = 1000;
+    const VOLATILE_MAKER_FEE: u64 = 500;
 
     public struct State has key, store {
         id: UID,
@@ -27,14 +31,12 @@ module deepbookv3::state {
     /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
     public fun create_pool<BaseAsset, QuoteAsset>(
         state: &mut State,
-        taker_fee: u64,
-        maker_fee: u64,
         tick_size: u64,
         lot_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(taker_fee, maker_fee, tick_size, lot_size, creation_fee, ctx);
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, creation_fee, ctx);
         assert!(!state.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
@@ -52,8 +54,8 @@ module deepbookv3::state {
     ) {
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.set_as_stable(stable);
-
-        // pool.set_fees() TODO
+        
+        // TODO: set fees
     }
 
     /// Insert a DEEP data point into a pool.
@@ -146,12 +148,13 @@ module deepbookv3::state {
         
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
-        let pool_data = if (winning_proposal.is_none()) {
+        let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
-            pool_data_option_with_params(ctx, winning_proposal.borrow())
+            let (stake_required, taker_fee, maker_fee) = winning_proposal.borrow().get_proposal_params();
+            option::some(new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee))
         };
-        pool.set_next_pool_data(pool_data);
+        pool.set_next_epoch_pool_state(pool_state);
     }
 
     // HELPERS
@@ -168,15 +171,5 @@ module deepbookv3::state {
         pool_metadata.refresh(ctx);
 
         pool_metadata
-    }
-
-    fun pool_data_option_with_params(
-        ctx: &TxContext,
-        proposal: &Proposal
-    ): Option<PoolData> {
-        let (stake_required, taker_fee, maker_fee) = proposal.get_proposal_params();
-        let pooldata = new_pool_data(ctx, 0,0,0, stake_required, taker_fee, maker_fee);
-
-        option::some(pooldata)
     }
 }
