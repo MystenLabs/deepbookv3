@@ -295,13 +295,11 @@ module deepbookv3::pool {
         account: &mut Account,
         ctx: &mut TxContext,
     ) {
-        // Check user's settled, unwithdrawn amounts.
-        assert!(account.get_owner() == ctx.sender(), EIncorrectAccountOwner);
-        // Deposit them to the user's account.
+        // Get the valid user information
         let user_data = &mut pool.users[account.get_owner()];
         let (base_amount, quote_amount) = user_data.get_settle_amounts();
 
-        // Take the valid amounts from the pool balances
+        // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
             let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
             deepbookv3::account::deposit(account, base_coin);
