@@ -52,7 +52,6 @@ module deepbookv3::pool {
         // Assuming a maximum TPS of 100K/s of Sui chain, it would take (1<<63) / 100000 / 3600 / 24 / 365 = 2924712 years to reach the full capacity.
         // The highest bit of the order id is used to denote the order type, 0 for bid, 1 for ask.
         order_id: u64,
-        client_order_id: u64,
         // Only used for limit orders.
         price: u64,
         // quantity when the order first placed in
@@ -80,8 +79,8 @@ module deepbookv3::pool {
         lot_size: u64,
         bids: CritbitTree<TickLevel>,
         asks: CritbitTree<TickLevel>,
-        next_bid_order_id: u64,
-        next_ask_order_id: u64,
+        next_bid_order_id: u64, // increments for each bid order
+        next_ask_order_id: u64, // increments for each ask order
         deep_config: DeepPrice,
         users: Table<address, User>,
         base_type: TypeName,
@@ -307,17 +306,17 @@ module deepbookv3::pool {
     ) {
         // a) Withdraw from user account
         if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let coin: Coin<BaseAsset> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<BaseAsset> = coin.into_balance();
             // b) merge into pool balances
             pool.base_balances.join(balance);
         } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let coin: Coin<QuoteAsset> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<QuoteAsset> = coin.into_balance();
             // b) merge into pool balances
             pool.quote_balances.join(balance);
         } else if (coin_type == 2){
-            let coin: Coin<DEEP> = deepbookv3::account::withdraw(user_account, amount, ctx);
+            let coin: Coin<DEEP> = account::withdraw(user_account, amount, ctx);
             let balance: Balance<DEEP> = coin.into_balance();
             // b) merge into pool balances
             pool.deepbook_balance.join(balance);
@@ -338,11 +337,11 @@ module deepbookv3::pool {
         // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
             let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
-            deepbookv3::account::deposit(account, base_coin);
+            account::deposit(account, base_coin);
         };
         if (quote_amount > 0) {
             let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
-            deepbookv3::account::deposit(account, quote_coin);
+            account::deposit(account, quote_coin);
         };
 
         // Reset the user's settled amounts
@@ -394,22 +393,87 @@ module deepbookv3::pool {
         };
     }
 
-    // //for pool we need:
-    // set_next_pool_data(Option<PoolData>)
+    // Order management
+    public(package) fun place_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>, 
+        account: &mut Account,
+        is_bid: bool, // true for bid, false for ask
+        price: u64,
+        quantity: u64,
+        ctx: &mut TxContext,
+    ) {
+        // Refresh state as necessary if first order of epoch
+        refresh_state(pool, ctx);
 
-    // // Order management (5)
-    // public(package) fun place_order(&mut Account, &mut Pool, other_params) {
-    //     // // Refresh state as necessary
-    //     // refresh_state();
-        
-    //     // // Optionally deposit from account
-    //     // deposit_base();
-    //     // deposit_quote();
-    //     // deposit_deep();
-        
-    //     // // Place order
-    //     // place_actual_order();
-    // }
+        let user_data = &mut pool.users[account.get_owner()];
+        let (base_amount, quote_amount) = user_data.get_settle_amounts();
+
+        if (is_bid) {
+            // Bid
+
+            // Deposit quote asset if there's not enough in custodian
+            if (quote_amount < quantity){
+                let difference = quantity - quote_amount;
+                let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
+                let balance: Balance<QuoteAsset> = coin.into_balance();
+                pool.quote_balances.join(balance);
+                user_data.set_settle_amounts(false, 0, ctx);
+            } else {
+                user_data.set_settle_amounts(false, quote_amount - quantity, ctx);
+            };
+            
+            // Create Order
+            let order = Order {
+                order_id: pool.next_bid_order_id,
+                price,
+                original_quantity: quantity,
+                quantity,
+                is_bid: true,
+                owner: account.get_owner(),
+                expire_timestamp: 0, // TODO
+                self_matching_prevention: 0, // TODO
+            };
+
+            // Insert order into critbit tree
+            let tick_level = borrow_mut_leaf_by_index(&mut pool.bids, price);
+            tick_level.open_orders.push_back(order.order_id, order);
+
+            // Increment order id
+            pool.next_bid_order_id =  pool.next_bid_order_id + 1;
+        } else {
+            // Ask
+
+            // Deposit base asset if there's not enough in custodian
+            if (base_amount < quantity){
+                let difference = quantity - base_amount;
+                let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
+                let balance: Balance<BaseAsset> = coin.into_balance();
+                pool.base_balances.join(balance);
+                user_data.set_settle_amounts(true, 0, ctx);
+            } else {
+                user_data.set_settle_amounts(true, base_amount - quantity, ctx);
+            };
+
+            // Create Order
+            let order = Order {
+                order_id: pool.next_ask_order_id,
+                price,
+                original_quantity: quantity,
+                quantity,
+                is_bid: false,
+                owner: account.get_owner(),
+                expire_timestamp: 0, // TODO
+                self_matching_prevention: 0, // TODO
+            };
+
+            // Insert order into critbit tree
+            let tick_level = borrow_mut_leaf_by_index(&mut pool.asks, price);
+            tick_level.open_orders.push_back(order.order_id, order);
+
+            // Increment order id
+            pool.next_ask_order_id =  pool.next_ask_order_id + 1;
+        }
+    }
 
     // public(package) fun create_order() // Support creating multiple orders
     // // This may include different types of taker/maker orders
