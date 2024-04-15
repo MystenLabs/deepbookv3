@@ -550,24 +550,11 @@ module deepbookv3::pool {
         })
     }
 
-    // public(package) fun create_order() // Support creating multiple orders
     // // This may include different types of taker/maker orders
     // public(package) fun modify_order() // Support modifying multiple orders
-    // public(package) fun cancel_order()
-    // public(package) fun cancel_all()
     // public(package) fun get_order()
     // public(package) fun get_all_orders()
     // public(package) fun get_book()
     // public(package) fun get_base_asset()
     // public(package) fun get_quote_asset()
-	
-	// // Called by State when a proposal passes quorum (3)
-	// public(package) fun update_next_state<BaseAsset, QuoteAsset>(
-	//   pool: &mut Pool<BaseAsset, QuoteAsset>,
-	//   state: PoolData,
-	// ) {
-	//   pool.next_pool_state = state;
-	// }
-	
-
 }
