@@ -40,6 +40,20 @@ module deepbookv3::pool {
         lot_size: u64,
     }
 
+    /// Emitted when a maker order is canceled.
+    public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        /// object ID of the pool the order was placed on
+        pool_id: ID,
+        /// ID of the order within the pool
+        order_id: u64,
+        is_bid: bool,
+        /// owner ID of the `AccountCap` that canceled the order
+        owner: address,
+        original_quantity: u64,
+        base_asset_quantity_canceled: u64,
+        price: u64
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
     // Temporary, remove after structs all available
@@ -393,8 +407,27 @@ module deepbookv3::pool {
         };
     }
 
+    public fun mul_place_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        is_bid: vector<bool>,
+        price: vector<u64>,
+        quantity: vector<u64>,
+        ctx: &mut TxContext,
+    ) {
+        // TODO: to implement
+    }
+
+    public fun mul_cancel_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ) {
+        // TODO: to implement
+    }
+
     // Order management
-    public(package) fun place_order<BaseAsset, QuoteAsset>(
+    public fun place_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         is_bid: bool, // true for bid, false for ask
@@ -434,7 +467,7 @@ module deepbookv3::pool {
                 self_matching_prevention: 0, // TODO
             };
 
-            // Insert order into critbit tree
+            // TODO: Ignore for now, will insert order into critbit tree, this will change based on new data structure
             let tick_level = borrow_mut_leaf_by_index(&mut pool.bids, price);
             tick_level.open_orders.push_back(order.order_id, order);
 
@@ -466,13 +499,55 @@ module deepbookv3::pool {
                 self_matching_prevention: 0, // TODO
             };
 
-            // Insert order into critbit tree
+            // TODO: Ignore for now, will insert order into critbit tree, this will change based on new data structure
             let tick_level = borrow_mut_leaf_by_index(&mut pool.asks, price);
             tick_level.open_orders.push_back(order.order_id, order);
 
             // Increment order id
             pool.next_ask_order_id =  pool.next_ask_order_id + 1;
         }
+    }
+
+    public fun cancel_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>, 
+        account: &mut Account,
+        order_id: u64,
+        ctx: &mut TxContext,
+    ) {
+        // TODO: find order in corresponding critbit tree using order_id
+
+        let order_cancelled = Order {
+            order_id: 0,
+            price: 10,
+            original_quantity: 8,
+            quantity: 3,
+            is_bid: false,
+            owner: @0x0, // TODO
+            expire_timestamp: 0, // TODO
+            self_matching_prevention: 0, // TODO
+        };
+
+        if (order_cancelled.is_bid) {
+            // deposit quote asset back into user account
+            let coin: Coin<QuoteAsset> = coin::from_balance(pool.quote_balances.split(order_cancelled.quantity), ctx);
+            account::deposit(account, coin);
+        }
+        else {
+            // deposit base asset back into user account
+            let coin: Coin<BaseAsset> = coin::from_balance(pool.base_balances.split(order_cancelled.quantity), ctx);
+            account::deposit(account, coin);
+        };
+
+        // Emit order cancelled event
+        event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
+            pool_id: *pool.id.uid_as_inner(), // Get inner id from UID
+            order_id: order_cancelled.order_id,
+            is_bid: order_cancelled.is_bid,
+            owner: order_cancelled.owner,
+            original_quantity: order_cancelled.original_quantity,
+            base_asset_quantity_canceled: order_cancelled.quantity,
+            price: order_cancelled.price
+        })
     }
 
     // public(package) fun create_order() // Support creating multiple orders
