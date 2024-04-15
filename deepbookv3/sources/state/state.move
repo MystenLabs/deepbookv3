@@ -5,7 +5,8 @@ module deepbookv3::state {
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
-    use deepbookv3::pool::{Pool, DEEP, Self};
+    use deepbookv3::pool::{Pool, DEEP, Self, PoolData, new_pool_data};
+    use deepbookv3::governance::{Proposal};
     use deepbookv3::pool_metadata::{Self, PoolMetadata};
     use deepbookv3::deep_reference_price::{DeepReferencePools};
 
@@ -122,11 +123,12 @@ module deepbookv3::state {
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
-        let (user_stake, _) = pool.get_user_stake(ctx.sender(), ctx);
+        let user = ctx.sender();
+        let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
         
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
-        pool_metadata.add_proposal(maker_fee, taker_fee, stake_required);
+        pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
 
     /// Vote on a proposal using the user's full voting power.
@@ -144,9 +146,12 @@ module deepbookv3::state {
         
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
-        if (winning_proposal.is_some()) {
-            // TODO: set next fees
-        }
+        let pool_data = if (winning_proposal.is_none()) {
+            option::none()
+        } else {
+            pool_data_option_with_params(winning_proposal.borrow())
+        };
+        pool.set_next_pool_data(pool_data);
     }
 
     // HELPERS
@@ -163,5 +168,14 @@ module deepbookv3::state {
         pool_metadata.refresh(ctx);
 
         pool_metadata
+    }
+
+    fun pool_data_option_with_params(
+        proposal: &Proposal
+    ): Option<PoolData> {
+        let (stake_required, taker_fee, maker_fee) = proposal.get_proposal_params();
+        let pooldata = new_pool_data(0,0,0, stake_required, taker_fee, maker_fee);
+
+        option::some(pooldata)
     }
 }
