@@ -21,6 +21,7 @@ module deepbookv3::pool {
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSizeLotSize: u64 = 3;
     const EUserNotFound: u64 = 4;
+    const EIncorrectAccountOwner: u64 = 5;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -102,7 +103,7 @@ module deepbookv3::pool {
     }
 
     // Pool Data for a specific Epoch (1)
-	public struct PoolData has copy, store {
+	public struct PoolData has copy, store, drop {
         pool_id: ID,
         epoch: u64,
         total_maker_volume: u64,
@@ -285,21 +286,32 @@ module deepbookv3::pool {
             // b) merge into pool balances
             pool.deepbook_balance.join(balance);
         }
-        // TODO: Update UserData
+        // TODO: Update UserData during order cancel
     }
 
-    // // Withdraw settled funds (3)
-    // public(package) fun withdraw_settled_funds(
-    //     account: &mut Account,
-    //     pool: &mut Pool,
-    //     ctx: &mut TxContext,
-    //     ) {
-    //     // Check user's settled, unwithdrawn amounts.
-    //     // Deposit them to the user's account.
-    //     let user_data = pool.users[account.owner];
-    //     let coin = // split coin from pool balances based on user_data
-    //     deepbook::account::deposit(account, coin);
-    // }
+    // Withdraw settled funds. Tx address has to own the account being withdrawn to.
+    public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ) {
+        // Get the valid user information
+        let user_data = &mut pool.users[account.get_owner()];
+        let (base_amount, quote_amount) = user_data.get_settle_amounts();
+
+        // Take the valid amounts from the pool balances, deposit into user account
+        if (base_amount > 0) {
+            let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
+            deepbookv3::account::deposit(account, base_coin);
+        };
+        if (quote_amount > 0) {
+            let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
+            deepbookv3::account::deposit(account, quote_coin);
+        };
+
+        // Reset the user's settled amounts
+        user_data.reset_settle_amounts(ctx);
+    }
 
     fun burn(
         burn_address: address,
@@ -315,15 +327,38 @@ module deepbookv3::pool {
         transfer::public_transfer(fee, pool.treasury_address)
     }
 
+    // First interaction of each epoch processes this state update
+    public(package) fun refresh_state<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
+    ) {
+        let current_epoch = ctx.epoch();
+        if (pool.pool_data.epoch == current_epoch) return;
+
+        // Update pool data
+        pool.historical_pool_data.push_back(pool.pool_data);
+        pool.pool_data = pool.next_pool_data;
+        pool.pool_data.epoch = current_epoch;
+    }
+
+    // Allows other modules to update the next pool state parameters
+    public(package) fun set_next_pool_data<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        update_data: &mut Option<PoolData>,
+    ) {
+        if (update_data.is_some()){
+            pool.next_pool_data = update_data.extract();
+        }
+        else {
+            // We reset only the params being changed by proposals to current params
+            pool.next_pool_data.taker_fee = pool.pool_data.taker_fee;
+            pool.next_pool_data.maker_fee = pool.pool_data.maker_fee;
+            pool.next_pool_data.stake_required = pool.pool_data.stake_required;
+        };
+    }
+
     // //for pool we need:
     // set_next_pool_data(Option<PoolData>)
-
-    // public(package) fun burn(
-    //     pool: &Pool,
-    //     fee: Coin<DEEP>,
-    // ){
-    //     transfer::transfer(fee, pool.burn_address)
-    // }
 
     // // Order management (5)
     // public(package) fun place_order(&mut Account, &mut Pool, other_params) {
@@ -358,15 +393,5 @@ module deepbookv3::pool {
 	//   pool.next_pool_state = state;
 	// }
 	
-	// // First interaction of each epoch processes this
-	// fun refresh_state(
-	//   pool: &mut Pool,
-	//   ctx: &TxContext,
-	// ) {
-	//   let current_epoch = ctx.epoch();
-	//   if (pool.current_pool_data.epoch == current_epoch) return;
-	// 	pool.historical_pool_data.push_back(pool.current_pool_state);
-	// 	pool.current_pool_data = pool.next_pool_data;
-	// 	pool.current_pool_data.epoch = current_epoch;
-	// }
+
 }
