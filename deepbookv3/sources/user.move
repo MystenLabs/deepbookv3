@@ -29,6 +29,13 @@ module deepbookv3::user {
         }
     }
 
+    /// Get user's current and next stake amounts
+    public(package) fun get_user_stake(
+        user: &User,
+    ): (u64, u64) {
+        (user.stake_amount, user.next_stake_amount)
+    }
+
     // refresh user and return burn amount for last epoch
     public(package) fun refresh(
         user: &mut User,

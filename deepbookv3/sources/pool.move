@@ -211,6 +211,20 @@ module deepbookv3::pool {
         user.remove_stake()
     }
 
+    public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        ctx: &mut TxContext
+    ): (u64, u64) {
+        if (!pool.users.contains(user)) {
+            return (0, 0)
+        };
+
+        let user = get_user_mut(pool, user, ctx);
+
+        user.get_user_stake()
+    }
+
     public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,

@@ -10,6 +10,9 @@ module deepbookv3::state {
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
+    const ENotEnoughStake: u64 = 3;
+
+    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1000; // TODO
 
     public struct State has key, store {
         id: UID,
@@ -17,7 +20,9 @@ module deepbookv3::state {
         // deep_reference_price: DeepReferencePrice,
         vault: Balance<DEEP>,
     }
-
+    
+    /// Create a new pool. Calls create_pool inside Pool then registers it in the state.
+    /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
     public fun create_pool<BaseAsset, QuoteAsset>(
         state: &mut State,
         taker_fee: u64,
@@ -34,6 +39,8 @@ module deepbookv3::state {
         state.pools.add(pool_key, pool_metadata);
     }
 
+    /// Set the as stable or volatile. This changes the fee structure of the pool.
+    /// New proposals will be asserted against the new fee structure.
     public(package) fun set_pool_as_stable<BaseAsset, QuoteAsset>(
         // cap: DeepbookAdminCap, TODO
         state: &mut State,
@@ -49,6 +56,11 @@ module deepbookv3::state {
 
     // STAKE
 
+    /// Stake DEEP in the pool. This will increase the user's voting power next epoch
+    /// Individual user stakes are stored inside of the pool.
+    /// A user's stake is tracked as stake_amount, staked before current epoch, their "active" amount,
+    /// and next_stake_amount, stake_amount + new stake during this epoch. Upon refresh, stake_amount = next_stake_amount.
+    /// Total voting power is maintained in the pool metadata.
     public(package) fun stake<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -60,10 +72,14 @@ module deepbookv3::state {
 
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.add_voting_power(total_user_stake, amount.value());
-        
+
         state.vault.join(amount);
     }
 
+    /// Unstake DEEP in the pool. This will decrease the user's voting power.
+    /// All stake for this user will be removed.
+    /// If the user has voted, their vote will be removed.
+    /// If the user had accumulated rebates during this epoch, they will be forfeited.
     public(package) fun unstake<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -81,33 +97,38 @@ module deepbookv3::state {
 
     // GOVERNANCE 
 
+    /// Submit a proposal to change the fee structure of a pool.
+    /// The user submitting this proposal must have vested stake in the pool.
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
-        // get sender
-        // make sure he has enough stake to submit the proposal
+        let (user_stake, _) = pool.get_user_stake(ctx.sender(), ctx);
+        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
         pool_metadata.add_proposal(maker_fee, taker_fee, stake_required);
     }
 
+    /// Vote on a proposal using the user's full voting power.
+    /// If the vote pushes proposal over quorum, PoolData is created.
+    /// Set the Pool's next_pool_data with the created PoolData.
     public(package) fun vote<BaseAsset, QuoteAsset>(
         state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
         proposal_id: u64,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
-        // get user 
         let user = ctx.sender();
-        // get stake and calculate voting power
-        let voting_power = 0; // TODO
+        let (user_stake, _) = pool.get_user_stake(user, ctx);
+        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
         
         let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
-        let winning_proposal = pool_metadata.vote(proposal_id, user, voting_power);
+        let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         if (winning_proposal.is_some()) {
             // TODO: set next fees
         }
