@@ -334,16 +334,36 @@ module deepbookv3::pool {
         // Withdraw from user account and merge into pool balances
         if (coin_type == 0) {
             let coin: Coin<BaseAsset> = account::withdraw(user_account, amount, ctx);
-            let balance: Balance<BaseAsset> = coin.into_balance();
-            pool.base_balances.join(balance);
+            pool.base_balances.join(coin.into_balance());
         } else if (coin_type == 1) {
             let coin: Coin<QuoteAsset> = account::withdraw(user_account, amount, ctx);
-            let balance: Balance<QuoteAsset> = coin.into_balance();
-            pool.quote_balances.join(balance);
+            pool.quote_balances.join(coin.into_balance());
         } else if (coin_type == 2){
             let coin: Coin<DEEP> = account::withdraw(user_account, amount, ctx);
-            let balance: Balance<DEEP> = coin.into_balance();
-            pool.deepbook_balance.join(balance);
+            pool.deepbook_balance.join(coin.into_balance());
+        }
+    }
+
+    // This will be automatically called if not enough assets in settled_funds for a trade
+    // User cannot manually deposit
+    // Deposit BaseAsset, QuoteAsset, Deepbook Tokens
+    fun withdraw<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        coin_type: u64, // 0 for base, 1 for quote, 2 for deep
+        ctx: &mut TxContext,
+    ) {
+        // Withdraw from pool balances and deposit into user account
+        if (coin_type == 0) {
+            let coin: Coin<BaseAsset> = coin::from_balance(pool.base_balances.split(amount), ctx);
+            account::deposit(user_account, coin);
+        } else if (coin_type == 1) {
+            let coin: Coin<QuoteAsset> = coin::from_balance(pool.quote_balances.split(amount), ctx);
+            account::deposit(user_account, coin);
+        } else if (coin_type == 2){
+            let coin: Coin<DEEP> = coin::from_balance(pool.deepbook_balance.split(amount), ctx);
+            account::deposit(user_account, coin);
         }
     }
 
@@ -475,6 +495,7 @@ module deepbookv3::pool {
         });
     }
 
+    // Leaving next to place_maker_order for readibility, will be refactored
     fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
@@ -570,7 +591,7 @@ module deepbookv3::pool {
         ctx: &mut TxContext,
     ) {
         // TODO: find order in corresponding critbit tree using order_id
-
+        // Sample order that is cancelled
         let order_cancelled = Order {
             order_id: 0,
             price: 10000,
@@ -586,13 +607,26 @@ module deepbookv3::pool {
 
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
-            let coin: Coin<QuoteAsset> = coin::from_balance(pool.quote_balances.split(order_cancelled.quantity), ctx);
-            account::deposit(account, coin);
+            withdraw(pool, account, order_cancelled.quantity, 1, ctx)
         }
         else {
             // deposit base asset back into user account
-            let coin: Coin<BaseAsset> = coin::from_balance(pool.base_balances.split(order_cancelled.quantity), ctx);
-            account::deposit(account, coin);
+            withdraw(pool, account, order_cancelled.quantity, 0, ctx)
+        };
+
+        // withdraw fees into user account
+        let verified = pool.deep_config.is_some();
+        if (verified) {
+            // withdraw deepbook fees
+            withdraw(pool, account, order_cancelled.fee_quantity, 2, ctx)
+        }
+        else if (order_cancelled.is_bid) {
+            // withdraw quote asset fees
+            withdraw(pool, account, order_cancelled.fee_quantity, 1, ctx)
+        }
+        else {
+            // withdraw quote asset fees
+            withdraw(pool, account, order_cancelled.fee_quantity, 0, ctx)
         };
 
         // Emit order cancelled event
@@ -608,7 +642,7 @@ module deepbookv3::pool {
     }
 
     // // Other helpful functions
-    // public(package) fun modify_order() // Support modifying multiple orders
+    // public(package) fun modify_order()
     // public(package) fun get_order()
     // public(package) fun get_all_orders()
     // public(package) fun get_book()
