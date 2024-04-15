@@ -1,6 +1,8 @@
 module deepbookv3::user {
     use sui::vec_map::{VecMap, Self};
 
+    const EInvalidResetAddress: u64 = 1;
+
     public struct User has store {
         user: address,
         last_refresh_epoch: u64,
@@ -90,5 +92,20 @@ module deepbookv3::user {
     ): (u64, u64) {
         // calculate reabtes from the current User data
         (0, 0)
+    }
+
+    public(package) fun get_settle_amounts(
+        user: &User,
+    ): (u64, u64) {
+        (user.settled_base_amount, user.settled_quote_amount)
+    }
+
+    public(package) fun reset_settle_amounts(
+        user: &mut User,
+        ctx: &TxContext,
+    ) {
+        assert!(user.user == ctx.sender(), EInvalidResetAddress);
+        user.settled_base_amount = 0;
+        user.settled_quote_amount = 0;
     }
 }

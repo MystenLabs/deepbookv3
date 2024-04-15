@@ -149,7 +149,7 @@ module deepbookv3::state {
         let pool_data = if (winning_proposal.is_none()) {
             option::none()
         } else {
-            pool_data_option_with_params(winning_proposal.borrow())
+            pool_data_option_with_params(ctx, winning_proposal.borrow())
         };
         pool.set_next_pool_data(pool_data);
     }
@@ -171,10 +171,11 @@ module deepbookv3::state {
     }
 
     fun pool_data_option_with_params(
+        ctx: &TxContext,
         proposal: &Proposal
     ): Option<PoolData> {
         let (stake_required, taker_fee, maker_fee) = proposal.get_proposal_params();
-        let pooldata = new_pool_data(0,0,0, stake_required, taker_fee, maker_fee);
+        let pooldata = new_pool_data(ctx, 0,0,0, stake_required, taker_fee, maker_fee);
 
         option::some(pooldata)
     }
