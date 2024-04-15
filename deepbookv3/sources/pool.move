@@ -212,6 +212,20 @@ module deepbookv3::pool {
         user.remove_stake()
     }
 
+    public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        ctx: &mut TxContext
+    ): (u64, u64) {
+        if (!pool.users.contains(user)) {
+            return (0, 0)
+        };
+
+        let user = get_user_mut(pool, user, ctx);
+
+        user.get_user_stake()
+    }
+
     public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -241,6 +255,16 @@ module deepbookv3::pool {
         };
 
         user
+    }
+
+    // DEEP PRICE POINT
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        base_conversion_rate: u64,
+        quote_conversion_rate: u64,
+        timestamp: u64,
+    ) {
+        pool.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp)
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<

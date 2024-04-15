@@ -1,10 +1,7 @@
 module deepbookv3::pool_metadata {
-    use sui::balance::{Balance, Self};
-
     use deepbookv3::governance::{Governance, Proposal, Self};
-    use deepbookv3::pool::{DEEP};
 
-    const VOTING_POWER_CUTOFF: u64 = 1000; // TODO: decide this
+    const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
 
     /// Details of a pool. This is refreshed every epoch by the first State level action against this pool.
     public struct PoolMetadata has store {
@@ -64,16 +61,17 @@ module deepbookv3::pool_metadata {
     }
 
     /// Vote on a proposal. Called by State.
-    /// Validation of the user and voting power is done in State.
+    /// Validation of the user and stake is done in State.
     /// Validation of proposal id is done in Governance.
     /// Remove any existing vote by this user and add new vote.
     public(package) fun vote(
         pool_metadata: &mut PoolMetadata,
         proposal_id: u64,
         voter: address,
-        voting_power: u64,
+        stake_amount: u64,
     ): Option<Proposal> {
         pool_metadata.governance.remove_vote(voter);
+        let voting_power = stake_to_voting_power(stake_amount);
         pool_metadata.governance.vote(proposal_id, voter, voting_power)
     }
 
@@ -103,6 +101,15 @@ module deepbookv3::pool_metadata {
         pool_metadata.new_voting_power = pool_metadata.new_voting_power - new_voting_power;
         pool_metadata.governance.decrease_voting_power(old_voting_power);
     }
+
+    fun stake_to_voting_power(
+        stake: u64,
+    ): u64 {
+        if (stake >= VOTING_POWER_CUTOFF) {
+            return stake - (stake - VOTING_POWER_CUTOFF) / 2
+        };
+        stake
+    }   
 
     fun calculate_new_voting_power(
         total_stake: u64,
