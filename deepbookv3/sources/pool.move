@@ -433,17 +433,34 @@ module deepbookv3::pool {
         // Refresh state as necessary if first order of epoch
         refresh_state(pool, ctx);
 
-        let config = pool.deep_config.borrow();
-        let deep_quantity = config.deep_per_quote() * quantity;
-        // TODO: Rounding as necessary
-        let fee_quantity = deep_quantity * pool.pool_state.get_maker_fee();
-        // Deposit the deepbook fees
-        deposit(pool, account, fee_quantity, 2, ctx);
+        let verified = pool.deep_config.is_some();
+        let maker_fee = pool.pool_state.get_maker_fee();
+        let fee_quantity;
+        let mut place_quantity = quantity;
+        if (verified) {
+            let config = pool.deep_config.borrow();
+            let deep_quantity = config.deep_per_quote() * quantity;
+            // TODO: Rounding as necessary
+            fee_quantity = deep_quantity * maker_fee;
+            // Deposit the deepbook fees
+            deposit(pool, account, fee_quantity, 2, ctx);
+        }
+        // If unverified pool
+        else {
+            // TODO: Rounding as necessary
+            fee_quantity = quantity * maker_fee;
+            place_quantity = place_quantity - fee_quantity;
+            if (is_bid) {
+                deposit(pool, account, fee_quantity, 1, ctx);
+            } else {
+                deposit(pool, account, fee_quantity, 0, ctx);
+            };
+        };
 
         if (is_bid) {
-            place_bid_maker_order(pool, account, price, quantity, fee_quantity, ctx);
+            place_bid_maker_order(pool, account, price, place_quantity, fee_quantity, ctx);
         } else {
-            place_ask_maker_order(pool, account, price, quantity, fee_quantity, ctx);
+            place_ask_maker_order(pool, account, price, place_quantity, fee_quantity, ctx);
         };
 
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
@@ -458,7 +475,7 @@ module deepbookv3::pool {
         });
     }
 
-    public fun place_bid_maker_order<BaseAsset, QuoteAsset>(
+    fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         price: u64,
@@ -502,7 +519,7 @@ module deepbookv3::pool {
         pool.next_bid_order_id =  pool.next_bid_order_id + 1;
     }
 
-    public fun place_ask_maker_order<BaseAsset, QuoteAsset>(
+    fun place_ask_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         price: u64,
