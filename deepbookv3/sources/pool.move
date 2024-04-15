@@ -132,7 +132,7 @@ module deepbookv3::pool {
         pool_state: PoolState,
     }
 
-    // Pool Data for a specific Epoch (1)
+    // Pool Data for a specific Epoch
 	public struct PoolData has copy, store, drop {
         epoch: u64,
         total_maker_volume: u64,
@@ -163,6 +163,7 @@ module deepbookv3::pool {
         }
     }
 
+    /// Creates a new pool for trading, called by state module
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         taker_fee: u64,
         maker_fee: u64,
@@ -225,6 +226,7 @@ module deepbookv3::pool {
 
     // USER
 
+    /// Increase a user's stake
     public(package) fun increase_user_stake<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -236,6 +238,7 @@ module deepbookv3::pool {
         user.increase_stake(amount)
     }
 
+    /// Removes a user's stake
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -246,6 +249,7 @@ module deepbookv3::pool {
         user.remove_stake()
     }
 
+    /// Get the user's (current, next) stake amounts
     public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -260,6 +264,7 @@ module deepbookv3::pool {
         user.get_user_stake()
     }
 
+    /// Claim the rebates for the user
     public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -273,6 +278,7 @@ module deepbookv3::pool {
         balance.into_coin(ctx)
     }
 
+    /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
     fun get_user_mut<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -291,8 +297,6 @@ module deepbookv3::pool {
         user
     }
 
-    // DEEP PRICE
-
     /// Add a new price point to the pool.
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -307,25 +311,9 @@ module deepbookv3::pool {
         config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
-    // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
-    
-    /// Get the base and quote asset of pool, return as ascii strings
-    public fun get_base_quote_types<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
-        (pool.base_type.into_string(), pool.quote_type.into_string())
-    }
-
-    /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
-    public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
-       let (base, quote) = get_base_quote_types(pool);
-       if (string_helper::compare_ascii_strings(&base, &quote)) {
-           return string_helper::append_strings(&base, &quote)
-       };
-       string_helper::append_strings(&quote, &base)
-    }
-
-    // This will be automatically called if not enough assets in settled_funds for a trade
-    // User cannot manually deposit
-    // Deposit BaseAsset, QuoteAsset, Deepbook Tokens
+    /// This will be automatically called if not enough assets in settled_funds for a trade
+    /// User cannot manually deposit
+    /// Deposit BaseAsset, QuoteAsset, Deepbook Tokens
     fun deposit<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
@@ -346,9 +334,9 @@ module deepbookv3::pool {
         }
     }
 
-    // This will be automatically called if not enough assets in settled_funds for a trade
-    // User cannot manually deposit
-    // Deposit BaseAsset, QuoteAsset, Deepbook Tokens
+    /// This will be automatically called when order is cancelled
+    /// User cannot manually withdraw
+    /// Withdraw BaseAsset, QuoteAsset, Deepbook Tokens
     fun withdraw<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
@@ -369,7 +357,7 @@ module deepbookv3::pool {
         }
     }
 
-    // Withdraw settled funds. Tx address has to own the account being withdrawn to.
+    /// Withdraw settled funds. Account is an owned object
     public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -393,6 +381,7 @@ module deepbookv3::pool {
         user_data.reset_settle_amounts(ctx);
     }
 
+    /// Burn DEEP tokens
     fun burn(
         burn_address: address,
         amount: Coin<DEEP>,
@@ -400,6 +389,7 @@ module deepbookv3::pool {
         transfer::public_transfer(amount, burn_address)
     }
 
+    /// Send fees collected in input tokens to treasury
     fun send_treasury<BaseAsset, QuoteAsset, T>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         fee: Coin<T>,
@@ -407,7 +397,7 @@ module deepbookv3::pool {
         transfer::public_transfer(fee, pool.treasury_address)
     }
 
-    // First interaction of each epoch processes this state update
+    /// First interaction of each epoch processes this state update
     public(package) fun refresh_state<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
@@ -425,6 +415,7 @@ module deepbookv3::pool {
         pool.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
     }
 
+    /// Allow placing of multiple orders, input can be adjusted
     public fun mul_place_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -436,6 +427,7 @@ module deepbookv3::pool {
         // TODO: to implement
     }
 
+    /// Allow canceling of multiple orders
     public fun mul_cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -444,6 +436,7 @@ module deepbookv3::pool {
         // TODO: to implement
     }
 
+    /// Place a maker order
     public fun place_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         is_bid: bool, // true for bid, false for ask
@@ -503,7 +496,7 @@ module deepbookv3::pool {
         });
     }
 
-    // Leaving next to place_maker_order for readibility, will be refactored
+    /// Helper, places a bid maker order
     fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
@@ -548,6 +541,7 @@ module deepbookv3::pool {
         pool.next_bid_order_id =  pool.next_bid_order_id + 1;
     }
 
+    /// Helper, places an ask maker order
     fun place_ask_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
@@ -592,6 +586,7 @@ module deepbookv3::pool {
         pool.next_ask_order_id =  pool.next_ask_order_id + 1;
     }
 
+    /// cancels an order by id
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
@@ -649,7 +644,24 @@ module deepbookv3::pool {
         })
     }
 
+    // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
+    
+    /// Get the base and quote asset of pool, return as ascii strings
+    public fun get_base_quote_types<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
+        (pool.base_type.into_string(), pool.quote_type.into_string())
+    }
+
+    /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
+    public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
+       let (base, quote) = get_base_quote_types(pool);
+       if (string_helper::compare_ascii_strings(&base, &quote)) {
+           return string_helper::append_strings(&base, &quote)
+       };
+       string_helper::append_strings(&quote, &base)
+    }
+
     // // Other helpful functions
+    // TODO: taker order, send fees directly to treasury
     // public(package) fun modify_order()
     // public(package) fun get_order()
     // public(package) fun get_all_orders()
