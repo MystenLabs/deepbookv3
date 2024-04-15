@@ -104,7 +104,7 @@ module deepbookv3::pool {
 
     // Pool Data for a specific Epoch (1)
 	public struct PoolData has copy, store, drop {
-        epoch :u64,
+        epoch: u64,
         total_maker_volume: u64,
         total_staked_maker_volume: u64,
         total_fees_collected: u64,
@@ -168,7 +168,7 @@ module deepbookv3::pool {
 
         let deepprice = deep_price::initialize();
 
-        let pooldata = new_pool_data(ctx, 0, 0, 0, 0, 0, 0);
+        let pooldata = new_pool_data(ctx, 0, 0, 0, 0, taker_fee, maker_fee);
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
