@@ -40,6 +40,21 @@ module deepbookv3::pool {
         lot_size: u64,
     }
 
+    /// Emitted when a maker order is injected into the order book.
+    public struct OrderPlaced<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        /// object ID of the pool the order was placed on
+        pool_id: ID,
+        /// ID of the order within the pool
+        order_id: u64,
+        is_bid: bool,
+        /// owner ID of the `AccountCap` that placed the order
+        owner: address,
+        original_quantity: u64,
+        base_asset_quantity_placed: u64,
+        price: u64,
+        expire_timestamp: u64
+    }
+
     /// Emitted when a maker order is canceled.
     public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
         /// object ID of the pool the order was placed on
@@ -422,7 +437,18 @@ module deepbookv3::pool {
             place_bid_maker_order(pool, account, price, quantity, ctx);
         } else {
             place_ask_maker_order(pool, account, price, quantity, ctx);
-        }
+        };
+
+        event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
+            pool_id: *object::uid_as_inner(&pool.id),
+            order_id: 0,
+            is_bid,
+            owner: account.get_owner(),
+            original_quantity: quantity,
+            base_asset_quantity_placed: quantity,
+            price,
+            expire_timestamp: 0, // TODO
+        });
     }
 
     public fun place_bid_maker_order<BaseAsset, QuoteAsset>(
@@ -489,7 +515,7 @@ module deepbookv3::pool {
         refresh_state(pool, ctx);
 
         let user_data = &mut pool.users[account.get_owner()];
-        let (base_amount, quote_amount) = user_data.get_settle_amounts();
+        let (base_amount, _) = user_data.get_settle_amounts();
 
         let config = pool.deep_config.borrow();
         let deep_quantity = config.deep_per_base() * quantity;
