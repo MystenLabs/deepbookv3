@@ -48,11 +48,13 @@ module deepbookv3::pool_metadata {
     /// Validation of proposal parameters done in Goverance.
     public(package) fun add_proposal(
         pool_metadata: &mut PoolMetadata,
+        user: address,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64
     ) {
         pool_metadata.governance.create_new_proposal(
+            user,
             pool_metadata.is_stable,
             maker_fee,
             taker_fee,
@@ -72,7 +74,7 @@ module deepbookv3::pool_metadata {
     ): Option<Proposal> {
         pool_metadata.governance.remove_vote(voter);
         let voting_power = stake_to_voting_power(stake_amount);
-        pool_metadata.governance.vote(proposal_id, voter, voting_power)
+        pool_metadata.governance.vote(voter, proposal_id, voting_power)
     }
 
     /// Add stake to the pool. Called by State.

@@ -104,7 +104,6 @@ module deepbookv3::pool {
 
     // Pool Data for a specific Epoch (1)
 	public struct PoolData has copy, store, drop {
-        pool_id: ID,
         epoch: u64,
         total_maker_volume: u64,
         total_staked_maker_volume: u64,
@@ -113,6 +112,26 @@ module deepbookv3::pool {
         taker_fee: u64,
         maker_fee: u64,
 	}
+
+    public(package) fun new_pool_data(
+        ctx: &TxContext,
+        total_maker_volume: u64,
+        total_staked_maker_volume: u64,
+        total_fees_collected: u64,
+        stake_required: u64,
+        taker_fee: u64,
+        maker_fee: u64,
+    ): PoolData {
+        PoolData {
+            epoch: ctx.epoch(),
+            total_maker_volume,
+            total_staked_maker_volume,
+            total_fees_collected,
+            stake_required,
+            taker_fee,
+            maker_fee,
+        }
+    }
 
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         taker_fee: u64,
@@ -149,16 +168,7 @@ module deepbookv3::pool {
 
         let deepprice = deep_price::initialize();
 
-        let pooldata = PoolData{
-            pool_id,
-            epoch: ctx.epoch(),
-            total_maker_volume: 0,
-            total_staked_maker_volume: 0,
-            total_fees_collected: 0,
-            stake_required: 0,
-            taker_fee,
-            maker_fee,
-        };
+        let pooldata = new_pool_data(ctx, 0, 0, 0, 0, taker_fee, maker_fee);
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
@@ -257,7 +267,9 @@ module deepbookv3::pool {
         user
     }
 
-    // DEEP PRICE POINT
+    // DEEP PRICE
+
+    /// Add a new price point to the pool.
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         base_conversion_rate: u64,
@@ -365,15 +377,16 @@ module deepbookv3::pool {
         pool.pool_data.epoch = current_epoch;
     }
 
-    // Allows other modules to update the next pool state parameters
+    /// Update the pool's next pool data.
+    /// During an epoch refresh, the current pool data is moved to historical pool data.
+    /// The next pool data is moved to current pool data.
     public(package) fun set_next_pool_data<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        update_data: &mut Option<PoolData>,
+        next_pool_data: Option<PoolData>,
     ) {
-        if (update_data.is_some()){
-            pool.next_pool_data = update_data.extract();
-        }
-        else {
+        if (next_pool_data.is_some()){
+            pool.next_pool_data = *next_pool_data.borrow();
+        } else {
             // We reset only the params being changed by proposals to current params
             pool.next_pool_data.taker_fee = pool.pool_data.taker_fee;
             pool.next_pool_data.maker_fee = pool.pool_data.maker_fee;

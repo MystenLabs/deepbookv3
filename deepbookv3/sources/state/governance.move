@@ -10,9 +10,14 @@ module deepbookv3::governance {
     const MIN_MAKER_VOLATILE: u64 = 200;
     const MAX_MAKER_VOLATILE: u64 = 500;
 
+    const MAX_PROPOSALS_CREATIONS_PER_USER: u64 = 1;
+    const MAX_VOTES_CASTED_PER_USER: u64 = 3;
+
     const EInvalidMakerFee: u64 = 1;
     const EInvalidTakerFee: u64 = 2;
     const EProposalDoesNotExist: u64 = 3;
+    const EUserProposalCreationLimitReached: u64 = 4;
+    const EUserVotesCastedLimitReached: u64 = 5;
 
     public struct Proposal has store, drop, copy {
         maker_fee: u64,
@@ -22,9 +27,11 @@ module deepbookv3::governance {
         votes: u64,
     }
 
-    public struct Vote has store, drop {
-        proposal_id: u64,
-        voting_power: u64,
+    public struct Voter has store, drop {
+        proposal_id: Option<u64>,
+        voting_power: Option<u64>,
+        proposals_created: u64,
+        votes_casted: u64,
     }
 
     /// Governance struct that holds all the governance related data.
@@ -40,7 +47,7 @@ module deepbookv3::governance {
         // All proposals that have been created in the current epoch.
         proposals: vector<Proposal>,
         // User -> Vote mapping. Used to retrieve the vote of a user.
-        votes: VecMap<address, Vote>,
+        voters: VecMap<address, Voter>,
     }
 
     public(package) fun new(): Governance {
@@ -49,7 +56,7 @@ module deepbookv3::governance {
             quorum: 0,
             winning_proposal: option::none(),
             proposals: vector::empty(),
-            votes: vec_map::empty(),
+            voters: vec_map::empty(),
         }
     }
 
@@ -62,10 +69,16 @@ module deepbookv3::governance {
         }
     }
 
-    fun new_vote(proposal_id: u64, voting_power: u64): Vote {
-        Vote {
-            proposal_id: proposal_id,
-            voting_power: voting_power,
+    public(package) fun get_proposal_params(proposal: &Proposal): (u64, u64, u64) {
+        (proposal.maker_fee, proposal.taker_fee, proposal.stake_required)
+    }
+
+    fun new_voter(): Voter {
+        Voter {
+            proposal_id: option::none(),
+            voting_power: option::none(),
+            proposals_created: 0,
+            votes_casted: 0,
         }
     }
 
@@ -73,7 +86,7 @@ module deepbookv3::governance {
     /// Epoch validation done by the parent.
     public(package) fun reset(governance: &mut Governance) {
         governance.proposals = vector::empty();
-        governance.votes = vec_map::empty();
+        governance.voters = vec_map::empty();
         governance.quorum = governance.voting_power / 2;
         governance.winning_proposal = option::none();
     }
@@ -96,13 +109,18 @@ module deepbookv3::governance {
 
     /// Create a new proposal with the given parameters.
     /// Perform validation depending on the type of pool.
+    /// A user can only create 1 proposal per epoch.
     public(package) fun create_new_proposal(
         governance: &mut Governance,
+        user: address,
         stable: bool,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
     ) {
+        governance.add_voter_if_does_not_exist(user);
+        governance.increment_proposals_created(user);
+
         if (stable) {
             assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
@@ -119,18 +137,17 @@ module deepbookv3::governance {
     /// Validation of user and voting power should be done before calling this function.
     public(package) fun vote(
         governance: &mut Governance,
-        proposal_id: u64,
         user: address,
+        proposal_id: u64,
         voting_power: u64,
     ): Option<Proposal> {
         // we can't validate user, voting_power. they must be validated before calling this function.
         assert!(proposal_id < governance.proposals.length(), EProposalDoesNotExist);
+        governance.add_voter_if_does_not_exist(user);
+        governance.update_voter(user, proposal_id, voting_power);
 
         let proposal = &mut governance.proposals[proposal_id];
         proposal.votes = proposal.votes + voting_power;
-
-        let vote = new_vote(proposal_id, voting_power);
-        governance.votes.insert(user, vote);
 
         if (proposal.votes >= governance.quorum) {
             governance.winning_proposal = option::some(*proposal);
@@ -146,19 +163,50 @@ module deepbookv3::governance {
         governance: &mut Governance,
         user: address
     ): Option<Proposal> {
-        if (!governance.votes.contains(&user)) return governance.winning_proposal;
+        if (!governance.voters.contains(&user)) return governance.winning_proposal;
+        let voter = governance.voters.get_mut(&user);
+        if (voter.proposal_id.is_none()) return governance.winning_proposal;
 
-        let (_, vote) = governance.votes.remove(&user);
-        let proposal = &mut governance.proposals[vote.proposal_id];
-        proposal.votes = proposal.votes - vote.voting_power;
+        let votes = voter.voting_power.extract();
+
+        let proposal = &mut governance.proposals[voter.proposal_id.extract()];
+        proposal.votes = proposal.votes - votes;
 
         // this was over quorum before, now it is not
         // it was the winning proposal before, now it is not
-        if (proposal.votes + vote.voting_power >= governance.quorum
+        if (proposal.votes + votes >= governance.quorum
             && proposal.votes < governance.quorum) {
             governance.winning_proposal = option::none();
         };
 
         governance.winning_proposal
+    }
+
+    fun add_voter_if_does_not_exist(governance: &mut Governance, user: address) {
+        if (!governance.voters.contains(&user)) {
+            let voter = new_voter();
+            governance.voters.insert(user, voter);
+        };
+    }
+
+    fun increment_proposals_created(governance: &mut Governance, user: address) {
+        let voter = governance.voters.get_mut(&user);
+        assert!(voter.proposals_created < MAX_PROPOSALS_CREATIONS_PER_USER, EUserProposalCreationLimitReached);
+
+        voter.proposals_created = voter.proposals_created + 1;
+    }
+
+    fun update_voter(
+        governance: &mut Governance, 
+        user: address,
+        proposal_id: u64,
+        voting_power: u64,
+    ) {
+        let voter = governance.voters.get_mut(&user);
+        assert!(voter.votes_casted < MAX_VOTES_CASTED_PER_USER, EUserVotesCastedLimitReached);
+
+        voter.votes_casted = voter.votes_casted + 1;
+        voter.proposal_id = option::some(proposal_id);
+        voter.voting_power = option::some(voting_power);
     }
 }
