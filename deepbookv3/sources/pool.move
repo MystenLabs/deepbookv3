@@ -433,6 +433,9 @@ module deepbookv3::pool {
         quantity: u64,
         ctx: &mut TxContext,
     ) {
+        // Refresh state as necessary if first order of epoch
+        refresh_state(pool, ctx);
+
         if (is_bid) {
             place_bid_maker_order(pool, account, price, quantity, ctx);
         } else {
@@ -458,9 +461,6 @@ module deepbookv3::pool {
         quantity: u64,
         ctx: &mut TxContext,
     ) {
-        // Refresh state as necessary if first order of epoch
-        refresh_state(pool, ctx);
-
         let user_data = &mut pool.users[account.get_owner()];
         let (_, quote_amount) = user_data.get_settle_amounts();
 
@@ -469,7 +469,7 @@ module deepbookv3::pool {
         // TODO: Rounding
         let fee_quantity = deep_quantity * pool.pool_state.get_maker_fee();
 
-        // Include fees
+        // deposit(pool, account, fee_quantity, 2, ctx);
 
         // Deposit quote asset if there's not enough in custodian
         if (quote_amount < quantity){
@@ -511,9 +511,6 @@ module deepbookv3::pool {
         quantity: u64,
         ctx: &mut TxContext,
     ) {
-        // Refresh state as necessary if first order of epoch
-        refresh_state(pool, ctx);
-
         let user_data = &mut pool.users[account.get_owner()];
         let (base_amount, _) = user_data.get_settle_amounts();
 
