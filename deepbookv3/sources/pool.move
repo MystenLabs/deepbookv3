@@ -14,6 +14,7 @@ module deepbookv3::pool {
     use deepbookv3::math::Self as clob_math;
     use deepbookv3::user::{User};
     use deepbookv3::account::{Self, Account};
+    use deepbookv3::pool_state::{Self, PoolState, PoolEpochState};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -21,7 +22,6 @@ module deepbookv3::pool {
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSizeLotSize: u64 = 3;
     const EUserNotFound: u64 = 4;
-    const EIncorrectAccountOwner: u64 = 5;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -97,9 +97,7 @@ module deepbookv3::pool {
         burn_address: address, // DEEP tokens
 
         // Historical, current, and next PoolData.
-        historical_pool_data: vector<PoolData>, // size constraint
-        pool_data: PoolData,
-        next_pool_data: PoolData,
+        pool_state: PoolState,
     }
 
     // Pool Data for a specific Epoch (1)
@@ -168,8 +166,6 @@ module deepbookv3::pool {
 
         let deepprice = deep_price::initialize();
 
-        let pooldata = new_pool_data(ctx, 0, 0, 0, 0, taker_fee, maker_fee);
-
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
             bids: critbit::new(ctx),
@@ -185,9 +181,7 @@ module deepbookv3::pool {
             deepbook_balance: balance::zero(),
             burn_address: @0x0, // TODO
             treasury_address: @0x0, // TODO
-            historical_pool_data: vector::empty(),
-            pool_data: pooldata,
-            next_pool_data: pooldata,
+            pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
             base_type: base_type_name,
             quote_type: quote_type_name,
         });
@@ -368,34 +362,18 @@ module deepbookv3::pool {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        let current_epoch = ctx.epoch();
-        if (pool.pool_data.epoch == current_epoch) return;
-
-        // Update pool data
-        pool.historical_pool_data.push_back(pool.pool_data);
-        pool.pool_data = pool.next_pool_data;
-        pool.pool_data.epoch = current_epoch;
+        pool.pool_state.refresh_state(ctx);
     }
 
-    /// Update the pool's next pool data.
-    /// During an epoch refresh, the current pool data is moved to historical pool data.
-    /// The next pool data is moved to current pool data.
-    public(package) fun set_next_pool_data<BaseAsset, QuoteAsset>(
+    /// Update the pool's next pool state.
+    /// During an epoch refresh, the current pool state is moved to historical pool state.
+    /// The next pool state is moved to current pool state.
+    public(package) fun set_next_epoch_pool_state<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        next_pool_data: Option<PoolData>,
+        next_epoch_pool_state: Option<PoolEpochState>,
     ) {
-        if (next_pool_data.is_some()){
-            pool.next_pool_data = *next_pool_data.borrow();
-        } else {
-            // We reset only the params being changed by proposals to current params
-            pool.next_pool_data.taker_fee = pool.pool_data.taker_fee;
-            pool.next_pool_data.maker_fee = pool.pool_data.maker_fee;
-            pool.next_pool_data.stake_required = pool.pool_data.stake_required;
-        };
+        pool.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
     }
-
-    // //for pool we need:
-    // set_next_pool_data(Option<PoolData>)
 
     // // Order management (5)
     // public(package) fun place_order(&mut Account, &mut Pool, other_params) {
