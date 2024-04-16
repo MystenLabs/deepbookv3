@@ -437,7 +437,9 @@ module deepbookv3::pool {
         // If verified pool with source
         if (verified) {
             let config = pool.deep_config.borrow();
-            let deep_quantity = config.deep_per_quote() * quantity;
+            // quantity is always in terms of base asset
+            // TODO: option to use deep_per_quote if base not available
+            let deep_quantity = config.deep_per_base() * quantity;
             // TODO: Rounding as necessary
             fee_quantity = deep_quantity * maker_fee;
             // Deposit the deepbook fees
@@ -485,17 +487,17 @@ module deepbookv3::pool {
         ctx: &mut TxContext,
     ) {
         let user_data = &mut pool.users[account.get_owner()];
-        let (_, quote_amount) = user_data.get_settle_amounts();
+        let (_, available_quote_amount) = user_data.get_settle_amounts();
 
         // Deposit quote asset if there's not enough in custodian
-        if (quote_amount < quantity){
-            let difference = quantity - quote_amount;
+        if (available_quote_amount < quantity){
+            let difference = quantity - available_quote_amount;
             let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
             let balance: Balance<QuoteAsset> = coin.into_balance();
             pool.quote_balances.join(balance);
             user_data.set_settle_amounts(false, 0, ctx);
         } else {
-            user_data.set_settle_amounts(false, quote_amount - quantity, ctx);
+            user_data.set_settle_amounts(false, available_quote_amount - quantity, ctx);
         };
         
         // Create Order
@@ -532,17 +534,17 @@ module deepbookv3::pool {
         ctx: &mut TxContext,
     ) {
         let user_data = &mut pool.users[account.get_owner()];
-        let (base_amount, _) = user_data.get_settle_amounts();
+        let (available_base_amount, _) = user_data.get_settle_amounts();
 
         // Deposit base asset if there's not enough in custodian
-        if (base_amount < quantity){
-            let difference = quantity - base_amount;
+        if (available_base_amount < quantity){
+            let difference = quantity - available_base_amount;
             let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
             let balance: Balance<BaseAsset> = coin.into_balance();
             pool.base_balances.join(balance);
             user_data.set_settle_amounts(true, 0, ctx);
         } else {
-            user_data.set_settle_amounts(true, base_amount - quantity, ctx);
+            user_data.set_settle_amounts(true, available_base_amount - quantity, ctx);
         };
 
         // Create Order
