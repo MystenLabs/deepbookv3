@@ -432,7 +432,7 @@ module deepbookv3::pool {
 
         let verified = pool.deep_config.is_some();
         let maker_fee = pool.pool_state.get_maker_fee();
-        let fee_quantity;
+        let mut fee_quantity;
         let mut place_quantity = quantity;
         // If verified pool with source
         if (verified) {
@@ -448,11 +448,14 @@ module deepbookv3::pool {
         // If unverified pool
         else {
             // TODO: Rounding as necessary
-            fee_quantity = quantity * maker_fee;
-            place_quantity = place_quantity - fee_quantity;
+            fee_quantity = quantity * maker_fee; // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
+            place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
+                fee_quantity = fee_quantity * price; // if price = 5, fee_q = 50 (in quote assets)
+                // deposit quote asset fees
                 deposit(pool, account, fee_quantity, 1, ctx);
             } else {
+                // deposit base asset fees
                 deposit(pool, account, fee_quantity, 0, ctx);
             };
         };
@@ -490,14 +493,15 @@ module deepbookv3::pool {
         let (_, available_quote_amount) = user_data.get_settle_amounts();
 
         // Deposit quote asset if there's not enough in custodian
+        let quote_quantity = quantity * price;
         if (available_quote_amount < quantity){
-            let difference = quantity - available_quote_amount;
+            let difference = quote_quantity - available_quote_amount;
             let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
             let balance: Balance<QuoteAsset> = coin.into_balance();
             pool.quote_balances.join(balance);
             user_data.set_settle_amounts(false, 0, ctx);
         } else {
-            user_data.set_settle_amounts(false, available_quote_amount - quantity, ctx);
+            user_data.set_settle_amounts(false, available_quote_amount - quote_quantity, ctx);
         };
         
         // Create Order
@@ -574,7 +578,7 @@ module deepbookv3::pool {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
-        client_order_id: u64,
+        client_order_id: u64, // use this to find order
         ctx: &mut TxContext,
     ) {
         // TODO: find order in corresponding critbit tree using order_id
