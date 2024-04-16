@@ -587,7 +587,7 @@ module deepbookv3::pool {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
-        client_order_id: u64, // use this to find order
+        order_id: u64, // use this to find order
         ctx: &mut TxContext,
     ) {
         // TODO: find order in corresponding BigVec using client_order_id
