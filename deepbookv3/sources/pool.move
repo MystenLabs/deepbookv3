@@ -511,9 +511,9 @@ module deepbookv3::pool {
             let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
             let balance: Balance<QuoteAsset> = coin.into_balance();
             pool.quote_balances.join(balance);
-            user_data.set_settle_amounts(false, 0, ctx);
+            user_data.set_settle_amounts(option::none(), option::some(0), ctx);
         } else {
-            user_data.set_settle_amounts(false, available_quote_amount - quote_quantity, ctx);
+            user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
         };
         
         // Create Order
@@ -559,9 +559,9 @@ module deepbookv3::pool {
             let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
             let balance: Balance<BaseAsset> = coin.into_balance();
             pool.base_balances.join(balance);
-            user_data.set_settle_amounts(true, 0, ctx);
+            user_data.set_settle_amounts(option::some(0), option::none(), ctx);
         } else {
-            user_data.set_settle_amounts(true, available_base_amount - quantity, ctx);
+            user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
         };
 
         // Create Order

@@ -111,15 +111,16 @@ module deepbookv3::user {
 
     public(package) fun set_settle_amounts(
         user: &mut User,
-        is_base: bool,
-        quantity: u64,
+        mut settled_base_amount: Option<u64>,
+        mut settled_quote_amount: Option<u64>,
         ctx: &TxContext,
     ) {
         assert!(user.user == ctx.sender(), EInvalidResetAddress);
-        if (is_base) {
-            user.settled_base_amount = quantity;
-        } else {
-            user.settled_quote_amount = quantity;
-        }
+        if (settled_base_amount.is_some()) {
+            user.settled_base_amount = settled_base_amount.extract();
+        };
+        if (settled_quote_amount.is_some()) {
+            user.settled_quote_amount = settled_quote_amount.extract();
+        };
     }
 }
