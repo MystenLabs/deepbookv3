@@ -600,7 +600,8 @@ module deepbookv3::pool {
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
-            withdraw(pool, account, order_cancelled.quantity, 1, ctx)
+            let quote_asset_quantity = order_cancelled.quantity * order_cancelled.price;
+            withdraw(pool, account, quote_asset_quantity, 1, ctx)
         } else {
             // deposit base asset back into user account
             withdraw(pool, account, order_cancelled.quantity, 0, ctx)
