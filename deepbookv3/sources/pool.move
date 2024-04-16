@@ -11,7 +11,7 @@ module deepbookv3::pool {
     use deepbookv3::deep_price::{Self, DeepPrice};
     use deepbookv3::string_helper::{Self};
     use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
-    use deepbookv3::math::Self as clob_math;
+    use deepbookv3::math::{Self, mul};
     use deepbookv3::user::{User};
     use deepbookv3::account::{Self, Account};
     use deepbookv3::pool_state::{Self, PoolState, PoolEpochState};
@@ -451,19 +451,20 @@ module deepbookv3::pool {
             let config = pool.deep_config.borrow();
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
-            let deep_quantity = config.deep_per_base() * quantity;
+            // NOTE: make sure deep_per_base is represented similarly as others 10^9 scaling
+            let deep_quantity = mul(config.deep_per_base(), quantity);
             // TODO: Rounding as necessary
-            fee_quantity = deep_quantity * maker_fee;
+            fee_quantity = mul(deep_quantity, maker_fee);
             // Deposit the deepbook fees
             deposit(pool, account, fee_quantity, 2, ctx);
         }
         // If unverified pool
         else {
             // TODO: Rounding as necessary
-            fee_quantity = quantity * maker_fee; // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
+            fee_quantity = mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
             place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
-                fee_quantity = fee_quantity * price; // if price = 5, fee_q = 50 (in quote assets)
+                fee_quantity = mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
                 // deposit quote asset fees
                 deposit(pool, account, fee_quantity, 1, ctx);
             } else {
@@ -505,7 +506,7 @@ module deepbookv3::pool {
         let (_, available_quote_amount) = user_data.get_settle_amounts();
 
         // Deposit quote asset if there's not enough in custodian
-        let quote_quantity = quantity * price;
+        let quote_quantity = mul(quantity, price);
         if (available_quote_amount < quantity){
             let difference = quote_quantity - available_quote_amount;
             let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
@@ -615,7 +616,7 @@ module deepbookv3::pool {
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
-            let quote_asset_quantity = order_cancelled.quantity * order_cancelled.price;
+            let quote_asset_quantity = mul(order_cancelled.quantity, order_cancelled.price);
             withdraw(pool, account, quote_asset_quantity, 1, ctx)
         } else {
             // deposit base asset back into user account
