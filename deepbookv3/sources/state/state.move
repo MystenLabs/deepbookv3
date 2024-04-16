@@ -33,10 +33,11 @@ module deepbookv3::state {
         state: &mut State,
         tick_size: u64,
         lot_size: u64,
+        min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, creation_fee, ctx);
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, min_size, creation_fee, ctx);
         assert!(!state.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);

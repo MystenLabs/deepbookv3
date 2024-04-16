@@ -20,10 +20,13 @@ module deepbookv3::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
     const EInvalidFee: u64 = 1;
     const ESameBaseAndQuote: u64 = 2;
-    const EInvalidTickSizeLotSize: u64 = 3;
-    const EUserNotFound: u64 = 4;
-    const EInvalidPriceTickSize: u64 = 5;
-    const EBelowMinimumLotSize: u64 = 6;
+    const EInvalidTickSize: u64 = 3;
+    const EInvalidLotSize: u64 = 4;
+    const EInvalidMinSize: u64 = 5;
+    const EUserNotFound: u64 = 6;
+    const EOrderInvalidTickSize: u64 = 7;
+    const EOrderBelowMinimumSize: u64 = 8;
+    const EOrderInvalidLotSize: u64 = 9;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
@@ -40,6 +43,7 @@ module deepbookv3::pool {
         maker_fee: u64,
         tick_size: u64,
         lot_size: u64,
+        min_size: u64,
     }
 
     /// Emitted when a maker order is injected into the order book.
@@ -118,6 +122,7 @@ module deepbookv3::pool {
         id: UID,
         tick_size: u64,
         lot_size: u64,
+        min_size: u64,
         bids: CritbitTree<TickLevel>,
         asks: CritbitTree<TickLevel>,
         next_bid_order_id: u64, // increments for each bid order
@@ -146,6 +151,7 @@ module deepbookv3::pool {
         maker_fee: u64,
         tick_size: u64,
         lot_size: u64,
+        min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ): String {
@@ -154,7 +160,9 @@ module deepbookv3::pool {
         let base_type_name = type_name::get<BaseAsset>();
         let quote_type_name = type_name::get<QuoteAsset>();
 
-        assert!(clob_math::unsafe_mul(lot_size, tick_size) > 0, EInvalidTickSizeLotSize);
+        assert!(tick_size > 0, EInvalidTickSize);
+        assert!(lot_size > 0, EInvalidLotSize);
+        assert!(min_size > 0, EInvalidMinSize);
         assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
         
         // TODO: Assertion for tick_size and lot_size
@@ -172,6 +180,7 @@ module deepbookv3::pool {
             maker_fee,
             tick_size,
             lot_size,
+            min_size,
         });
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
@@ -184,6 +193,7 @@ module deepbookv3::pool {
             deep_config: option::none(),
             tick_size,
             lot_size,
+            min_size,
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
@@ -426,8 +436,10 @@ module deepbookv3::pool {
         // Refresh state as necessary if first order of epoch
         refresh_state(pool, ctx);
 
-        assert!(price % pool.tick_size == 0, EInvalidPriceTickSize);
-        assert!(quantity >= pool.lot_size, EBelowMinimumLotSize);
+        assert!(price % pool.tick_size == 0, EOrderInvalidTickSize);
+        // Check quantity is above minimum quantity (in base asset)
+        assert!(quantity >= pool.min_size, EOrderBelowMinimumSize);
+        assert!(quantity % pool.lot_size == 0, EOrderInvalidLotSize);
 
         // TODO: check for quantity % min_qty_tick == 0
 
