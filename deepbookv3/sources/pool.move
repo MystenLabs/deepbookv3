@@ -165,8 +165,6 @@ module deepbookv3::pool {
         assert!(min_size > 0, EInvalidMinSize);
         assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
         
-        // TODO: Assertion for tick_size and lot_size
-
         let pool_uid = object::new(ctx);
         let pool_id = *object::uid_as_inner(&pool_uid);
 
@@ -441,8 +439,6 @@ module deepbookv3::pool {
         assert!(quantity >= pool.min_size, EOrderBelowMinimumSize);
         assert!(quantity % pool.lot_size == 0, EOrderInvalidLotSize);
 
-        // TODO: check for quantity % min_qty_tick == 0
-
         let maker_fee = pool.pool_state.get_maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
@@ -451,16 +447,14 @@ module deepbookv3::pool {
             let config = pool.deep_config.borrow();
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
-            // NOTE: make sure deep_per_base is represented similarly as others 10^9 scaling
+            // TODO: make sure there is mul_down and mul_up for rounding
             let deep_quantity = mul(config.deep_per_base(), quantity);
-            // TODO: Rounding as necessary
             fee_quantity = mul(deep_quantity, maker_fee);
             // Deposit the deepbook fees
             deposit(pool, account, fee_quantity, 2, ctx);
         }
         // If unverified pool
         else {
-            // TODO: Rounding as necessary
             fee_quantity = mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
             place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
@@ -596,7 +590,7 @@ module deepbookv3::pool {
         client_order_id: u64, // use this to find order
         ctx: &mut TxContext,
     ) {
-        // TODO: find order in corresponding critbit tree using order_id
+        // TODO: find order in corresponding BigVec using client_order_id
         // Sample order that is cancelled
         let order_cancelled = Order {
             order_id: 0,
