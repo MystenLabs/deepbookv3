@@ -98,6 +98,7 @@ module deepbookv3::pool {
         quantity: u64,
         original_fee_quantity: u64,
         fee_quantity: u64,
+        verified_pool: bool,
         is_bid: bool,
         /// Order can only be canceled by the `AccountCap` with this owner ID
         owner: address,
@@ -430,12 +431,11 @@ module deepbookv3::pool {
 
         // TODO: check for quantity % min_qty_tick == 0
 
-        let verified = pool.deep_config.is_some();
         let maker_fee = pool.pool_state.get_maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
         // If verified pool with source
-        if (verified) {
+        if (pool.is_verified()) {
             let config = pool.deep_config.borrow();
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
@@ -513,6 +513,7 @@ module deepbookv3::pool {
             quantity,
             original_fee_quantity: fee_quantity,
             fee_quantity,
+            verified_pool: pool.is_verified(),
             is_bid: true,
             owner: account.get_owner(),
             expire_timestamp: 0, // TODO
@@ -560,6 +561,7 @@ module deepbookv3::pool {
             quantity,
             original_fee_quantity: fee_quantity,
             fee_quantity,
+            verified_pool: pool.is_verified(),
             is_bid: false,
             owner: account.get_owner(),
             expire_timestamp: 0, // TODO
@@ -591,6 +593,7 @@ module deepbookv3::pool {
             quantity: 3000,
             original_fee_quantity: 80,
             fee_quantity: 30,
+            verified_pool: true,
             is_bid: false,
             owner: @0x0, // TODO
             expire_timestamp: 0, // TODO
@@ -608,8 +611,8 @@ module deepbookv3::pool {
         };
 
         // withdraw fees into user account
-        let verified = pool.deep_config.is_some();
-        if (verified) {
+        // if pool is verified at the time of order placement, fees are in deepbook tokens
+        if (order_cancelled.verified_pool) {
             // withdraw deepbook fees
             withdraw(pool, account, order_cancelled.fee_quantity, 2, ctx)
         } else if (order_cancelled.is_bid) {
@@ -633,6 +636,12 @@ module deepbookv3::pool {
             base_asset_quantity_canceled: order_cancelled.quantity,
             price: order_cancelled.price
         })
+    }
+
+    // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
+
+    public fun is_verified<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): bool {
+        pool.deep_config.is_some()
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
