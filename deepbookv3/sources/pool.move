@@ -467,10 +467,34 @@ module deepbookv3::pool {
             };
         };
 
+        let user_data = &mut pool.users[account.get_owner()];
+        let (available_base_amount, available_quote_amount) = user_data.get_settle_amounts();
+
         if (is_bid) {
-            place_bid_maker_order(pool, account, client_order_id, price, place_quantity, fee_quantity, ctx);
+            // Deposit quote asset if there's not enough in custodian
+            let quote_quantity = mul(quantity, price);
+            if (available_quote_amount < quantity){
+                let difference = quote_quantity - available_quote_amount;
+                let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
+                let balance: Balance<QuoteAsset> = coin.into_balance();
+                pool.quote_balances.join(balance);
+                user_data.set_settle_amounts(option::none(), option::some(0), ctx);
+            } else {
+                user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
+            };
+            place_bid_maker_order(pool, client_order_id, price, place_quantity, fee_quantity, ctx);
         } else {
-            place_ask_maker_order(pool, account, client_order_id, price, place_quantity, fee_quantity, ctx);
+            // Deposit base asset if there's not enough in custodian
+            if (available_base_amount < quantity){
+                let difference = quantity - available_base_amount;
+                let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
+                let balance: Balance<BaseAsset> = coin.into_balance();
+                pool.base_balances.join(balance);
+                user_data.set_settle_amounts(option::some(0), option::none(), ctx);
+            } else {
+                user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
+            };
+            place_ask_maker_order(pool, client_order_id, price, place_quantity, fee_quantity, ctx);
         };
 
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
@@ -489,28 +513,12 @@ module deepbookv3::pool {
     /// Helper, places a bid maker order
     fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
-        account: &mut Account,
         client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
-        let user_data = &mut pool.users[account.get_owner()];
-        let (_, available_quote_amount) = user_data.get_settle_amounts();
-
-        // Deposit quote asset if there's not enough in custodian
-        let quote_quantity = mul(quantity, price);
-        if (available_quote_amount < quantity){
-            let difference = quote_quantity - available_quote_amount;
-            let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
-            let balance: Balance<QuoteAsset> = coin.into_balance();
-            pool.quote_balances.join(balance);
-            user_data.set_settle_amounts(option::none(), option::some(0), ctx);
-        } else {
-            user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
-        };
-        
         // Create Order
         let order = Order {
             order_id: pool.next_bid_order_id,
@@ -522,7 +530,7 @@ module deepbookv3::pool {
             fee_quantity,
             verified_pool: pool.is_verified(),
             is_bid: true,
-            owner: account.get_owner(),
+            owner: ctx.sender(),
             expire_timestamp: 0, // TODO
             self_matching_prevention: 0, // TODO
         };
@@ -538,27 +546,12 @@ module deepbookv3::pool {
     /// Helper, places an ask maker order
     fun place_ask_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
-        account: &mut Account,
         client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
-        let user_data = &mut pool.users[account.get_owner()];
-        let (available_base_amount, _) = user_data.get_settle_amounts();
-
-        // Deposit base asset if there's not enough in custodian
-        if (available_base_amount < quantity){
-            let difference = quantity - available_base_amount;
-            let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
-            let balance: Balance<BaseAsset> = coin.into_balance();
-            pool.base_balances.join(balance);
-            user_data.set_settle_amounts(option::some(0), option::none(), ctx);
-        } else {
-            user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
-        };
-
         // Create Order
         let order = Order {
             order_id: pool.next_ask_order_id,
@@ -570,7 +563,7 @@ module deepbookv3::pool {
             fee_quantity,
             verified_pool: pool.is_verified(),
             is_bid: false,
-            owner: account.get_owner(),
+            owner: ctx.sender(),
             expire_timestamp: 0, // TODO
             self_matching_prevention: 0, // TODO
         };
