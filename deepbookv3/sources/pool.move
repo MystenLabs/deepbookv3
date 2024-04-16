@@ -48,6 +48,8 @@ module deepbookv3::pool {
         pool_id: ID,
         /// ID of the order within the pool
         order_id: u64,
+        /// ID of the order defined by client
+        client_order_id: u64,
         is_bid: bool,
         /// owner ID of the `AccountCap` that placed the order
         owner: address,
@@ -63,6 +65,8 @@ module deepbookv3::pool {
         pool_id: ID,
         /// ID of the order within the pool
         order_id: u64,
+        /// ID of the order defined by client
+        client_order_id: u64,
         is_bid: bool,
         /// owner ID of the `AccountCap` that canceled the order
         owner: address,
@@ -82,7 +86,10 @@ module deepbookv3::pool {
         // 64 bits are sufficient for order ids whereas 32 bits are not.
         // Assuming a maximum TPS of 100K/s of Sui chain, it would take (1<<63) / 100000 / 3600 / 24 / 365 = 2924712 years to reach the full capacity.
         // The highest bit of the order id is used to denote the order type, 0 for bid, 1 for ask.
+        /// ID of the order within the pool
         order_id: u64,
+        /// ID of the order defined by client
+        client_order_id: u64,
         // Only used for limit orders.
         price: u64,
         // quantity when the order first placed in
@@ -441,6 +448,7 @@ module deepbookv3::pool {
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         is_bid: bool, // true for bid, false for ask
         account: &mut Account,
+        client_order_id: u64,
         price: u64,
         quantity: u64,
         ctx: &mut TxContext,
@@ -479,14 +487,15 @@ module deepbookv3::pool {
         };
 
         if (is_bid) {
-            place_bid_maker_order(pool, account, price, place_quantity, fee_quantity, ctx);
+            place_bid_maker_order(pool, account, client_order_id, price, place_quantity, fee_quantity, ctx);
         } else {
-            place_ask_maker_order(pool, account, price, place_quantity, fee_quantity, ctx);
+            place_ask_maker_order(pool, account, client_order_id, price, place_quantity, fee_quantity, ctx);
         };
 
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: *object::uid_as_inner(&pool.id),
             order_id: 0,
+            client_order_id,
             is_bid,
             owner: account.get_owner(),
             original_quantity: quantity,
@@ -500,6 +509,7 @@ module deepbookv3::pool {
     fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
+        client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
@@ -522,6 +532,7 @@ module deepbookv3::pool {
         // Create Order
         let order = Order {
             order_id: pool.next_bid_order_id,
+            client_order_id,
             price,
             original_quantity: quantity,
             quantity,
@@ -545,6 +556,7 @@ module deepbookv3::pool {
     fun place_ask_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
+        client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
@@ -567,6 +579,7 @@ module deepbookv3::pool {
         // Create Order
         let order = Order {
             order_id: pool.next_ask_order_id,
+            client_order_id,
             price,
             original_quantity: quantity,
             quantity,
@@ -590,13 +603,14 @@ module deepbookv3::pool {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
-        order_id: u64,
+        client_order_id: u64,
         ctx: &mut TxContext,
     ) {
         // TODO: find order in corresponding critbit tree using order_id
         // Sample order that is cancelled
         let order_cancelled = Order {
             order_id: 0,
+            client_order_id: 0,
             price: 10000,
             original_quantity: 8000,
             quantity: 3000,
@@ -636,6 +650,7 @@ module deepbookv3::pool {
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id: *pool.id.uid_as_inner(), // Get inner id from UID
             order_id: order_cancelled.order_id,
+            client_order_id: order_cancelled.client_order_id,
             is_bid: order_cancelled.is_bid,
             owner: order_cancelled.owner,
             original_quantity: order_cancelled.original_quantity,
