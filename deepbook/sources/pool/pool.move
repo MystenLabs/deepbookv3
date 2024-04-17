@@ -562,20 +562,7 @@ module deepbook::pool {
     ) {
         // TODO: find order in corresponding BigVec using client_order_id
         // Sample order that is cancelled
-        let order_cancelled = Order {
-            order_id: 0,
-            client_order_id: 0,
-            price: 10000,
-            original_quantity: 8000,
-            quantity: 3000,
-            original_fee_quantity: 80,
-            fee_quantity: 30,
-            verified_pool: true,
-            is_bid: false,
-            owner: @0x0, // TODO
-            expire_timestamp: 0, // TODO
-            self_matching_prevention: 0, // TODO
-        };
+        let order_cancelled = cancel_order_int(pool, order_id, ctx);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -615,6 +602,29 @@ module deepbook::pool {
         })
     }
 
+    /// Cancels an order and returns it
+    fun cancel_order_int<BaseAsset, QuoteAsset>(
+        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _order_id: u64,
+        _ctx: &TxContext,
+    ): Order {
+        // TODO: cancel order using order_id, return canceled order
+        Order {
+            order_id: 0,
+            client_order_id: 1,
+            price: 10000,
+            original_quantity: 8000,
+            quantity: 3000,
+            original_fee_quantity: 80,
+            fee_quantity: 30,
+            verified_pool: true,
+            is_bid: false,
+            owner: @0x0, // TODO
+            expire_timestamp: 0, // TODO
+            self_matching_prevention: 0, // TODO
+        }
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     public fun is_verified<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): bool {
@@ -636,7 +646,6 @@ module deepbook::pool {
         } else {
             string_helper::append_strings(&quote, &base)
         }
-       
     }
 
     // // Other helpful functions
