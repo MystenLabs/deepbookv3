@@ -1,4 +1,4 @@
-module deepbookv3::account {
+module deepbook::account {
     use sui::dynamic_field as df;
     use sui::coin::{Self, Coin};
     use sui::balance::{Balance};
@@ -8,11 +8,11 @@ module deepbookv3::account {
     /// The account doesn't have enough funds to be withdrawn
     const EAccountBalanceTooLow: u64 = 0;
 
-    // Owned by user, this is what's passed into pools (1)
+    // Owned by user, this is what's passed into pools
     public struct Account has key, store {
-    id: UID,
-    owner: address,
-    // coin_balances will be represented in dynamic fields
+        id: UID,
+        owner: address,
+        // coin_balances will be represented in dynamic fields
     }
         
     // Identifier, name for dynamic field (3)

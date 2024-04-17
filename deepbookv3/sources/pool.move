@@ -1,20 +1,20 @@
-module deepbookv3::pool {
+module deepbook::pool {
     use sui::balance::{Self,Balance};
     use sui::table::{Self, Table};
     use sui::sui::SUI;
     use sui::event;
     use sui::coin::{Self, Coin};
-    use std::ascii::{Self, String};
+    use std::ascii::{String};
     use std::type_name::{Self, TypeName};
-    use sui::linked_table::{Self, LinkedTable};
+    use sui::linked_table::{LinkedTable};
 
-    use deepbookv3::deep_price::{Self, DeepPrice};
-    use deepbookv3::string_helper::{Self};
-    use deepbookv3::critbit::{Self, CritbitTree, is_empty, borrow_mut_leaf_by_index, min_leaf, remove_leaf_by_index, max_leaf, next_leaf, previous_leaf, borrow_leaf_by_index, borrow_leaf_by_key, find_leaf, insert_leaf};
-    use deepbookv3::math::{Self, mul};
-    use deepbookv3::user::{User};
-    use deepbookv3::account::{Self, Account};
-    use deepbookv3::pool_state::{Self, PoolState, PoolEpochState};
+    use deepbook::deep_price::{Self, DeepPrice};
+    use deepbook::string_helper::{Self};
+    use deepbook::critbit::{Self, CritbitTree, borrow_mut_leaf_by_index};
+    use deepbook::math::{mul};
+    use deepbook::user::{User};
+    use deepbook::account::{Self, Account};
+    use deepbook::pool_state::{Self, PoolState, PoolEpochState};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<

@@ -1,4 +1,4 @@
-module deepbookv3::pool_state {
+module deepbook::pool_state {
     public struct PoolEpochState has copy, store, drop {
         total_maker_volume: u64,
         total_staked_maker_volume: u64,

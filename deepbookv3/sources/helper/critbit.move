@@ -1,9 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbookv3::critbit {
+module deepbook::critbit {
     use sui::table::{Self, Table};
-    use deepbookv3::math::{count_leading_zeros};
+    use deepbook::math::{count_leading_zeros};
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error codes <<<<<<<<<<<<<<<<<<<<<<<<
     const EExceedCapacity: u64 = 2;

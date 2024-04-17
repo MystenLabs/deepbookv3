@@ -1,14 +1,14 @@
-module deepbookv3::state {
+module deepbook::state {
     use std::ascii::{String};
 
     use sui::balance::{Balance};
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
-    use deepbookv3::pool::{Pool, DEEP, Self};
-    use deepbookv3::pool_state::{new_pool_epoch_state_with_gov_params};
-    use deepbookv3::pool_metadata::{Self, PoolMetadata};
-    use deepbookv3::deep_reference_price::{DeepReferencePools};
+    use deepbook::pool::{Pool, DEEP, Self};
+    use deepbook::pool_state::{new_pool_epoch_state_with_gov_params};
+    use deepbook::pool_metadata::{Self, PoolMetadata};
+    use deepbook::deep_reference_price::{DeepReferencePools};
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;

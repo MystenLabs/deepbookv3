@@ -1,5 +1,5 @@
 /// Vector-related utilities.
-module deepbookv3::utils {
+module deepbook::utils {
     /// Pop elements from the back of `v` until its length equals `n`,
     /// returning the elements that were popped in the order they
     /// appeared in `v`.
