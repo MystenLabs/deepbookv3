@@ -17,7 +17,7 @@ module deepbook::pool {
         deep_price::{Self, DeepPrice},
         account::{Self, Account},
         big_vector::{Self, BigVector},
-        string_helper::{Self},
+        utils::{compare_ascii_strings, append_strings},
         user::User,
         math::mul,
     };
@@ -641,10 +641,10 @@ module deepbook::pool {
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
     public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
         let (base, quote) = get_base_quote_types(pool);
-        if (string_helper::compare_ascii_strings(&base, &quote)) {
-            string_helper::append_strings(&base, &quote)
+        if (compare_ascii_strings(&base, &quote)) {
+            append_strings(&base, &quote)
         } else {
-            string_helper::append_strings(&quote, &base)
+            append_strings(&quote, &base)
         }
     }
 
