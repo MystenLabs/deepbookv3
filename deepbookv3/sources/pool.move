@@ -2,22 +2,24 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
+        coin::{Self, Coin},
         sui::SUI,
         event,
-        coin::{Self, Coin},
     };
     use std::{
         ascii::String,
         type_name::{Self, TypeName},
     };
 
-    use deepbook::deep_price::{Self, DeepPrice};
-    use deepbook::string_helper::Self;
-    use deepbook::big_vector::{Self, BigVector};
-    use deepbook::math::mul;
-    use deepbook::user::User;
-    use deepbook::account::{Self, Account};
-    use deepbook::pool_state::{Self, PoolState, PoolEpochState};
+    use deepbook::{
+        pool_state::{Self, PoolState, PoolEpochState},
+        deep_price::{Self, DeepPrice},
+        account::{Self, Account},
+        big_vector::{Self, BigVector},
+        string_helper::{Self},
+        user::User,
+        math::mul,
+    };
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
