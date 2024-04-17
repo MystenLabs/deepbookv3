@@ -13,15 +13,19 @@ const placeOrders = async () => {
     let totalNonRefundableStorageFee = 0;
 
     for (let i = 0; i < 100; i++) {
+        let time = 1000;
         let price = Math.floor(Math.random() * 10) + 1;
         let amount = Math.floor(Math.random() * 100) + 1;
         console.log(`Placing order ${i} with price: ${price} and amount: ${amount}`)
 
+        let poolPackage = "0x6dc4b38b10b2e9f8b393c0235adbf6dfbceb9780e12726a8c7fae6258d22bfd8"
+        let poolObj = "0x24ebef42a67e995809dda9ce7186c7adb864f4ac4e895d0c69375aa1f6843489"
+
         let txb = new TransactionBlock();
         txb.moveCall({
-            target: `0xeac655e759a3635f0f2676a72c2c9ae351a3214e0bcb811fd53a0133de20ed31::pool::place_limit_order_bigvec`,
+            target: `${poolPackage}::pool::place_limit_order_critbit`,
             arguments: [
-                txb.object("0x1a95417c109490a294d1a8d3620da943ec37049bb01001e4f134b69e16a5f37b"),
+                txb.object(poolObj),
                 txb.pure(price),
                 txb.pure(amount),
                 txb.pure(price >= 5)
@@ -47,9 +51,14 @@ const placeOrders = async () => {
             console.log(`Storage cost:                  ${totalStorageCost}`)
             console.log(`Storage rebate:                ${totalStorageRebate}`)
             console.log(`Non-refundable storage fee:    ${totalNonRefundableStorageFee}`)
+        }).catch((err) => {
+            console.log(err)
+            i--
+            time = 10000
         })
 
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, time));
+        time = 1000
     }
 
     // let txb = new TransactionBlock();

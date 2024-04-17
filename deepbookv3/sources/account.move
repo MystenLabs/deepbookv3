@@ -10,8 +10,8 @@ module deepbookv3::account {
 
     // Owned by user, this is what's passed into pools (1)
     public struct Account has key, store {
-    id: UID,
-    owner: address,
+        id: UID,
+        owner: address,
     // coin_balances will be represented in dynamic fields
     }
         
