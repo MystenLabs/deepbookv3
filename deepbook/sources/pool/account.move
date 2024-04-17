@@ -1,26 +1,31 @@
 module deepbook::account {
-    use sui::dynamic_field as df;
-    use sui::coin::{Self, Coin};
-    use sui::balance::{Balance};
-    use std::type_name::{Self};
-    use std::ascii::{String};
+    use sui::{
+        dynamic_field as df,
+        coin::{Self, Coin},
+        balance::{Balance},
+    };
 
-    /// The account doesn't have enough funds to be withdrawn
+    use std::{
+        type_name::{Self},
+        ascii::{String},
+    };
+
+    //// The account doesn't have enough funds to be withdrawn
     const EAccountBalanceTooLow: u64 = 0;
 
-    // Owned by user, this is what's passed into pools
+    /// Owned by user, this is what's passed into pools
     public struct Account has key, store {
         id: UID,
         owner: address,
         // coin_balances will be represented in dynamic fields
     }
         
-    // Identifier for balance
+    /// Identifier for balance
     public struct BalanceKey<phantom T> has store, copy, drop {
         coin_type: String,
     }
 
-    // Create an individual account
+    /// Create an individual account
     public fun new(ctx: &mut TxContext): Account {
         // validate that this user hasn't reached account limit
         Account {
@@ -29,7 +34,7 @@ module deepbook::account {
         }
     }
 
-    // Deposit funds to an account
+    /// Deposit funds to an account
     public fun deposit<T>(
         account: &mut Account, 
         coin: Coin<T>,
@@ -49,7 +54,7 @@ module deepbook::account {
         }
     }
 
-    // Withdraw funds from an account
+    /// Withdraw funds from an account
     public fun withdraw<T>(
         account: &mut Account, 
         amount: u64,
@@ -69,6 +74,7 @@ module deepbook::account {
         coin::from_balance(withdrawn_balance, ctx)
     }
 
+    /// Returns the owner of the account
     public fun get_owner(account: &Account): address {
         account.owner   
     }

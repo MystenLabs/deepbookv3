@@ -38,7 +38,7 @@ module deepbook::user {
         (user.stake_amount, user.next_stake_amount)
     }
 
-    // refresh user and return burn amount for last epoch
+    /// refresh user and return burn amount accumulated (if any)
     public(package) fun refresh(
         user: &mut User,
         ctx: &TxContext
@@ -56,7 +56,7 @@ module deepbook::user {
         burn
     }
 
-    // increase user stake
+    /// increase user stake and return the new stake amount
     public(package) fun increase_stake(
         user: &mut User,
         amount: u64,
@@ -87,7 +87,7 @@ module deepbook::user {
         rebates
     }
 
-    /// returns (rebates, burn) for the user
+    /// Returns (rebates, burn) for the user
     fun calculate_rebates_and_burn(
         _user: &User,
     ): (u64, u64) {
@@ -95,33 +95,22 @@ module deepbook::user {
         (0, 0)
     }
 
+    /// Get settled amounts for the user
     public(package) fun get_settle_amounts(
         user: &User,
     ): (u64, u64) {
         (user.settled_base_amount, user.settled_quote_amount)
     }
 
-    public(package) fun reset_settle_amounts(
-        user: &mut User,
-        ctx: &TxContext,
-    ) {
-        assert!(user.user == ctx.sender(), EInvalidResetAddress);
-        user.settled_base_amount = 0;
-        user.settled_quote_amount = 0;
-    }
-
+    /// Set settled amounts for the user
     public(package) fun set_settle_amounts(
         user: &mut User,
-        mut settled_base_amount: Option<u64>,
-        mut settled_quote_amount: Option<u64>,
+        settled_base_amount: u64,
+        settled_quote_amount: u64,
         ctx: &TxContext,
     ) {
         assert!(user.user == ctx.sender(), EInvalidResetAddress);
-        if (settled_base_amount.is_some()) {
-            user.settled_base_amount = settled_base_amount.extract();
-        };
-        if (settled_quote_amount.is_some()) {
-            user.settled_quote_amount = settled_quote_amount.extract();
-        };
+        user.settled_base_amount = settled_base_amount;
+        user.settled_quote_amount = settled_quote_amount;
     }
 }
