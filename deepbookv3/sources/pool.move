@@ -303,7 +303,7 @@ module deepbookv3::pool {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u64, // 0 for base, 1 for quote, 2 for deep
+        coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
         // Withdraw from user account and merge into pool balances
@@ -326,7 +326,7 @@ module deepbookv3::pool {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u64, // 0 for base, 1 for quote, 2 for deep
+        coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
         // Withdraw from pool balances and deposit into user account
@@ -510,7 +510,7 @@ module deepbookv3::pool {
         });
     }
 
-    /// Helper, places a bid maker order
+    /// Balance accounting happens before this function is called
     fun place_bid_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         client_order_id: u64,
@@ -543,7 +543,7 @@ module deepbookv3::pool {
         pool.next_bid_order_id =  pool.next_bid_order_id + 1;
     }
 
-    /// Helper, places an ask maker order
+    /// Balance accounting happens before this function is called
     fun place_ask_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         client_order_id: u64,
@@ -574,6 +574,17 @@ module deepbookv3::pool {
 
         // Increment order id
         pool.next_ask_order_id =  pool.next_ask_order_id + 1;
+    }
+
+    public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        client_order_id: u64,
+        account: &mut Account,
+        quantity: u64,
+        clock: u64, // TODO, update to Clock
+        ctx: &mut TxContext,
+    ) {
+        // To implement
     }
 
     /// cancels an order by id
