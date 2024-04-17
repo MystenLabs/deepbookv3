@@ -250,12 +250,11 @@ module deepbookv3::pool {
     }
 
     /// Claim the rebates for the user
-    public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
+    public fun claim_rebates<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user: address,
         ctx: &mut TxContext
     ): Coin<DEEP> {
-        let user = get_user_mut(pool, user, ctx);
+        let user = get_user_mut(pool, ctx.sender(), ctx);
         
         let amount = user.reset_rebates();
         let balance = pool.deepbook_balance.split(amount);
