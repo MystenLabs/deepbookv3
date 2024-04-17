@@ -1,5 +1,5 @@
 [package]
-name = "deepbookv3"
+name = "deepbook"
 edition = "2024.beta"
 version = "0.0.1"
 
@@ -7,4 +7,4 @@ version = "0.0.1"
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/mainnet" }
 
 [addresses]
-deepbookv3 = "0x0"
+deepbook = "0x0"

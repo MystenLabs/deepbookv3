@@ -1,4 +1,4 @@
-module deepbookv3::user {
+module deepbook::user {
     use sui::vec_map::{VecMap, Self};
 
     const EInvalidResetAddress: u64 = 1;

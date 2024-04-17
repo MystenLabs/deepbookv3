@@ -12,13 +12,13 @@
 ///
 /// Note: The index type is `u128`, but the length is stored as `u64`
 /// because the expectation is that indices are sparsely distributed.
-module deepbookv3::big_vector {
+module deepbook::big_vector {
     use sui::dynamic_field as df;
 
     use fun sui::object::new as TxContext.new;
 
-    use fun deepbookv3::utils::pop_until as vector.pop_until;
-    use fun deepbookv3::utils::pop_n as vector.pop_n;
+    use fun deepbook::utils::pop_until as vector.pop_until;
+    use fun deepbook::utils::pop_n as vector.pop_n;
 
     public struct BigVector<phantom E: store> has key, store {
         id: UID,

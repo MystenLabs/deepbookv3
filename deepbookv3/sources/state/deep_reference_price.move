@@ -1,9 +1,9 @@
-module deepbookv3::deep_reference_price {
+module deepbook::deep_reference_price {
     use sui::vec_map::{VecMap};
     use std::type_name::{Self};
     use std::ascii::{String};
 
-    use deepbookv3::pool::{Pool, DEEP}; // TODO
+    use deepbook::pool::{Pool, DEEP}; // TODO
 
     const EIneligiblePool: u64 = 1;
 

@@ -1,4 +1,4 @@
-module deepbookv3::governance {
+module deepbook::governance {
     use sui::vec_map::{VecMap, Self};
 
     const MIN_TAKER_STABLE: u64 = 50; // 0.5 basis points

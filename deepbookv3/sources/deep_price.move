@@ -1,4 +1,4 @@
-module deepbookv3::deep_price {
+module deepbook::deep_price {
     // DEEP price points used for trading fee calculations
 	public struct DeepPrice has store, drop {
 		last_insert_timestamp: u64,
