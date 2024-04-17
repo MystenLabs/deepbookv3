@@ -29,7 +29,7 @@ module deepbook::pool {
     const EOrderInvalidLotSize: u64 = 9;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
-    const FEE_AMOUNT_FOR_CREATE_POOL: u64 = 100 * 1_000_000_000; // 100 SUI
+    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -155,7 +155,7 @@ module deepbook::pool {
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ): String {
-        assert!(creation_fee.value() == FEE_AMOUNT_FOR_CREATE_POOL, EInvalidFee);
+        assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
 
         let base_type_name = type_name::get<BaseAsset>();
         let quote_type_name = type_name::get<QuoteAsset>();
@@ -331,14 +331,14 @@ module deepbook::pool {
         // Withdraw from pool balances and deposit into user account
         if (coin_type == 0) {
             let coin: Coin<BaseAsset> = coin::from_balance(pool.base_balances.split(amount), ctx);
-            account::deposit(user_account, coin);
+            user_account.deposit(coin);
         } else if (coin_type == 1) {
             let coin: Coin<QuoteAsset> = coin::from_balance(pool.quote_balances.split(amount), ctx);
-            account::deposit(user_account, coin);
+            user_account.deposit(coin);
         } else if (coin_type == 2){
             let coin: Coin<DEEP> = coin::from_balance(pool.deepbook_balance.split(amount), ctx);
-            account::deposit(user_account, coin);
-        }
+            user_account.deposit(coin);
+        };
     }
 
     /// Withdraw settled funds. Account is an owned object
@@ -354,11 +354,11 @@ module deepbook::pool {
         // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
             let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
-            account::deposit(account, base_coin);
+            account.deposit(base_coin);
         };
         if (quote_amount > 0) {
             let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
-            account::deposit(account, quote_coin);
+            account.deposit(quote_coin);
         };
 
         // Reset the user's settled amounts
@@ -373,7 +373,7 @@ module deepbook::pool {
         transfer::public_transfer(amount, burn_address)
     }
 
-    /// Send fees collected in input tokens to treasury
+    /// Send fees collected in input tokens to treasury, called at trade settlement
     fun send_treasury<BaseAsset, QuoteAsset, T>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         fee: Coin<T>,
@@ -535,16 +535,12 @@ module deepbook::pool {
         };
 
         if (is_bid){
-            // TODO: Ignore for now, this will change based on new data structure
-            let tick_level = borrow_mut_leaf_by_index(&mut pool.bids, price);
-            tick_level.open_orders.push_back(order.order_id, order);
+            // TODO: Place ask order into BigVec
 
             // Increment order id
             pool.next_bid_order_id =  pool.next_bid_order_id + 1;
         } else {
-            // TODO: Ignore for now, this will change based on new data structure
-            let tick_level = borrow_mut_leaf_by_index(&mut pool.asks, price);
-            tick_level.open_orders.push_back(order.order_id, order);
+            // TODO: Place ask order into BigVec
 
             // Increment order id
             pool.next_ask_order_id =  pool.next_ask_order_id + 1;
