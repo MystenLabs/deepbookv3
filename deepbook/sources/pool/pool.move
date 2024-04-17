@@ -141,10 +141,10 @@ module deepbook::pool {
         pool_state: PoolState,
     }
 
-    // <<<<<<<<<<<<<<<<<<<<<<<< Public Functions <<<<<<<<<<<<<<<<<<<<<<<<
+    // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a maker order
-    public fun place_maker_order<BaseAsset, QuoteAsset>(
+    public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         client_order_id: u64,
@@ -236,7 +236,7 @@ module deepbook::pool {
 
     #[allow(unused_function, unused_variable)]
     /// cancels an order by id
-    public fun cancel_order<BaseAsset, QuoteAsset>(
+    public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         order_id: u64,
@@ -285,7 +285,7 @@ module deepbook::pool {
     }
 
     /// Claim the rebates for the user
-    public fun claim_rebates<BaseAsset, QuoteAsset>(
+    public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &mut TxContext
     ): Coin<DEEP> {
@@ -298,7 +298,7 @@ module deepbook::pool {
     }
 
     /// Withdraw settled funds back into user account
-    public fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
+    public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         ctx: &mut TxContext,
@@ -323,7 +323,7 @@ module deepbook::pool {
 
     #[allow(unused_function, unused_variable)]
     /// Allow canceling of multiple orders
-    public fun cancel_all<BaseAsset, QuoteAsset>(
+    public(package) fun cancel_all<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _account: &mut Account,
         _ctx: &mut TxContext,
@@ -332,7 +332,7 @@ module deepbook::pool {
     }
 
     #[allow(unused_function, unused_variable)]
-    public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
+    public(package) fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _client_order_id: u64,
         _account: &mut Account,
@@ -343,7 +343,7 @@ module deepbook::pool {
     }
 
     #[allow(unused_function, unused_variable)]
-    public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
+    public(package) fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _client_order_id: u64,
         _account: &mut Account,
@@ -352,8 +352,6 @@ module deepbook::pool {
     ) {
         // TODO: to implement
     }
-
-    // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Creates a new pool for trading and returns pool_key, called by state module
     public(package) fun create_pool<BaseAsset, QuoteAsset>(

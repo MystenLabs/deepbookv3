@@ -87,10 +87,11 @@ module deepbook::user {
         rebates
     }
 
+    /// returns (rebates, burn) for the user
     fun calculate_rebates_and_burn(
         _user: &User,
     ): (u64, u64) {
-        // calculate reabtes from the current User data
+        // calculate rebates from the current User data
         (0, 0)
     }
 

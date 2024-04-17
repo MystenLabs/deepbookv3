@@ -29,7 +29,7 @@ module deepbook::account {
         }
     }
 
-    // Deposit function to add funds to an account
+    // Deposit funds to an account
     public fun deposit<T>(
         account: &mut Account, 
         coin: Coin<T>,
@@ -49,7 +49,7 @@ module deepbook::account {
         }
     }
 
-    // Withdraw function to remove funds from an account
+    // Withdraw funds from an account
     public fun withdraw<T>(
         account: &mut Account, 
         amount: u64,
