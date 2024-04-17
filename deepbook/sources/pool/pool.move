@@ -200,82 +200,81 @@ module deepbook::pool {
 
     /// Increase a user's stake
     public(package) fun increase_user_stake<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         amount: u64,
         ctx: &mut TxContext
     ): u64 {
-        let user = get_user_mut(pool, user, ctx);
+        let user = self.get_user_mut(user, ctx);
         user.increase_stake(amount)
     }
 
     /// Removes a user's stake
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         ctx: &mut TxContext
     ): (u64, u64) {
-        let user = get_user_mut(pool, user, ctx);
+        let user = self.get_user_mut(user, ctx);
         user.remove_stake()
     }
 
     /// Get the user's (current, next) stake amounts
     public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         ctx: &mut TxContext
     ): (u64, u64) {
-        if (!pool.users.contains(user)) {
+        if (!self.users.contains(user)) {
             (0, 0)
         } else {
-            let user = get_user_mut(pool, user, ctx);
+            let user = self.get_user_mut(user, ctx);
             user.get_user_stake()
         }
     }
 
     /// Claim the rebates for the user
     public fun claim_rebates<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &mut TxContext
     ): Coin<DEEP> {
-        let user = get_user_mut(pool, ctx.sender(), ctx);
+        let user = self.get_user_mut(ctx.sender(), ctx);
         
         let amount = user.reset_rebates();
-        let balance = pool.deepbook_balance.split(amount);
+        let balance = self.deepbook_balance.split(amount);
         
         balance.into_coin(ctx)
     }
 
     /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
     fun get_user_mut<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         ctx: &mut TxContext
     ): &mut User {
-        assert!(pool.users.contains(user), EUserNotFound);
+        assert!(self.users.contains(user), EUserNotFound);
 
-        let user = pool.users.borrow_mut(user);
+        let user = &mut self.users[user];
         let burn_amount = user.refresh(ctx);
         if (burn_amount > 0) {
-            let balance = pool.deepbook_balance.split(burn_amount);
+            let balance = self.deepbook_balance.split(burn_amount);
             let coins = balance.into_coin(ctx);
             burn(coins);
         };
-
         user
     }
 
     /// Add a new price point to the pool.
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         base_conversion_rate: u64,
         quote_conversion_rate: u64,
         timestamp: u64,
     ) {
-        if (pool.deep_config.is_none()) {
-            pool.deep_config = option::some(deep_price::initialize());
+        if (self.deep_config.is_none()) {
+            self.deep_config = option::some(deep_price::initialize());
         };
-        let config = pool.deep_config.borrow_mut();
+        let config = self.deep_config.borrow_mut();
         config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
@@ -283,7 +282,7 @@ module deepbook::pool {
     /// User cannot manually deposit
     /// Deposit BaseAsset, QuoteAsset, Deepbook Tokens
     fun deposit<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
         coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
@@ -292,13 +291,13 @@ module deepbook::pool {
         // Withdraw from user account and merge into pool balances
         if (coin_type == 0) {
             let coin: Coin<BaseAsset> = account::withdraw(user_account, amount, ctx);
-            pool.base_balances.join(coin.into_balance());
+            self.base_balances.join(coin.into_balance());
         } else if (coin_type == 1) {
             let coin: Coin<QuoteAsset> = account::withdraw(user_account, amount, ctx);
-            pool.quote_balances.join(coin.into_balance());
+            self.quote_balances.join(coin.into_balance());
         } else if (coin_type == 2){
             let coin: Coin<DEEP> = account::withdraw(user_account, amount, ctx);
-            pool.deepbook_balance.join(coin.into_balance());
+            self.deepbook_balance.join(coin.into_balance());
         }
     }
 
@@ -306,42 +305,42 @@ module deepbook::pool {
     /// User cannot manually withdraw
     /// Withdraw BaseAsset, QuoteAsset, Deepbook Tokens
     fun withdraw<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
+        coin_type: u8, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
         // Withdraw from pool balances and deposit into user account
         if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = coin::from_balance(pool.base_balances.split(amount), ctx);
+            let coin: Coin<BaseAsset> = coin::from_balance(self.base_balances.split(amount), ctx);
             user_account.deposit(coin);
         } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = coin::from_balance(pool.quote_balances.split(amount), ctx);
+            let coin: Coin<QuoteAsset> = coin::from_balance(self.quote_balances.split(amount), ctx);
             user_account.deposit(coin);
         } else if (coin_type == 2){
-            let coin: Coin<DEEP> = coin::from_balance(pool.deepbook_balance.split(amount), ctx);
+            let coin: Coin<DEEP> = coin::from_balance(self.deepbook_balance.split(amount), ctx);
             user_account.deposit(coin);
         };
     }
 
     /// Withdraw settled funds. Account is an owned object
     public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         ctx: &mut TxContext,
     ) {
         // Get the valid user information
-        let user_data = &mut pool.users[account.get_owner()];
+        let user_data = &mut self.users[account.get_owner()];
         let (base_amount, quote_amount) = user_data.get_settle_amounts();
 
         // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
-            let base_coin = coin::from_balance(pool.base_balances.split(base_amount), ctx);
+            let base_coin = coin::from_balance(self.base_balances.split(base_amount), ctx);
             account.deposit(base_coin);
         };
         if (quote_amount > 0) {
-            let quote_coin = coin::from_balance(pool.quote_balances.split(quote_amount), ctx);
+            let quote_coin = coin::from_balance(self.quote_balances.split(quote_amount), ctx);
             account.deposit(quote_coin);
         };
 
@@ -366,26 +365,26 @@ module deepbook::pool {
 
     /// First interaction of each epoch processes this state update
     public(package) fun refresh_state<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        pool.pool_state.refresh_state(ctx);
+        self.pool_state.refresh_state(ctx);
     }
 
     /// Update the pool's next pool state.
     /// During an epoch refresh, the current pool state is moved to historical pool state.
     /// The next pool state is moved to current pool state.
     public(package) fun set_next_epoch_pool_state<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         next_epoch_pool_state: Option<PoolEpochState>,
     ) {
-        pool.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
+        self.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
     }
 
     #[allow(unused_function, unused_variable)]
     /// Allow placing of multiple orders, input can be adjusted
     public fun mul_place_order<BaseAsset, QuoteAsset>(
-        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
         _account: &mut Account,
         _is_bid: vector<bool>,
         _price: vector<u64>,
@@ -398,7 +397,7 @@ module deepbook::pool {
     #[allow(unused_function, unused_variable)]
     /// Allow canceling of multiple orders
     public fun mul_cancel_order<BaseAsset, QuoteAsset>(
-        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
         _account: &mut Account,
         _ctx: &mut TxContext,
     ) {
@@ -407,7 +406,7 @@ module deepbook::pool {
 
     /// Place a maker order
     public fun place_maker_order<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         client_order_id: u64,
         price: u64,
@@ -416,26 +415,26 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         // Refresh state as necessary if first order of epoch
-        refresh_state(pool, ctx);
+        self.refresh_state(ctx);
 
-        assert!(price % pool.tick_size == 0, EOrderInvalidTickSize);
+        assert!(price % self.tick_size == 0, EOrderInvalidTickSize);
         // Check quantity is above minimum quantity (in base asset)
-        assert!(quantity >= pool.min_size, EOrderBelowMinimumSize);
-        assert!(quantity % pool.lot_size == 0, EOrderInvalidLotSize);
+        assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
+        assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
-        let maker_fee = pool.pool_state.get_maker_fee();
+        let maker_fee = self.pool_state.get_maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
         // If verified pool with source
-        if (pool.is_verified()) {
-            let config = pool.deep_config.borrow();
+        if (self.is_verified()) {
+            let config = self.deep_config.borrow();
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
             // TODO: make sure there is mul_down and mul_up for rounding
             let deep_quantity = mul(config.deep_per_base(), quantity);
             fee_quantity = mul(deep_quantity, maker_fee);
             // Deposit the deepbook fees
-            deposit(pool, account, fee_quantity, 2, ctx);
+            self.deposit(account, fee_quantity, 2, ctx);
         }
         // If unverified pool
         else {
@@ -444,14 +443,14 @@ module deepbook::pool {
             if (is_bid) {
                 fee_quantity = mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
                 // deposit quote asset fees
-                deposit(pool, account, fee_quantity, 1, ctx);
+                self.deposit(account, fee_quantity, 1, ctx);
             } else {
                 // deposit base asset fees
-                deposit(pool, account, fee_quantity, 0, ctx);
+                self.deposit(account, fee_quantity, 0, ctx);
             };
         };
 
-        let user_data = &mut pool.users[account.get_owner()];
+        let user_data = &mut self.users[account.get_owner()];
         let (available_base_amount, available_quote_amount) = user_data.get_settle_amounts();
 
         if (is_bid) {
@@ -459,9 +458,9 @@ module deepbook::pool {
             let quote_quantity = mul(quantity, price);
             if (available_quote_amount < quantity){
                 let difference = quote_quantity - available_quote_amount;
-                let coin: Coin<QuoteAsset> = account::withdraw(account, difference, ctx);
+                let coin: Coin<QuoteAsset> = account.withdraw(difference, ctx);
                 let balance: Balance<QuoteAsset> = coin.into_balance();
-                pool.quote_balances.join(balance);
+                self.quote_balances.join(balance);
                 user_data.set_settle_amounts(option::none(), option::some(0), ctx);
             } else {
                 user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
@@ -470,18 +469,18 @@ module deepbook::pool {
             // Deposit base asset if there's not enough in custodian
             if (available_base_amount < quantity){
                 let difference = quantity - available_base_amount;
-                let coin: Coin<BaseAsset> = account::withdraw(account, difference, ctx);
+                let coin: Coin<BaseAsset> = account.withdraw(difference, ctx);
                 let balance: Balance<BaseAsset> = coin.into_balance();
-                pool.base_balances.join(balance);
+                self.base_balances.join(balance);
                 user_data.set_settle_amounts(option::some(0), option::none(), ctx);
             } else {
                 user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
             };
         };
 
-        place_maker_order_int(pool, client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
+        self.place_maker_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-            pool_id: *object::uid_as_inner(&pool.id),
+            pool_id: *object::uid_as_inner(&self.id),
             order_id: 0,
             client_order_id,
             is_bid,
@@ -495,7 +494,7 @@ module deepbook::pool {
 
     /// Balance accounting happens before this function is called
     fun place_maker_order_int<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>, 
         client_order_id: u64,
         price: u64,
         quantity: u64,
@@ -505,14 +504,14 @@ module deepbook::pool {
     ) {
         // Create Order
         let _order = Order {
-            order_id: pool.next_bid_order_id,
+            order_id: self.next_bid_order_id,
             client_order_id,
             price,
             original_quantity: quantity,
             quantity,
             original_fee_quantity: fee_quantity,
             fee_quantity,
-            verified_pool: pool.is_verified(),
+            verified_pool: self.is_verified(),
             is_bid,
             owner: ctx.sender(),
             expire_timestamp: 0, // TODO
@@ -523,18 +522,18 @@ module deepbook::pool {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            pool.next_bid_order_id =  pool.next_bid_order_id + 1;
+            self.next_bid_order_id =  self.next_bid_order_id + 1;
         } else {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            pool.next_ask_order_id =  pool.next_ask_order_id + 1;
+            self.next_ask_order_id =  self.next_ask_order_id + 1;
         }
     }
 
     #[allow(unused_function, unused_variable)]
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
-        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
         _client_order_id: u64,
         _account: &mut Account,
         _quantity: u64,
@@ -547,43 +546,43 @@ module deepbook::pool {
     #[allow(unused_function, unused_variable)]
     /// cancels an order by id
     public fun cancel_order<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
-        order_id: u64, // use this to find order
+        order_id: u64,
         ctx: &mut TxContext,
     ) {
-        // TODO: find order in corresponding BigVec using client_order_id
+        // TODO: find order in corresponding BigVec using order_id
         // Sample order that is cancelled
-        let order_cancelled = cancel_order_int(pool, order_id, ctx);
+        let order_cancelled = self.cancel_order_int(order_id, ctx);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
             let quote_asset_quantity = mul(order_cancelled.quantity, order_cancelled.price);
-            withdraw(pool, account, quote_asset_quantity, 1, ctx)
+            self.withdraw(account, quote_asset_quantity, 1, ctx)
         } else {
             // deposit base asset back into user account
-            withdraw(pool, account, order_cancelled.quantity, 0, ctx)
+            self.withdraw(account, order_cancelled.quantity, 0, ctx)
         };
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
         if (order_cancelled.verified_pool) {
             // withdraw deepbook fees
-            withdraw(pool, account, order_cancelled.fee_quantity, 2, ctx)
+            self.withdraw(account, order_cancelled.fee_quantity, 2, ctx)
         } else if (order_cancelled.is_bid) {
             // withdraw quote asset fees
             // can be combined with withdrawal above, separate now for clarity
-            withdraw(pool, account, order_cancelled.fee_quantity, 1, ctx)
+            self.withdraw(account, order_cancelled.fee_quantity, 1, ctx)
         } else {
             // withdraw base asset fees
             // can be combined with withdrawal above, separate now for clarity
-            withdraw(pool, account, order_cancelled.fee_quantity, 0, ctx)
+            self.withdraw(account, order_cancelled.fee_quantity, 0, ctx)
         };
 
         // Emit order cancelled event
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
-            pool_id: *pool.id.uid_as_inner(), // Get inner id from UID
+            pool_id: *self.id.uid_as_inner(), // Get inner id from UID
             order_id: order_cancelled.order_id,
             client_order_id: order_cancelled.client_order_id,
             is_bid: order_cancelled.is_bid,
@@ -596,43 +595,45 @@ module deepbook::pool {
 
     /// Cancels an order and returns it
     fun cancel_order_int<BaseAsset, QuoteAsset>(
-        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
         _order_id: u64,
         _ctx: &TxContext,
     ): Order {
+
         // TODO: cancel order using order_id, return canceled order
+
         Order {
             order_id: 0,
             client_order_id: 1,
             price: 10000,
-            original_quantity: 8000,
-            quantity: 3000,
-            original_fee_quantity: 80,
-            fee_quantity: 30,
+            original_quantity: 2000,
+            quantity: 1000,
+            original_fee_quantity: 20,
+            fee_quantity: 10,
             verified_pool: true,
             is_bid: false,
-            owner: @0x0, // TODO
-            expire_timestamp: 0, // TODO
+            owner: @0x0,
+            expire_timestamp: 0,
             self_matching_prevention: 0, // TODO
         }
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Helper Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
-    public fun is_verified<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): bool {
-        pool.deep_config.is_some()
+    public fun is_verified<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+        self.deep_config.is_some()
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
     
     /// Get the base and quote asset of pool, return as ascii strings
-    public fun get_base_quote_types<BaseAsset, QuoteAsset>(_pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
+    public fun get_base_quote_types<BaseAsset, QuoteAsset>(_self: &Pool<BaseAsset, QuoteAsset>): (String, String) {
         (type_name::get<BaseAsset>().into_string(), type_name::get<QuoteAsset>().into_string())
     }
 
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-    public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
-        let (base, quote) = get_base_quote_types(pool);
+    public fun pool_key<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): String {
+        let (base, quote) = get_base_quote_types(self);
         if (compare_ascii_strings(&base, &quote)) {
             append_strings(&base, &quote)
         } else {
