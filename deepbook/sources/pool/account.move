@@ -15,12 +15,12 @@ module deepbook::account {
         // coin_balances will be represented in dynamic fields
     }
         
-    // Identifier, name for dynamic field (3)
+    // Identifier for balance
     public struct BalanceKey<phantom T> has store, copy, drop {
         coin_type: String,
     }
 
-    // Create an individual account (2)
+    // Create an individual account
     public fun new(ctx: &mut TxContext): Account {
         // validate that this user hasn't reached account limit
         Account {
@@ -29,7 +29,7 @@ module deepbook::account {
         }
     }
 
-    // Deposit and withdrawal function (4)
+    // Deposit funds to an account
     public fun deposit<T>(
         account: &mut Account, 
         coin: Coin<T>,
@@ -49,11 +49,12 @@ module deepbook::account {
         }
     }
 
+    // Withdraw funds from an account
     public fun withdraw<T>(
         account: &mut Account, 
         amount: u64,
         ctx: &mut TxContext,
-    ): Coin<T>{
+    ): Coin<T> {
         let coin_type_name = type_name::get<T>().into_string();
 
         let balance_key = BalanceKey<T> { coin_type: coin_type_name };
@@ -71,7 +72,4 @@ module deepbook::account {
     public fun get_owner(account: &Account): address {
         account.owner   
     }
-
-    // Sample Usage
-    // let withdrawn_coin: Coin<GoldCoin> = withdraw<GoldCoin>(&mut account, amount_to_withdraw, &mut ctx);
 }
