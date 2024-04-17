@@ -406,7 +406,7 @@ module deepbook::pool {
     }
 
     /// Place a maker order
-    public fun place_limit_order<BaseAsset, QuoteAsset>(
+    public fun place_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         account: &mut Account,
         client_order_id: u64,
@@ -414,7 +414,7 @@ module deepbook::pool {
         quantity: u64,
         is_bid: bool, // true for bid, false for ask
         ctx: &mut TxContext,
-    ): u64 {
+    ) {
         // Refresh state as necessary if first order of epoch
         refresh_state(pool, ctx);
 
@@ -491,8 +491,6 @@ module deepbook::pool {
             price,
             expire_timestamp: 0, // TODO
         });
-
-        0
     }
 
     /// Balance accounting happens before this function is called

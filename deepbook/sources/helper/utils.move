@@ -1,4 +1,4 @@
-/// Vector-related utilities.
+/// Deepbook utility functions.
 module deepbook::utils {
     use std::ascii::{Self, String};
 

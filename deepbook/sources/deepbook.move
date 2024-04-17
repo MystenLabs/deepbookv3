@@ -115,8 +115,8 @@ module deepbook::deepbook {
         quantity: u64,
         is_bid: bool,
         ctx: &mut TxContext,
-    ): u64 {
-        pool.place_limit_order(account, client_order_id, price, quantity, is_bid, ctx)
+    ) {
+        pool.place_maker_order(account, client_order_id, price, quantity, is_bid, ctx);
     }
 
     // public fun place_market_order()
