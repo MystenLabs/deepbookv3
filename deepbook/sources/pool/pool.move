@@ -109,7 +109,7 @@ module deepbook::pool {
         // Quantity of fee currently held
         fee_quantity: u64,
         // Whether or not pool is verified at order placement
-        verified_pool: bool,
+        fee_is_deep: bool,
         // Whether the order is a bid or ask
         is_bid: bool,
         // Owner of the order
@@ -164,8 +164,8 @@ module deepbook::pool {
         let maker_fee = self.pool_state.get_maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
-        // If verified pool with source
-        if (self.is_verified()) {
+        // If order fee is paid in DEEP tokens
+        if (self.fee_is_deep()) {
             let config = self.deep_config.borrow();
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
@@ -258,7 +258,7 @@ module deepbook::pool {
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
-        if (order_cancelled.verified_pool) {
+        if (order_cancelled.fee_is_deep) {
             // withdraw deepbook fees
             self.withdraw(account, order_cancelled.fee_quantity, 2, ctx)
         } else if (order_cancelled.is_bid) {
@@ -593,7 +593,7 @@ module deepbook::pool {
             quantity,
             original_fee_quantity: fee_quantity,
             fee_quantity,
-            verified_pool: self.is_verified(),
+            fee_is_deep: self.fee_is_deep(),
             is_bid,
             owner: ctx.sender(),
             expire_timestamp: 0, // TODO
@@ -632,7 +632,7 @@ module deepbook::pool {
             quantity: 1000,
             original_fee_quantity: 20,
             fee_quantity: 10,
-            verified_pool: true,
+            fee_is_deep: true,
             is_bid: false,
             owner: @0x0,
             expire_timestamp: 0,
@@ -640,8 +640,8 @@ module deepbook::pool {
         }
     }
 
-    /// Returns if the pool is verified
-    fun is_verified<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    /// Returns if the order fee is paid in deep tokens
+    fun fee_is_deep<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.deep_config.is_some()
     }
 
