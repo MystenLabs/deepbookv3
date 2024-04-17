@@ -118,4 +118,11 @@ module deepbook::deepbook {
     ): u64 {
         pool.place_limit_order(account, client_order_id, price, quantity, is_bid, ctx)
     }
+
+    // public fun place_market_order()
+    // public fun cancel_order()
+    // public fun cancel_all()
+    // public fun get_open_orders()
+    // public fun get_amount_out()
+    // public fun get_order_book()
 }

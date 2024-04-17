@@ -1,9 +1,10 @@
 module deepbook::deep_reference_price {
-    use sui::vec_map::{VecMap};
     use std::{
         type_name,
         ascii::String,
     };
+    
+    use sui::vec_map::VecMap;
 
     use deepbook::pool::{Pool, DEEP}; // TODO: DEEP token
 
