@@ -1,6 +1,6 @@
 module deepbookv3::deep_price {
     // DEEP price points used for trading fee calculations
-	public struct DeepPrice has store{
+	public struct DeepPrice has store, drop {
 		last_insert_timestamp: u64,
 		price_points_base: vector<u64>, // deque with a max size
 		price_points_quote: vector<u64>,
@@ -28,5 +28,13 @@ module deepbookv3::deep_price {
         _quote_conversion_rate: u64,
     ) {
         // TODO
+    }
+
+    public(package) fun deep_per_base(deep_price: &DeepPrice): u64 {
+        deep_price.deep_per_base
+    }
+
+    public(package) fun deep_per_quote(deep_price: &DeepPrice): u64 {
+        deep_price.deep_per_quote
     }
 }
