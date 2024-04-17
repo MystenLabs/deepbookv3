@@ -35,6 +35,8 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
+    const BURN_ADDRESS: address = @0x0; // TODO: update to burn address
+    const TREASURY_ADDRESS: address = @0x0; // TODO: update to treasury address
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -86,30 +88,31 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
-    // Temporary, remove after on-chain dependency possible
+    /// Temporary to represent DEEP token, remove after on-chain dependency possible
     public struct DEEP has store {}
 
+    /// For each pool, order id is incremental and unique for each opening order.
+    /// Orders that are submitted earlier has lower order ids.
     public struct Order has store, drop {
-        // For each pool, order id is incremental and unique for each opening order.
-        // Orders that are submitted earlier has lower order ids.
-        // 64 bits are sufficient for order ids whereas 32 bits are not.
-        // Assuming a maximum TPS of 100K/s of Sui chain, it would take (1<<63) / 100000 / 3600 / 24 / 365 = 2924712 years to reach the full capacity.
-        // The highest bit of the order id is used to denote the order type, 0 for bid, 1 for ask.
-        /// ID of the order within the pool
+        // ID of the order within the pool
         order_id: u64,
-        /// ID of the order defined by client
+        // ID of the order defined by client
         client_order_id: u64,
-        // Only used for limit orders.
+        // Price, only used for limit orders
         price: u64,
-        // quantity when the order first placed in
+        // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
-        // quantity of the order currently held
+        // Quantity of the order currently held
         quantity: u64,
+        // Quantity of fee (in fee asset terms) when the order is placed
         original_fee_quantity: u64,
+        // Quantity of fee currently held
         fee_quantity: u64,
+        // Whether or not pool is verified at order placement
         verified_pool: bool,
+        // Whether the order is a bid or ask
         is_bid: bool,
-        /// Order can only be canceled by the `AccountCap` with this owner ID
+        // Owner of the order
         owner: address,
         // Expiration timestamp in ms.
         expire_timestamp: u64,
@@ -135,10 +138,10 @@ module deepbook::pool {
         deepbook_balance: Balance<DEEP>,
 
         // treasury and burn address
-        treasury_address: address, // Input tokens
-        burn_address: address, // DEEP tokens
+        treasury_address: address, // Where input tokens as fees and pool creation fees are sent
+        burn_address: address, // Where DEEP tokens as fees are burned
 
-        // Historical, current, and next PoolData.
+        // Historical, current, and next PoolData
         pool_state: PoolState,
     }
 
@@ -153,19 +156,16 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): String {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
-
-        let base_type_name = type_name::get<BaseAsset>();
-        let quote_type_name = type_name::get<QuoteAsset>();
-
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
+
+        let base_type_name = type_name::get<BaseAsset>();
+        let quote_type_name = type_name::get<QuoteAsset>();
         assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
         
         let pool_uid = object::new(ctx);
         let pool_id = *object::uid_as_inner(&pool_uid);
-
-        // Creates the capability to mark a pool owner.
 
         event::emit(PoolCreated {
             pool_id,
@@ -192,19 +192,17 @@ module deepbook::pool {
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
-            burn_address: @0x0, // TODO
-            treasury_address: @0x0, // TODO
+            burn_address: BURN_ADDRESS,
+            treasury_address: TREASURY_ADDRESS,
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
         });
 
-        transfer::public_transfer(coin::from_balance(creation_fee, ctx), @0x0); //TODO: update to treasury address
+        transfer::public_transfer(coin::from_balance(creation_fee, ctx), TREASURY_ADDRESS);
         let pool_key = pool.pool_key();
         transfer::share_object(pool);
 
         pool_key
     }
-
-    // USER
 
     /// Increase a user's stake
     public(package) fun increase_user_stake<BaseAsset, QuoteAsset>(
@@ -214,7 +212,6 @@ module deepbook::pool {
         ctx: &mut TxContext
     ): u64 {
         let user = get_user_mut(pool, user, ctx);
-        
         user.increase_stake(amount)
     }
 
@@ -225,7 +222,6 @@ module deepbook::pool {
         ctx: &mut TxContext
     ): (u64, u64) {
         let user = get_user_mut(pool, user, ctx);
-        
         user.remove_stake()
     }
 
