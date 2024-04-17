@@ -53,7 +53,7 @@ module deepbook::account {
         account: &mut Account, 
         amount: u64,
         ctx: &mut TxContext,
-    ): Coin<T>{
+    ): Coin<T> {
         let coin_type_name = type_name::get<T>().into_string();
 
         let balance_key = BalanceKey<T> { coin_type: coin_type_name };
