@@ -424,11 +424,11 @@ module deepbookv3::pool {
     /// Place a maker order
     public fun place_maker_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
-        is_bid: bool, // true for bid, false for ask
         account: &mut Account,
         client_order_id: u64,
         price: u64,
         quantity: u64,
+        is_bid: bool, // true for bid, false for ask
         ctx: &mut TxContext,
     ) {
         // Refresh state as necessary if first order of epoch
@@ -482,7 +482,6 @@ module deepbookv3::pool {
             } else {
                 user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
             };
-            place_bid_maker_order(pool, client_order_id, price, place_quantity, fee_quantity, ctx);
         } else {
             // Deposit base asset if there's not enough in custodian
             if (available_base_amount < quantity){
@@ -494,9 +493,9 @@ module deepbookv3::pool {
             } else {
                 user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
             };
-            place_ask_maker_order(pool, client_order_id, price, place_quantity, fee_quantity, ctx);
         };
 
+        place_maker_order_int(pool, client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: *object::uid_as_inner(&pool.id),
             order_id: 0,
@@ -511,12 +510,13 @@ module deepbookv3::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun place_bid_maker_order<BaseAsset, QuoteAsset>(
+    fun place_maker_order_int<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 
         client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
+        is_bid: bool, // true for bid, false for ask
         ctx: &TxContext,
     ) {
         // Create Order
@@ -529,51 +529,27 @@ module deepbookv3::pool {
             original_fee_quantity: fee_quantity,
             fee_quantity,
             verified_pool: pool.is_verified(),
-            is_bid: true,
+            is_bid,
             owner: ctx.sender(),
             expire_timestamp: 0, // TODO
             self_matching_prevention: 0, // TODO
         };
 
-        // TODO: Ignore for now, will insert order into critbit tree, this will change based on new data structure
-        let tick_level = borrow_mut_leaf_by_index(&mut pool.bids, price);
-        tick_level.open_orders.push_back(order.order_id, order);
+        if (is_bid){
+            // TODO: Ignore for now, this will change based on new data structure
+            let tick_level = borrow_mut_leaf_by_index(&mut pool.bids, price);
+            tick_level.open_orders.push_back(order.order_id, order);
 
-        // Increment order id
-        pool.next_bid_order_id =  pool.next_bid_order_id + 1;
-    }
+            // Increment order id
+            pool.next_bid_order_id =  pool.next_bid_order_id + 1;
+        } else {
+            // TODO: Ignore for now, this will change based on new data structure
+            let tick_level = borrow_mut_leaf_by_index(&mut pool.asks, price);
+            tick_level.open_orders.push_back(order.order_id, order);
 
-    /// Balance accounting happens before this function is called
-    fun place_ask_maker_order<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>, 
-        client_order_id: u64,
-        price: u64,
-        quantity: u64,
-        fee_quantity: u64,
-        ctx: &TxContext,
-    ) {
-        // Create Order
-        let order = Order {
-            order_id: pool.next_ask_order_id,
-            client_order_id,
-            price,
-            original_quantity: quantity,
-            quantity,
-            original_fee_quantity: fee_quantity,
-            fee_quantity,
-            verified_pool: pool.is_verified(),
-            is_bid: false,
-            owner: ctx.sender(),
-            expire_timestamp: 0, // TODO
-            self_matching_prevention: 0, // TODO
-        };
-
-        // TODO: Ignore for now, will insert order into critbit tree, this will change based on new data structure
-        let tick_level = borrow_mut_leaf_by_index(&mut pool.asks, price);
-        tick_level.open_orders.push_back(order.order_id, order);
-
-        // Increment order id
-        pool.next_ask_order_id =  pool.next_ask_order_id + 1;
+            // Increment order id
+            pool.next_ask_order_id =  pool.next_ask_order_id + 1;
+        }
     }
 
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
