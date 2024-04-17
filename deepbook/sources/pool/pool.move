@@ -201,9 +201,9 @@ module deepbook::pool {
                 let coin: Coin<QuoteAsset> = account.withdraw(difference, ctx);
                 let balance: Balance<QuoteAsset> = coin.into_balance();
                 self.quote_balances.join(balance);
-                user_data.set_settle_amounts(option::none(), option::some(0), ctx);
+                user_data.set_settle_amounts(available_base_amount, 0, ctx);
             } else {
-                user_data.set_settle_amounts(option::none(), option::some(available_quote_amount - quote_quantity), ctx);
+                user_data.set_settle_amounts(available_base_amount, available_quote_amount - quote_quantity, ctx);
             };
         } else {
             // Deposit base asset if there's not enough in custodian
@@ -212,9 +212,9 @@ module deepbook::pool {
                 let coin: Coin<BaseAsset> = account.withdraw(difference, ctx);
                 let balance: Balance<BaseAsset> = coin.into_balance();
                 self.base_balances.join(balance);
-                user_data.set_settle_amounts(option::some(0), option::none(), ctx);
+                user_data.set_settle_amounts(0, available_quote_amount, ctx);
             } else {
-                user_data.set_settle_amounts(option::some(available_base_amount - quantity), option::none(), ctx);
+                user_data.set_settle_amounts(available_base_amount - quantity, available_quote_amount, ctx);
             };
         };
 
@@ -318,7 +318,7 @@ module deepbook::pool {
         };
 
         // Reset the user's settled amounts
-        user_data.reset_settle_amounts(ctx);
+        user_data.set_settle_amounts(0, 0, ctx);
     }
 
     #[allow(unused_function, unused_variable)]

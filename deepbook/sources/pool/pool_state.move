@@ -41,6 +41,7 @@ module deepbook::pool_state {
         new_pool_epoch_state(0, 0, 0, stake_required, taker_fee, maker_fee)
     }
 
+    /// Create a new pool state
     public(package) fun new_pool_state(
         ctx: &TxContext,
         stake_required: u64,
@@ -55,6 +56,7 @@ module deepbook::pool_state {
         }
     }
 
+    /// Refresh the pool state if the epoch has changed
     public(package) fun refresh_state(
         state: &mut PoolState,
         ctx: &TxContext,
@@ -67,6 +69,7 @@ module deepbook::pool_state {
         state.current_state = state.next_state;
     }
 
+    /// Set the next epoch pool state
     public(package) fun set_next_epoch_pool_state(
         state: &mut PoolState,
         next_epoch_state: Option<PoolEpochState>,
