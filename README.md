@@ -29,7 +29,7 @@ Each pool conducts governance independently from each other. The first stake, un
 Staking DEEP will merge the user's DEEP tokens into the vault and push the user's next_stake_amount onto Pool. 
 ## Pool
 ### Orders
-To place a maker order within the trading system, several key parameters are required: the pool identifier, user account, client order ID, price, quantity (always in terms of the base asset), and whether the order is a bid (buy) or ask (sell). The system first attempts to cover the trade amount using any settled balances the user has within the pool. If these are insufficient, it will draw the required funds from the user's account.
+To place a maker order within the trading system, several key parameters are required: the pool object, user account, client_order_id, price, quantity (always in terms of the base asset), and whether the order is a bid (buy) or ask (sell). The system first attempts to cover the trade amount using any settled balances the user has within the pool. If these are insufficient, it will draw the required funds from the user's account.
 
 An order remains active in the system either until it is fully settled through trades or the user decides to cancel it. Cancelling an order triggers a mechanism that refunds the remaining order funds and fees back into the user's account. This efficient handling ensures that users can share their assets across multiple pools.
 
