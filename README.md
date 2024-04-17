@@ -28,11 +28,43 @@ Each pool conducts governance independently from each other. The first stake, un
 
 Staking DEEP will merge the user's DEEP tokens into the vault and push the user's next_stake_amount onto Pool. 
 ## Pool
-### Refresh
 ### Orders
-### DEEP fees
-### Deposit & Withdrawals from Account, Settled Funds
-### User Rebates and Burns, Stake
+To place a maker order within the trading system, several key parameters are required: the pool object, user account, client_order_id, price, quantity (always in terms of the base asset), and whether the order is a bid (buy) or ask (sell). The system first attempts to cover the trade amount using any settled balances the user has within the pool. If these are insufficient, it will draw the required funds from the user's account.
+
+An order remains active in the system either until it is fully settled through trades or the user decides to cancel it. Cancelling an order triggers a mechanism that refunds the remaining order funds and fees back into the user's account. This efficient handling ensures that users can share their assets across multiple pools.
+
+### DEEP Price
+The DEEP price is crucial for calculating transaction fees within the trading pool, and it is dynamically updated in the DeepPrice struct to reflect the prevailing market conditions. This price is revised at regular intervals within the pool's configuration system. The initial methodology for determining the DEEP price involves calculating a moving average of the price points recorded over the past hour. This approach helps in moderating the impact of short-term market fluctuations on fee calculations, ensuring that fees are based on a more stable and representative market price. This mechanism enables the pool to adapt its fee structure dynamically, aligning it closely with real-time economic conditions and maintaining fairness in trading charges.
+
+### Trading fees
+Fees within the trading pool are structured differently based on the verification status of the pool. In verified pools, the deep_config includes a DeepPrice object. The fees are computed in terms of DEEP tokens, using rates specified as "deep_per_base" or "deep_per_quote" within DeepPrice. Collected fees are directly deposited into the pool balances.
+
+Conversely, in unverified pools where deep_config does not have a DeepPrice object, fees for ask orders are calculated in terms of the base asset, while fees for bid orders are calculated in terms of the quote asset. This means that the transaction fees comes directly from the primary assets involved in trading. Collected fees are immediately sent to treasury at trade settlement.
+
+### Deposits and Withdrawals on Pool Level, Settled Funds
+Automated Deposits: The system automates deposits to ensure users can always engage in trading activities, even if preliminary checks reveal insufficient funds in their settled balances within the pool. This automation enhances user experience by removing manual steps and potential trading delays.
+
+No Manual Deposit: Users cannot manually deposit assets into the pool custodian; instead, this process is managed automatically by the system based on trading needs and balance requirements. This design choice is aimed at simplifying interactions and preventing errors or misuse.
+
+Security and Permission Checks: Implicit in this process are security and permission checks. Withdrawals from user accounts require authorization to ensure that only the account owner or authorized parties can initiate such transfers.
+
+Funds from Settled Orders: Once user orders are settled, the funds are stored in the User struct at the pool level. Users can then use these funds to place new orders or withdraw them at any time.
+
+### User Rebates and Burns/Treasury
+Rebates serve as incentives for users, especially market makers, who contribute liquidity to the trading pool. These rebates represent a portion of the transaction fees generated from trading activities and are designed to encourage ongoing participation and liquidity enhancement in the pool. Rebates are accrued over each epoch, reflecting the user's level of activity during that period, and users can claim them when they choose to. Important to note that rebates are only available for pools that are verified and where trading fees are paid in DEEP.
+
+Upon claiming rebates, the specified amount is transferred back to the user from the pool's balance of DEEP tokens. Concurrently, any portion of the fees that is not rebated is burned.
+
 ## Account
-[IMG]
+Users can create new accounts and are able to deposit or withdraw any coin types. Deposits involve adding coins to an account's balance, which is stored dynamically and can be merged with existing balances of the same type. Withdrawals check if sufficient funds are available and then allow users to remove a specified amount from their balance. 
+
+The account structure also maintains a reference to the owner's address, and the system includes functions to retrieve the owner of an account. This framework is built to handle transactions securely within a flexible structure, ensuring that operations like deposits and withdrawals are efficiently managed according to the account's stored values and types of coins.
+
+Users can pass the account object for placing orders within any deepbook pool, provided the account holds enough assets. This enables the utilization of shared balances across various pools containing the same assets, allowing for transactions in pools such as SUI/USDC and SUI/USDT using a single SUI balance.
+
 ## Feedback from MMs
+Important to have the ability to create multiple accounts for added flexibility and as a precaution in case an account becomes locked.
+
+Limit the number of calls to fetch Level 2 order book data (from 3 calls to 1 call) to avoid excessive load.
+
+Capability to retrieve historical trades by account, which will likely require an off-chain solution to manage the data efficiently and maintain performance without overburdening the on-chain systems.

@@ -1,14 +1,14 @@
-module deepbookv3::state {
+module deepbook::state {
     use std::ascii::{String};
 
     use sui::balance::{Balance};
     use sui::table::{Table, add};
     use sui::sui::SUI;
 
-    use deepbookv3::pool::{Pool, DEEP, Self};
-    use deepbookv3::pool_state::{new_pool_epoch_state_with_gov_params};
-    use deepbookv3::pool_metadata::{Self, PoolMetadata};
-    use deepbookv3::deep_reference_price::{DeepReferencePools};
+    use deepbook::pool::{Pool, DEEP, Self};
+    use deepbook::pool_state::{new_pool_epoch_state_with_gov_params};
+    use deepbook::pool_metadata::{Self, PoolMetadata};
+    use deepbook::deep_reference_price::{DeepReferencePools};
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
@@ -33,10 +33,11 @@ module deepbookv3::state {
         state: &mut State,
         tick_size: u64,
         lot_size: u64,
+        min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, creation_fee, ctx);
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, min_size, creation_fee, ctx);
         assert!(!state.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);

@@ -1,6 +1,6 @@
 #[test_only]
-module deepbookv3::big_vector_tests {
-    use deepbookv3::big_vector::{Self as bv, BigVector};
+module deepbook::big_vector_tests {
+    use deepbook::big_vector::{Self as bv, BigVector};
 
     #[test]
     fun test_destroy_empty() {

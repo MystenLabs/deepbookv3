@@ -1,5 +1,5 @@
-module deepbookv3::pool_metadata {
-    use deepbookv3::governance::{Governance, Proposal, Self};
+module deepbook::pool_metadata {
+    use deepbook::governance::{Governance, Proposal, Self};
 
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
 

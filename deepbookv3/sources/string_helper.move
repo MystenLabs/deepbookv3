@@ -1,4 +1,4 @@
-module deepbookv3::string_helper {
+module deepbook::string_helper {
     use std::ascii::{Self, String};
 
     /// Compare two ASCII strings, return True if first string is less than to equal to the second string in lexicographic order
