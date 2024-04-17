@@ -36,7 +36,7 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const BURN_ADDRESS: address = @0x0; // TODO: update to burn address
-    const TREASURY_ADDRESS: address = @0x0; // TODO: update to treasury address
+    const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -137,10 +137,6 @@ module deepbook::pool {
         quote_balances: Balance<QuoteAsset>,
         deepbook_balance: Balance<DEEP>,
 
-        // treasury and burn address
-        treasury_address: address, // Where input tokens as fees and pool creation fees are sent
-        burn_address: address, // Where DEEP tokens as fees are burned
-
         // Historical, current, and next PoolData
         pool_state: PoolState,
     }
@@ -192,8 +188,6 @@ module deepbook::pool {
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
-            burn_address: BURN_ADDRESS,
-            treasury_address: TREASURY_ADDRESS,
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
         });
 
@@ -265,7 +259,7 @@ module deepbook::pool {
         if (burn_amount > 0) {
             let balance = pool.deepbook_balance.split(burn_amount);
             let coins = balance.into_coin(ctx);
-            burn(pool.burn_address, coins);
+            burn(coins);
         };
 
         user
@@ -357,19 +351,17 @@ module deepbook::pool {
 
     /// Burn DEEP tokens
     fun burn(
-        burn_address: address,
         amount: Coin<DEEP>,
     ) {
-        transfer::public_transfer(amount, burn_address)
+        transfer::public_transfer(amount, BURN_ADDRESS)
     }
 
     #[allow(unused_function)]
     /// Send fees collected in input tokens to treasury
-    fun send_treasury<BaseAsset, QuoteAsset, T>(
-        pool: &Pool<BaseAsset, QuoteAsset>,
+    fun send_treasury<T>(
         fee: Coin<T>,
     ) {
-        transfer::public_transfer(fee, pool.treasury_address)
+        transfer::public_transfer(fee, TREASURY_ADDRESS)
     }
 
     /// First interaction of each epoch processes this state update
