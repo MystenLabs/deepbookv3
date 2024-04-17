@@ -19,14 +19,17 @@ module deepbook::governance {
     const EUserProposalCreationLimitReached: u64 = 4;
     const EUserVotesCastedLimitReached: u64 = 5;
 
+    /// Proposal struct that holds the parameters of a proposal and its current total votes.
     public struct Proposal has store, drop, copy {
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
-        // Total votes for this proposal.
         votes: u64,
     }
 
+    /// Voter represents a single voter and the actions they have taken in the current epoch.
+    /// A user can create up to 1 proposal per epoch.
+    /// A user can cast/recast votes up to 3 times per epoch.
     public struct Voter has store, drop {
         proposal_id: Option<u64>,
         voting_power: Option<u64>,
@@ -84,42 +87,42 @@ module deepbook::governance {
 
     /// Reset the governance state. This will happen after an epoch change.
     /// Epoch validation done by the parent.
-    public(package) fun reset(governance: &mut Governance) {
-        governance.proposals = vector::empty();
-        governance.voters = vec_map::empty();
-        governance.quorum = governance.voting_power / 2;
-        governance.winning_proposal = option::none();
+    public(package) fun reset(self: &mut Governance) {
+        self.proposals = vector::empty();
+        self.voters = vec_map::empty();
+        self.quorum = self.voting_power / 2;
+        self.winning_proposal = option::none();
     }
 
     /// Increase the voting power available.
     /// This is called by the parent during an epoch change.
     /// The newly staked voting power from the previous epoch is added to the governance.
     /// Validation should be done before calling this funciton.
-    public(package) fun increase_voting_power(governance: &mut Governance, voting_power: u64) {
-        governance.voting_power = governance.voting_power + voting_power;
+    public(package) fun increase_voting_power(self: &mut Governance, voting_power: u64) {
+        self.voting_power = self.voting_power + voting_power;
     }
 
     /// Decrease the voting power available.
     /// This is called by the parent when a user unstakes.
     /// Only voting power that has been added previously can be removed. This will always be >= 0.
     /// Validation should be done before calling this funciton.
-    public(package) fun decrease_voting_power(governance: &mut Governance, voting_power: u64) {
-        governance.voting_power = governance.voting_power - voting_power;
+    public(package) fun decrease_voting_power(self: &mut Governance, voting_power: u64) {
+        self.voting_power = self.voting_power - voting_power;
     }
 
     /// Create a new proposal with the given parameters.
     /// Perform validation depending on the type of pool.
     /// A user can only create 1 proposal per epoch.
     public(package) fun create_new_proposal(
-        governance: &mut Governance,
+        self: &mut Governance,
         user: address,
         stable: bool,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
     ) {
-        governance.add_voter_if_does_not_exist(user);
-        governance.increment_proposals_created(user);
+        self.add_voter_if_does_not_exist(user);
+        self.increment_proposals_created(user);
 
         if (stable) {
             assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
@@ -130,79 +133,79 @@ module deepbook::governance {
         };
 
         let proposal = new_proposal(maker_fee, taker_fee, stake_required);
-        governance.proposals.push_back(proposal);
+        self.proposals.push_back(proposal);
     }
 
     /// Vote on a proposal.
     /// Validation of user and voting power should be done before calling this function.
     public(package) fun vote(
-        governance: &mut Governance,
+        self: &mut Governance,
         user: address,
         proposal_id: u64,
         voting_power: u64,
     ): Option<Proposal> {
         // we can't validate user, voting_power. they must be validated before calling this function.
-        assert!(proposal_id < governance.proposals.length(), EProposalDoesNotExist);
-        governance.add_voter_if_does_not_exist(user);
-        governance.update_voter(user, proposal_id, voting_power);
+        assert!(proposal_id < self.proposals.length(), EProposalDoesNotExist);
+        self.add_voter_if_does_not_exist(user);
+        self.update_voter(user, proposal_id, voting_power);
 
-        let proposal = &mut governance.proposals[proposal_id];
+        let proposal = &mut self.proposals[proposal_id];
         proposal.votes = proposal.votes + voting_power;
 
-        if (proposal.votes >= governance.quorum) {
-            governance.winning_proposal = option::some(*proposal);
+        if (proposal.votes >= self.quorum) {
+            self.winning_proposal = option::some(*proposal);
         };
 
-        governance.winning_proposal
+        self.winning_proposal
     }
 
     /// Remove a vote from a proposal.
     /// If user hasn't not exist, do nothing.
     /// This is called in two scenarios: a voted user changes his vote, or a user unstakes.
     public(package) fun remove_vote(
-        governance: &mut Governance,
+        self: &mut Governance,
         user: address
     ): Option<Proposal> {
-        if (!governance.voters.contains(&user)) return governance.winning_proposal;
-        let voter = governance.voters.get_mut(&user);
-        if (voter.proposal_id.is_none()) return governance.winning_proposal;
+        if (!self.voters.contains(&user)) return self.winning_proposal;
+        let voter = self.voters.get_mut(&user);
+        if (voter.proposal_id.is_none()) return self.winning_proposal;
 
         let votes = voter.voting_power.extract();
 
-        let proposal = &mut governance.proposals[voter.proposal_id.extract()];
+        let proposal = &mut self.proposals[voter.proposal_id.extract()];
         proposal.votes = proposal.votes - votes;
 
         // this was over quorum before, now it is not
         // it was the winning proposal before, now it is not
-        if (proposal.votes + votes >= governance.quorum
-            && proposal.votes < governance.quorum) {
-            governance.winning_proposal = option::none();
+        if (proposal.votes + votes >= self.quorum
+            && proposal.votes < self.quorum) {
+            self.winning_proposal = option::none();
         };
 
-        governance.winning_proposal
+        self.winning_proposal
     }
 
-    fun add_voter_if_does_not_exist(governance: &mut Governance, user: address) {
-        if (!governance.voters.contains(&user)) {
+    fun add_voter_if_does_not_exist(self: &mut Governance, user: address) {
+        if (!self.voters.contains(&user)) {
             let voter = new_voter();
-            governance.voters.insert(user, voter);
+            self.voters.insert(user, voter);
         };
     }
 
-    fun increment_proposals_created(governance: &mut Governance, user: address) {
-        let voter = governance.voters.get_mut(&user);
+    fun increment_proposals_created(self: &mut Governance, user: address) {
+        let voter = self.voters.get_mut(&user);
         assert!(voter.proposals_created < MAX_PROPOSALS_CREATIONS_PER_USER, EUserProposalCreationLimitReached);
 
         voter.proposals_created = voter.proposals_created + 1;
     }
 
     fun update_voter(
-        governance: &mut Governance, 
+        self: &mut Governance, 
         user: address,
         proposal_id: u64,
         voting_power: u64,
     ) {
-        let voter = governance.voters.get_mut(&user);
+        let voter = self.voters.get_mut(&user);
         assert!(voter.votes_casted < MAX_VOTES_CASTED_PER_USER, EUserVotesCastedLimitReached);
 
         voter.votes_casted = voter.votes_casted + 1;

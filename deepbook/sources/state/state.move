@@ -1,14 +1,19 @@
 module deepbook::state {
-    use std::ascii::{String};
+    use std::ascii::String;
 
-    use sui::balance::{Balance};
-    use sui::table::{Table, add};
-    use sui::sui::SUI;
+    use sui::{
+        balance::Balance,
+        table::Table,
+        sui::SUI,
+        coin::{Self, Coin},
+    };
 
-    use deepbook::pool::{Pool, DEEP, Self};
-    use deepbook::pool_state::{new_pool_epoch_state_with_gov_params};
-    use deepbook::pool_metadata::{Self, PoolMetadata};
-    use deepbook::deep_reference_price::{DeepReferencePools};
+    use deepbook::{
+        pool::{Pool, DEEP, Self},
+        pool_state,
+        pool_metadata::{Self, PoolMetadata},
+        deep_reference_price::DeepReferencePools,
+    };
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
@@ -29,8 +34,8 @@ module deepbook::state {
     
     /// Create a new pool. Calls create_pool inside Pool then registers it in the state.
     /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
-    public fun create_pool<BaseAsset, QuoteAsset>(
-        state: &mut State,
+    public(package) fun create_pool<BaseAsset, QuoteAsset>(
+        self: &mut State,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
@@ -38,22 +43,22 @@ module deepbook::state {
         ctx: &mut TxContext,
     ) {
         let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, min_size, creation_fee, ctx);
-        assert!(!state.pools.contains(pool_key), EPoolAlreadyExists);
+        assert!(!self.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
-        state.pools.add(pool_key, pool_metadata);
+        self.pools.add(pool_key, pool_metadata);
     }
 
     /// Set the as stable or volatile. This changes the fee structure of the pool.
     /// New proposals will be asserted against the new fee structure.
     public(package) fun set_pool_as_stable<BaseAsset, QuoteAsset>(
         // cap: DeepbookAdminCap, TODO
-        state: &mut State,
+        self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         stable: bool,
         ctx: &TxContext,
     ) {
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.set_as_stable(stable);
         
         // TODO: set fees
@@ -63,12 +68,12 @@ module deepbook::state {
     /// reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
     /// pool is the Pool that will have the DEEP data point added.
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
-        state: &State,
+        self: &State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        let (base_conversion_rate, quote_conversion_rate) = state.deep_reference_pools.get_conversion_rates(reference_pool, pool);
+        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools.get_conversion_rates(reference_pool, pool);
         let timestamp = ctx.epoch_timestamp_ms();
         pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
@@ -81,18 +86,18 @@ module deepbook::state {
     /// and next_stake_amount, stake_amount + new stake during this epoch. Upon refresh, stake_amount = next_stake_amount.
     /// Total voting power is maintained in the pool metadata.
     public(package) fun stake<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        amount: Balance<DEEP>,
+        amount: Coin<DEEP>,
         ctx: &mut TxContext,
     ) {
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
 
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_voting_power(total_user_stake, amount.value());
 
-        state.vault.join(amount);
+        self.vault.join(amount.into_balance());
     }
 
     /// Unstake DEEP in the pool. This will decrease the user's voting power.
@@ -100,18 +105,18 @@ module deepbook::state {
     /// If the user has voted, their vote will be removed.
     /// If the user had accumulated rebates during this epoch, they will be forfeited.
     public(package) fun unstake<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &mut TxContext
-    ): Balance<DEEP> {
+    ): Coin<DEEP> {
         let user = ctx.sender();
 
         // total amount staked before this epoch, total amount staked during this epoch
         let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.remove_voting_power(user_old_stake, user_new_stake);
 
-        state.vault.split(user_old_stake + user_new_stake)
+        coin::from_balance(self.vault.split(user_old_stake + user_new_stake), ctx)
     }
 
     // GOVERNANCE 
@@ -119,7 +124,7 @@ module deepbook::state {
     /// Submit a proposal to change the fee structure of a pool.
     /// The user submitting this proposal must have vested stake in the pool.
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         maker_fee: u64,
         taker_fee: u64,
@@ -130,7 +135,7 @@ module deepbook::state {
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
         
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
 
@@ -138,7 +143,7 @@ module deepbook::state {
     /// If the vote pushes proposal over quorum, PoolData is created.
     /// Set the Pool's next_pool_data with the created PoolData.
     public(package) fun vote<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         proposal_id: u64,
         ctx: &mut TxContext,
@@ -147,13 +152,13 @@ module deepbook::state {
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
         
-        let pool_metadata = get_pool_metadata_mut(state, pool, ctx);
+        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
             let (stake_required, taker_fee, maker_fee) = winning_proposal.borrow().get_proposal_params();
-            option::some(new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee))
+            option::some(pool_state::new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee))
         };
         pool.set_next_epoch_pool_state(pool_state);
     }
@@ -161,14 +166,14 @@ module deepbook::state {
     // HELPERS
 
     fun get_pool_metadata_mut<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext
     ): &mut PoolMetadata {
         let pool_key = pool.pool_key();
-        assert!(state.pools.contains(pool_key), EPoolDoesNotExist);
+        assert!(self.pools.contains(pool_key), EPoolDoesNotExist);
 
-        let pool_metadata = &mut state.pools[pool_key];
+        let pool_metadata = &mut self.pools[pool_key];
         pool_metadata.refresh(ctx);
 
         pool_metadata

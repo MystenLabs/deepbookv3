@@ -1,17 +1,23 @@
 module deepbook::deep_reference_price {
-    use sui::vec_map::{VecMap};
-    use std::type_name::{Self};
-    use std::ascii::{String};
+    use std::{
+        type_name,
+        ascii::String,
+    };
+    
+    use sui::vec_map::VecMap;
 
-    use deepbook::pool::{Pool, DEEP}; // TODO
+    use deepbook::pool::{Pool, DEEP}; // TODO: DEEP token
 
     const EIneligiblePool: u64 = 1;
 
+    /// DeepReferencePools is a struct that holds the reference pools for the DEEP token.
+    /// DEEP/SUI, DEEP/USDC, DEEP/WETH
     public struct DeepReferencePools has store {
-        // base or quote -> pool_key
+        // Base or quote -> pool_key
         reference_pools: VecMap<String, String>,
     }
 
+    /// Add a reference pool. Can be performed by the DeepbookAdminCap owner.
     public(package) fun add_reference_pool<BaseAsset, QutoeAsset>(
         deep_reference_price: &mut DeepReferencePools,
         pool: &Pool<BaseAsset, QutoeAsset>,
