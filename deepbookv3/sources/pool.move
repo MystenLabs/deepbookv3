@@ -1,11 +1,15 @@
 module deepbook::pool {
-    use sui::balance::{Self,Balance};
-    use sui::table::{Self, Table};
-    use sui::sui::SUI;
-    use sui::event;
-    use sui::coin::{Self, Coin};
-    use std::ascii::String;
-    use std::type_name::{Self, TypeName};
+    use sui::{
+        balance::{Self,Balance},
+        table::{Self, Table},
+        sui::SUI,
+        event,
+        coin::{Self, Coin},
+    };
+    use std::{
+        ascii::String,
+        type_name::{Self, TypeName},
+    };
 
     use deepbook::deep_price::{Self, DeepPrice};
     use deepbook::string_helper::Self;
@@ -122,8 +126,6 @@ module deepbook::pool {
         next_ask_order_id: u64, // increments for each ask order
         deep_config: Option<DeepPrice>,
         users: Table<address, User>,
-        base_type: TypeName,
-        quote_type: TypeName,
 
         // Where funds will be held while order is live
         base_balances: Balance<BaseAsset>,
@@ -191,8 +193,6 @@ module deepbook::pool {
             burn_address: @0x0, // TODO
             treasury_address: @0x0, // TODO
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
-            base_type: base_type_name,
-            quote_type: quote_type_name,
         });
 
         transfer::public_transfer(coin::from_balance(creation_fee, ctx), @0x0); //TODO: update to treasury address
@@ -627,11 +627,11 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Accessor Functions <<<<<<<<<<<<<<<<<<<<<<<<
     
     /// Get the base and quote asset of pool, return as ascii strings
-    public fun get_base_quote_types<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
-        (pool.base_type.into_string(), pool.quote_type.into_string())
+    public fun get_base_quote_types<BaseAsset, QuoteAsset>(_pool: &Pool<BaseAsset, QuoteAsset>): (String, String) {
+        (type_name::get<BaseAsset>().into_string(), type_name::get<QuoteAsset>().into_string())
     }
 
-    /// Get the pool key string base+quote (if base<= quote) otherwise quote+base
+    /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
     public fun pool_key<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>): String {
        let (base, quote) = get_base_quote_types(pool);
        if (string_helper::compare_ascii_strings(&base, &quote)) {
