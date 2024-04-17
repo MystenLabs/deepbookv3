@@ -4,15 +4,14 @@ module deepbook::pool {
     use sui::sui::SUI;
     use sui::event;
     use sui::coin::{Self, Coin};
-    use std::ascii::{String};
+    use std::ascii::String;
     use std::type_name::{Self, TypeName};
-    use sui::linked_table::{LinkedTable};
 
     use deepbook::deep_price::{Self, DeepPrice};
-    use deepbook::string_helper::{Self};
-    use deepbook::critbit::{Self, CritbitTree, borrow_mut_leaf_by_index};
-    use deepbook::math::{mul};
-    use deepbook::user::{User};
+    use deepbook::string_helper::Self;
+    use deepbook::big_vector::{Self, BigVector};
+    use deepbook::math::mul;
+    use deepbook::user::User;
     use deepbook::account::{Self, Account};
     use deepbook::pool_state::{Self, PoolState, PoolEpochState};
     // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
@@ -112,19 +111,13 @@ module deepbook::pool {
         self_matching_prevention: u8
     }
 
-    public struct TickLevel has store {
-        price: u64,
-        // The key is order's order_id.
-        open_orders: LinkedTable<u64, Order>,
-    }
-
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key, store {
         id: UID,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        bids: CritbitTree<TickLevel>,
-        asks: CritbitTree<TickLevel>,
+        bids: BigVector<Order>,
+        asks: BigVector<Order>,
         next_bid_order_id: u64, // increments for each bid order
         next_ask_order_id: u64, // increments for each ask order
         deep_config: Option<DeepPrice>,
@@ -183,8 +176,8 @@ module deepbook::pool {
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
-            bids: critbit::new(ctx),
-            asks: critbit::new(ctx),
+            bids: big_vector::empty(10000, 1000, ctx),
+            asks: big_vector::empty(10000, 1000, ctx),
             next_bid_order_id: 0,
             next_ask_order_id: 0,
             users: table::new(ctx),
@@ -373,7 +366,8 @@ module deepbook::pool {
         transfer::public_transfer(amount, burn_address)
     }
 
-    /// Send fees collected in input tokens to treasury, called at trade settlement
+    #[allow(unused_function)]
+    /// Send fees collected in input tokens to treasury
     fun send_treasury<BaseAsset, QuoteAsset, T>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         fee: Coin<T>,
@@ -399,23 +393,25 @@ module deepbook::pool {
         pool.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
     }
 
+    #[allow(unused_function, unused_variable)]
     /// Allow placing of multiple orders, input can be adjusted
     public fun mul_place_order<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        is_bid: vector<bool>,
-        price: vector<u64>,
-        quantity: vector<u64>,
-        ctx: &mut TxContext,
+        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _account: &mut Account,
+        _is_bid: vector<bool>,
+        _price: vector<u64>,
+        _quantity: vector<u64>,
+        _ctx: &mut TxContext,
     ) {
         // TODO: to implement
     }
 
+    #[allow(unused_function, unused_variable)]
     /// Allow canceling of multiple orders
     public fun mul_cancel_order<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        ctx: &mut TxContext,
+        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _account: &mut Account,
+        _ctx: &mut TxContext,
     ) {
         // TODO: to implement
     }
@@ -519,7 +515,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         // Create Order
-        let order = Order {
+        let _order = Order {
             order_id: pool.next_bid_order_id,
             client_order_id,
             price,
@@ -547,17 +543,19 @@ module deepbook::pool {
         }
     }
 
+    #[allow(unused_function, unused_variable)]
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        client_order_id: u64,
-        account: &mut Account,
-        quantity: u64,
-        clock: u64, // TODO, update to Clock
-        ctx: &mut TxContext,
+        _pool: &mut Pool<BaseAsset, QuoteAsset>,
+        _client_order_id: u64,
+        _account: &mut Account,
+        _quantity: u64,
+        _clock: u64, // TODO, update to Clock
+        _ctx: &mut TxContext,
     ) {
         // To implement
     }
 
+    #[allow(unused_function, unused_variable)]
     /// cancels an order by id
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>, 

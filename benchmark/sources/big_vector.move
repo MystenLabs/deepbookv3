@@ -395,6 +395,18 @@ module benchmark::big_vector {
         }
     }
 
+    public fun contains<E: store>(self: &BigVector<E>, key: u128): bool {
+        if (self.root_id == NO_SLICE) {
+            return false
+        };
+
+        let (ref, off) = self.slice_following(key);
+        if (ref.is_null()) return false;
+        let slice = self.borrow_slice(ref);
+        
+        off < slice.length() && key == slice.key(off)
+    }
+
     /// Borrow a slice from this vector.
     public fun borrow_slice<E: store>(
         self: &BigVector<E>,

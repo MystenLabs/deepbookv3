@@ -51,6 +51,22 @@ module deepbook::big_vector_tests {
     }
 
     #[test]
+    fun test_insert_u128() {
+        let price: u64 = 4;
+        let mut key = price as u128;
+        key << 64;
+        key = key + 1;
+        let mut bv = empty_for_test();
+        bv.insert(key, 1);
+        key = price as u128;
+        key << 64;
+        key = key + 2;
+        bv.insert(key, 1);
+
+        bv.drop()
+    }
+
+    #[test]
     fun test_branching() {
         let mut bv = empty_for_test();
         bv.insert(43, 1);
