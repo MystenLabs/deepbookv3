@@ -38,7 +38,7 @@ module deepbook::user {
         (user.stake_amount, user.next_stake_amount)
     }
 
-    /// refresh user and return burn amount accumulated (if any)
+    /// Refresh user and return burn amount accumulated (if any)
     public(package) fun refresh(
         user: &mut User,
         ctx: &TxContext
@@ -56,7 +56,7 @@ module deepbook::user {
         burn
     }
 
-    /// increase user stake and return the new stake amount
+    /// Increase user stake and return the new stake amount
     public(package) fun increase_stake(
         user: &mut User,
         amount: u64,
@@ -66,7 +66,7 @@ module deepbook::user {
         user.stake_amount + user.next_stake_amount
     }
 
-    // remove user stake
+    // Remove user stake
     public(package) fun remove_stake(
         user: &mut User,
     ): (u64, u64) {
@@ -78,6 +78,7 @@ module deepbook::user {
         (old_stake, new_stake)
     }
 
+    /// Return user unclaimed rebates and reset to 0
     public(package) fun reset_rebates(
         user: &mut User,
     ): u64 {

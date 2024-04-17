@@ -1,8 +1,8 @@
 module deepbook::account {
     use sui::{
-        dynamic_field as df,
         coin::{Self, Coin},
         balance::{Balance},
+        dynamic_field as df,
     };
 
     use std::{
