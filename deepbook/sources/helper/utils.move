@@ -30,7 +30,7 @@ module deepbook::utils {
         res
     }
     
-    /// Compare two ASCII strings, return True if first string is less than to equal to the second string in lexicographic order
+    /// Compare two ASCII strings, return True if first string is less than or equal to the second string in lexicographic order
     public fun compare_ascii_strings(str1: &String, str2: &String): bool {
         let len1 = str1.length();
         let len2 = str2.length();
