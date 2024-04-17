@@ -86,7 +86,7 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
-    // Temporary, remove after structs all available
+    // Temporary, remove after on-chain dependency possible
     public struct DEEP has store {}
 
     public struct Order has store, drop {
