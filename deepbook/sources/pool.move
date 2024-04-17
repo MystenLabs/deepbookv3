@@ -6,6 +6,7 @@ module deepbook::pool {
         sui::SUI,
         event,
     };
+
     use std::{
         ascii::String,
         type_name::{Self, TypeName},
@@ -20,7 +21,6 @@ module deepbook::pool {
         user::User,
         math::mul,
     };
-    // use 0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::Deep::DEEP;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
     const EInvalidFee: u64 = 1;
@@ -34,7 +34,7 @@ module deepbook::pool {
     const EOrderInvalidLotSize: u64 = 9;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
-    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI
+    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
