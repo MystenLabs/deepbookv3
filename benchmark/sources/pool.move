@@ -123,8 +123,8 @@ module benchmark::pool {
         };
 
         let price_key = price as u128;
-        let (slice_ref, _) = open_orders.slice_following(price_key);
-        if (slice_ref.slice_is_null()) {
+        let (slice_ref, off) = open_orders.slice_following(price_key);
+        if (slice_ref.slice_is_null() || off == 0) {
             open_orders.insert(price_key, big_vector::empty(100000, 1000, ctx));
         };
 
