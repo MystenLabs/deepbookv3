@@ -8,6 +8,13 @@ module deepbook::pool_state {
         maker_fee: u64,
     }
 
+    public struct PoolState has copy, store {
+        epoch: u64,
+        historic_states: vector<PoolEpochState>,
+        current_state: PoolEpochState,
+        next_state: PoolEpochState,
+    }
+
     public(package) fun new_pool_epoch_state(
         total_maker_volume: u64,
         total_staked_maker_volume: u64,
@@ -32,13 +39,6 @@ module deepbook::pool_state {
         maker_fee: u64,
     ): PoolEpochState {
         new_pool_epoch_state(0, 0, 0, stake_required, taker_fee, maker_fee)
-    }
-
-    public struct PoolState has copy, store {
-        epoch: u64,
-        historic_states: vector<PoolEpochState>,
-        current_state: PoolEpochState,
-        next_state: PoolEpochState,
     }
 
     public(package) fun new_pool_state(

@@ -10,7 +10,7 @@ module deepbook::deep_price {
 
     public(package) fun initialize(): DeepPrice {
         // Initialize the DEEP price points
-        DeepPrice{
+        DeepPrice {
             last_insert_timestamp: 0,
             price_points_base: vector::empty(),
             price_points_quote: vector::empty(),
