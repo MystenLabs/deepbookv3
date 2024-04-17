@@ -322,7 +322,7 @@ module deepbook::pool {
     }
 
     #[allow(unused_function, unused_variable)]
-    /// Allow canceling of multiple orders
+    /// Allow canceling of all orders for an account
     public(package) fun cancel_all<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _account: &mut Account,
