@@ -100,37 +100,6 @@ module deepbookv3::pool {
         pool_state: PoolState,
     }
 
-    // Pool Data for a specific Epoch (1)
-	public struct PoolData has copy, store, drop {
-        epoch: u64,
-        total_maker_volume: u64,
-        total_staked_maker_volume: u64,
-        total_fees_collected: u64,
-        stake_required: u64,
-        taker_fee: u64,
-        maker_fee: u64,
-	}
-
-    public(package) fun new_pool_data(
-        ctx: &TxContext,
-        total_maker_volume: u64,
-        total_staked_maker_volume: u64,
-        total_fees_collected: u64,
-        stake_required: u64,
-        taker_fee: u64,
-        maker_fee: u64,
-    ): PoolData {
-        PoolData {
-            epoch: ctx.epoch(),
-            total_maker_volume,
-            total_staked_maker_volume,
-            total_fees_collected,
-            stake_required,
-            taker_fee,
-            maker_fee,
-        }
-    }
-
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         taker_fee: u64,
         maker_fee: u64,
