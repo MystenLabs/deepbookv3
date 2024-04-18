@@ -5,10 +5,7 @@ module deepbook::account {
         dynamic_field as df,
     };
 
-    use std::{
-        type_name::{Self},
-        ascii::{String},
-    };
+    use std::type_name::{Self, TypeName};
 
     //// The account doesn't have enough funds to be withdrawn
     const EAccountBalanceTooLow: u64 = 0;
@@ -22,7 +19,7 @@ module deepbook::account {
         
     /// Identifier for balance
     public struct BalanceKey<phantom T> has store, copy, drop {
-        coin_type: String,
+        coin_type: TypeName,
     }
 
     /// Create an individual account
@@ -39,8 +36,7 @@ module deepbook::account {
         account: &mut Account, 
         coin: Coin<T>,
     ) {
-        let coin_type_name = type_name::get<T>().into_string();
-        let balance_key = BalanceKey<T> { coin_type: coin_type_name };
+        let balance_key = BalanceKey<T> { coin_type: type_name::get<T>() };
 
         let balance = coin.into_balance();
         // Check if a balance for this coin type already exists.
@@ -60,9 +56,7 @@ module deepbook::account {
         amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let coin_type_name = type_name::get<T>().into_string();
-
-        let balance_key = BalanceKey<T> { coin_type: coin_type_name };
+        let balance_key = BalanceKey<T> { coin_type: type_name::get<T>() };
         // Check if the account has a balance for this coin type
         assert!(df::exists_with_type<BalanceKey<T>, Balance<T>>(&account.id, balance_key), EAccountBalanceTooLow);
         // Borrow the existing balance mutably to split it

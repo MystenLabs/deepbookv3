@@ -31,7 +31,7 @@ module deepbook::utils {
     }
     
     /// Compare two ASCII strings, return True if first string is less than or equal to the second string in lexicographic order
-    public fun compare_ascii_strings(str1: &String, str2: &String): bool {
+    public fun compare(str1: &String, str2: &String): bool {
         let len1 = str1.length();
         let len2 = str2.length();
         let min_len = if (len1 < len2) { len1 } else { len2 };
@@ -57,7 +57,7 @@ module deepbook::utils {
     }
 
     /// Append two ASCII strings and return the result
-    public fun append_strings(str1: &String, str2: &String): String {
+    public fun append(str1: &String, str2: &String): String {
         let mut result_bytes = vector::empty<u8>();
 
         // Append bytes from the first string
