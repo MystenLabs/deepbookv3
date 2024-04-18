@@ -242,7 +242,7 @@ module deepbook::pool {
             };
         };
 
-        let order_id = self.place_limit_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
+        let order_id = self.place_limit_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: *object::uid_as_inner(&self.id),
             order_id: 0,
@@ -613,6 +613,7 @@ module deepbook::pool {
         quantity: u64,
         fee_quantity: u64,
         is_bid: bool, // true for bid, false for ask
+        expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
     ): u64 {
         let order_id = self.next_bid_order_id;
@@ -628,7 +629,7 @@ module deepbook::pool {
             fee_is_deep: self.fee_is_deep(),
             is_bid,
             owner: ctx.sender(),
-            expire_timestamp: 0, // TODO
+            expire_timestamp,
             self_matching_prevention: 0, // TODO
         };
 
