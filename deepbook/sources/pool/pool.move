@@ -12,7 +12,7 @@ module deepbook::pool {
 
     use std::{
         ascii::String,
-        type_name::{Self},
+        type_name,
     };
 
     use deepbook::{
