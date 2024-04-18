@@ -406,7 +406,7 @@ module deepbook::pool {
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
         });
 
-        transfer::public_transfer(coin::from_balance(creation_fee, ctx), TREASURY_ADDRESS);
+        transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
         let pool_key = pool.pool_key();
         transfer::share_object(pool);
 
@@ -420,8 +420,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext
     ): u64 {
-        let user = self.get_user_mut(user, ctx);
-        user.increase_stake(amount)
+        self.get_user_mut(user, ctx).increase_stake(amount)
     }
 
     /// Removes a user's stake
@@ -430,8 +429,7 @@ module deepbook::pool {
         user: address,
         ctx: &mut TxContext
     ): (u64, u64) {
-        let user = self.get_user_mut(user, ctx);
-        user.remove_stake()
+        self.get_user_mut(user, ctx).remove_stake()
     }
 
     /// Get the user's (current, next) stake amounts
@@ -443,8 +441,7 @@ module deepbook::pool {
         if (!self.users.contains(user)) {
             (0, 0)
         } else {
-            let user = self.get_user_mut(user, ctx);
-            user.stake()
+            self.get_user_mut(user, ctx).stake()
         }
     }
 
@@ -498,6 +495,9 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
+    ///
+    /// TODO: this function should not take ctx;
+    /// TODO: burn can't be a send to an address, use "burnt_balance" instead.
     fun get_user_mut<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
@@ -510,7 +510,7 @@ module deepbook::pool {
         if (burn_amount > 0) {
             let balance = self.deepbook_balance.split(burn_amount);
             let coins = balance.into_coin(ctx);
-            burn(coins);
+            burn(coins); // TODO: this should not be here
         };
         user
     }
@@ -562,6 +562,8 @@ module deepbook::pool {
     }
 
     /// Burn DEEP tokens
+    ///
+    /// TODO: SHOULD NOT WORK LIKE THIS, PAYS GAS AT USER EXPENSE
     fun burn(amount: Coin<DEEP>) {
         transfer::public_transfer(amount, BURN_ADDRESS)
     }
