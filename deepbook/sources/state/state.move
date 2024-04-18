@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::state {
     use std::ascii::String;
 
@@ -5,7 +8,7 @@ module deepbook::state {
         balance::Balance,
         table::Table,
         sui::SUI,
-        coin::{Self, Coin},
+        coin::Coin,
     };
 
     use deepbook::{
@@ -31,9 +34,10 @@ module deepbook::state {
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
-    
-    /// Create a new pool. Calls create_pool inside Pool then registers it in the state.
-    /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
+
+    /// Create a new pool. Calls create_pool inside Pool then registers it in
+    /// the state. `pool_key` is a sorted, concatenated string of the two asset
+    /// names. If SUI/USDC exists, you can't create USDC/SUI.
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         self: &mut State,
         tick_size: u64,
@@ -42,7 +46,16 @@ module deepbook::state {
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, min_size, creation_fee, ctx);
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(
+            VOLATILE_TAKER_FEE,
+            VOLATILE_MAKER_FEE,
+            tick_size,
+            lot_size,
+            min_size,
+            creation_fee,
+            ctx
+        );
+
         assert!(!self.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
@@ -60,7 +73,7 @@ module deepbook::state {
     ) {
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.set_as_stable(stable);
-        
+
         // TODO: set fees
     }
 
@@ -73,8 +86,9 @@ module deepbook::state {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools.get_conversion_rates(reference_pool, pool);
-        let timestamp = ctx.epoch_timestamp_ms();
+        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
+            .get_conversion_rates(reference_pool, pool);
+        let timestamp = ctx.epoch_timestamp_ms(); // TODO: Clock or Epoch?
         pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
@@ -89,7 +103,7 @@ module deepbook::state {
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         amount: Coin<DEEP>,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
@@ -116,10 +130,10 @@ module deepbook::state {
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.remove_voting_power(user_old_stake, user_new_stake);
 
-        coin::from_balance(self.vault.split(user_old_stake + user_new_stake), ctx)
+        self.vault.split(user_old_stake + user_new_stake).into_coin(ctx)
     }
 
-    // GOVERNANCE 
+    // GOVERNANCE
 
     /// Submit a proposal to change the fee structure of a pool.
     /// The user submitting this proposal must have vested stake in the pool.
@@ -129,12 +143,12 @@ module deepbook::state {
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
-        
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
@@ -146,19 +160,25 @@ module deepbook::state {
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         proposal_id: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
-        
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
-            let (stake_required, taker_fee, maker_fee) = winning_proposal.borrow().get_proposal_params();
-            option::some(pool_state::new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee))
+            let (stake_required, taker_fee, maker_fee) = winning_proposal
+                .borrow()
+                .get_proposal_params();
+
+            let pool_state = pool_state::new_pool_epoch_state_with_gov_params(
+                stake_required, taker_fee, maker_fee
+            );
+            option::some(pool_state)
         };
         pool.set_next_epoch_pool_state(pool_state);
     }

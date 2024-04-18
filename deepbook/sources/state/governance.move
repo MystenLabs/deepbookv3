@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::governance {
     use sui::vec_map::{VecMap, Self};
 
@@ -153,10 +156,10 @@ module deepbook::governance {
         proposal.votes = proposal.votes + voting_power;
 
         if (proposal.votes >= self.quorum) {
-            self.winning_proposal = option::some(*proposal);
+            self.winning_proposal.swap_or_fill(*proposal);
         };
 
-        self.winning_proposal
+        self.winning_proposal // implicit copy?
     }
 
     /// Remove a vote from a proposal.
@@ -200,7 +203,7 @@ module deepbook::governance {
     }
 
     fun update_voter(
-        self: &mut Governance, 
+        self: &mut Governance,
         user: address,
         proposal_id: u64,
         voting_power: u64,

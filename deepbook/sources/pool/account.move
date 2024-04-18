@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::account {
     use sui::{
         coin::{Self, Coin},
@@ -16,7 +19,7 @@ module deepbook::account {
         owner: address,
         // coin_balances will be represented in dynamic fields
     }
-        
+
     /// Identifier for balance
     public struct BalanceKey<phantom T> has store, copy, drop {
         coin_type: TypeName,
@@ -33,7 +36,7 @@ module deepbook::account {
 
     /// Deposit funds to an account
     public fun deposit<T>(
-        account: &mut Account, 
+        account: &mut Account,
         coin: Coin<T>,
     ) {
         let balance_key = BalanceKey<T> { coin_type: type_name::get<T>() };
@@ -52,7 +55,7 @@ module deepbook::account {
 
     /// Withdraw funds from an account
     public fun withdraw<T>(
-        account: &mut Account, 
+        account: &mut Account,
         amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
@@ -69,7 +72,7 @@ module deepbook::account {
     }
 
     /// Returns the owner of the account
-    public fun get_owner(account: &Account): address {
-        account.owner   
+    public fun owner(account: &Account): address {
+        account.owner
     }
 }

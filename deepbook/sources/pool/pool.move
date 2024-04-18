@@ -1,8 +1,11 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
-        coin::{Self, Coin},
+        coin::{Self, Coin, TreasuryCap},
         sui::SUI,
         event,
     };
@@ -35,7 +38,6 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
-    const BURN_ADDRESS: address = @0x0; // TODO: update to burn address
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
@@ -120,7 +122,9 @@ module deepbook::pool {
         self_matching_prevention: u8
     }
 
-    public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key, store {
+    // TODO: why Pool has `store` ?
+    // TODO: consider adding back if necessary
+    public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         tick_size: u64,
         lot_size: u64,
@@ -139,13 +143,16 @@ module deepbook::pool {
 
         // Historical, current, and next PoolData
         pool_state: PoolState,
+
+        // Store burned DEEP tokens
+        burnt_balance: Balance<DEEP>,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a maker order
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         client_order_id: u64,
         price: u64,
@@ -161,7 +168,7 @@ module deepbook::pool {
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
-        let maker_fee = self.pool_state.get_maker_fee();
+        let maker_fee = self.pool_state.maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
         // If order fee is paid in DEEP tokens
@@ -189,8 +196,8 @@ module deepbook::pool {
             };
         };
 
-        let user_data = &mut self.users[account.get_owner()];
-        let (available_base_amount, available_quote_amount) = user_data.get_settle_amounts();
+        let user_data = &mut self.users[account.owner()];
+        let (available_base_amount, available_quote_amount) = user_data.settle_amounts();
 
         if (is_bid) {
             // Deposit quote asset if there's not enough in custodian
@@ -198,23 +205,37 @@ module deepbook::pool {
             let quote_quantity = mul(quantity, price);
             if (available_quote_amount < quantity){
                 let difference = quote_quantity - available_quote_amount;
-                let coin: Coin<QuoteAsset> = account.withdraw(difference, ctx);
-                let balance: Balance<QuoteAsset> = coin.into_balance();
-                self.quote_balances.join(balance);
-                user_data.set_settle_amounts(available_base_amount, 0, ctx);
+                let quote: Coin<QuoteAsset> = account.withdraw(difference, ctx);
+                self.quote_balances.join(quote.into_balance());
+                user_data.set_settle_amounts(
+                    available_base_amount,
+                    0,
+                    ctx
+                );
             } else {
-                user_data.set_settle_amounts(available_base_amount, available_quote_amount - quote_quantity, ctx);
+                user_data.set_settle_amounts(
+                    available_base_amount,
+                    available_quote_amount - quote_quantity,
+                    ctx
+                );
             };
         } else {
             // Deposit base asset if there's not enough in custodian
             if (available_base_amount < quantity){
                 let difference = quantity - available_base_amount;
-                let coin: Coin<BaseAsset> = account.withdraw(difference, ctx);
-                let balance: Balance<BaseAsset> = coin.into_balance();
-                self.base_balances.join(balance);
-                user_data.set_settle_amounts(0, available_quote_amount, ctx);
+                let base = account.withdraw(difference, ctx);
+                self.base_balances.join(base.into_balance());
+                user_data.set_settle_amounts(
+                    0,
+                    available_quote_amount,
+                    ctx
+                );
             } else {
-                user_data.set_settle_amounts(available_base_amount - quantity, available_quote_amount, ctx);
+                user_data.set_settle_amounts(
+                    available_base_amount - quantity,
+                    available_quote_amount,
+                    ctx
+                );
             };
         };
 
@@ -224,7 +245,7 @@ module deepbook::pool {
             order_id: 0,
             client_order_id,
             is_bid,
-            owner: account.get_owner(),
+            owner: account.owner(),
             original_quantity: quantity,
             base_asset_quantity_placed: quantity,
             price,
@@ -237,7 +258,7 @@ module deepbook::pool {
     #[allow(unused_function, unused_variable)]
     /// cancels an order by id
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         order_id: u64,
         ctx: &mut TxContext,
@@ -250,25 +271,25 @@ module deepbook::pool {
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
             let quote_asset_quantity = mul(order_cancelled.quantity, order_cancelled.price);
-            self.withdraw(account, quote_asset_quantity, 1, ctx)
+            self.withdraw_quote(account, quote_asset_quantity, ctx)
         } else {
             // deposit base asset back into user account
-            self.withdraw(account, order_cancelled.quantity, 0, ctx)
+            self.withdraw_base(account, order_cancelled.quantity, ctx)
         };
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
         if (order_cancelled.fee_is_deep) {
             // withdraw deepbook fees
-            self.withdraw(account, order_cancelled.fee_quantity, 2, ctx)
+            self.withdraw_deep(account, order_cancelled.fee_quantity, ctx)
         } else if (order_cancelled.is_bid) {
             // withdraw quote asset fees
             // can be combined with withdrawal above, separate now for clarity
-            self.withdraw(account, order_cancelled.fee_quantity, 1, ctx)
+            self.withdraw_quote(account, order_cancelled.fee_quantity, ctx)
         } else {
             // withdraw base asset fees
             // can be combined with withdrawal above, separate now for clarity
-            self.withdraw(account, order_cancelled.fee_quantity, 0, ctx)
+            self.withdraw_base(account, order_cancelled.fee_quantity, ctx)
         };
 
         // Emit order cancelled event
@@ -290,11 +311,10 @@ module deepbook::pool {
         ctx: &mut TxContext
     ): Coin<DEEP> {
         let user = self.get_user_mut(ctx.sender(), ctx);
-        
         let amount = user.reset_rebates();
-        let balance = self.deepbook_balance.split(amount);
-        
-        balance.into_coin(ctx)
+        self.deepbook_balance
+            .split(amount)
+            .into_coin(ctx)
     }
 
     /// Withdraw settled funds back into user account
@@ -304,8 +324,8 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         // Get the valid user information
-        let user_data = &mut self.users[account.get_owner()];
-        let (base_amount, quote_amount) = user_data.get_settle_amounts();
+        let user_data = &mut self.users[account.owner()];
+        let (base_amount, quote_amount) = user_data.settle_amounts();
 
         // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
@@ -371,7 +391,7 @@ module deepbook::pool {
         let base_type_name = type_name::get<BaseAsset>();
         let quote_type_name = type_name::get<QuoteAsset>();
         assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
-        
+
         let pool_uid = object::new(ctx);
         let pool_id = *pool_uid.uid_as_inner();
 
@@ -400,10 +420,11 @@ module deepbook::pool {
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
+            burnt_balance: balance::zero(),
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
         });
 
-        transfer::public_transfer(coin::from_balance(creation_fee, ctx), TREASURY_ADDRESS);
+        transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
         let pool_key = pool.pool_key();
         transfer::share_object(pool);
 
@@ -415,33 +436,30 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         amount: u64,
-        ctx: &mut TxContext
+        ctx: &TxContext,
     ): u64 {
-        let user = self.get_user_mut(user, ctx);
-        user.increase_stake(amount)
+        self.get_user_mut(user, ctx).increase_stake(amount)
     }
 
     /// Removes a user's stake
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext
     ): (u64, u64) {
-        let user = self.get_user_mut(user, ctx);
-        user.remove_stake()
+        self.get_user_mut(user, ctx).remove_stake()
     }
 
     /// Get the user's (current, next) stake amounts
     public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext,
     ): (u64, u64) {
         if (!self.users.contains(user)) {
             (0, 0)
         } else {
-            let user = self.get_user_mut(user, ctx);
-            user.get_user_stake()
+            self.get_user_mut(user, ctx).stake()
         }
     }
 
@@ -453,10 +471,11 @@ module deepbook::pool {
         timestamp: u64,
     ) {
         if (self.deep_config.is_none()) {
-            self.deep_config = option::some(deep_price::initialize());
+            self.deep_config.fill(deep_price::empty());
         };
-        let config = self.deep_config.borrow_mut();
-        config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
+        self.deep_config
+            .borrow_mut()
+            .add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
     /// First interaction of each epoch processes this state update
@@ -495,20 +514,23 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
+    ///
+    /// TODO: remove hidden mutation from access function.
+    /// TODO: context should not be an argument here.
     fun get_user_mut<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext
     ): &mut User {
         assert!(self.users.contains(user), EUserNotFound);
 
         let user = &mut self.users[user];
         let burn_amount = user.refresh(ctx);
         if (burn_amount > 0) {
-            let balance = self.deepbook_balance.split(burn_amount);
-            let coins = balance.into_coin(ctx);
-            burn(coins);
+            let burnt_balance = self.deepbook_balance.split(burn_amount);
+            self.burnt_balance.join(burnt_balance);
         };
+
         user
     }
 
@@ -524,58 +546,56 @@ module deepbook::pool {
     ) {
         // Withdraw from user account and merge into pool balances
         if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = user_account.withdraw(amount, ctx);
-            self.base_balances.join(coin.into_balance());
+            let base = user_account.withdraw(amount, ctx);
+            self.base_balances.join(base.into_balance());
         } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = user_account.withdraw(amount, ctx);
-            self.quote_balances.join(coin.into_balance());
+            let quote = user_account.withdraw(amount, ctx);
+            self.quote_balances.join(quote.into_balance());
         } else if (coin_type == 2){
-            let coin: Coin<DEEP> = user_account.withdraw(amount, ctx);
+            let coin = user_account.withdraw(amount, ctx);
             self.deepbook_balance.join(coin.into_balance());
         }
     }
 
-    /// This will be automatically called when order is cancelled
-    /// User cannot manually withdraw
-    /// Withdraw BaseAsset, QuoteAsset, Deepbook Tokens
-    fun withdraw<BaseAsset, QuoteAsset>(
+    fun withdraw_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u8, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
-        // Withdraw from pool balances and deposit into user account
-        if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = coin::from_balance(self.base_balances.split(amount), ctx);
-            user_account.deposit(coin);
-        } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = coin::from_balance(self.quote_balances.split(amount), ctx);
-            user_account.deposit(coin);
-        } else if (coin_type == 2){
-            let coin: Coin<DEEP> = coin::from_balance(self.deepbook_balance.split(amount), ctx);
-            user_account.deposit(coin);
-        };
+        let coin = self.base_balances.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
     }
 
-    /// Burn DEEP tokens
-    fun burn(
-        amount: Coin<DEEP>,
+    fun withdraw_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
     ) {
-        transfer::public_transfer(amount, BURN_ADDRESS)
+        let coin = self.quote_balances.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
+    }
+
+    fun withdraw_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let coin = self.deepbook_balance.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
     }
 
     #[allow(unused_function)]
     /// Send fees collected in input tokens to treasury
-    fun send_treasury<T>(
-        fee: Coin<T>,
-    ) {
+    fun send_treasury<T>(fee: Coin<T>) {
         transfer::public_transfer(fee, TREASURY_ADDRESS)
     }
 
     /// Balance accounting happens before this function is called
     fun place_maker_order_int<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,
         quantity: u64,
@@ -604,12 +624,12 @@ module deepbook::pool {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            self.next_bid_order_id =  self.next_bid_order_id + 1;
+            self.next_bid_order_id = self.next_bid_order_id + 1;
         } else {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            self.next_ask_order_id =  self.next_ask_order_id + 1;
+            self.next_ask_order_id = self.next_ask_order_id + 1;
         };
 
         order_id
@@ -643,6 +663,13 @@ module deepbook::pool {
     /// Returns if the order fee is paid in deep tokens
     fun fee_is_deep<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.deep_config.is_some()
+    }
+
+    #[allow(unused_function)]
+    fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
+        let amount = self.burnt_balance.value();
+        let burnt = self.burnt_balance.split(amount);
+        tcap.supply_mut().decrease_supply(burnt);
     }
 
     // // Other helpful functions

@@ -1,9 +1,12 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::deep_reference_price {
     use std::{
         type_name,
         ascii::String,
     };
-    
+
     use sui::vec_map::VecMap;
 
     use deepbook::pool::{Pool, DEEP}; // TODO: DEEP token
@@ -25,7 +28,7 @@ module deepbook::deep_reference_price {
     ) {
         let (base, quote) = pool.get_base_quote_types();
         let deep_type = type_name::get<DEEP>().into_string();
-        
+
         assert!(base == deep_type || quote == deep_type, EIneligiblePool);
 
         if (base == deep_type) {

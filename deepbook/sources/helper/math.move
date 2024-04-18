@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::math {
     /// scaling setting for float
     const FLOAT_SCALING_U128: u128 = 1_000_000_000;

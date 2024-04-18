@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::pool_state {
     public struct PoolEpochState has copy, store, drop {
         total_maker_volume: u64,
@@ -83,15 +86,15 @@ module deepbook::pool_state {
         }
     }
 
-    public(package) fun get_maker_fee(state: &PoolState): u64 {
+    public(package) fun maker_fee(state: &PoolState): u64 {
         state.current_state.maker_fee
     }
 
-    public(package) fun get_taker_fee(state: &PoolState): u64 {
+    public(package) fun taker_fee(state: &PoolState): u64 {
         state.current_state.taker_fee
     }
 
-    public(package) fun get_stake_required(state: &PoolState): u64 {
+    public(package) fun stake_required(state: &PoolState): u64 {
         state.current_state.stake_required
     }
 }
