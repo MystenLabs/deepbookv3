@@ -122,7 +122,9 @@ module deepbook::pool {
         self_matching_prevention: u8
     }
 
-    public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key, store {
+    // TODO: why Pool has `store` ?
+    // TODO: consider adding back if necessary
+    public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         tick_size: u64,
         lot_size: u64,
@@ -203,23 +205,37 @@ module deepbook::pool {
             let quote_quantity = mul(quantity, price);
             if (available_quote_amount < quantity){
                 let difference = quote_quantity - available_quote_amount;
-                let coin: Coin<QuoteAsset> = account.withdraw(difference, ctx);
-                let balance: Balance<QuoteAsset> = coin.into_balance();
-                self.quote_balances.join(balance);
-                user_data.set_settle_amounts(available_base_amount, 0, ctx);
+                let quote: Coin<QuoteAsset> = account.withdraw(difference, ctx);
+                self.quote_balances.join(quote.into_balance());
+                user_data.set_settle_amounts(
+                    available_base_amount,
+                    0,
+                    ctx
+                );
             } else {
-                user_data.set_settle_amounts(available_base_amount, available_quote_amount - quote_quantity, ctx);
+                user_data.set_settle_amounts(
+                    available_base_amount,
+                    available_quote_amount - quote_quantity,
+                    ctx
+                );
             };
         } else {
             // Deposit base asset if there's not enough in custodian
             if (available_base_amount < quantity){
                 let difference = quantity - available_base_amount;
-                let coin: Coin<BaseAsset> = account.withdraw(difference, ctx);
-                let balance: Balance<BaseAsset> = coin.into_balance();
-                self.base_balances.join(balance);
-                user_data.set_settle_amounts(0, available_quote_amount, ctx);
+                let base = account.withdraw(difference, ctx);
+                self.base_balances.join(base.into_balance());
+                user_data.set_settle_amounts(
+                    0,
+                    available_quote_amount,
+                    ctx
+                );
             } else {
-                user_data.set_settle_amounts(available_base_amount - quantity, available_quote_amount, ctx);
+                user_data.set_settle_amounts(
+                    available_base_amount - quantity,
+                    available_quote_amount,
+                    ctx
+                );
             };
         };
 
@@ -255,25 +271,25 @@ module deepbook::pool {
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
             let quote_asset_quantity = mul(order_cancelled.quantity, order_cancelled.price);
-            self.withdraw(account, quote_asset_quantity, 1, ctx)
+            self.withdraw_quote(account, quote_asset_quantity, ctx)
         } else {
             // deposit base asset back into user account
-            self.withdraw(account, order_cancelled.quantity, 0, ctx)
+            self.withdraw_base(account, order_cancelled.quantity, ctx)
         };
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
         if (order_cancelled.fee_is_deep) {
             // withdraw deepbook fees
-            self.withdraw(account, order_cancelled.fee_quantity, 2, ctx)
+            self.withdraw_deep(account, order_cancelled.fee_quantity, ctx)
         } else if (order_cancelled.is_bid) {
             // withdraw quote asset fees
             // can be combined with withdrawal above, separate now for clarity
-            self.withdraw(account, order_cancelled.fee_quantity, 1, ctx)
+            self.withdraw_quote(account, order_cancelled.fee_quantity, ctx)
         } else {
             // withdraw base asset fees
             // can be combined with withdrawal above, separate now for clarity
-            self.withdraw(account, order_cancelled.fee_quantity, 0, ctx)
+            self.withdraw_base(account, order_cancelled.fee_quantity, ctx)
         };
 
         // Emit order cancelled event
@@ -295,11 +311,10 @@ module deepbook::pool {
         ctx: &mut TxContext
     ): Coin<DEEP> {
         let user = self.get_user_mut(ctx.sender(), ctx);
-
         let amount = user.reset_rebates();
-        let balance = self.deepbook_balance.split(amount);
-
-        balance.into_coin(ctx)
+        self.deepbook_balance
+            .split(amount)
+            .into_coin(ctx)
     }
 
     /// Withdraw settled funds back into user account
@@ -531,38 +546,45 @@ module deepbook::pool {
     ) {
         // Withdraw from user account and merge into pool balances
         if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = user_account.withdraw(amount, ctx);
-            self.base_balances.join(coin.into_balance());
+            let base = user_account.withdraw(amount, ctx);
+            self.base_balances.join(base.into_balance());
         } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = user_account.withdraw(amount, ctx);
-            self.quote_balances.join(coin.into_balance());
+            let quote = user_account.withdraw(amount, ctx);
+            self.quote_balances.join(quote.into_balance());
         } else if (coin_type == 2){
-            let coin: Coin<DEEP> = user_account.withdraw(amount, ctx);
+            let coin = user_account.withdraw(amount, ctx);
             self.deepbook_balance.join(coin.into_balance());
         }
     }
 
-    /// This will be automatically called when order is cancelled
-    /// User cannot manually withdraw
-    /// Withdraw BaseAsset, QuoteAsset, Deepbook Tokens
-    fun withdraw<BaseAsset, QuoteAsset>(
+    fun withdraw_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u8, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
-        // Withdraw from pool balances and deposit into user account
-        if (coin_type == 0) {
-            let coin: Coin<BaseAsset> = coin::from_balance(self.base_balances.split(amount), ctx);
-            user_account.deposit(coin);
-        } else if (coin_type == 1) {
-            let coin: Coin<QuoteAsset> = coin::from_balance(self.quote_balances.split(amount), ctx);
-            user_account.deposit(coin);
-        } else if (coin_type == 2){
-            let coin: Coin<DEEP> = coin::from_balance(self.deepbook_balance.split(amount), ctx);
-            user_account.deposit(coin);
-        };
+        let coin = self.base_balances.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
+    }
+
+    fun withdraw_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let coin = self.quote_balances.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
+    }
+
+    fun withdraw_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let coin = self.deepbook_balance.split(amount).into_coin(ctx);
+        user_account.deposit(coin);
     }
 
     #[allow(unused_function)]
@@ -602,12 +624,12 @@ module deepbook::pool {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            self.next_bid_order_id =  self.next_bid_order_id + 1;
+            self.next_bid_order_id = self.next_bid_order_id + 1;
         } else {
             // TODO: Place ask order into BigVec
 
             // Increment order id
-            self.next_ask_order_id =  self.next_ask_order_id + 1;
+            self.next_ask_order_id = self.next_ask_order_id + 1;
         };
 
         order_id
