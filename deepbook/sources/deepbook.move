@@ -46,10 +46,10 @@ module deepbook::deepbook {
         state: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
+        clock: &Clock,
     ) {
         state.add_deep_price_point<BaseAsset, QuoteAsset>(
-            reference_pool, pool, ctx
+            reference_pool, pool, clock
         );
     }
 
