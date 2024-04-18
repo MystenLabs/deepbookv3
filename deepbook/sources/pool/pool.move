@@ -6,6 +6,7 @@ module deepbook::pool {
         balance::{Self,Balance},
         table::{Self, Table},
         coin::{Self, Coin, TreasuryCap},
+        clock::Clock,
         sui::SUI,
         event,
     };
@@ -32,9 +33,10 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EUserNotFound: u64 = 6;
-    const EOrderInvalidTickSize: u64 = 7;
+    const EOrderInvalidPrice: u64 = 7;
     const EOrderBelowMinimumSize: u64 = 8;
     const EOrderInvalidLotSize: u64 = 9;
+    const EInvalidExpireTimestamp: u64 = 10;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -150,7 +152,7 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
-    /// Place a maker order
+    /// Place a limit order to the order book.
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -158,15 +160,19 @@ module deepbook::pool {
         price: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
+        expire_timestamp: u64, // Expiration timestamp in ms
+        clock: &Clock,
         ctx: &mut TxContext,
     ): u64 {
         // Refresh state as necessary if first order of epoch
         self.refresh_state(ctx);
 
-        assert!(price % self.tick_size == 0, EOrderInvalidTickSize);
+        assert!(price > 0, EOrderInvalidPrice);
+        assert!(price % self.tick_size == 0, EOrderInvalidPrice);
         // Check quantity is above minimum quantity (in base asset)
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
+        assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
         let maker_fee = self.pool_state.maker_fee();
         let mut fee_quantity;
@@ -236,7 +242,7 @@ module deepbook::pool {
             };
         };
 
-        let order_id = self.place_maker_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
+        let order_id = self.place_limit_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: *object::uid_as_inner(&self.id),
             order_id: 0,
@@ -600,7 +606,7 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun place_maker_order_int<BaseAsset, QuoteAsset>(
+    fun place_limit_order_int<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,
