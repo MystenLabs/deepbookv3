@@ -179,20 +179,17 @@ module deepbook::pool {
             // TODO: make sure there is mul_down and mul_up for rounding
             let deep_quantity = mul(config.deep_per_base(), quantity);
             fee_quantity = mul(deep_quantity, maker_fee);
-            // Deposit the deepbook fees
-            self.deposit(account, fee_quantity, 2, ctx);
+            self.deposit_deep(account, fee_quantity, ctx);
         }
-        // If unverified pool
+        // If unverified pool, fees paid in base/quote assets
         else {
             fee_quantity = mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
             place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
                 fee_quantity = mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
-                // deposit quote asset fees
-                self.deposit(account, fee_quantity, 1, ctx);
+                self.deposit_quote(account, fee_quantity, ctx);
             } else {
-                // deposit base asset fees
-                self.deposit(account, fee_quantity, 0, ctx);
+                self.deposit_base(account, fee_quantity, ctx);
             };
         };
 
@@ -535,26 +532,35 @@ module deepbook::pool {
     }
 
     /// This will be automatically called if not enough assets in settled_funds for a trade
-    /// User cannot manually deposit
-    /// Deposit BaseAsset, QuoteAsset, Deepbook Tokens
-    fun deposit<BaseAsset, QuoteAsset>(
+    /// User cannot manually deposit. Funds are withdrawn from user account and merged into pool balances.
+    fun deposit_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
-        // Withdraw from user account and merge into pool balances
-        if (coin_type == 0) {
-            let base = user_account.withdraw(amount, ctx);
-            self.base_balances.join(base.into_balance());
-        } else if (coin_type == 1) {
-            let quote = user_account.withdraw(amount, ctx);
-            self.quote_balances.join(quote.into_balance());
-        } else if (coin_type == 2){
-            let coin = user_account.withdraw(amount, ctx);
-            self.deepbook_balance.join(coin.into_balance());
-        }
+        let base = user_account.withdraw(amount, ctx);
+        self.base_balances.join(base.into_balance());
+    }
+
+    fun deposit_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let quote = user_account.withdraw(amount, ctx);
+        self.quote_balances.join(quote.into_balance());
+    }
+
+    fun deposit_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let coin = user_account.withdraw(amount, ctx);
+        self.deepbook_balance.join(coin.into_balance());
     }
 
     fun withdraw_base<BaseAsset, QuoteAsset>(
