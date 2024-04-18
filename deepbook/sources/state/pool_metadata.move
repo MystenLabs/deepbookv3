@@ -118,6 +118,8 @@ module deepbook::pool_metadata {
         }
     }
 
+    /// Given a user's total stake and new stake from this epoch,
+    /// calculate the new voting power to add to the governance.
     fun calculate_new_voting_power(
         total_stake: u64,
         new_stake: u64,
@@ -134,6 +136,8 @@ module deepbook::pool_metadata {
         amount_till_cutoff + (new_stake - amount_till_cutoff) / 2
     }
 
+    /// Given a user's total stake and new stake from this epoch,
+    /// calculate the voting power and new voting power to remove from the governance.
     fun calculate_voting_power_removed(
         old_stake: u64,
         new_stake: u64,
