@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 #[test_only]
 module deepbook::big_vector_tests {
     use deepbook::big_vector::{Self as bv, BigVector};

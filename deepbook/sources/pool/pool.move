@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
@@ -145,7 +148,7 @@ module deepbook::pool {
 
     /// Place a maker order
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         client_order_id: u64,
         price: u64,
@@ -237,7 +240,7 @@ module deepbook::pool {
     #[allow(unused_function, unused_variable)]
     /// cancels an order by id
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         order_id: u64,
         ctx: &mut TxContext,
@@ -290,10 +293,10 @@ module deepbook::pool {
         ctx: &mut TxContext
     ): Coin<DEEP> {
         let user = self.get_user_mut(ctx.sender(), ctx);
-        
+
         let amount = user.reset_rebates();
         let balance = self.deepbook_balance.split(amount);
-        
+
         balance.into_coin(ctx)
     }
 
@@ -371,7 +374,7 @@ module deepbook::pool {
         let base_type_name = type_name::get<BaseAsset>();
         let quote_type_name = type_name::get<QuoteAsset>();
         assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
-        
+
         let pool_uid = object::new(ctx);
         let pool_id = *pool_uid.uid_as_inner();
 
@@ -575,7 +578,7 @@ module deepbook::pool {
 
     /// Balance accounting happens before this function is called
     fun place_maker_order_int<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>, 
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,
         quantity: u64,

@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::pool_metadata {
     use deepbook::governance::{Governance, Proposal, Self};
 
@@ -11,7 +14,7 @@ module deepbook::pool_metadata {
         is_stable: bool,
         // Governance details.
         governance: Governance,
-        // Voting power generated from stakes during this epoch. 
+        // Voting power generated from stakes during this epoch.
         // During a refresh, this value is added to the governance and set to 0.
         new_voting_power: u64,
     }
@@ -32,7 +35,7 @@ module deepbook::pool_metadata {
         self.is_stable = stable;
     }
 
-    /// Refresh the pool metadata. 
+    /// Refresh the pool metadata.
     /// This is called by every State level action, but only processed once per epoch.
     public(package) fun refresh(self: &mut PoolMetadata, ctx: &TxContext) {
         let current_epoch = ctx.epoch();
@@ -111,7 +114,7 @@ module deepbook::pool_metadata {
             return stake - (stake - VOTING_POWER_CUTOFF) / 2
         };
         stake
-    }   
+    }
 
     fun calculate_new_voting_power(
         total_stake: u64,
@@ -125,7 +128,7 @@ module deepbook::pool_metadata {
         if (amount_till_cutoff >= new_stake) {
             return new_stake
         };
-        
+
         amount_till_cutoff + (new_stake - amount_till_cutoff) / 2
     }
 
@@ -140,7 +143,7 @@ module deepbook::pool_metadata {
             let amount_till_cutoff = VOTING_POWER_CUTOFF - old_stake;
             return (old_stake + amount_till_cutoff, (new_stake - amount_till_cutoff) / 2)
         };
-        
+
         let old_after_cutoff = old_stake - VOTING_POWER_CUTOFF;
 
         return (old_stake + old_after_cutoff, new_stake / 2)

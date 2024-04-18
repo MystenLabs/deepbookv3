@@ -1,10 +1,13 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::deepbook {
     use sui::{
         balance::Balance,
         coin::Coin,
         sui::SUI
     };
-    
+
     use deepbook::{
         state::State,
         pool::{Pool, DEEP},

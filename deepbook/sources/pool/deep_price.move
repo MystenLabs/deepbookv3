@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::deep_price {
     // DEEP price points used for trading fee calculations
 	public struct DeepPrice has store, drop {

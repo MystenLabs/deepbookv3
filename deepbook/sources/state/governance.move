@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::governance {
     use sui::vec_map::{VecMap, Self};
 
@@ -200,7 +203,7 @@ module deepbook::governance {
     }
 
     fun update_voter(
-        self: &mut Governance, 
+        self: &mut Governance,
         user: address,
         proposal_id: u64,
         voting_power: u64,

@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::state {
     use std::ascii::String;
 
@@ -31,7 +34,7 @@ module deepbook::state {
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
-    
+
     /// Create a new pool. Calls create_pool inside Pool then registers it in the state.
     /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
@@ -60,7 +63,7 @@ module deepbook::state {
     ) {
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.set_as_stable(stable);
-        
+
         // TODO: set fees
     }
 
@@ -119,7 +122,7 @@ module deepbook::state {
         coin::from_balance(self.vault.split(user_old_stake + user_new_stake), ctx)
     }
 
-    // GOVERNANCE 
+    // GOVERNANCE
 
     /// Submit a proposal to change the fee structure of a pool.
     /// The user submitting this proposal must have vested stake in the pool.
@@ -134,7 +137,7 @@ module deepbook::state {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
-        
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
@@ -151,7 +154,7 @@ module deepbook::state {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
-        
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         let pool_state = if (winning_proposal.is_none()) {

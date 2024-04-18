@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 /// Deepbook utility functions.
 module deepbook::utils {
     use std::ascii::{Self, String};
@@ -29,7 +32,7 @@ module deepbook::utils {
         res.reverse();
         res
     }
-    
+
     /// Compare two ASCII strings, return True if first string is less than or equal to the second string in lexicographic order
     public fun compare(str1: &String, str2: &String): bool {
         let len1 = str1.length();

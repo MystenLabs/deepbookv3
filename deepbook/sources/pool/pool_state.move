@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::pool_state {
     public struct PoolEpochState has copy, store, drop {
         total_maker_volume: u64,
