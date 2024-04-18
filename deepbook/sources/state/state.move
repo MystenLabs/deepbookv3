@@ -103,7 +103,7 @@ module deepbook::state {
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         amount: Coin<DEEP>,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
@@ -143,7 +143,7 @@ module deepbook::state {
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
@@ -160,7 +160,7 @@ module deepbook::state {
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         proposal_id: u64,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
         let user = ctx.sender();
         let (user_stake, _) = pool.get_user_stake(user, ctx);

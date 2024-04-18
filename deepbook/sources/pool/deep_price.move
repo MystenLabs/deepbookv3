@@ -11,7 +11,7 @@ module deepbook::deep_price {
 		deep_per_quote: u64,
 	}
 
-    public(package) fun initialize(): DeepPrice {
+    public(package) fun empty(): DeepPrice {
         // Initialize the DEEP price points
         DeepPrice {
             last_insert_timestamp: 0,

@@ -5,7 +5,7 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
-        coin::{Self, Coin},
+        coin::{Self, Coin, TreasuryCap},
         sui::SUI,
         event,
     };
@@ -38,7 +38,6 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
-    const BURN_ADDRESS: address = @0x0; // TODO: update to burn address
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
@@ -142,6 +141,9 @@ module deepbook::pool {
 
         // Historical, current, and next PoolData
         pool_state: PoolState,
+
+        // Store burned DEEP tokens
+        burnt_balance: Balance<DEEP>,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
@@ -403,6 +405,7 @@ module deepbook::pool {
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
+            burnt_balance: balance::zero(),
             pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
         });
 
@@ -418,7 +421,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         amount: u64,
-        ctx: &mut TxContext
+        ctx: &TxContext,
     ): u64 {
         self.get_user_mut(user, ctx).increase_stake(amount)
     }
@@ -427,7 +430,7 @@ module deepbook::pool {
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext
     ): (u64, u64) {
         self.get_user_mut(user, ctx).remove_stake()
     }
@@ -436,7 +439,7 @@ module deepbook::pool {
     public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext,
     ): (u64, u64) {
         if (!self.users.contains(user)) {
             (0, 0)
@@ -453,10 +456,11 @@ module deepbook::pool {
         timestamp: u64,
     ) {
         if (self.deep_config.is_none()) {
-            self.deep_config.fill(deep_price::initialize());
+            self.deep_config.fill(deep_price::empty());
         };
-        let config = self.deep_config.borrow_mut();
-        config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
+        self.deep_config
+            .borrow_mut()
+            .add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
     /// First interaction of each epoch processes this state update
@@ -496,22 +500,22 @@ module deepbook::pool {
 
     /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
     ///
-    /// TODO: this function should not take ctx;
-    /// TODO: burn can't be a send to an address, use "burnt_balance" instead.
+    /// TODO: remove hidden mutation from access function.
+    /// TODO: context should not be an argument here.
     fun get_user_mut<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &mut TxContext
+        ctx: &TxContext
     ): &mut User {
         assert!(self.users.contains(user), EUserNotFound);
 
         let user = &mut self.users[user];
         let burn_amount = user.refresh(ctx);
         if (burn_amount > 0) {
-            let balance = self.deepbook_balance.split(burn_amount);
-            let coins = balance.into_coin(ctx);
-            burn(coins); // TODO: this should not be here
+            let burnt_balance = self.deepbook_balance.split(burn_amount);
+            self.burnt_balance.join(burnt_balance);
         };
+
         user
     }
 
@@ -559,13 +563,6 @@ module deepbook::pool {
             let coin: Coin<DEEP> = coin::from_balance(self.deepbook_balance.split(amount), ctx);
             user_account.deposit(coin);
         };
-    }
-
-    /// Burn DEEP tokens
-    ///
-    /// TODO: SHOULD NOT WORK LIKE THIS, PAYS GAS AT USER EXPENSE
-    fun burn(amount: Coin<DEEP>) {
-        transfer::public_transfer(amount, BURN_ADDRESS)
     }
 
     #[allow(unused_function)]
@@ -644,6 +641,13 @@ module deepbook::pool {
     /// Returns if the order fee is paid in deep tokens
     fun fee_is_deep<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.deep_config.is_some()
+    }
+
+    #[allow(unused_function)]
+    fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
+        let amount = self.burnt_balance.value();
+        let burnt = self.burnt_balance.split(amount);
+        tcap.supply_mut().decrease_supply(burnt);
     }
 
     // // Other helpful functions
