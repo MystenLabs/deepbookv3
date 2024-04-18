@@ -25,7 +25,9 @@ module deepbook::deepbook {
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext
     ) {
-        state.create_pool<BaseAsset, QuoteAsset>(tick_size, lot_size, min_size, creation_fee, ctx);
+        state.create_pool<BaseAsset, QuoteAsset>(
+            tick_size, lot_size, min_size, creation_fee, ctx
+        );
     }
 
     /// Public facing function to set a pool as stable.
@@ -45,7 +47,9 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        state.add_deep_price_point<BaseAsset, QuoteAsset>(reference_pool, pool, ctx);
+        state.add_deep_price_point<BaseAsset, QuoteAsset>(
+            reference_pool, pool, ctx
+        );
     }
 
     /// Public facing function to remove a deep price point from a specific pool.
@@ -94,7 +98,9 @@ module deepbook::deepbook {
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
-        state.submit_proposal<BaseAsset, QuoteAsset>(pool, maker_fee, taker_fee, stake_required, ctx);
+        state.submit_proposal<BaseAsset, QuoteAsset>(
+            pool, maker_fee, taker_fee, stake_required, ctx
+        );
     }
 
     /// Public facing function to vote on a proposal.
@@ -119,7 +125,9 @@ module deepbook::deepbook {
         is_bid: bool,
         ctx: &mut TxContext,
     ) {
-        pool.place_limit_order(account, client_order_id, price, quantity, is_bid, ctx);
+        pool.place_limit_order(
+            account, client_order_id, price, quantity, is_bid, ctx
+        );
     }
 
     // public fun place_market_order()

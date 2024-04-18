@@ -102,18 +102,20 @@ module deepbook::pool_metadata {
         old_epoch_stake: u64,
         current_epoch_stake: u64,
     ) {
-        let (old_voting_power, new_voting_power) = calculate_voting_power_removed(old_epoch_stake, current_epoch_stake);
+        let (
+            old_voting_power,
+            new_voting_power
+        ) = calculate_voting_power_removed(old_epoch_stake, current_epoch_stake);
         self.new_voting_power = self.new_voting_power - new_voting_power;
         self.governance.decrease_voting_power(old_voting_power);
     }
 
-    fun stake_to_voting_power(
-        stake: u64,
-    ): u64 {
+    fun stake_to_voting_power(stake: u64): u64 {
         if (stake >= VOTING_POWER_CUTOFF) {
-            return stake - (stake - VOTING_POWER_CUTOFF) / 2
-        };
-        stake
+            stake - (stake - VOTING_POWER_CUTOFF) / 2
+        } else {
+            stake
+        }
     }
 
     fun calculate_new_voting_power(
@@ -141,11 +143,17 @@ module deepbook::pool_metadata {
         };
         if (old_stake <= VOTING_POWER_CUTOFF) {
             let amount_till_cutoff = VOTING_POWER_CUTOFF - old_stake;
-            return (old_stake + amount_till_cutoff, (new_stake - amount_till_cutoff) / 2)
+            return (
+                old_stake + amount_till_cutoff,
+                (new_stake - amount_till_cutoff) / 2
+            )
         };
 
         let old_after_cutoff = old_stake - VOTING_POWER_CUTOFF;
 
-        return (old_stake + old_after_cutoff, new_stake / 2)
+        (
+            old_stake + old_after_cutoff,
+            new_stake / 2
+        )
     }
 }

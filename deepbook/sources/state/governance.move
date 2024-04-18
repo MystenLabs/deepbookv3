@@ -156,10 +156,10 @@ module deepbook::governance {
         proposal.votes = proposal.votes + voting_power;
 
         if (proposal.votes >= self.quorum) {
-            self.winning_proposal = option::some(*proposal);
+            self.winning_proposal.swap_or_fill(*proposal);
         };
 
-        self.winning_proposal
+        self.winning_proposal // implicit copy? 
     }
 
     /// Remove a vote from a proposal.

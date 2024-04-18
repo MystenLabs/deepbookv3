@@ -35,8 +35,9 @@ module deepbook::state {
         vault: Balance<DEEP>,
     }
 
-    /// Create a new pool. Calls create_pool inside Pool then registers it in the state.
-    /// pool_key is a sorted, concatenated string of the two asset names. If SUI/USDC exists, you can't create USDC/SUI.
+    /// Create a new pool. Calls create_pool inside Pool then registers it in
+    /// the state. `pool_key` is a sorted, concatenated string of the two asset
+    /// names. If SUI/USDC exists, you can't create USDC/SUI.
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         self: &mut State,
         tick_size: u64,
@@ -45,7 +46,16 @@ module deepbook::state {
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(VOLATILE_TAKER_FEE, VOLATILE_MAKER_FEE, tick_size, lot_size, min_size, creation_fee, ctx);
+        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(
+            VOLATILE_TAKER_FEE,
+            VOLATILE_MAKER_FEE,
+            tick_size,
+            lot_size,
+            min_size,
+            creation_fee,
+            ctx
+        );
+
         assert!(!self.pools.contains(pool_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
@@ -76,8 +86,9 @@ module deepbook::state {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools.get_conversion_rates(reference_pool, pool);
-        let timestamp = ctx.epoch_timestamp_ms();
+        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
+            .get_conversion_rates(reference_pool, pool);
+        let timestamp = ctx.epoch_timestamp_ms(); // TODO: Clock or Epoch?
         pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
@@ -119,7 +130,7 @@ module deepbook::state {
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.remove_voting_power(user_old_stake, user_new_stake);
 
-        coin::from_balance(self.vault.split(user_old_stake + user_new_stake), ctx)
+        self.vault.split(user_old_stake + user_new_stake).into_coin(ctx)
     }
 
     // GOVERNANCE
@@ -160,8 +171,14 @@ module deepbook::state {
         let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
-            let (stake_required, taker_fee, maker_fee) = winning_proposal.borrow().get_proposal_params();
-            option::some(pool_state::new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee))
+            let (stake_required, taker_fee, maker_fee) = winning_proposal
+                .borrow()
+                .get_proposal_params();
+
+            let pool_state = pool_state::new_pool_epoch_state_with_gov_params(
+                stake_required, taker_fee, maker_fee
+            );
+            option::some(pool_state)
         };
         pool.set_next_epoch_pool_state(pool_state);
     }

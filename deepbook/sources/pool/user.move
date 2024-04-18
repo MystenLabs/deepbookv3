@@ -18,11 +18,9 @@ module deepbook::user {
         settled_quote_amount: u64,
     }
 
-    public(package) fun new_user(
-        user: address,
-    ): User {
+    public(package) fun new_user(user: address): User {
         User {
-            user: user,
+            user,
             last_refresh_epoch: 0,
             open_orders: vec_map::empty(),
             maker_volume: 0,
@@ -35,17 +33,12 @@ module deepbook::user {
     }
 
     /// Get user's current and next stake amounts
-    public(package) fun get_user_stake(
-        user: &User,
-    ): (u64, u64) {
+    public(package) fun get_user_stake(user: &User): (u64, u64) {
         (user.stake_amount, user.next_stake_amount)
     }
 
     /// Refresh user and return burn amount accumulated (if any)
-    public(package) fun refresh(
-        user: &mut User,
-        ctx: &TxContext
-    ): u64 {
+    public(package) fun refresh(user: &mut User, ctx: &TxContext): u64 {
         let current_epoch = ctx.epoch();
         if (user.last_refresh_epoch == current_epoch) return 0;
 
@@ -60,19 +53,14 @@ module deepbook::user {
     }
 
     /// Increase user stake and return the new stake amount
-    public(package) fun increase_stake(
-        user: &mut User,
-        amount: u64,
-    ): u64 {
+    public(package) fun increase_stake(user: &mut User, amount: u64): u64 {
         user.next_stake_amount = user.next_stake_amount + amount;
 
         user.stake_amount + user.next_stake_amount
     }
 
     // Remove user stake
-    public(package) fun remove_stake(
-        user: &mut User,
-    ): (u64, u64) {
+    public(package) fun remove_stake(user: &mut User): (u64, u64) {
         let old_stake = user.stake_amount;
         let new_stake = user.next_stake_amount;
         user.stake_amount = 0;
@@ -82,9 +70,7 @@ module deepbook::user {
     }
 
     /// Return user unclaimed rebates and reset to 0
-    public(package) fun reset_rebates(
-        user: &mut User,
-    ): u64 {
+    public(package) fun reset_rebates(user: &mut User): u64 {
         let rebates = user.unclaimed_rebates;
         user.unclaimed_rebates = 0;
 
@@ -92,9 +78,7 @@ module deepbook::user {
     }
 
     /// Get settled amounts for the user
-    public(package) fun get_settle_amounts(
-        user: &User,
-    ): (u64, u64) {
+    public(package) fun get_settle_amounts(user: &User): (u64, u64) {
         (user.settled_base_amount, user.settled_quote_amount)
     }
 
@@ -111,9 +95,7 @@ module deepbook::user {
     }
 
     /// Returns (rebates, burn) for the user
-    fun calculate_rebates_and_burn(
-        _user: &User,
-    ): (u64, u64) {
+    fun calculate_rebates_and_burn(_user: &User): (u64, u64) {
         // calculate rebates from the current User data
         (0, 0)
     }

@@ -456,7 +456,7 @@ module deepbook::pool {
         timestamp: u64,
     ) {
         if (self.deep_config.is_none()) {
-            self.deep_config = option::some(deep_price::initialize());
+            self.deep_config.fill(deep_price::initialize());
         };
         let config = self.deep_config.borrow_mut();
         config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
@@ -562,17 +562,13 @@ module deepbook::pool {
     }
 
     /// Burn DEEP tokens
-    fun burn(
-        amount: Coin<DEEP>,
-    ) {
+    fun burn(amount: Coin<DEEP>) {
         transfer::public_transfer(amount, BURN_ADDRESS)
     }
 
     #[allow(unused_function)]
     /// Send fees collected in input tokens to treasury
-    fun send_treasury<T>(
-        fee: Coin<T>,
-    ) {
+    fun send_treasury<T>(fee: Coin<T>) {
         transfer::public_transfer(fee, TREASURY_ADDRESS)
     }
 
