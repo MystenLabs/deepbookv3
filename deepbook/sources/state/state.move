@@ -8,7 +8,7 @@ module deepbook::state {
         balance::Balance,
         table::Table,
         sui::SUI,
-        coin::{Self, Coin},
+        coin::Coin,
     };
 
     use deepbook::{

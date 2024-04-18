@@ -159,7 +159,7 @@ module deepbook::governance {
             self.winning_proposal.swap_or_fill(*proposal);
         };
 
-        self.winning_proposal // implicit copy? 
+        self.winning_proposal // implicit copy?
     }
 
     /// Remove a vote from a proposal.

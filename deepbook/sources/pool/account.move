@@ -72,7 +72,7 @@ module deepbook::account {
     }
 
     /// Returns the owner of the account
-    public fun get_owner(account: &Account): address {
+    public fun owner(account: &Account): address {
         account.owner
     }
 }

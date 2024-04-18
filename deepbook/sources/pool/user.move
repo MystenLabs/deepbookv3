@@ -33,7 +33,7 @@ module deepbook::user {
     }
 
     /// Get user's current and next stake amounts
-    public(package) fun get_user_stake(user: &User): (u64, u64) {
+    public(package) fun stake(user: &User): (u64, u64) {
         (user.stake_amount, user.next_stake_amount)
     }
 
@@ -78,7 +78,7 @@ module deepbook::user {
     }
 
     /// Get settled amounts for the user
-    public(package) fun get_settle_amounts(user: &User): (u64, u64) {
+    public(package) fun settle_amounts(user: &User): (u64, u64) {
         (user.settled_base_amount, user.settled_quote_amount)
     }
 

@@ -164,7 +164,7 @@ module deepbook::pool {
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
-        let maker_fee = self.pool_state.get_maker_fee();
+        let maker_fee = self.pool_state.maker_fee();
         let mut fee_quantity;
         let mut place_quantity = quantity;
         // If order fee is paid in DEEP tokens
@@ -192,8 +192,8 @@ module deepbook::pool {
             };
         };
 
-        let user_data = &mut self.users[account.get_owner()];
-        let (available_base_amount, available_quote_amount) = user_data.get_settle_amounts();
+        let user_data = &mut self.users[account.owner()];
+        let (available_base_amount, available_quote_amount) = user_data.settle_amounts();
 
         if (is_bid) {
             // Deposit quote asset if there's not enough in custodian
@@ -227,7 +227,7 @@ module deepbook::pool {
             order_id: 0,
             client_order_id,
             is_bid,
-            owner: account.get_owner(),
+            owner: account.owner(),
             original_quantity: quantity,
             base_asset_quantity_placed: quantity,
             price,
@@ -307,8 +307,8 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         // Get the valid user information
-        let user_data = &mut self.users[account.get_owner()];
-        let (base_amount, quote_amount) = user_data.get_settle_amounts();
+        let user_data = &mut self.users[account.owner()];
+        let (base_amount, quote_amount) = user_data.settle_amounts();
 
         // Take the valid amounts from the pool balances, deposit into user account
         if (base_amount > 0) {
@@ -444,7 +444,7 @@ module deepbook::pool {
             (0, 0)
         } else {
             let user = self.get_user_mut(user, ctx);
-            user.get_user_stake()
+            user.stake()
         }
     }
 
