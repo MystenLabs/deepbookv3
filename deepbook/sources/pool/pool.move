@@ -12,7 +12,7 @@ module deepbook::pool {
 
     use std::{
         ascii::String,
-        type_name::{Self, TypeName},
+        type_name::{Self},
     };
 
     use deepbook::{
@@ -42,11 +42,9 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
-    public struct PoolCreated has copy, store, drop {
+    public struct PoolCreated<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
         /// object ID of the newly created pool
         pool_id: ID,
-        base_asset: TypeName,
-        quote_asset: TypeName,
         // 10^9 scaling
         taker_fee: u64,
         maker_fee: u64,
@@ -90,7 +88,7 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
-    /// Temporary to represent DEEP token, remove after on-chain dependency possible
+    /// Temporary to represent DEEP token, remove after we have the open-sourced the DEEP token contract
     public struct DEEP has store {}
 
     /// For each pool, order id is incremental and unique for each opening order.
@@ -99,7 +97,7 @@ module deepbook::pool {
         // ID of the order within the pool
         order_id: u64,
         // ID of the order defined by client
-        client_order_id: u64,
+        client_order_id: u64, // TODO: What does this ID do?
         // Price, only used for limit orders
         price: u64,
         // Quantity (in base asset terms) when the order is placed
@@ -240,8 +238,9 @@ module deepbook::pool {
         };
 
         let order_id = self.place_maker_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
+
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-            pool_id: *object::uid_as_inner(&self.id),
+            pool_id: self.id.to_inner(),
             order_id: 0,
             client_order_id,
             is_bid,
@@ -294,7 +293,7 @@ module deepbook::pool {
 
         // Emit order cancelled event
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
-            pool_id: *self.id.uid_as_inner(), // Get inner id from UID
+            pool_id: self.id.to_inner(), // Get inner id from UID
             order_id: order_cancelled.order_id,
             client_order_id: order_cancelled.client_order_id,
             is_bid: order_cancelled.is_bid,
@@ -388,17 +387,12 @@ module deepbook::pool {
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
 
-        let base_type_name = type_name::get<BaseAsset>();
-        let quote_type_name = type_name::get<QuoteAsset>();
-        assert!(base_type_name != quote_type_name, ESameBaseAndQuote);
+        assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
         let pool_uid = object::new(ctx);
-        let pool_id = *pool_uid.uid_as_inner();
 
-        event::emit(PoolCreated {
-            pool_id,
-            base_asset: base_type_name,
-            quote_asset: quote_type_name,
+        event::emit(PoolCreated<BaseAsset, QuoteAsset> {
+            pool_id: pool_uid.to_inner(),
             taker_fee,
             maker_fee,
             tick_size,
@@ -421,7 +415,7 @@ module deepbook::pool {
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
             burnt_balance: balance::zero(),
-            pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
+            pool_state: pool_state::new_pool_state(0, taker_fee, maker_fee, ctx),
         });
 
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
@@ -502,6 +496,7 @@ module deepbook::pool {
     }
 
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
+    /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID? 
     public(package) fun pool_key<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): String {
         let (base, quote) = get_base_quote_types(self);
         if (compare(&base, &quote)) {
@@ -545,6 +540,9 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         // Withdraw from user account and merge into pool balances
+
+        // TOOD: Use constants with clear view of what it is instead of 0,1,2.
+        // Not sure if Enums will be a thing in time.
         if (coin_type == 0) {
             let base = user_account.withdraw(amount, ctx);
             self.base_balances.join(base.into_balance());

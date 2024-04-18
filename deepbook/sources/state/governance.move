@@ -43,6 +43,7 @@ module deepbook::governance {
     /// Governance struct that holds all the governance related data.
     /// This will reset during every epoch change, except voting_power which will be as needed.
     /// Participation is limited to users with staked voting power. vector and VecMap will not overflow.
+    /// Question: Why is this the case? (How do we know this?)
     public struct Governance has store {
         // Total eligible voting power available.
         voting_power: u64,
@@ -190,8 +191,7 @@ module deepbook::governance {
 
     fun add_voter_if_does_not_exist(self: &mut Governance, user: address) {
         if (!self.voters.contains(&user)) {
-            let voter = new_voter();
-            self.voters.insert(user, voter);
+            self.voters.insert(user, new_voter());
         };
     }
 
