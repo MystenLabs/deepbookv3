@@ -63,8 +63,15 @@ The account structure also maintains a reference to the owner's address, and the
 Users can pass the account object for placing orders within any deepbook pool, provided the account holds enough assets. This enables the utilization of shared balances across various pools containing the same assets, allowing for transactions in pools such as SUI/USDC and SUI/USDT using a single SUI balance.
 
 ## Feedback from MMs
-Important to have the ability to create multiple accounts for added flexibility and as a precaution in case an account becomes locked.
+- Important to have the ability to create multiple accounts for added flexibility and as a precaution in case an account becomes locked.
+- We will support the creation of child accounts / premissions in Account.
 
-Limit the number of calls to fetch Level 2 order book data (from 3 calls to 1 call) to avoid excessive load.
+- Limit the number of calls to fetch Level 2 order book data (from 3 calls to 1 call) to avoid excessive load. They have to first make a call to know what the midprice is, then make two calls for bid book and ask book with the given price.
+- We solve this by modifying v2's order book retrieval. You will be able to retrieve the order book in two ways: specify a lower, upper price limits or specify the number of ticks. The first option exists in V2, the second will automatically fetch the first n bid and ask ticks.
 
-Capability to retrieve historical trades by account, which will likely require an off-chain solution to manage the data efficiently and maintain performance without overburdening the on-chain systems.
+- Capability to retrieve historical trades by account. This is required for trade reconciliation, auditing.
+- We can solve this with an off-chain solution to manage the data efficiently and maintain performance without overburdening the on-chain systems.
+
+- A readonly endpoint get_amount_out: given some amount as input, get the amount out if it were executed as a market order.
+
+- Better documentation
