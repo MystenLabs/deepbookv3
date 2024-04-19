@@ -13,6 +13,7 @@ module deepbook::pool_state {
 
     public struct PoolState has copy, store {
         epoch: u64,
+        // TODO: Won't this get too filled? Is there something planned to delete the historic states?
         historic_states: vector<PoolEpochState>,
         current_state: PoolEpochState,
         next_state: PoolEpochState,
@@ -46,10 +47,10 @@ module deepbook::pool_state {
 
     /// Create a new pool state
     public(package) fun new_pool_state(
-        ctx: &TxContext,
         stake_required: u64,
         taker_fee: u64,
         maker_fee: u64,
+        ctx: &TxContext,
     ): PoolState {
         PoolState {
             epoch: ctx.epoch(),

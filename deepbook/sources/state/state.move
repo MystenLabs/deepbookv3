@@ -31,6 +31,7 @@ module deepbook::state {
 
     public struct State has key, store {
         id: UID,
+        // TODO: upgrade-ability plan? do we need?
         pools: Table<String, PoolMetadata>,
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,

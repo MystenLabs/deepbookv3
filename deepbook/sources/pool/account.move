@@ -1,14 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+// TODO: I think it might make more sense to represent ownership by a "Capability",
+// instead of by address. That allows for flexible access control (someone could wrap their AccountCap)
+// and pass it to others.
+// Is this intented to be a shared object or an owned object? Important: You cannot promote owned to shared!
+
 module deepbook::account {
     use sui::{
-        coin::{Self, Coin},
+        coin::Coin,
         balance::{Balance},
         dynamic_field as df,
     };
-
-    use std::type_name::{Self, TypeName};
 
     //// The account doesn't have enough funds to be withdrawn
     const EAccountBalanceTooLow: u64 = 0;
@@ -21,9 +24,7 @@ module deepbook::account {
     }
 
     /// Identifier for balance
-    public struct BalanceKey<phantom T> has store, copy, drop {
-        coin_type: TypeName,
-    }
+    public struct BalanceKey<phantom T> has store, copy, drop {}
 
     /// Create an individual account
     public fun new(ctx: &mut TxContext): Account {
@@ -39,8 +40,7 @@ module deepbook::account {
         account: &mut Account,
         coin: Coin<T>,
     ) {
-        let balance_key = BalanceKey<T> { coin_type: type_name::get<T>() };
-
+        let balance_key = BalanceKey<T> {};
         let balance = coin.into_balance();
         // Check if a balance for this coin type already exists.
         if (df::exists_with_type<BalanceKey<T>, Balance<T>>(&account.id, balance_key)) {
@@ -59,16 +59,15 @@ module deepbook::account {
         amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let balance_key = BalanceKey<T> { coin_type: type_name::get<T>() };
+        let balance_key = BalanceKey<T> {};
         // Check if the account has a balance for this coin type
         assert!(df::exists_with_type<BalanceKey<T>, Balance<T>>(&account.id, balance_key), EAccountBalanceTooLow);
         // Borrow the existing balance mutably to split it
         let existing_balance: &mut Balance<T> = df::borrow_mut(&mut account.id, balance_key);
         // Ensure the account has enough of the coin type to withdraw the desired amount
         assert!(existing_balance.value() >= amount, EAccountBalanceTooLow);
-        let withdrawn_balance = existing_balance.split(amount);
-        // Take a transferable `Coin` from a `Balance`
-        coin::from_balance(withdrawn_balance, ctx)
+        
+        existing_balance.split(amount).into_coin(ctx)
     }
 
     /// Returns the owner of the account
