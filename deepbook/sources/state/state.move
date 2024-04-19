@@ -31,6 +31,7 @@ module deepbook::state { // Consider renaming this module
 
     public struct State has key, store {
         id: UID,
+        // TODO: upgrade-ability plan? do we need?
         pools: Table<String, PoolMetadata>,
         // pools: Bag, (other places where table is used as well)
         // bag::add<Key,Value>()
