@@ -6,6 +6,7 @@ module deepbook::pool {
         balance::{Self,Balance},
         table::{Self, Table},
         coin::{Self, Coin, TreasuryCap},
+        clock::Clock,
         sui::SUI,
         event,
     };
@@ -32,9 +33,10 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EUserNotFound: u64 = 6;
-    const EOrderInvalidTickSize: u64 = 7;
+    const EOrderInvalidPrice: u64 = 7;
     const EOrderBelowMinimumSize: u64 = 8;
     const EOrderInvalidLotSize: u64 = 9;
+    const EInvalidExpireTimestamp: u64 = 10;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -148,7 +150,7 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
-    /// Place a maker order
+    /// Place a limit order to the order book.
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -156,15 +158,19 @@ module deepbook::pool {
         price: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
+        expire_timestamp: u64, // Expiration timestamp in ms
+        clock: &Clock,
         ctx: &mut TxContext,
     ): u64 {
         // Refresh state as necessary if first order of epoch
         self.refresh_state(ctx);
 
-        assert!(price % self.tick_size == 0, EOrderInvalidTickSize);
+        assert!(price > 0, EOrderInvalidPrice);
+        assert!(price % self.tick_size == 0, EOrderInvalidPrice);
         // Check quantity is above minimum quantity (in base asset)
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
+        assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
         let maker_fee = self.pool_state.maker_fee();
         let mut fee_quantity;
@@ -177,20 +183,17 @@ module deepbook::pool {
             // TODO: make sure there is mul_down and mul_up for rounding
             let deep_quantity = mul(config.deep_per_base(), quantity);
             fee_quantity = mul(deep_quantity, maker_fee);
-            // Deposit the deepbook fees
-            self.deposit(account, fee_quantity, 2, ctx);
+            self.deposit_deep(account, fee_quantity, ctx);
         }
-        // If unverified pool
+        // If unverified pool, fees paid in base/quote assets
         else {
             fee_quantity = mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
             place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
                 fee_quantity = mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
-                // deposit quote asset fees
-                self.deposit(account, fee_quantity, 1, ctx);
+                self.deposit_quote(account, fee_quantity, ctx);
             } else {
-                // deposit base asset fees
-                self.deposit(account, fee_quantity, 0, ctx);
+                self.deposit_base(account, fee_quantity, ctx);
             };
         };
 
@@ -237,8 +240,7 @@ module deepbook::pool {
             };
         };
 
-        let order_id = self.place_maker_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, ctx);
-
+        let order_id = self.place_limit_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(),
             order_id: 0,
@@ -530,29 +532,35 @@ module deepbook::pool {
     }
 
     /// This will be automatically called if not enough assets in settled_funds for a trade
-    /// User cannot manually deposit
-    /// Deposit BaseAsset, QuoteAsset, Deepbook Tokens
-    fun deposit<BaseAsset, QuoteAsset>(
+    /// User cannot manually deposit. Funds are withdrawn from user account and merged into pool balances.
+    fun deposit_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user_account: &mut Account,
         amount: u64,
-        coin_type: u64, // 0 for base, 1 for quote, 2 for deep. TODO: use enum
         ctx: &mut TxContext,
     ) {
-        // Withdraw from user account and merge into pool balances
+        let base = user_account.withdraw(amount, ctx);
+        self.base_balances.join(base.into_balance());
+    }
 
-        // TOOD: Use constants with clear view of what it is instead of 0,1,2.
-        // Not sure if Enums will be a thing in time.
-        if (coin_type == 0) {
-            let base = user_account.withdraw(amount, ctx);
-            self.base_balances.join(base.into_balance());
-        } else if (coin_type == 1) {
-            let quote = user_account.withdraw(amount, ctx);
-            self.quote_balances.join(quote.into_balance());
-        } else if (coin_type == 2){
-            let coin = user_account.withdraw(amount, ctx);
-            self.deepbook_balance.join(coin.into_balance());
-        }
+    fun deposit_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let quote = user_account.withdraw(amount, ctx);
+        self.quote_balances.join(quote.into_balance());
+    }
+
+    fun deposit_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user_account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        let coin = user_account.withdraw(amount, ctx);
+        self.deepbook_balance.join(coin.into_balance());
     }
 
     fun withdraw_base<BaseAsset, QuoteAsset>(
@@ -592,13 +600,14 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun place_maker_order_int<BaseAsset, QuoteAsset>(
+    fun place_limit_order_int<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
         is_bid: bool, // true for bid, false for ask
+        expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
     ): u64 {
         let order_id = self.next_bid_order_id;
@@ -614,7 +623,7 @@ module deepbook::pool {
             fee_is_deep: self.fee_is_deep(),
             is_bid,
             owner: ctx.sender(),
-            expire_timestamp: 0, // TODO
+            expire_timestamp,
             self_matching_prevention: 0, // TODO
         };
 

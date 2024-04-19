@@ -40,7 +40,7 @@ module benchmark::pool {
             next_ask_order_id: 1000000,
             user_open_orders: table::new(ctx),
         };
-        
+
         transfer::share_object(pool);
     }
 
@@ -105,18 +105,14 @@ module benchmark::pool {
         ctx: &mut TxContext,
     ): u128 {
         let owner = ctx.sender();
-        let mut order_id: u128;
+        let order_id;
         let open_orders: &mut BigVector<Order>;
         if (is_bid) {
-            order_id = price as u128;
-            order_id = order_id << 64;
-            order_id = order_id + (pool.next_bid_order_id as u128);
+            order_id = encode_order_id(price, pool.next_bid_order_id);
             pool.next_bid_order_id = pool.next_bid_order_id + 1;
             open_orders = &mut pool.bids_bigvec;
         } else {
-            order_id = price as u128;
-            order_id = order_id << 64;
-            order_id = order_id + (pool.next_ask_order_id as u128);
+            order_id = encode_order_id(price, pool.next_ask_order_id);
             pool.next_ask_order_id = pool.next_ask_order_id + 1;
             open_orders = &mut pool.asks_bigvec;
         };
@@ -142,5 +138,12 @@ module benchmark::pool {
         pool.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
 
         order_id
+    }
+
+    fun encode_order_id(
+        price: u64,
+        order_id: u64
+    ): u128 {
+        ((price as u128) << 64) + (order_id as u128)
     }
 }

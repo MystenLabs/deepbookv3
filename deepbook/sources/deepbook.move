@@ -5,7 +5,8 @@ module deepbook::deepbook {
     use sui::{
         balance::Balance,
         coin::Coin,
-        sui::SUI
+        sui::SUI,
+        clock::Clock,
     };
 
     use deepbook::{
@@ -45,10 +46,10 @@ module deepbook::deepbook {
         state: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
+        clock: &Clock,
     ) {
         state.add_deep_price_point<BaseAsset, QuoteAsset>(
-            reference_pool, pool, ctx
+            reference_pool, pool, clock
         );
     }
 
@@ -123,10 +124,19 @@ module deepbook::deepbook {
         price: u64,
         quantity: u64,
         is_bid: bool,
+        expire_timestamp: u64, // Expiration timestamp in ms
+        clock: &Clock,
         ctx: &mut TxContext,
     ) {
         pool.place_limit_order(
-            account, client_order_id, price, quantity, is_bid, ctx
+            account,
+            client_order_id,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            clock,
+            ctx,
         );
     }
 
