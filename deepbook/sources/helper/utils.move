@@ -52,11 +52,7 @@ module deepbook::utils {
             i = i + 1
         };
 
-        if (len1 <= len2) {
-            return true
-        } else {
-            return false
-        }
+        (len1 <= len2)
     }
 
     /// Append two ASCII strings and return the result
