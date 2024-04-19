@@ -137,6 +137,8 @@ module deepbook::pool {
         next_ask_order_id: u64, // increments for each ask order
         deep_config: Option<DeepPrice>,
         users: Table<address, User>,
+        // Potentially change to - epoch_data: Table<u64, LinkedTable<address, User>>
+        // We can only check 1k dynamic fields in Table for a transaction, cannot verify that all addresses are after epoch x for last_refresh_epoch
 
         // Where funds will be held while order is live
         base_balances: Balance<BaseAsset>,
@@ -165,7 +167,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): u64 {
         // Refresh state as necessary if first order of epoch
-        self.refresh_state(ctx);
+        self.refresh(ctx);
 
         assert!(price > 0, EOrderInvalidPrice);
         assert!(price % self.tick_size == 0, EOrderInvalidPrice);
@@ -242,7 +244,7 @@ module deepbook::pool {
             };
         };
 
-        let order_id = self.place_limit_order_int(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
+        let order_id = self.internal_place_limit_order(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: *object::uid_as_inner(&self.id),
             order_id: 0,
@@ -268,7 +270,7 @@ module deepbook::pool {
     ) {
         // TODO: find order in corresponding BigVec using order_id
         // Sample order that is cancelled
-        let order_cancelled = self.cancel_order_int(order_id, ctx);
+        let order_cancelled = self.internal_cancel_order(order_id, ctx);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -424,7 +426,7 @@ module deepbook::pool {
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
             burnt_balance: balance::zero(),
-            pool_state: pool_state::new_pool_state(ctx, 0, taker_fee, maker_fee),
+            pool_state: pool_state::empty(ctx, 0, taker_fee, maker_fee),
         });
 
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
@@ -482,21 +484,21 @@ module deepbook::pool {
     }
 
     /// First interaction of each epoch processes this state update
-    public(package) fun refresh_state<BaseAsset, QuoteAsset>(
+    public(package) fun refresh<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
-        self.pool_state.refresh_state(ctx);
+        self.pool_state.refresh(ctx); // change to by account?
     }
 
     /// Update the pool's next pool state.
     /// During an epoch refresh, the current pool state is moved to historical pool state.
     /// The next pool state is moved to current pool state.
-    public(package) fun set_next_epoch_pool_state<BaseAsset, QuoteAsset>(
+    public(package) fun set_next_epoch<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         next_epoch_pool_state: Option<PoolEpochState>,
     ) {
-        self.pool_state.set_next_epoch_pool_state(next_epoch_pool_state);
+        self.pool_state.set_next_epoch(next_epoch_pool_state);
     }
 
     /// Get the base and quote asset of pool, return as ascii strings
@@ -606,7 +608,7 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun place_limit_order_int<BaseAsset, QuoteAsset>(
+    fun internal_place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,
@@ -649,7 +651,7 @@ module deepbook::pool {
     }
 
     /// Cancels an order and returns it
-    fun cancel_order_int<BaseAsset, QuoteAsset>(
+    fun internal_cancel_order<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _order_id: u64,
         _ctx: &TxContext,
@@ -684,6 +686,7 @@ module deepbook::pool {
         let burnt = self.burnt_balance.split(amount);
         tcap.supply_mut().decrease_supply(burnt);
     }
+    // Will be replaced by actual deep token package dependency
 
     // // Other helpful functions
     // TODO: taker order, send fees directly to treasury

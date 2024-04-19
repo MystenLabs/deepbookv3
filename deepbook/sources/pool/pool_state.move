@@ -36,7 +36,7 @@ module deepbook::pool_state {
         }
     }
 
-    public(package) fun new_pool_epoch_state_with_gov_params(
+    public(package) fun new_pool_epoch_state_with_gov_params( //rename
         stake_required: u64,
         taker_fee: u64,
         maker_fee: u64,
@@ -44,8 +44,8 @@ module deepbook::pool_state {
         new_pool_epoch_state(0, 0, 0, stake_required, taker_fee, maker_fee)
     }
 
-    /// Create a new pool state
-    public(package) fun new_pool_state(
+    /// Create an empty pool state
+    public(package) fun empty(
         ctx: &TxContext,
         stake_required: u64,
         taker_fee: u64,
@@ -60,7 +60,7 @@ module deepbook::pool_state {
     }
 
     /// Refresh the pool state if the epoch has changed
-    public(package) fun refresh_state(
+    public(package) fun refresh(
         state: &mut PoolState,
         ctx: &TxContext,
     ) {
@@ -73,7 +73,7 @@ module deepbook::pool_state {
     }
 
     /// Set the next epoch pool state
-    public(package) fun set_next_epoch_pool_state(
+    public(package) fun set_next_epoch( // TODO: remove pool_state naming
         state: &mut PoolState,
         next_epoch_state: Option<PoolEpochState>,
     ) {
