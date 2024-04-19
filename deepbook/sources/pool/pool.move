@@ -8,7 +8,6 @@ module deepbook::pool {
         coin::{Self, Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
-        linked_table::LinkedTable,
         event,
     };
 
@@ -136,7 +135,6 @@ module deepbook::pool {
         asks: BigVector<Order>,
         next_bid_order_id: u64, // increments for each bid order
         next_ask_order_id: u64, // increments for each ask order
-        user_open_orders: Table<address, LinkedTable<u128, u128>>,
         deep_config: Option<DeepPrice>,
         users: Table<address, User>,
 
@@ -417,7 +415,6 @@ module deepbook::pool {
             asks: big_vector::empty(10000, 1000, ctx),
             next_bid_order_id: 0,
             next_ask_order_id: 0,
-            user_open_orders: table::new(ctx),
             users: table::new(ctx),
             deep_config: option::none(),
             tick_size,
