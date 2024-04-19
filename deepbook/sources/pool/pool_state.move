@@ -46,7 +46,7 @@ module deepbook::pool_state {
     }
 
     /// Create an empty pool state
-    public(package) fun new_pool_state(
+    public(package) fun empty(
         stake_required: u64,
         taker_fee: u64,
         maker_fee: u64,

@@ -419,7 +419,7 @@ module deepbook::pool {
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
             burnt_balance: balance::zero(),
-            pool_state: pool_state::empty(ctx, 0, taker_fee, maker_fee),
+            pool_state: pool_state::empty(0, taker_fee, maker_fee, ctx),
         });
 
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
@@ -500,7 +500,7 @@ module deepbook::pool {
     }
 
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-    /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID? 
+    /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
     public(package) fun pool_key<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): String {
         let (base, quote) = get_base_quote_types(self);
         if (compare(&base, &quote)) {
