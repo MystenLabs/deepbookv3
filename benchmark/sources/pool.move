@@ -144,6 +144,6 @@ module benchmark::pool {
         price: u64,
         order_id: u64
     ): u128 {
-        ((price as u128) << 64)+ (order_id as u128)
+        ((price as u128) << 64) + (order_id as u128)
     }
 }
