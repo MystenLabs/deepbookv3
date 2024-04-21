@@ -9,6 +9,7 @@ module deepbook::state {
         table::Table,
         sui::SUI,
         coin::Coin,
+        clock::Clock,
     };
 
     use deepbook::{
@@ -30,6 +31,7 @@ module deepbook::state {
 
     public struct State has key, store {
         id: UID,
+        // TODO: upgrade-ability plan? do we need?
         pools: Table<String, PoolMetadata>,
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
@@ -84,11 +86,11 @@ module deepbook::state {
         self: &State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
+        clock: &Clock,
     ) {
         let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
             .get_conversion_rates(reference_pool, pool);
-        let timestamp = ctx.epoch_timestamp_ms(); // TODO: Clock or Epoch?
+        let timestamp = clock.timestamp_ms();
         pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
