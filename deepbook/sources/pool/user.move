@@ -116,7 +116,8 @@ module deepbook::user {
     public(package) fun remove_open_order(
         self: &mut User,
         order_id: u128,
-    ) {
+    ): u128 {
         self.open_orders.remove(&order_id);
+        order_id
     }
 }
