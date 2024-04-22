@@ -20,6 +20,7 @@ module deepbook::account {
     //// The account doesn't have enough funds to be withdrawn
     const EAccountBalanceTooLow: u64 = 0;
 
+    // TODO: use Bag instead of direct dynamic fields
     /// Owned by user, this is what's passed into pools
     public struct Account has key, store {
         id: UID,
@@ -74,7 +75,7 @@ module deepbook::account {
         let existing_balance: &mut Balance<T> = df::borrow_mut(&mut account.id, balance_key);
         // Ensure the account has enough of the coin type to withdraw the desired amount
         assert!(existing_balance.value() >= amount, EAccountBalanceTooLow);
-        
+
         existing_balance.split(amount).into_coin(ctx)
     }
 

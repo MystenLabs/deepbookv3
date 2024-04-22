@@ -69,9 +69,9 @@ module deepbook::governance {
 
     fun new_proposal(maker_fee: u64, taker_fee: u64, stake_required: u64): Proposal {
         Proposal {
-            maker_fee: maker_fee,
-            taker_fee: taker_fee,
-            stake_required: stake_required,
+            maker_fee,
+            taker_fee,
+            stake_required,
             votes: 0,
         }
     }

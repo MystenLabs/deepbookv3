@@ -3,7 +3,7 @@
 
 /// Deepbook utility functions.
 module deepbook::utils {
-    use std::ascii::{Self, String};
+    use std::ascii::String;
 
     /// Pop elements from the back of `v` until its length equals `n`,
     /// returning the elements that were popped in the order they
@@ -33,7 +33,8 @@ module deepbook::utils {
         res
     }
 
-    /// Compare two ASCII strings, return True if first string is less than or equal to the second string in lexicographic order
+    /// Compare two ASCII strings, return True if first string is less than or
+    /// equal to the second string in lexicographic order
     public fun compare(str1: &String, str2: &String): bool {
         let len1 = str1.length();
         let len2 = str2.length();
@@ -55,28 +56,13 @@ module deepbook::utils {
         (len1 <= len2)
     }
 
-    /// Append two ASCII strings and return the result
-    public fun append(str1: &String, str2: &String): String {
-        let mut result_bytes = vector::empty<u8>();
-
+    /// Concatenate two ASCII strings and return the result.
+    public fun concat_ascii(str1: String, str2: String): String {
         // Append bytes from the first string
-        let bytes1 = str1.as_bytes();
-        let len1 = bytes1.length();
-        let mut i = 0;
-        while (i < len1) {
-            result_bytes.push_back(bytes1[i]);
-            i = i + 1;
-        };
+        let mut bytes1 = str1.into_bytes();
+        let bytes2 = str2.into_bytes();
 
-        // Append bytes from the second string
-        let bytes2 = str2.as_bytes();
-        let len2 = bytes2.length();
-        i = 0;
-        while (i < len2) {
-            result_bytes.push_back(bytes2[i]);
-            i = i + 1;
-        };
-
-        ascii::string(result_bytes)
+        bytes1.append(bytes2);
+        bytes1.to_ascii_string()
     }
 }

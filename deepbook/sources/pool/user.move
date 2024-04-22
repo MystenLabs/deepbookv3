@@ -94,6 +94,7 @@ module deepbook::user {
         user.settled_quote_amount = settled_quote_amount;
     }
 
+    // TODO: Function name is not very descriptive, "burn" part is not clear
     /// Returns (rebates, burn) for the user
     fun calculate_rebates_and_burn(_user: &User): (u64, u64) {
         // calculate rebates from the current User data
