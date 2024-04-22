@@ -422,6 +422,8 @@ module deepbook::pool {
             pool_state: pool_state::empty(0, taker_fee, maker_fee, ctx),
         });
 
+        // TODO: reconsider sending the Coin here. User pays gas;
+        // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
         let pool_key = pool.pool_key();
         transfer::share_object(pool);
@@ -495,13 +497,20 @@ module deepbook::pool {
     }
 
     /// Get the base and quote asset of pool, return as ascii strings
-    public(package) fun get_base_quote_types<BaseAsset, QuoteAsset>(_self: &Pool<BaseAsset, QuoteAsset>): (String, String) {
-        (type_name::get<BaseAsset>().into_string(), type_name::get<QuoteAsset>().into_string())
+    public(package) fun get_base_quote_types<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>
+    ): (String, String) {
+        (
+            type_name::get<BaseAsset>().into_string(),
+            type_name::get<QuoteAsset>().into_string()
+        )
     }
 
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
     /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
-    public(package) fun pool_key<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): String {
+    public(package) fun pool_key<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): String {
         let (base, quote) = get_base_quote_types(self);
         if (utils::compare(&base, &quote)) {
             utils::concat_ascii(base, quote)
