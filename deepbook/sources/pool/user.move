@@ -106,6 +106,13 @@ module deepbook::user {
         self.open_orders
     }
 
+    public(package) fun add_open_order(
+        self: &mut User,
+        order_id: u128,
+    ) {
+        self.open_orders.insert(order_id);
+    }
+
     public(package) fun remove_open_order(
         self: &mut User,
         order_id: u128,

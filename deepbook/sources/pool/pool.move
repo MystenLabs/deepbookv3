@@ -644,6 +644,7 @@ module deepbook::pool {
             self_matching_prevention: 0, // TODO
         };
 
+        // Insert order into order books
         if (is_bid){
             self.bids.insert(order_id, order);
             self.next_bid_order_id = self.next_bid_order_id - 1;
@@ -651,6 +652,10 @@ module deepbook::pool {
             self.asks.insert(order_id, order);
             self.next_ask_order_id = self.next_ask_order_id + 1;
         };
+
+        // Add order to user's open orders
+        let user_data = &mut self.users[ctx.sender()];
+        user_data.add_open_order(order_id);
 
         order_id
     }
@@ -669,6 +674,7 @@ module deepbook::pool {
         order
     }
 
+    /// Returns 0 if the order is a bid order, 1 if the order is an ask order
     fun order_is_bid(order_id: u128): bool {
         (order_id < MIN_ASK_ORDER_ID)
     }
