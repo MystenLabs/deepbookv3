@@ -62,7 +62,7 @@ module deepbook::governance {
             voting_power: 0,
             quorum: 0,
             winning_proposal: option::none(),
-            proposals: vector::empty(),
+            proposals: vector[],
             voters: vec_map::empty(),
         }
     }
@@ -92,7 +92,7 @@ module deepbook::governance {
     /// Reset the governance state. This will happen after an epoch change.
     /// Epoch validation done by the parent.
     public(package) fun reset(self: &mut Governance) {
-        self.proposals = vector::empty();
+        self.proposals = vector[];
         self.voters = vec_map::empty();
         self.quorum = self.voting_power / 2;
         self.winning_proposal = option::none();

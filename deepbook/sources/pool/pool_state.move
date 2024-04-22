@@ -54,7 +54,7 @@ module deepbook::pool_state {
     ): PoolState {
         PoolState {
             epoch: ctx.epoch(),
-            historic_states: vector::empty(),
+            historic_states: vector[],
             current_state: new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee),
             next_state: new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee),
         }
