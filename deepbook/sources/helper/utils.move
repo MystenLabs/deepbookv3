@@ -38,7 +38,7 @@ module deepbook::utils {
     /// equal to the second string in lexicographic order
     public fun compare(str1: &String, str2: &String): bool {
         if (str1 == str2) return true;
-        
+
         let min_len = math::min(str1.length(), str2.length());
         let (bytes1, bytes2) = (str1.as_bytes(), str2.as_bytes());
 
@@ -64,7 +64,7 @@ module deepbook::utils {
         bytes1.append(bytes2);
         bytes1.to_ascii_string()
     }
-    
+
     /// first bit is 0 for bid, 1 for ask
     /// next 63 bits are price (assertion for price is done in order function)
     /// last 64 bits are order_id
@@ -124,4 +124,5 @@ module deepbook::utils {
             &b"AAAA".to_ascii_string(),
             &b"AAAA".to_ascii_string()
         ), true);
+    }
 }

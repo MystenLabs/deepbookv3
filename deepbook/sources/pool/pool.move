@@ -24,7 +24,7 @@ module deepbook::pool {
         account::Account,
         user::User,
         utils::{Self, encode_order_id},
-        math::mul,
+        math,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
