@@ -649,7 +649,7 @@ module deepbook::pool {
         // TODO: cancel order using order_id, return canceled order
 
         Order {
-            order_id: 0u128,
+            order_id: 0,
             client_order_id: 1,
             price: 10000,
             original_quantity: 2000,
