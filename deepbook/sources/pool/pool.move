@@ -358,19 +358,20 @@ module deepbook::pool {
         account: &mut Account,
         ctx: &mut TxContext,
     ): vector<Order>{
-        let mut output = vector[];
+        let mut cancelled_orders = vector[];
         let user_open_orders = self.users[ctx.sender()].open_orders();
 
-        let keys_vector = user_open_orders.into_keys();
-        let len = keys_vector.length();
+        let orders_vector = user_open_orders.into_keys();
+        let len = orders_vector.length();
         let mut i = 0;
         while (i < len) {
-            let key = keys_vector[i];
-            let order = cancel_order(self, account, key, ctx);
-            output.push_back(order);
+            let key = orders_vector[i];
+            let cancelled_order = cancel_order(self, account, key, ctx);
+            cancelled_orders.push_back(cancelled_order);
             i = i + 1;
         };
-        output
+
+        cancelled_orders
     }
 
     public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
@@ -619,14 +620,12 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
     ): u128 {
-
-        let int_order_id;
-        if (is_bid) {
-            int_order_id = self.next_bid_order_id;
+        let order_id = if (is_bid) {
+            encode_order_id(is_bid, price, self.next_bid_order_id)
         } else {
-            int_order_id = self.next_ask_order_id;
+            encode_order_id(is_bid, price, self.next_ask_order_id)
         };
-        let order_id = encode_order_id(is_bid, price, int_order_id);
+        update_order_id(self, is_bid);
 
         // Create Order
         let order = Order {
@@ -647,10 +646,8 @@ module deepbook::pool {
         // Insert order into order books
         if (is_bid){
             self.bids.insert(order_id, order);
-            self.next_bid_order_id = self.next_bid_order_id - 1;
         } else {
             self.asks.insert(order_id, order);
-            self.next_ask_order_id = self.next_ask_order_id + 1;
         };
 
         // Add order to user's open orders
@@ -665,18 +662,27 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
     ): Order {
-        let order;
         if (order_is_bid(order_id)) {
-            order = self.bids.remove(order_id)
+            self.bids.remove(order_id)
         } else {
-            order = self.asks.remove(order_id);
-        };
-        order
+            self.asks.remove(order_id)
+        }
     }
 
     /// Returns 0 if the order is a bid order, 1 if the order is an ask order
     fun order_is_bid(order_id: u128): bool {
         (order_id < MIN_ASK_ORDER_ID)
+    }
+
+    fun update_order_id<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        is_bid: bool
+    ) {
+        if (is_bid) {
+            self.next_bid_order_id = self.next_bid_order_id - 1;
+        } else {
+            self.next_ask_order_id = self.next_ask_order_id + 1;
+        }
     }
 
     /// Returns if the order fee is paid in deep tokens
