@@ -358,10 +358,10 @@ module deepbook::pool {
         account: &mut Account,
         ctx: &mut TxContext,
     ): vector<Order>{
-        let mut output = vector::empty();
-        let test = self.users[ctx.sender()].open_orders();
+        let mut output = vector[];
+        let user_open_orders = self.users[ctx.sender()].open_orders();
 
-        let keys_vector = test.into_keys();
+        let keys_vector = user_open_orders.into_keys();
         let len = keys_vector.length();
         let mut i = 0;
         while (i < len) {
