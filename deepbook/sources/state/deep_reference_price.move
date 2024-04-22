@@ -32,9 +32,9 @@ module deepbook::deep_reference_price {
         assert!(base == deep_type || quote == deep_type, EIneligiblePool);
 
         if (base == deep_type) {
-            deep_reference_price.reference_pools.insert(quote, pool.pool_key());
+            deep_reference_price.reference_pools.insert(quote, pool.key());
         } else {
-            deep_reference_price.reference_pools.insert(base, pool.pool_key());
+            deep_reference_price.reference_pools.insert(base, pool.key());
         }
     }
 

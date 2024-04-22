@@ -385,7 +385,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
-    ): String {
+    ): Pool<BaseAsset, QuoteAsset> {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
@@ -425,10 +425,8 @@ module deepbook::pool {
         // TODO: reconsider sending the Coin here. User pays gas;
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
-        let pool_key = pool.pool_key();
-        transfer::share_object(pool);
 
-        pool_key
+        pool
     }
 
     /// Increase a user's stake
@@ -508,7 +506,7 @@ module deepbook::pool {
 
     /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
     /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
-    public(package) fun pool_key<BaseAsset, QuoteAsset>(
+    public(package) fun key<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>
     ): String {
         let (base, quote) = get_base_quote_types(self);
@@ -517,6 +515,12 @@ module deepbook::pool {
         } else {
             utils::concat_ascii(quote, base)
         }
+    }
+
+    #[allow(lint(share_owned))]
+    /// Share the Pool. 
+    public(package) fun share<BaseAsset, QuoteAsset>(self: Pool<BaseAsset, QuoteAsset>) {
+        transfer::share_object(self)
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
