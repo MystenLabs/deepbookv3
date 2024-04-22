@@ -77,7 +77,7 @@ module deepbook::pool_state {
         if (state.epoch == current_epoch) return;
 
         // Save this state if there are users who might need it to calculate rebates
-        if (state.current_state.users_with_rebates != 0) {
+        if (state.current_state.users_with_rebates > 0) {
             state.historic_states.insert(state.epoch, state.current_state);
         };
         

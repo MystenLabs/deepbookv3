@@ -524,9 +524,9 @@ module deepbook::pool {
         assert!(self.users.contains(user), EUserNotFound);
 
         let user = &mut self.users[user];
+        let historic_epoch = user.last_refresh_epoch();
         let (rebates, burn_amount) = user.refresh(ctx);
         if (rebates > 0) {
-            let historic_epoch = user.last_refresh_epoch();
             self.pool_state.decrement_users_with_rebates(&historic_epoch);
         };
         if (burn_amount > 0) {
