@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbook::state {
+module deepbook::state { // Consider renaming this module
     use std::ascii::String;
 
     use sui::{
@@ -33,6 +33,10 @@ module deepbook::state {
         id: UID,
         // TODO: upgrade-ability plan? do we need?
         pools: Table<String, PoolMetadata>,
+        // pools: Bag, (other places where table is used as well)
+        // bag::add<Key,Value>()
+        // key = PoolKey<Base, Quote>
+        // string concatenation of base and quote no longer needed
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
@@ -182,7 +186,7 @@ module deepbook::state {
             );
             option::some(pool_state)
         };
-        pool.set_next_epoch_pool_state(pool_state);
+        pool.set_next_epoch(pool_state);
     }
 
     // HELPERS

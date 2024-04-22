@@ -109,7 +109,7 @@ module benchmark::pool {
         let open_orders: &mut BigVector<Order>;
         if (is_bid) {
             order_id = encode_order_id(price, pool.next_bid_order_id);
-            pool.next_bid_order_id = pool.next_bid_order_id + 1;
+            pool.next_bid_order_id = pool.next_bid_order_id - 1;
             open_orders = &mut pool.bids_bigvec;
         } else {
             order_id = encode_order_id(price, pool.next_ask_order_id);

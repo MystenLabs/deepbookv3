@@ -44,7 +44,7 @@ module deepbook::governance {
     /// This will reset during every epoch change, except voting_power which will be as needed.
     /// Participation is limited to users with staked voting power. vector and VecMap will not overflow.
     /// Question: Why is this the case? (How do we know this?)
-    public struct Governance has store {
+    public struct Governance has store { // Can take out of Deepbook package (for treasury management)
         // Total eligible voting power available.
         voting_power: u64,
         // Calculated when the governance is reset. It is half of the total voting power.
