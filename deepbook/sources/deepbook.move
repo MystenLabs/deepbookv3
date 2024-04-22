@@ -118,7 +118,7 @@ module deepbook::deepbook {
 
     // ORDERS
 
-    /// TODO: add returning order_id
+    /// TODO: add other return values
     /// Public facing function to place a limit order.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -130,7 +130,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ) {
+    ): u128 {
         pool.place_limit_order(
             account,
             client_order_id,
@@ -140,7 +140,7 @@ module deepbook::deepbook {
             expire_timestamp,
             clock,
             ctx,
-        );
+        )
     }
 
     /// Public facing function to cancel an order.
