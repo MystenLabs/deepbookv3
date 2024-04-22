@@ -23,7 +23,7 @@ module deepbook::pool {
         big_vector::{Self, BigVector},
         account::Account,
         user::User,
-        utils,
+        utils::{Self, encode_order_id},
         math::mul,
     };
 
@@ -42,6 +42,10 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
+    const MIN_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
+    const MIN_ASK_ORDER_ID: u64 = 1;
+    const MIN_PRICE: u64 = 1;
+    const MAX_PRICE: u64 = (1u128 << 64 - 1) as u64;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -61,7 +65,7 @@ module deepbook::pool {
         /// object ID of the pool the order was placed on
         pool_id: ID,
         /// ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         /// ID of the order defined by client
         client_order_id: u64,
         is_bid: bool,
@@ -78,7 +82,7 @@ module deepbook::pool {
         /// object ID of the pool the order was placed on
         pool_id: ID,
         /// ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         /// ID of the order defined by client
         client_order_id: u64,
         is_bid: bool,
@@ -98,7 +102,7 @@ module deepbook::pool {
     /// Orders that are submitted earlier has lower order ids.
     public struct Order has store, drop {
         // ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         // ID of the order defined by client
         client_order_id: u64, // TODO: What does this ID do?
         // Price, only used for limit orders
@@ -123,8 +127,6 @@ module deepbook::pool {
         self_matching_prevention: u8
     }
 
-    // TODO: why Pool has `store` ?
-    // TODO: consider adding back if necessary
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         tick_size: u64,
@@ -164,11 +166,11 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): u64 {
+    ): u128 {
         // Refresh state as necessary if first order of epoch
         self.refresh(ctx);
 
-        assert!(price > 0, EOrderInvalidPrice);
+        assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
         assert!(price % self.tick_size == 0, EOrderInvalidPrice);
         // Check quantity is above minimum quantity (in base asset)
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
@@ -246,7 +248,7 @@ module deepbook::pool {
         let order_id = self.internal_place_limit_order(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(),
-            order_id: 0,
+            order_id,
             client_order_id,
             is_bid,
             owner: account.owner(),
@@ -263,7 +265,7 @@ module deepbook::pool {
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
-        order_id: u64,
+        order_id: u128,
         ctx: &mut TxContext,
     ) {
         // TODO: find order in corresponding BigVec using order_id and remove it
@@ -395,8 +397,8 @@ module deepbook::pool {
             id: pool_uid,
             bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
             asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
-            next_bid_order_id: 0,
-            next_ask_order_id: 0,
+            next_bid_order_id: MIN_BID_ORDER_ID,
+            next_ask_order_id: MIN_ASK_ORDER_ID,
             users: table::new(ctx),
             deep_config: option::none(),
             tick_size,
@@ -598,10 +600,18 @@ module deepbook::pool {
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
-    ): u64 {
-        let order_id = self.next_bid_order_id;
+    ): u128 {
+
+        let int_order_id;
+        if (is_bid) {
+            int_order_id = self.next_bid_order_id;
+        } else {
+            int_order_id = self.next_ask_order_id;
+        };
+        let order_id = encode_order_id(price, int_order_id);
+
         // Create Order
-        let _order = Order {
+        let order = Order {
             order_id,
             client_order_id,
             price,
@@ -616,15 +626,13 @@ module deepbook::pool {
             self_matching_prevention: 0, // TODO
         };
 
+
+//public fun insert<E: store>(self: &mut BigVector<E>, key: u128, val: E) {
         if (is_bid){
-            // TODO: Place ask order into BigVec
-
-            // Increment order id
-            self.next_bid_order_id = self.next_bid_order_id + 1;
+            self.bids.insert(order_id, order);
+            self.next_bid_order_id = self.next_bid_order_id - 1;
         } else {
-            // TODO: Place ask order into BigVec
-
-            // Increment order id
+            self.asks.insert(order_id, order);
             self.next_ask_order_id = self.next_ask_order_id + 1;
         };
 
@@ -634,14 +642,14 @@ module deepbook::pool {
     /// Cancels an order and returns it
     fun internal_cancel_order<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _order_id: u64,
+        _order_id: u128,
         _ctx: &TxContext,
     ): Order {
 
         // TODO: cancel order using order_id, return canceled order
 
         Order {
-            order_id: 0,
+            order_id: 0u128,
             client_order_id: 1,
             price: 10000,
             original_quantity: 2000,
@@ -657,7 +665,9 @@ module deepbook::pool {
     }
 
     /// Returns if the order fee is paid in deep tokens
-    fun fee_is_deep<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    fun fee_is_deep<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): bool {
         self.deep_config.is_some()
     }
 
