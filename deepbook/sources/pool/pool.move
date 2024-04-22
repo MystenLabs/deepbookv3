@@ -23,7 +23,7 @@ module deepbook::pool {
         account::Account,
         user::User,
         utils,
-        math::mul,
+        math,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -183,16 +183,16 @@ module deepbook::pool {
             // quantity is always in terms of base asset
             // TODO: option to use deep_per_quote if base not available
             // TODO: make sure there is mul_down and mul_up for rounding
-            let deep_quantity = mul(config.deep_per_base(), quantity);
-            fee_quantity = mul(deep_quantity, maker_fee);
+            let deep_quantity = math::mul(config.deep_per_base(), quantity);
+            fee_quantity = math::mul(deep_quantity, maker_fee);
             self.deposit_deep(account, fee_quantity, ctx);
         }
         // If unverified pool, fees paid in base/quote assets
         else {
-            fee_quantity = mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
+            fee_quantity = math::mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
             place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
             if (is_bid) {
-                fee_quantity = mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
+                fee_quantity = math::mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
                 self.deposit_quote(account, fee_quantity, ctx);
             } else {
                 self.deposit_base(account, fee_quantity, ctx);
@@ -205,7 +205,7 @@ module deepbook::pool {
         if (is_bid) {
             // Deposit quote asset if there's not enough in custodian
             // Convert input quantity into quote quantity
-            let quote_quantity = mul(quantity, price);
+            let quote_quantity = math::mul(quantity, price);
             if (available_quote_amount < quantity){
                 let difference = quote_quantity - available_quote_amount;
                 let quote: Coin<QuoteAsset> = account.withdraw(difference, ctx);
@@ -273,7 +273,7 @@ module deepbook::pool {
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
-            let quote_asset_quantity = mul(order_cancelled.quantity, order_cancelled.price);
+            let quote_asset_quantity = math::mul(order_cancelled.quantity, order_cancelled.price);
             self.withdraw_quote(account, quote_asset_quantity, ctx)
         } else {
             // deposit base asset back into user account
