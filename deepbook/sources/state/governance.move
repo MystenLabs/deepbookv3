@@ -171,7 +171,7 @@ module deepbook::governance {
         user: address
     ): Option<Proposal> {
         if (!self.voters.contains(&user)) return self.winning_proposal;
-        let voter = self.voters.get_mut(&user);
+        let voter = &mut self.voters[&user];
         if (voter.proposal_id.is_none()) return self.winning_proposal;
 
         let votes = voter.voting_power.extract();
@@ -183,7 +183,7 @@ module deepbook::governance {
         // it was the winning proposal before, now it is not
         if (proposal.votes + votes >= self.quorum
             && proposal.votes < self.quorum) {
-            self.winning_proposal = option::none();
+            self.winning_proposal = option::none(); // .extract() ? 
         };
 
         self.winning_proposal
@@ -196,7 +196,7 @@ module deepbook::governance {
     }
 
     fun increment_proposals_created(self: &mut Governance, user: address) {
-        let voter = self.voters.get_mut(&user);
+        let voter = &mut self.voters[&user];
         assert!(voter.proposals_created < MAX_PROPOSALS_CREATIONS_PER_USER, EUserProposalCreationLimitReached);
 
         voter.proposals_created = voter.proposals_created + 1;
@@ -208,11 +208,11 @@ module deepbook::governance {
         proposal_id: u64,
         voting_power: u64,
     ) {
-        let voter = self.voters.get_mut(&user);
+        let voter = &mut self.voters[&user];
         assert!(voter.votes_casted < MAX_VOTES_CASTED_PER_USER, EUserVotesCastedLimitReached);
 
         voter.votes_casted = voter.votes_casted + 1;
-        voter.proposal_id = option::some(proposal_id);
-        voter.voting_power = option::some(voting_power);
+        voter.proposal_id.swap_or_fill(proposal_id);
+        voter.voting_power.swap_or_fill(voting_power);
     }
 }
