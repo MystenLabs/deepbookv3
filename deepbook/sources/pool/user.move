@@ -37,19 +37,18 @@ module deepbook::user {
         (user.stake_amount, user.next_stake_amount)
     }
 
-    /// Refresh user and return burn amount accumulated (if any)
-    public(package) fun refresh(user: &mut User, ctx: &TxContext): u64 {
+    /// Refresh user and return rebates and burn amount accumulated (if any)
+    public(package) fun refresh(user: &mut User, ctx: &TxContext): (u64, u64) {
         let current_epoch = ctx.epoch();
-        if (user.last_refresh_epoch == current_epoch) return 0;
+        if (user.last_refresh_epoch == current_epoch) return (0, 0);
 
         let (rebates, burn) = calculate_rebates_and_burn(user);
         user.unclaimed_rebates = user.unclaimed_rebates + rebates;
         user.last_refresh_epoch = current_epoch;
         user.maker_volume = 0;
         user.stake_amount = user.next_stake_amount;
-        user.next_stake_amount = 0;
 
-        burn
+        (rebates, burn)
     }
 
     /// Increase user stake and return the new stake amount
@@ -98,5 +97,9 @@ module deepbook::user {
     fun calculate_rebates_and_burn(_user: &User): (u64, u64) {
         // calculate rebates from the current User data
         (0, 0)
+    }
+
+    public(package) fun last_refresh_epoch(user: &User): u64 {
+        user.last_refresh_epoch
     }
 }
