@@ -146,7 +146,7 @@ module deepbook::deepbook {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
-        client_order_id: u64,
+        client_order_id: u128,
         ctx: &mut TxContext,
     ) {
         pool.cancel_order(account, client_order_id, ctx);
