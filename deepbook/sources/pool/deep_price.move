@@ -15,8 +15,8 @@ module deepbook::deep_price {
         // Initialize the DEEP price points
         DeepPrice {
             last_insert_timestamp: 0,
-            price_points_base: vector::empty(),
-            price_points_quote: vector::empty(),
+            price_points_base: vector[],
+            price_points_quote: vector[],
             deep_per_base: 0,
             deep_per_quote: 0,
         }

@@ -52,7 +52,7 @@ module deepbook::state { // Consider renaming this module
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool_key = pool::create_pool<BaseAsset, QuoteAsset>(
+        let pool = pool::create_pool<BaseAsset, QuoteAsset>(
             VOLATILE_TAKER_FEE,
             VOLATILE_MAKER_FEE,
             tick_size,
@@ -62,10 +62,11 @@ module deepbook::state { // Consider renaming this module
             ctx
         );
 
-        assert!(!self.pools.contains(pool_key), EPoolAlreadyExists);
+        assert!(!self.pools.contains(pool.key()), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
-        self.pools.add(pool_key, pool_metadata);
+        self.pools.add(pool.key(), pool_metadata);
+        pool.share()
     }
 
     /// Set the as stable or volatile. This changes the fee structure of the pool.
@@ -77,8 +78,8 @@ module deepbook::state { // Consider renaming this module
         stable: bool,
         ctx: &TxContext,
     ) {
-        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        pool_metadata.set_as_stable(stable);
+        self.get_pool_metadata_mut(pool, ctx)
+            .set_as_stable(stable);
 
         // TODO: set fees
     }
@@ -94,8 +95,12 @@ module deepbook::state { // Consider renaming this module
     ) {
         let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
             .get_conversion_rates(reference_pool, pool);
-        let timestamp = clock.timestamp_ms();
-        pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
+
+        pool.add_deep_price_point(
+            base_conversion_rate,
+            quote_conversion_rate,
+            clock.timestamp_ms()
+        );
     }
 
     /// Add a DEEP reference pool: DEEP/USDC, DEEP/SUI, etc.
@@ -124,8 +129,8 @@ module deepbook::state { // Consider renaming this module
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
 
-        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        pool_metadata.add_voting_power(total_user_stake, amount.value());
+        self.get_pool_metadata_mut(pool, ctx)
+            .add_voting_power(total_user_stake, amount.value());
 
         self.vault.join(amount.into_balance());
     }
@@ -143,8 +148,9 @@ module deepbook::state { // Consider renaming this module
 
         // total amount staked before this epoch, total amount staked during this epoch
         let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
-        let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        pool_metadata.remove_voting_power(user_old_stake, user_new_stake);
+
+        self.get_pool_metadata_mut(pool, ctx)
+            .remove_voting_power(user_old_stake, user_new_stake);
 
         self.vault.split(user_old_stake + user_new_stake).into_coin(ctx)
     }
@@ -206,12 +212,11 @@ module deepbook::state { // Consider renaming this module
         pool: &Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext
     ): &mut PoolMetadata {
-        let pool_key = pool.pool_key();
+        let pool_key = pool.key();
         assert!(self.pools.contains(pool_key), EPoolDoesNotExist);
 
         let pool_metadata = &mut self.pools[pool_key];
         pool_metadata.refresh(ctx);
-
         pool_metadata
     }
 }

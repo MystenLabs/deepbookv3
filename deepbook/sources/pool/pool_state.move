@@ -45,8 +45,8 @@ module deepbook::pool_state {
         new_pool_epoch_state(0, 0, 0, stake_required, taker_fee, maker_fee)
     }
 
-    /// Create an empty pool state
-    public(package) fun empty(
+    /// Create a new pool state
+    public(package) fun new(
         stake_required: u64,
         taker_fee: u64,
         maker_fee: u64,
@@ -54,7 +54,7 @@ module deepbook::pool_state {
     ): PoolState {
         PoolState {
             epoch: ctx.epoch(),
-            historic_states: vector::empty(),
+            historic_states: vector[],
             current_state: new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee),
             next_state: new_pool_epoch_state_with_gov_params(stake_required, taker_fee, maker_fee),
         }

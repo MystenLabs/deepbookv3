@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Public-facing interface for the package.
+/// TODO: No authorization checks are implemented;
 module deepbook::deepbook {
     use sui::{
         balance::Balance,
@@ -39,7 +41,7 @@ module deepbook::deepbook {
         stable: bool,
         ctx: &TxContext,
     ) {
-        state.set_pool_as_stable<BaseAsset, QuoteAsset>(pool, stable, ctx);
+        state.set_pool_as_stable(pool, stable, ctx);
     }
 
     /// Public facing function to add a reference pool.
@@ -57,7 +59,7 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         clock: &Clock,
     ) {
-        state.add_deep_price_point<BaseAsset, QuoteAsset>(
+        state.add_deep_price_point(
             reference_pool, pool, clock
         );
         // Determine frequency this is done
@@ -68,7 +70,7 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &mut TxContext
     ): Coin<DEEP> {
-        pool.claim_rebates<BaseAsset, QuoteAsset>(ctx)
+        pool.claim_rebates(ctx)
     }
 
     // GOVERNANCE
@@ -80,7 +82,7 @@ module deepbook::deepbook {
         amount: Coin<DEEP>,
         ctx: &mut TxContext,
     ) {
-        state.stake<BaseAsset, QuoteAsset>(pool, amount, ctx);
+        state.stake(pool, amount, ctx);
     }
 
     /// Public facing function to unstake DEEP tokens from a specific pool.
@@ -89,7 +91,7 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &mut TxContext
     ): Coin<DEEP> {
-        state.unstake<BaseAsset, QuoteAsset>(pool, ctx)
+        state.unstake(pool, ctx)
     }
 
     public fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
@@ -109,7 +111,7 @@ module deepbook::deepbook {
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
-        state.submit_proposal<BaseAsset, QuoteAsset>(
+        state.submit_proposal(
             pool, maker_fee, taker_fee, stake_required, ctx
         );
     }
@@ -121,7 +123,7 @@ module deepbook::deepbook {
         proposal_id: u64,
         ctx: &mut TxContext,
     ) {
-        state.vote<BaseAsset, QuoteAsset>(pool, proposal_id, ctx);
+        state.vote(pool, proposal_id, ctx);
     }
 
     // ORDERS
