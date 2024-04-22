@@ -419,7 +419,7 @@ module deepbook::pool {
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
             burnt_balance: balance::zero(),
-            pool_state: pool_state::empty(0, taker_fee, maker_fee, ctx),
+            pool_state: pool_state::new(0, taker_fee, maker_fee, ctx),
         });
 
         // TODO: reconsider sending the Coin here. User pays gas;
@@ -518,7 +518,7 @@ module deepbook::pool {
     }
 
     #[allow(lint(share_owned))]
-    /// Share the Pool. 
+    /// Share the Pool.
     public(package) fun share<BaseAsset, QuoteAsset>(self: Pool<BaseAsset, QuoteAsset>) {
         transfer::share_object(self)
     }
