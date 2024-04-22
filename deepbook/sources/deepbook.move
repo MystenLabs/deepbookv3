@@ -118,6 +118,7 @@ module deepbook::deepbook {
 
     // ORDERS
 
+    /// TODO: add returning order_id
     /// Public facing function to place a limit order.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
