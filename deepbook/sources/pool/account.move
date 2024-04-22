@@ -6,6 +6,10 @@
 // and pass it to others.
 // Is this intented to be a shared object or an owned object? Important: You cannot promote owned to shared!
 
+/// The Account is a shared object and holds all of the balances for a user.
+/// It is passed into Pools for placing orders. All Pools can desposit and withdraw from the account.
+/// When performing security checks, we need to ensure owned objects such as a Capability are not used.
+/// Owned objects cause wallets to be locked when trading at a high frequency.
 module deepbook::account {
     use sui::{
         coin::Coin,
@@ -35,7 +39,9 @@ module deepbook::account {
         }
     }
 
-    /// Deposit funds to an account
+    /// Deposit funds to an account.
+    /// TODO: security checks.
+    /// TODO: Pool can deposit.
     public fun deposit<T>(
         account: &mut Account,
         coin: Coin<T>,
@@ -53,7 +59,9 @@ module deepbook::account {
         }
     }
 
-    /// Withdraw funds from an account
+    /// Withdraw funds from an account.
+    /// TODO: security checks.
+    /// TODO: Pool can withdraw.
     public fun withdraw<T>(
         account: &mut Account,
         amount: u64,
