@@ -105,4 +105,11 @@ module deepbook::user {
     public(package) fun open_orders(self: &User): VecSet<u128> {
         self.open_orders
     }
+
+    public(package) fun remove_open_order(
+        self: &mut User,
+        order_id: u128,
+    ) {
+        self.open_orders.remove(&order_id);
+    }
 }

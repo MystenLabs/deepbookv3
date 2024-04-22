@@ -12,7 +12,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::State,
-        pool::{Pool, DEEP},
+        pool::{Order, Pool, DEEP},
         account::Account,
     };
 
@@ -148,8 +148,8 @@ module deepbook::deepbook {
         account: &mut Account,
         client_order_id: u128,
         ctx: &mut TxContext,
-    ) {
-        pool.cancel_order(account, client_order_id, ctx);
+    ): Order {
+        pool.cancel_order(account, client_order_id, ctx)
     }
 
     /// Public facing function to cancel all orders.
@@ -157,8 +157,8 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         ctx: &mut TxContext,
-    ) {
-        pool.cancel_all(account, ctx);
+    ): vector<Order> {
+        pool.cancel_all(account, ctx)
     }
 
     /// Public facing function to get open orders for a user.

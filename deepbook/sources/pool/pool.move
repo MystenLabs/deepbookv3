@@ -268,10 +268,13 @@ module deepbook::pool {
         account: &mut Account,
         order_id: u128,
         ctx: &mut TxContext,
-    ) {
-        // TODO: find order in corresponding BigVec using order_id and remove it
-        // Sample order that is cancelled
+    ): Order {
+        // Order cancelled and returned
         let order_cancelled = self.internal_cancel_order(order_id);
+
+        // remove order from user's open orders
+        let user_data = &mut self.users[account.owner()];
+        user_data.remove_open_order(order_id);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -308,7 +311,9 @@ module deepbook::pool {
             original_quantity: order_cancelled.original_quantity,
             base_asset_quantity_canceled: order_cancelled.quantity,
             price: order_cancelled.price
-        })
+        });
+
+        order_cancelled
     }
 
     /// Claim the rebates for the user
@@ -349,11 +354,23 @@ module deepbook::pool {
 
     /// Cancel all orders for an account. Withdraw settled funds back into user account.
     public(package) fun cancel_all<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _account: &mut Account,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ): vector<Order>{
+        let mut output = vector::empty();
+        let test = self.users[ctx.sender()].open_orders();
+
+        let keys_vector = test.into_keys();
+        let len = keys_vector.length();
+        let mut i = 0;
+        while (i < len) {
+            let key = keys_vector[i];
+            let order = cancel_order(self, account, key, ctx);
+            output.push_back(order);
+            i = i + 1;
+        };
+        output
     }
 
     public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
