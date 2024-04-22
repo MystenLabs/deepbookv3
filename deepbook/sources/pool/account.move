@@ -12,19 +12,24 @@
 /// Owned objects cause wallets to be locked when trading at a high frequency.
 module deepbook::account {
     use sui::{
+        bag::{Self, Bag},
+        balance::Balance,
         coin::Coin,
-        balance::{Balance},
-        dynamic_field as df,
     };
 
-    //// The account doesn't have enough funds to be withdrawn
+    //// The account doesn't have enough funds to be withdrawn.
     const EAccountBalanceTooLow: u64 = 0;
+    /// The account doesn't have the balance.
+    const ENoBalance: u64 = 1;
 
+    // TODO: use Bag instead of direct dynamic fields
     /// Owned by user, this is what's passed into pools
     public struct Account has key, store {
         id: UID,
+        /// The owner of the account.
         owner: address,
-        // coin_balances will be represented in dynamic fields
+        /// Stores the Coin Balances for this account.
+        balances: Bag,
     }
 
     /// Identifier for balance
@@ -36,6 +41,7 @@ module deepbook::account {
         Account {
             id: object::new(ctx),
             owner: ctx.sender(),
+            balances: bag::new(ctx),
         }
     }
 
@@ -46,16 +52,14 @@ module deepbook::account {
         account: &mut Account,
         coin: Coin<T>,
     ) {
-        let balance_key = BalanceKey<T> {};
-        let balance = coin.into_balance();
-        // Check if a balance for this coin type already exists.
-        if (df::exists_with_type<BalanceKey<T>, Balance<T>>(&account.id, balance_key)) {
-            // If it exists, borrow the existing balance mutably.
-            let existing_balance: &mut Balance<T> = df::borrow_mut(&mut account.id, balance_key);
-            existing_balance.join(balance);
+        let key = BalanceKey<T> {};
+        let to_deposit = coin.into_balance();
+
+        if (account.balances.contains(key)) {
+            let balance: &mut Balance<T> = &mut account.balances[key];
+            balance.join(to_deposit);
         } else {
-            // If the balance does not exist, add a new dynamic field with the balance.
-            df::add(&mut account.id, balance_key, balance);
+            account.balances.add(key, to_deposit);
         }
     }
 
@@ -67,15 +71,12 @@ module deepbook::account {
         amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let balance_key = BalanceKey<T> {};
-        // Check if the account has a balance for this coin type
-        assert!(df::exists_with_type<BalanceKey<T>, Balance<T>>(&account.id, balance_key), EAccountBalanceTooLow);
-        // Borrow the existing balance mutably to split it
-        let existing_balance: &mut Balance<T> = df::borrow_mut(&mut account.id, balance_key);
-        // Ensure the account has enough of the coin type to withdraw the desired amount
-        assert!(existing_balance.value() >= amount, EAccountBalanceTooLow);
-        
-        existing_balance.split(amount).into_coin(ctx)
+        let key = BalanceKey<T> {};
+        assert!(account.balances.contains(key), ENoBalance);
+        let acc_balance: &mut Balance<T> = &mut account.balances[key];
+        assert!(acc_balance.value() >= amount, EAccountBalanceTooLow);
+
+        acc_balance.split(amount).into_coin(ctx)
     }
 
     /// Returns the owner of the account

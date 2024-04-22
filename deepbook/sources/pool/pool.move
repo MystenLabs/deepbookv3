@@ -22,7 +22,7 @@ module deepbook::pool {
         big_vector::{Self, BigVector},
         account::Account,
         user::User,
-        utils::{compare, append},
+        utils,
         math::mul,
     };
 
@@ -406,8 +406,8 @@ module deepbook::pool {
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
-            bids: big_vector::empty(10000, 1000, ctx),
-            asks: big_vector::empty(10000, 1000, ctx),
+            bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
+            asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
             next_bid_order_id: 0,
             next_ask_order_id: 0,
             users: table::new(ctx),
@@ -503,10 +503,10 @@ module deepbook::pool {
     /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
     public(package) fun pool_key<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): String {
         let (base, quote) = get_base_quote_types(self);
-        if (compare(&base, &quote)) {
-            append(&base, &quote)
+        if (utils::compare(&base, &quote)) {
+            utils::concat_ascii(base, quote)
         } else {
-            append(&quote, &base)
+            utils::concat_ascii(quote, base)
         }
     }
 
