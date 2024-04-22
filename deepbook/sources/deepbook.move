@@ -12,7 +12,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::State,
-        pool::{Pool, DEEP},
+        pool::{Order, Pool, DEEP},
         account::Account,
     };
 
@@ -126,6 +126,7 @@ module deepbook::deepbook {
 
     // ORDERS
 
+    /// TODO: add other return values
     /// Public facing function to place a limit order.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -137,7 +138,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ) {
+    ): u128 {
         pool.place_limit_order(
             account,
             client_order_id,
@@ -147,7 +148,7 @@ module deepbook::deepbook {
             expire_timestamp,
             clock,
             ctx,
-        );
+        )
     }
 
     /// Public facing function to place a market order.
@@ -172,10 +173,10 @@ module deepbook::deepbook {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
-        client_order_id: u64,
+        client_order_id: u128,
         ctx: &mut TxContext,
-    ) {
-        pool.cancel_order(account, client_order_id, ctx);
+    ): Order {
+        pool.cancel_order(account, client_order_id, ctx)
     }
 
     /// Public facing function to cancel all orders.
@@ -183,8 +184,8 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         ctx: &mut TxContext,
-    ) {
-        pool.cancel_all(account, ctx);
+    ): vector<Order> {
+        pool.cancel_all(account, ctx)
     }
 
     /// Public facing function to get open orders for a user.
