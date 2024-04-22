@@ -42,10 +42,11 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
-    const MIN_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
-    const MIN_ASK_ORDER_ID: u64 = 1;
+    const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
+    const START_ASK_ORDER_ID: u64 = 1;
+    const MIN_ASK_ORDER_ID: u128 = 1 << 127;
     const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 64 - 1) as u64;
+    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -270,7 +271,7 @@ module deepbook::pool {
     ) {
         // TODO: find order in corresponding BigVec using order_id and remove it
         // Sample order that is cancelled
-        let order_cancelled = self.internal_cancel_order(order_id, ctx);
+        let order_cancelled = self.internal_cancel_order(order_id);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -397,8 +398,8 @@ module deepbook::pool {
             id: pool_uid,
             bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
             asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
-            next_bid_order_id: MIN_BID_ORDER_ID,
-            next_ask_order_id: MIN_ASK_ORDER_ID,
+            next_bid_order_id: START_BID_ORDER_ID,
+            next_ask_order_id: START_ASK_ORDER_ID,
             users: table::new(ctx),
             deep_config: option::none(),
             tick_size,
@@ -608,7 +609,7 @@ module deepbook::pool {
         } else {
             int_order_id = self.next_ask_order_id;
         };
-        let order_id = encode_order_id(price, int_order_id);
+        let order_id = encode_order_id(is_bid, price, int_order_id);
 
         // Create Order
         let order = Order {
@@ -637,29 +638,22 @@ module deepbook::pool {
         order_id
     }
 
-    /// Cancels an order and returns it
+    /// Cancels an order and returns the order details
     fun internal_cancel_order<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _order_id: u128,
-        _ctx: &TxContext,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
     ): Order {
+        let order;
+        if (order_is_bid(order_id)) {
+            order = self.bids.remove(order_id)
+        } else {
+            order = self.asks.remove(order_id);
+        };
+        order
+    }
 
-        // TODO: cancel order using order_id, return canceled order
-
-        Order {
-            order_id: 0,
-            client_order_id: 1,
-            price: 10000,
-            original_quantity: 2000,
-            quantity: 1000,
-            original_fee_quantity: 20,
-            fee_quantity: 10,
-            fee_is_deep: true,
-            is_bid: false,
-            owner: @0x0,
-            expire_timestamp: 0,
-            self_matching_prevention: 0, // TODO
-        }
+    fun order_is_bid(order_id: u128): bool {
+        (order_id < MIN_ASK_ORDER_ID)
     }
 
     /// Returns if the order fee is paid in deep tokens

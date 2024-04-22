@@ -66,10 +66,18 @@ module deepbook::utils {
         bytes1.to_ascii_string()
     }
 
+    /// first bit is 0 for bid, 1 for ask
+    /// next 63 bits are price (assertion for price is done in order function)
+    /// last 64 bits are order_id
     public(package) fun encode_order_id(
+        is_bid: bool,
         price: u64,
         order_id: u64
     ): u128 {
-        ((price as u128) << 64) + (order_id as u128)
+        if (is_bid) {
+            ((price as u128) << 64) + (order_id as u128)
+        } else {
+            (1u128 << 127) + ((price as u128) << 64) + (order_id as u128)
+        }
     }
 }
