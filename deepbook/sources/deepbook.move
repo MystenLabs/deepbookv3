@@ -7,6 +7,7 @@ module deepbook::deepbook {
         coin::Coin,
         sui::SUI,
         clock::Clock,
+        vec_set::VecSet,
     };
 
     use deepbook::{
@@ -141,11 +142,35 @@ module deepbook::deepbook {
         );
     }
 
+    /// Public facing function to cancel an order.
+    public fun cancel_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u64,
+        ctx: &mut TxContext,
+    ) {
+        pool.cancel_order(account, client_order_id, ctx);
+    }
+
+    /// Public facing function to cancel all orders.
+    public fun cancel_all_orders<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ) {
+        pool.cancel_all(account, ctx);
+    }
+
+    /// Public facing function to get open orders for a user.
+    public fun get_open_orders<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
+    ): VecSet<u128> {
+        pool.get_open_orders(user)
+    }
+
     // public fun add_reference_pool()
     // public fun place_market_order()
-    // public fun cancel_order()
-    // public fun cancel_all()
-    // public fun get_open_orders()
     // public fun get_amount_out()
     // public fun get_order_book()
 }

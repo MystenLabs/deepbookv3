@@ -5,6 +5,7 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
+        vec_set::VecSet,
         coin::{Self, Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
@@ -258,15 +259,14 @@ module deepbook::pool {
         order_id
     }
 
-    #[allow(unused_function, unused_variable)]
-    /// cancels an order by id
+    /// Cancel an order by order_id. Withdraw settled funds back into user account.
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         order_id: u64,
         ctx: &mut TxContext,
     ) {
-        // TODO: find order in corresponding BigVec using order_id
+        // TODO: find order in corresponding BigVec using order_id and remove it
         // Sample order that is cancelled
         let order_cancelled = self.internal_cancel_order(order_id, ctx);
 
@@ -344,8 +344,7 @@ module deepbook::pool {
         user_data.set_settle_amounts(0, 0, ctx);
     }
 
-    #[allow(unused_function, unused_variable)]
-    /// Allow canceling of all orders for an account
+    /// Cancel all orders for an account. Withdraw settled funds back into user account.
     public(package) fun cancel_all<BaseAsset, QuoteAsset>(
         _self: &mut Pool<BaseAsset, QuoteAsset>,
         _account: &mut Account,
@@ -354,26 +353,14 @@ module deepbook::pool {
         // TODO: to implement
     }
 
-    #[allow(unused_function, unused_variable)]
-    public(package) fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _client_order_id: u64,
-        _account: &mut Account,
-        _quantity: u64,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
-    }
+    public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
+    ): VecSet<u128> {
+        assert!(self.users.contains(user), EUserNotFound);
+        let user_data = &self.users[user];
 
-    #[allow(unused_function, unused_variable)]
-    public(package) fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _client_order_id: u64,
-        _account: &mut Account,
-        _quantity: u64,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
+        user_data.open_orders()
     }
 
     /// Creates a new pool for trading and returns pool_key, called by state module
@@ -684,7 +671,6 @@ module deepbook::pool {
 
     // // Other helpful functions
     // TODO: taker order, send fees directly to treasury
-    // public(package) fun modify_order()
     // public(package) fun get_order()
     // public(package) fun get_all_orders()
     // public(package) fun get_book()
