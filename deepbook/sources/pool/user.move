@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::user {
-    use sui::vec_map::{Self, VecMap};
+    use sui::vec_set::{Self, VecSet};
 
     const EInvalidResetAddress: u64 = 1;
 
     public struct User has store {
         user: address,
         last_refresh_epoch: u64,
-        open_orders: VecMap<u64, u64>,
+        open_orders: VecSet<u128>,
         maker_volume: u64,
         stake_amount: u64,
         next_stake_amount: u64,
@@ -22,7 +22,7 @@ module deepbook::user {
         User {
             user,
             last_refresh_epoch: 0,
-            open_orders: vec_map::empty(),
+            open_orders: vec_set::empty(),
             maker_volume: 0,
             stake_amount: 0,
             next_stake_amount: 0,
@@ -99,5 +99,10 @@ module deepbook::user {
     fun calculate_rebates_and_burn(_user: &User): (u64, u64) {
         // calculate rebates from the current User data
         (0, 0)
+    }
+
+    /// Get user's open orders.
+    public(package) fun open_orders(self: &User): VecSet<u128> {
+        self.open_orders
     }
 }
