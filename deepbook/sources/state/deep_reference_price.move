@@ -21,9 +21,9 @@ module deepbook::deep_reference_price {
     }
 
     /// Add a reference pool. Can be performed by the DeepbookAdminCap owner.
-    public(package) fun add_reference_pool<BaseAsset, QutoeAsset>(
+    public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
         deep_reference_price: &mut DeepReferencePools,
-        pool: &Pool<BaseAsset, QutoeAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         // cap: &DeepbookAdminCap TODO
     ) {
         let (base, quote) = pool.get_base_quote_types();
@@ -39,10 +39,10 @@ module deepbook::deep_reference_price {
     }
 
     /// TODO: comments
-    public(package) fun get_conversion_rates<BaseAsset, QutoeAsset>(
+    public(package) fun get_conversion_rates<BaseAsset, QuoteAsset>(
         _deep_reference_price: &DeepReferencePools,
-        _reference_pool: &Pool<BaseAsset, QutoeAsset>,
-        _pool: &Pool<BaseAsset, QutoeAsset>,
+        _reference_pool: &Pool<BaseAsset, QuoteAsset>,
+        _pool: &Pool<BaseAsset, QuoteAsset>,
     ): (u64, u64) {
         (0, 0)
         // TODO
