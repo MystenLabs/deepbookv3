@@ -42,6 +42,14 @@ module deepbook::deepbook {
         state.set_pool_as_stable<BaseAsset, QuoteAsset>(pool, stable, ctx);
     }
 
+    /// Public facing function to add a reference pool.
+    public fun add_reference_pool<BaseAsset, QuoteAsset>(
+        state: &mut State,
+        reference_pool: &Pool<BaseAsset, QuoteAsset>,
+    ) {
+        state.add_reference_pool<BaseAsset, QuoteAsset>(reference_pool);
+    }
+
     /// Public facing function to add a deep price point into a specific pool.
     public fun add_deep_price_point<BaseAsset, QuoteAsset>(
         state: &mut State,
@@ -143,6 +151,24 @@ module deepbook::deepbook {
         )
     }
 
+    /// Public facing function to place a market order.
+    public fun place_market_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u64,
+        quantity: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ): u128 {
+        pool.place_market_order(
+            account,
+            client_order_id,
+            quantity,
+            is_bid,
+            ctx,
+        )
+    }
+
     /// Public facing function to cancel an order.
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -170,8 +196,38 @@ module deepbook::deepbook {
         pool.get_open_orders(user)
     }
 
-    // public fun add_reference_pool()
-    // public fun place_market_order()
-    // public fun get_amount_out()
-    // public fun get_order_book()
+    /// Public facing function to get amount_out given amount_in.
+    public fun get_amount_out<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        amount_in: u64,
+        is_bid: bool,
+    ): u64 {
+        pool.get_amount_out(amount_in, is_bid)
+    }
+
+    /// Public facing function to get level2 bids.
+    public fun get_level2_bids<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_bids(price_low, price_high)
+    }
+
+    /// Public facing function to get level2 asks.
+    public fun get_level2_asks<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_asks(price_low, price_high)
+    }
+
+    /// Public facing function to get level2 ticks from mid.
+    public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_ticks_from_mid(ticks)
+    }
 }

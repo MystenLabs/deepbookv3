@@ -98,6 +98,16 @@ module deepbook::state { // Consider renaming this module
         pool.add_deep_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
+    /// Add a DEEP reference pool: DEEP/USDC, DEEP/SUI, etc.
+    /// This will be used to validate DEEP data points.
+    public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
+        self: &mut State,
+        reference_pool: &Pool<BaseAsset, QuoteAsset>,
+        // cap: &DeepbookAdminCap, TODO
+    ) {
+        self.deep_reference_pools.add_reference_pool(reference_pool);
+    }
+
     // STAKE
 
     /// Stake DEEP in the pool. This will increase the user's voting power next epoch
