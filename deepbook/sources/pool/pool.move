@@ -626,8 +626,6 @@ module deepbook::pool {
             self_matching_prevention: 0, // TODO
         };
 
-
-//public fun insert<E: store>(self: &mut BigVector<E>, key: u128, val: E) {
         if (is_bid){
             self.bids.insert(order_id, order);
             self.next_bid_order_id = self.next_bid_order_id - 1;
