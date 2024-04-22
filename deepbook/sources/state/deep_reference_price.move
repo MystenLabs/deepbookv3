@@ -24,7 +24,6 @@ module deepbook::deep_reference_price {
     public(package) fun add_reference_pool<BaseAsset, QutoeAsset>(
         deep_reference_price: &mut DeepReferencePools,
         pool: &Pool<BaseAsset, QutoeAsset>,
-        // cap: &DeepbookAdminCap TODO
     ) {
         let (base, quote) = pool.get_base_quote_types();
         let deep_type = type_name::get<DEEP>().into_string();

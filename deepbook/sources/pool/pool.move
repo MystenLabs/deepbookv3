@@ -259,6 +259,58 @@ module deepbook::pool {
         order_id
     }
 
+    /// Place a market order to the order book.
+    public(package) fun place_market_order<BaseAsset, QuoteAsset>(
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
+        _account: &mut Account,
+        _client_order_id: u64,
+        _quantity: u64, // in base asset
+        _is_bid: bool, // true for bid, false for ask
+        _ctx: &mut TxContext,
+    ): u128 {
+        // TODO: implement
+        0
+    }
+
+    /// Given an amount in and direction, calculate amount out
+    public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _amount_in: u64,
+        _is_bid: bool,
+    ): u64 {
+        // TODO: implement
+        0
+    }
+
+    /// Get the level2 bids between price_low and price_high.
+    public(package) fun get_level2_bids<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _price_low: u64,
+        _price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
+    /// Get the level2 bids between price_low and price_high.
+    public(package) fun get_level2_asks<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _price_low: u64,
+        _price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
+    /// Get the n ticks from the mid price
+    public(package) fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _ticks: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
     /// Cancel an order by order_id. Withdraw settled funds back into user account.
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -353,6 +405,7 @@ module deepbook::pool {
         // TODO: to implement
     }
 
+    /// Get all open orders for a user.
     public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         user: address,
