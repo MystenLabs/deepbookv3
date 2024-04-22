@@ -5,6 +5,7 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
+        vec_set::VecSet,
         coin::{Self, Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
@@ -22,8 +23,8 @@ module deepbook::pool {
         big_vector::{Self, BigVector},
         account::Account,
         user::User,
-        utils,
-        math,
+        utils::{Self, encode_order_id},
+        math::mul,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -41,6 +42,11 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
+    const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
+    const START_ASK_ORDER_ID: u64 = 1;
+    const MIN_ASK_ORDER_ID: u128 = 1 << 127;
+    const MIN_PRICE: u64 = 1;
+    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -60,7 +66,7 @@ module deepbook::pool {
         /// object ID of the pool the order was placed on
         pool_id: ID,
         /// ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         /// ID of the order defined by client
         client_order_id: u64,
         is_bid: bool,
@@ -77,7 +83,7 @@ module deepbook::pool {
         /// object ID of the pool the order was placed on
         pool_id: ID,
         /// ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         /// ID of the order defined by client
         client_order_id: u64,
         is_bid: bool,
@@ -97,7 +103,7 @@ module deepbook::pool {
     /// Orders that are submitted earlier has lower order ids.
     public struct Order has store, drop {
         // ID of the order within the pool
-        order_id: u64,
+        order_id: u128,
         // ID of the order defined by client
         client_order_id: u64, // TODO: What does this ID do?
         // Price, only used for limit orders
@@ -122,8 +128,6 @@ module deepbook::pool {
         self_matching_prevention: u8
     }
 
-    // TODO: why Pool has `store` ?
-    // TODO: consider adding back if necessary
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         tick_size: u64,
@@ -163,11 +167,11 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): u64 {
+    ): u128 {
         // Refresh state as necessary if first order of epoch
         self.refresh(ctx);
 
-        assert!(price > 0, EOrderInvalidPrice);
+        assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
         assert!(price % self.tick_size == 0, EOrderInvalidPrice);
         // Check quantity is above minimum quantity (in base asset)
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
@@ -245,7 +249,7 @@ module deepbook::pool {
         let order_id = self.internal_place_limit_order(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(),
-            order_id: 0,
+            order_id,
             client_order_id,
             is_bid,
             owner: account.owner(),
@@ -258,17 +262,71 @@ module deepbook::pool {
         order_id
     }
 
-    #[allow(unused_function, unused_variable)]
-    /// cancels an order by id
+    /// Place a market order to the order book.
+    public(package) fun place_market_order<BaseAsset, QuoteAsset>(
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
+        _account: &mut Account,
+        _client_order_id: u64,
+        _quantity: u64, // in base asset
+        _is_bid: bool, // true for bid, false for ask
+        _ctx: &mut TxContext,
+    ): u128 {
+        // TODO: implement
+        0
+    }
+
+    /// Given an amount in and direction, calculate amount out
+    public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _amount_in: u64,
+        _is_bid: bool,
+    ): u64 {
+        // TODO: implement
+        0
+    }
+
+    /// Get the level2 bids between price_low and price_high.
+    public(package) fun get_level2_bids<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _price_low: u64,
+        _price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
+    /// Get the level2 bids between price_low and price_high.
+    public(package) fun get_level2_asks<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _price_low: u64,
+        _price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
+    /// Get the n ticks from the mid price
+    public(package) fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>,
+        _ticks: u64,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: implement
+        (vector[], vector[])
+    }
+
+    /// Cancel an order by order_id. Withdraw settled funds back into user account.
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
-        order_id: u64,
+        order_id: u128,
         ctx: &mut TxContext,
-    ) {
-        // TODO: find order in corresponding BigVec using order_id
-        // Sample order that is cancelled
-        let order_cancelled = self.internal_cancel_order(order_id, ctx);
+    ): Order {
+        // Order cancelled and returned
+        let order_cancelled = self.internal_cancel_order(order_id);
+
+        // remove order from user's open orders
+        let user_data = &mut self.users[account.owner()];
+        user_data.remove_open_order(order_id);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -305,7 +363,9 @@ module deepbook::pool {
             original_quantity: order_cancelled.original_quantity,
             base_asset_quantity_canceled: order_cancelled.quantity,
             price: order_cancelled.price
-        })
+        });
+
+        order_cancelled
     }
 
     /// Claim the rebates for the user
@@ -344,36 +404,37 @@ module deepbook::pool {
         user_data.set_settle_amounts(0, 0, ctx);
     }
 
-    #[allow(unused_function, unused_variable)]
-    /// Allow canceling of all orders for an account
+    /// Cancel all orders for an account. Withdraw settled funds back into user account.
     public(package) fun cancel_all<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _account: &mut Account,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ): vector<Order>{
+        let mut cancelled_orders = vector[];
+        let user_open_orders = self.users[ctx.sender()].open_orders();
+
+        let orders_vector = user_open_orders.into_keys();
+        let len = orders_vector.length();
+        let mut i = 0;
+        while (i < len) {
+            let key = orders_vector[i];
+            let cancelled_order = cancel_order(self, account, key, ctx);
+            cancelled_orders.push_back(cancelled_order);
+            i = i + 1;
+        };
+
+        cancelled_orders
     }
 
-    #[allow(unused_function, unused_variable)]
-    public(package) fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _client_order_id: u64,
-        _account: &mut Account,
-        _quantity: u64,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
-    }
+    /// Get all open orders for a user.
+    public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
+    ): VecSet<u128> {
+        assert!(self.users.contains(user), EUserNotFound);
+        let user_data = &self.users[user];
 
-    #[allow(unused_function, unused_variable)]
-    public(package) fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _client_order_id: u64,
-        _account: &mut Account,
-        _quantity: u64,
-        _ctx: &mut TxContext,
-    ) {
-        // TODO: to implement
+        user_data.open_orders()
     }
 
     /// Creates a new pool for trading and returns pool_key, called by state module
@@ -408,8 +469,8 @@ module deepbook::pool {
             id: pool_uid,
             bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
             asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
-            next_bid_order_id: 0,
-            next_ask_order_id: 0,
+            next_bid_order_id: START_BID_ORDER_ID,
+            next_ask_order_id: START_ASK_ORDER_ID,
             users: table::new(ctx),
             deep_config: option::none(),
             tick_size,
@@ -624,10 +685,11 @@ module deepbook::pool {
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
-    ): u64 {
-        let order_id = self.next_bid_order_id;
+    ): u128 {
+        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+
         // Create Order
-        let _order = Order {
+        let order = Order {
             order_id,
             client_order_id,
             price,
@@ -642,48 +704,54 @@ module deepbook::pool {
             self_matching_prevention: 0, // TODO
         };
 
+        // Insert order into order books
         if (is_bid){
-            // TODO: Place ask order into BigVec
-
-            // Increment order id
-            self.next_bid_order_id = self.next_bid_order_id + 1;
+            self.bids.insert(order_id, order);
         } else {
-            // TODO: Place ask order into BigVec
-
-            // Increment order id
-            self.next_ask_order_id = self.next_ask_order_id + 1;
+            self.asks.insert(order_id, order);
         };
+
+        // Add order to user's open orders
+        let user_data = &mut self.users[ctx.sender()];
+        user_data.add_open_order(order_id);
 
         order_id
     }
 
-    /// Cancels an order and returns it
+    /// Cancels an order and returns the order details
     fun internal_cancel_order<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _order_id: u64,
-        _ctx: &TxContext,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
     ): Order {
+        if (order_is_bid(order_id)) {
+            self.bids.remove(order_id)
+        } else {
+            self.asks.remove(order_id)
+        }
+    }
 
-        // TODO: cancel order using order_id, return canceled order
+    /// Returns 0 if the order is a bid order, 1 if the order is an ask order
+    fun order_is_bid(order_id: u128): bool {
+        (order_id < MIN_ASK_ORDER_ID)
+    }
 
-        Order {
-            order_id: 0,
-            client_order_id: 1,
-            price: 10000,
-            original_quantity: 2000,
-            quantity: 1000,
-            original_fee_quantity: 20,
-            fee_quantity: 10,
-            fee_is_deep: true,
-            is_bid: false,
-            owner: @0x0,
-            expire_timestamp: 0,
-            self_matching_prevention: 0, // TODO
+    fun get_order_id<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        is_bid: bool
+    ): u64 {
+        if (is_bid) {
+            self.next_bid_order_id = self.next_bid_order_id - 1;
+            self.next_bid_order_id
+        } else {
+            self.next_ask_order_id = self.next_ask_order_id + 1;
+            self.next_ask_order_id
         }
     }
 
     /// Returns if the order fee is paid in deep tokens
-    fun fee_is_deep<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    fun fee_is_deep<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): bool {
         self.deep_config.is_some()
     }
 
@@ -697,7 +765,6 @@ module deepbook::pool {
 
     // // Other helpful functions
     // TODO: taker order, send fees directly to treasury
-    // public(package) fun modify_order()
     // public(package) fun get_order()
     // public(package) fun get_all_orders()
     // public(package) fun get_book()

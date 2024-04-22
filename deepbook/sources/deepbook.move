@@ -9,11 +9,12 @@ module deepbook::deepbook {
         coin::Coin,
         sui::SUI,
         clock::Clock,
+        vec_set::VecSet,
     };
 
     use deepbook::{
         state::State,
-        pool::{Pool, DEEP},
+        pool::{Order, Pool, DEEP},
         account::Account,
     };
 
@@ -41,6 +42,14 @@ module deepbook::deepbook {
         ctx: &TxContext,
     ) {
         state.set_pool_as_stable(pool, stable, ctx);
+    }
+
+    /// Public facing function to add a reference pool.
+    public fun add_reference_pool<BaseAsset, QuoteAsset>(
+        state: &mut State,
+        reference_pool: &Pool<BaseAsset, QuoteAsset>,
+    ) {
+        state.add_reference_pool<BaseAsset, QuoteAsset>(reference_pool);
     }
 
     /// Public facing function to add a deep price point into a specific pool.
@@ -119,6 +128,7 @@ module deepbook::deepbook {
 
     // ORDERS
 
+    /// TODO: add other return values
     /// Public facing function to place a limit order.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -130,7 +140,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ) {
+    ): u128 {
         pool.place_limit_order(
             account,
             client_order_id,
@@ -140,14 +150,86 @@ module deepbook::deepbook {
             expire_timestamp,
             clock,
             ctx,
-        );
+        )
     }
 
-    // public fun add_reference_pool()
-    // public fun place_market_order()
-    // public fun cancel_order()
-    // public fun cancel_all()
-    // public fun get_open_orders()
-    // public fun get_amount_out()
-    // public fun get_order_book()
+    /// Public facing function to place a market order.
+    public fun place_market_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u64,
+        quantity: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ): u128 {
+        pool.place_market_order(
+            account,
+            client_order_id,
+            quantity,
+            is_bid,
+            ctx,
+        )
+    }
+
+    /// Public facing function to cancel an order.
+    public fun cancel_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u128,
+        ctx: &mut TxContext,
+    ): Order {
+        pool.cancel_order(account, client_order_id, ctx)
+    }
+
+    /// Public facing function to cancel all orders.
+    public fun cancel_all_orders<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ): vector<Order> {
+        pool.cancel_all(account, ctx)
+    }
+
+    /// Public facing function to get open orders for a user.
+    public fun get_open_orders<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
+    ): VecSet<u128> {
+        pool.get_open_orders(user)
+    }
+
+    /// Public facing function to get amount_out given amount_in.
+    public fun get_amount_out<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        amount_in: u64,
+        is_bid: bool,
+    ): u64 {
+        pool.get_amount_out(amount_in, is_bid)
+    }
+
+    /// Public facing function to get level2 bids.
+    public fun get_level2_bids<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_bids(price_low, price_high)
+    }
+
+    /// Public facing function to get level2 asks.
+    public fun get_level2_asks<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_asks(price_low, price_high)
+    }
+
+    /// Public facing function to get level2 ticks from mid.
+    public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>) {
+        pool.get_level2_ticks_from_mid(ticks)
+    }
 }
