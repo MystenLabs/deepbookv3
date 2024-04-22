@@ -620,12 +620,7 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
     ): u128 {
-        let order_id = if (is_bid) {
-            encode_order_id(is_bid, price, self.next_bid_order_id)
-        } else {
-            encode_order_id(is_bid, price, self.next_ask_order_id)
-        };
-        update_order_id(self, is_bid);
+        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
         // Create Order
         let order = Order {
@@ -674,14 +669,16 @@ module deepbook::pool {
         (order_id < MIN_ASK_ORDER_ID)
     }
 
-    fun update_order_id<BaseAsset, QuoteAsset>(
+    fun get_order_id<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         is_bid: bool
-    ) {
+    ): u64 {
         if (is_bid) {
             self.next_bid_order_id = self.next_bid_order_id - 1;
+            self.next_bid_order_id
         } else {
             self.next_ask_order_id = self.next_ask_order_id + 1;
+            self.next_ask_order_id
         }
     }
 

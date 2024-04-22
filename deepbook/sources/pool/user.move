@@ -106,6 +106,7 @@ module deepbook::user {
         self.open_orders
     }
 
+    /// Add open order to User. Order has been added successfully before calling this function
     public(package) fun add_open_order(
         self: &mut User,
         order_id: u128,
@@ -113,6 +114,7 @@ module deepbook::user {
         self.open_orders.insert(order_id);
     }
 
+    /// removes open order from User, actual order removal is done before calling this function
     public(package) fun remove_open_order(
         self: &mut User,
         order_id: u128,
