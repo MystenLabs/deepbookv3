@@ -323,6 +323,7 @@ module deepbook::pool {
             // Add to filled map
             base_filled.insert(matched_quantity, ask.price);
             net_base_qty = net_base_qty + matched_quantity;
+            // TODO: Should round this up so makers get more than price specified
             net_quote_qty = net_quote_qty + math::mul(matched_quantity, ask.price);
             // If ask quantity is 0, remove the order
             if (ask.quantity == 0) {
@@ -363,6 +364,7 @@ module deepbook::pool {
             // Add to filled map
             quote_filled.insert(matched_quantity, bid.price);
             net_base_qty = net_base_qty + matched_quantity;
+            // Rounding down here is correct, we should get less quote_qty
             net_quote_qty = net_quote_qty + math::mul(matched_quantity, bid.price);
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
