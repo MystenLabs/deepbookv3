@@ -10,6 +10,7 @@ module deepbook::deepbook {
         sui::SUI,
         clock::Clock,
         vec_set::VecSet,
+        vec_map::VecMap,
     };
 
     use deepbook::{
@@ -140,7 +141,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): u128 {
+    ): (VecMap<u64,u64>, VecMap<u64,u64>, u128) {
         pool.place_limit_order(
             account,
             client_order_id,
