@@ -43,6 +43,7 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
+    // Assuming 10k orders, would take over 50 million years to overflow
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
@@ -158,6 +159,8 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
+    /// Will return (VecMap: BaseAsset, VecMap: QuoteAsset, u128) where the
+    /// two VecMaps contain qty -> price of filled quantities at each price level
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -249,7 +252,7 @@ module deepbook::pool {
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
-        let (base_fill, quote_fill, place_quantity) = if (is_bid) {
+        let (base_fills, quote_fills, place_quantity) = if (is_bid) {
             match_bid(self, order_id, place_quantity)
         } else {
             match_ask(self, order_id, place_quantity)
@@ -257,7 +260,7 @@ module deepbook::pool {
 
         // All quantity has been matched, no need to inject order
         if (place_quantity == 0) {
-            (base_fill, quote_fill, 0)
+            (base_fills, quote_fills, 0)
         } else {
             self.internal_inject_limit_order(
             order_id,
@@ -281,7 +284,7 @@ module deepbook::pool {
                 expire_timestamp: 0,
             });
 
-            (base_fill, quote_fill, order_id)
+            (base_fills, quote_fills, order_id)
         }
     }
 
@@ -308,7 +311,7 @@ module deepbook::pool {
             ask.fee_quantity = ask.fee_quantity - fee_subtracted;
 
             // Add to filled map
-            filled.insert(ask.price, matched_quantity);
+            filled.insert(matched_quantity, ask.price);
             // If ask quantity is 0, remove the order
             if (ask.quantity == 0) {
                 self.asks.remove(ask.order_id);
@@ -344,7 +347,7 @@ module deepbook::pool {
             bid.fee_quantity = bid.fee_quantity - fee_subtracted;
 
             // Add to filled map
-            filled.insert(bid.price, matched_quantity);
+            filled.insert(matched_quantity, bid.price);
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
                 self.bids.remove(bid.order_id);
