@@ -1,10 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// The user module manages user data and operations for the current epoch.
+/// This includes the user's open orders, maker volume, stake amount, and unclaimed rebates.
+/// When the epoch changes, the first user action triggers the necessary calculation for that user
+/// for the previous epoch. 
 module deepbook::user {
     use sui::vec_set::{Self, VecSet};
-
-    const EInvalidResetAddress: u64 = 1;
 
     public struct User has store {
         user: address,
@@ -14,8 +16,6 @@ module deepbook::user {
         stake_amount: u64,
         new_stake_amount: u64,
         unclaimed_rebates: u64,
-        settled_base_amount: u64,
-        settled_quote_amount: u64,
     }
 
     public(package) fun new_user(user: address): User {
@@ -27,8 +27,6 @@ module deepbook::user {
             stake_amount: 0,
             new_stake_amount: 0,
             unclaimed_rebates: 0,
-            settled_base_amount: 0,
-            settled_quote_amount: 0,
         }
     }
 
@@ -78,23 +76,6 @@ module deepbook::user {
         rebates
     }
 
-    /// Get settled amounts for the user.
-    public(package) fun settle_amounts(user: &User): (u64, u64) {
-        (user.settled_base_amount, user.settled_quote_amount)
-    }
-
-    /// Set settled amounts for the user.
-    public(package) fun set_settle_amounts(
-        user: &mut User,
-        settled_base_amount: u64,
-        settled_quote_amount: u64,
-        ctx: &TxContext,
-    ) {
-        assert!(user.user == ctx.sender(), EInvalidResetAddress);
-        user.settled_base_amount = settled_base_amount;
-        user.settled_quote_amount = settled_quote_amount;
-    }
-
     /// Given the epoch's volume data and the user's volume data,
     /// calculate the rebate and burn amounts.
     fun calculate_rebate_and_burn_amounts(_user: &User): (u64, u64) {
@@ -123,7 +104,7 @@ module deepbook::user {
         order_id: u128,
     ): u128 {
         self.open_orders.remove(&order_id);
-        
+
         order_id
     }
 }
