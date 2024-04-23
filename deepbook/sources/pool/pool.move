@@ -184,7 +184,6 @@ module deepbook::pool {
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
-        let (base_fee, quote_fee, deep_fee) = (0,0,0);
         let (net_base_qty, net_quote_qty, base_fills, quote_fills, quantity) =
         if (is_bid) {
             match_bid(self, order_id, quantity)
@@ -251,9 +250,9 @@ module deepbook::pool {
             (taker_base_qty + maker_base_quantity + total_base_fee, taker_quote_qty + maker_quote_quantity + total_quote_fee);
         if (total_base_qty > 0) self.deposit_base(account, total_base_qty, ctx);
         if (total_quote_qty > 0) self.deposit_quote(account, total_quote_qty, ctx);
-        if (total_deep_fee > 0) self.deposit_deep(account, deep_fee, ctx);
+        if (total_deep_fee > 0) self.deposit_deep(account, total_deep_fee, ctx);
 
-        let fee_quantity = math::max(math::max(base_fee, quote_fee), deep_fee);
+        let fee_quantity = math::max(math::max(total_base_fee, total_quote_fee), total_deep_fee);
 
         // All quantity has been matched, no need to inject order
         if (place_quantity == 0) {
@@ -367,12 +366,12 @@ module deepbook::pool {
 
     /// Place a market order to the order book.
     public(package) fun place_market_order<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _account: &mut Account,
-        _client_order_id: u64,
-        _quantity: u64, // in base asset
-        _is_bid: bool, // true for bid, false for ask
-        _ctx: &mut TxContext,
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u64,
+        quantity: u64, // in base asset
+        is_bid: bool, // true for bid, false for ask
+        ctx: &mut TxContext,
     ): u128 {
         // TODO: implement
         0
