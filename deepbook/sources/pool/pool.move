@@ -184,6 +184,9 @@ module deepbook::pool {
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
+        // TODO: open to brainstorming a better return type here.
+        // Can simply return base_fills/quote_fills and have
+        // separate function calculate net_base_qty/net_quote_qty
         let (net_base_qty, net_quote_qty, base_fills, quote_fills, quantity) =
         if (is_bid) {
             match_bid(self, order_id, quantity)
@@ -245,6 +248,8 @@ module deepbook::pool {
             taker_deep_fee + maker_deep_fee
         );
 
+        let fee_quantity = math::max(math::max(total_base_fee, total_quote_fee), total_deep_fee);
+
         // Transfer Base, Quote, Fee to Pool.
         let (total_base_qty, total_quote_qty) =
             (taker_base_qty + maker_base_quantity + total_base_fee, taker_quote_qty + maker_quote_quantity + total_quote_fee);
@@ -252,7 +257,14 @@ module deepbook::pool {
         if (total_quote_qty > 0) self.deposit_quote(account, total_quote_qty, ctx);
         if (total_deep_fee > 0) self.deposit_deep(account, total_deep_fee, ctx);
 
-        let fee_quantity = math::max(math::max(total_base_fee, total_quote_fee), total_deep_fee);
+        // Withdraw assets from taker orders
+        if (is_bid) {
+            self.withdraw_base(account, net_base_qty, ctx);
+        } else {
+            self.withdraw_quote(account, net_quote_qty, ctx);
+        };
+
+        // TODO: Send appropriate funds to other maker's accounts
 
         // All quantity has been matched, no need to inject order
         if (place_quantity == 0) {
@@ -351,7 +363,7 @@ module deepbook::pool {
             // Add to filled map
             quote_filled.insert(matched_quantity, bid.price);
             net_base_qty = net_base_qty + matched_quantity;
-            net_quote_qty = net_quote_qty + matched_quantity * bid.price;
+            net_quote_qty = net_quote_qty + math::mul(matched_quantity, bid.price);
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
                 self.bids.remove(bid.order_id);
@@ -366,18 +378,19 @@ module deepbook::pool {
 
     /// Place a market order to the order book.
     public(package) fun place_market_order<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        client_order_id: u64,
-        quantity: u64, // in base asset
-        is_bid: bool, // true for bid, false for ask
-        ctx: &mut TxContext,
+        _self: &mut Pool<BaseAsset, QuoteAsset>,
+        _account: &mut Account,
+        _client_order_id: u64,
+        _quantity: u64, // in base asset
+        _is_bid: bool, // true for bid, false for ask
+        _ctx: &mut TxContext,
     ): u128 {
         // TODO: implement
         0
     }
 
     /// Given an amount in and direction, calculate amount out
+    /// Will return (amount_out, amount_in_used)
     public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>,
         _amount_in: u64,
