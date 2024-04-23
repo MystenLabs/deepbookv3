@@ -181,42 +181,79 @@ module deepbook::pool {
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
-        // Calculate total Base, Quote, DEEP to be transferred.
-        let maker_fee = self.pool_state.maker_fee();
-        let (base_quantity, quote_quantity) = if (is_bid) {
+        // Encode the order_id
+        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+
+        let (base_fee, quote_fee, deep_fee) = (0,0,0);
+        let (net_base_qty, net_quote_qty, base_fills, quote_fills, quantity) =
+        if (is_bid) {
+            match_bid(self, order_id, quantity)
+        } else {
+            match_ask(self, order_id, quantity)
+        };
+
+        // Calculate the net quantity to be deposited and placed
+        let (taker_base_qty, taker_quote_qty) = if (is_bid) {
+            (0, net_quote_qty)
+        } else {
+            (net_base_qty, 0)
+        };
+
+        // Calculate the quantity to be placed
+        let (maker_base_quantity, maker_quote_quantity) = if (is_bid) {
             (0, math::mul(quantity, price))
         } else {
             (quantity, 0)
         };
-        let (base_fee, quote_fee, deep_fee) = if (self.fee_is_deep()) {
-            let config = self.deep_config.borrow();
-            let quote_fee = math::mul(config.deep_per_base(), base_quantity) + 
-                math::mul(config.deep_per_quote(), quote_quantity);
-            
+        let place_quantity = math::max(maker_base_quantity, maker_quote_quantity);
+
+        // Calculate total Base, Quote, DEEP to be transferred.
+        let maker_fee = self.pool_state.maker_fee();
+        let taker_fee = self.pool_state.taker_fee();
+        let config = self.deep_config.borrow();
+
+        // taker fees
+        let (taker_base_fee, taker_quote_fee, taker_deep_fee) = if (self.fee_is_deep()) {
+            if (is_bid) {
+                (0, 0, math::mul(taker_fee, math::mul(config.deep_per_base(), net_base_qty)))
+            } else {
+                (0, 0, math::mul(taker_fee, math::mul(config.deep_per_quote(), net_quote_qty)))
+            }
+        } else {
+            if (is_bid) {
+                (math::mul(taker_fee, net_base_qty), 0, 0)
+            } else {
+                (0, math::mul(taker_fee, net_quote_qty), 0)
+            }
+        };
+
+        // maker fees
+        let (maker_base_fee, maker_quote_fee, maker_deep_fee) = if (self.fee_is_deep()) {
+            let quote_fee = math::mul(config.deep_per_base(), maker_base_quantity) +
+                math::mul(config.deep_per_quote(), maker_quote_quantity);
+
             (0, 0, quote_fee)
         } else {
-            let base_fee = math::mul(base_quantity, maker_fee); // TODO: taker_fee, decimal places
-            let quote_fee = math::mul(quote_quantity, maker_fee);
-            
+            let base_fee = math::mul(maker_base_quantity, maker_fee);
+            let quote_fee = math::mul(maker_quote_quantity, maker_fee);
+
             (base_fee, quote_fee, 0)
         };
-        
+
+        let (total_base_fee, total_quote_fee, total_deep_fee) = (
+            taker_base_fee + maker_base_fee,
+            taker_quote_fee + maker_quote_fee,
+            taker_deep_fee + maker_deep_fee
+        );
+
         // Transfer Base, Quote, Fee to Pool.
-        if (base_quantity + base_fee > 0) self.deposit_base(account, base_quantity + base_fee, ctx);
-        if (quote_quantity + quote_fee > 0) self.deposit_quote(account, quote_quantity + quote_fee, ctx);
-        if (deep_fee > 0) self.deposit_deep(account, deep_fee, ctx);
+        let (total_base_qty, total_quote_qty) =
+            (taker_base_qty + maker_base_quantity + total_base_fee, taker_quote_qty + maker_quote_quantity + total_quote_fee);
+        if (total_base_qty > 0) self.deposit_base(account, total_base_qty, ctx);
+        if (total_quote_qty > 0) self.deposit_quote(account, total_quote_qty, ctx);
+        if (total_deep_fee > 0) self.deposit_deep(account, deep_fee, ctx);
 
-        let place_quantity = math::max(base_quantity, quote_quantity);
         let fee_quantity = math::max(math::max(base_fee, quote_fee), deep_fee);
-
-        // Encode the order_id
-        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
-
-        let (base_fills, quote_fills, place_quantity) = if (is_bid) {
-            match_bid(self, order_id, place_quantity)
-        } else {
-            match_ask(self, order_id, place_quantity)
-        };
 
         // All quantity has been matched, no need to inject order
         if (place_quantity == 0) {
@@ -238,7 +275,7 @@ module deepbook::pool {
                 client_order_id,
                 is_bid,
                 owner: account.owner(),
-                original_quantity: quantity,
+                original_quantity: place_quantity,
                 base_asset_quantity_placed: quantity,
                 price,
                 expire_timestamp: 0,
@@ -252,17 +289,19 @@ module deepbook::pool {
     fun match_bid<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
-        place_quantity: u64,
-    ): (VecMap<u64,u64>, VecMap<u64,u64>, u64) {
-        let mut remaining_quantity = place_quantity;
-        let mut filled = vec_map::empty<u64,u64>();
+        quantity: u64, // in base asset
+    ): (u64, u64, VecMap<u64,u64>, VecMap<u64,u64>, u64) {
+        let mut remaining_quantity = quantity;
+        let mut net_base_qty = 0;
+        let mut net_quote_qty = 0;
+        let mut base_filled = vec_map::empty<u64,u64>();
         // TODO: Think of a better implementation inside BigVec
         let (ref, _) = self.asks.slice_before(order_id);
         let mut ask = self.asks.borrow_prev_mut(order_id);
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
             // Match with existing asks
             // If quantity left, inject limit order
-            // Match
+            // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
             let matched_quantity = math::min(ask.quantity, remaining_quantity);
             ask.quantity = ask.quantity - matched_quantity;
             remaining_quantity = remaining_quantity - matched_quantity;
@@ -271,26 +310,30 @@ module deepbook::pool {
             ask.fee_quantity = ask.fee_quantity - fee_subtracted;
 
             // Add to filled map
-            filled.insert(matched_quantity, ask.price);
+            base_filled.insert(matched_quantity, ask.price);
+            net_base_qty = net_base_qty + matched_quantity;
+            net_quote_qty = net_quote_qty + math::mul(matched_quantity, ask.price);
             // If ask quantity is 0, remove the order
             if (ask.quantity == 0) {
                 self.asks.remove(ask.order_id);
             };
             ask = self.asks.borrow_prev_mut(order_id);
 
-            // TODO: reconcile maker order that's been taken
+            // TODO: reconcile maker order that's been taken, send quote asset to maker
         };
 
-        (filled, vec_map::empty<u64,u64>(), remaining_quantity)
+        (net_base_qty, net_quote_qty, base_filled, vec_map::empty(), remaining_quantity)
     }
 
     fun match_ask<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
-        place_quantity: u64,
-    ): (VecMap<u64,u64>, VecMap<u64,u64>, u64) {
-        let mut remaining_quantity = place_quantity;
-        let mut filled = vec_map::empty<u64,u64>();
+        quantity: u64, // in base asset
+    ): (u64, u64, VecMap<u64,u64>, VecMap<u64,u64>, u64) {
+        let mut remaining_quantity = quantity;
+        let mut net_base_qty = 0;
+        let mut net_quote_qty = 0;
+        let mut quote_filled = vec_map::empty<u64,u64>();
         // TODO: Think of a better implementation inside BigVec
         let (ref, _) = self.bids.slice_following(order_id);
         let mut bid = self.bids.borrow_next_mut(order_id);
@@ -298,26 +341,28 @@ module deepbook::pool {
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
             // Match with existing bids
             // If quantity left, inject limit order
-            // Match
-            let matched_quantity = math::min(bid.quantity, remaining_quantity);
-            bid.quantity = bid.quantity - matched_quantity;
+            // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
+            let matched_quantity = math::min(math::div(bid.quantity, bid.price), remaining_quantity);
+            bid.quantity = bid.quantity - math::mul(matched_quantity, bid.price);
             remaining_quantity = remaining_quantity - matched_quantity;
             // TODO: Double check rounding here
-            let fee_subtracted = math::div(math::mul(matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+            let fee_subtracted = math::div(math::mul(math::mul(matched_quantity, bid.price), bid.original_fee_quantity), bid.original_quantity);
             bid.fee_quantity = bid.fee_quantity - fee_subtracted;
 
             // Add to filled map
-            filled.insert(matched_quantity, bid.price);
+            quote_filled.insert(matched_quantity, bid.price);
+            net_base_qty = net_base_qty + matched_quantity;
+            net_quote_qty = net_quote_qty + matched_quantity * bid.price;
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
                 self.bids.remove(bid.order_id);
             };
             bid = self.bids.borrow_next_mut(order_id)
 
-            // TODO: reconcile maker order that's been taken
+            // TODO: reconcile maker order that's been taken, send base asset to maker
         };
 
-        (vec_map::empty<u64,u64>(), filled, remaining_quantity)
+        (net_base_qty, net_quote_qty, vec_map::empty(), quote_filled, remaining_quantity)
     }
 
     /// Place a market order to the order book.
@@ -721,7 +766,6 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
     ) {
-
 
         // Create Order
         let order = Order {
