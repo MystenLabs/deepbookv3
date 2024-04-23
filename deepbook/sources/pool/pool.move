@@ -245,50 +245,62 @@ module deepbook::pool {
             };
         };
 
-        // Place limit order, q + p
-        // 1) Match with existing orders using market matching (similar to market order, with a price limit)
-        // During matching, reduce quantity as necessary from exisiting orders
-        // 2) After matching phrase done, if quantity left, inject limit order
+        // calculate current order quantities
 
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
         if (is_bid) {
-            while (place_quantity > 0) {
+            // TODO: Think of a better implementation inside BigVec
+            let (ref, _) = self.asks.slice_following(order_id);
+            let mut ask = self.asks.borrow_prev_mut(order_id);
+            while (place_quantity > 0 && !ref.slice_is_null()) {
                 // Match with existing asks
                 // If quantity left, inject limit order
-                // Still valid if now the place_quantity is below min_size because part of the order filled
-                let ask = self.asks.borrow_prev_mut(order_id);
                 // Match
                 let matched_quantity = math::min(ask.quantity, place_quantity);
                 ask.quantity = ask.quantity - matched_quantity;
                 place_quantity = place_quantity - matched_quantity;
+                // TODO: Double check rounding here
+                let fee_subtracted = math::div(math::mul(matched_quantity, ask.original_fee_quantity), ask.original_quantity);
+                ask.fee_quantity = ask.fee_quantity - fee_subtracted;
                 // If ask quantity is 0, remove the order
                 if (ask.quantity == 0) {
                     self.asks.remove(ask.order_id);
                 };
+                ask = self.asks.borrow_prev_mut(order_id);
 
                 // TODO: reconcile maker order that's been taken
             }
         } else {
-            while (place_quantity > 0) {
+            // TODO: Think of a better implementation inside BigVec
+            let (ref, _) = self.bids.slice_following(order_id);
+            let mut bid = self.bids.borrow_next_mut(order_id);
+            // There is a valid bid that matches
+            while (place_quantity > 0 && !ref.slice_is_null()) {
                 // Match with existing bids
                 // If quantity left, inject limit order
-                // Still valid if now the place_quantity is below min_size because part of the order filled
-                let bid = self.bids.borrow_next_mut(order_id);
                 // Match
                 let matched_quantity = math::min(bid.quantity, place_quantity);
                 bid.quantity = bid.quantity - matched_quantity;
                 place_quantity = place_quantity - matched_quantity;
+                // TODO: Double check rounding here
+                let fee_subtracted = math::div(math::mul(matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+                bid.fee_quantity = bid.fee_quantity - fee_subtracted;
                 // If bid quantity is 0, remove the order
                 if (bid.quantity == 0) {
                     self.bids.remove(bid.order_id);
                 };
+                bid = self.bids.borrow_next_mut(order_id)
 
                 // TODO: reconcile maker order that's been taken
             }
         };
 
-        self.internal_inject_limit_order(
+        // All quantity has been matched, no need to inject order
+        if (place_quantity == 0) {
+            0
+        } else {
+            self.internal_inject_limit_order(
             order_id,
             client_order_id,
             price,
@@ -297,20 +309,21 @@ module deepbook::pool {
             is_bid,
             expire_timestamp,
             ctx
-        );
-        event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-            pool_id: self.id.to_inner(),
-            order_id,
-            client_order_id,
-            is_bid,
-            owner: account.owner(),
-            original_quantity: quantity,
-            base_asset_quantity_placed: quantity,
-            price,
-            expire_timestamp: 0,
-        });
+            );
+            event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
+                pool_id: self.id.to_inner(),
+                order_id,
+                client_order_id,
+                is_bid,
+                owner: account.owner(),
+                original_quantity: quantity,
+                base_asset_quantity_placed: quantity,
+                price,
+                expire_timestamp: 0,
+            });
 
-        order_id
+            order_id
+        }
     }
 
     /// Place a market order to the order book.
