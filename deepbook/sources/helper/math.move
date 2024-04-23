@@ -26,4 +26,13 @@ module deepbook::math {
         assert!(result > 0, EUnderflow);
         result
     }
+
+    /// return the minimum of two numbers
+    public(package) fun min(x: u64, y: u64): u64 {
+        if (x <= y) {
+            x
+        } else {
+            y
+        }
+    }
 }

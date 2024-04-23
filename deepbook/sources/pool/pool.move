@@ -250,7 +250,46 @@ module deepbook::pool {
         // During matching, reduce quantity as necessary from exisiting orders
         // 2) After matching phrase done, if quantity left, inject limit order
 
-        let order_id = self.internal_inject_limit_order(
+        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+
+        if (is_bid) {
+            while (place_quantity > 0) {
+                // Match with existing asks
+                // If quantity left, inject limit order
+                // Still valid if now the place_quantity is below min_size because part of the order filled
+                let ask = self.asks.borrow_prev_mut(order_id);
+                // Match
+                let matched_quantity = math::min(ask.quantity, place_quantity);
+                ask.quantity = ask.quantity - matched_quantity;
+                place_quantity = place_quantity - matched_quantity;
+                // If ask quantity is 0, remove the order
+                if (ask.quantity == 0) {
+                    self.asks.remove(ask.order_id);
+                };
+
+                // TODO: reconcile maker order that's been taken
+            }
+        } else {
+            while (place_quantity > 0) {
+                // Match with existing bids
+                // If quantity left, inject limit order
+                // Still valid if now the place_quantity is below min_size because part of the order filled
+                let bid = self.bids.borrow_next_mut(order_id);
+                // Match
+                let matched_quantity = math::min(bid.quantity, place_quantity);
+                bid.quantity = bid.quantity - matched_quantity;
+                place_quantity = place_quantity - matched_quantity;
+                // If bid quantity is 0, remove the order
+                if (bid.quantity == 0) {
+                    self.bids.remove(bid.order_id);
+                };
+
+                // TODO: reconcile maker order that's been taken
+            }
+        };
+
+        self.internal_inject_limit_order(
+            order_id,
             client_order_id,
             price,
             place_quantity,
@@ -690,6 +729,7 @@ module deepbook::pool {
     /// Balance accounting happens before this function is called
     fun internal_inject_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
         client_order_id: u64,
         price: u64,
         quantity: u64,
@@ -697,8 +737,8 @@ module deepbook::pool {
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
-    ): u128 {
-        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+    ) {
+
 
         // Create Order
         let order = Order {
@@ -726,8 +766,6 @@ module deepbook::pool {
         // Add order to user's open orders
         let user_data = &mut self.users[ctx.sender()];
         user_data.add_open_order(order_id);
-
-        order_id
     }
 
     /// Cancels an order and returns the order details
