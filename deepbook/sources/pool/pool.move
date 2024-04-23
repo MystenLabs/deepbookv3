@@ -184,8 +184,7 @@ module deepbook::pool {
         // If order fee is paid in DEEP tokens
         if (self.fee_is_deep()) {
             let config = self.deep_config.borrow();
-            // quantity is always in terms of base asset
-            // TODO: option to use deep_per_quote if base not available
+            // quantity is always in terms of base asset, deep_per_base will always be available
             // TODO: make sure there is mul_down and mul_up for rounding
             let deep_quantity = math::mul(config.deep_per_base(), quantity);
             fee_quantity = math::mul(deep_quantity, maker_fee);
@@ -256,7 +255,7 @@ module deepbook::pool {
             original_quantity: quantity,
             base_asset_quantity_placed: quantity,
             price,
-            expire_timestamp: 0, // TODO
+            expire_timestamp: 0,
         });
 
         order_id
