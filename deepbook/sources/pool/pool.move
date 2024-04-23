@@ -245,7 +245,21 @@ module deepbook::pool {
             };
         };
 
-        let order_id = self.internal_place_limit_order(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
+        // Place limit order, q + p
+        // 1) Match with existing orders using market matching (similar to market order, with a price limit)
+        // During matching, reduce quantity as necessary from exisiting orders
+        // 2) After matching phrase done, if quantity left, inject limit order
+
+
+        let order_id = self.internal_inject_limit_order(
+            client_order_id,
+            price,
+            place_quantity,
+            fee_quantity,
+            is_bid,
+            expire_timestamp,
+            ctx
+        );
         event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(),
             order_id,
@@ -675,7 +689,7 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun internal_place_limit_order<BaseAsset, QuoteAsset>(
+    fun internal_inject_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         client_order_id: u64,
         price: u64,

@@ -23,7 +23,7 @@ module deepbook::big_vector {
     use fun deepbook::utils::pop_until as vector.pop_until;
     use fun deepbook::utils::pop_n as vector.pop_n;
 
-    public struct BigVector<phantom E: store> has key, store {
+    public struct BigVector<phantom E> has key, store {
         id: UID,
 
         /// How deep the tree structure is.
@@ -251,6 +251,22 @@ module deepbook::big_vector {
         &mut slice[offset]
     }
 
+    /// Access the element at index `ix` or greater in `self`, mutably.
+    /// TODO: fix
+    public fun borrow_next_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
+        let (ref, offset) = self.slice_following(ix);
+        let slice = self.borrow_slice_mut(ref);
+        &mut slice[offset]
+    }
+
+    /// Access the element at index `ix` or less in `self`, mutably.
+    /// TODO: fix
+    public fun borrow_prev_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
+        let (ref, offset) = self.slice_before(ix);
+        let slice = self.borrow_slice_mut(ref);
+        &mut slice[offset]
+    }
+
     // === BigVector Mutators ===
 
     /// Add `val` to `self` at index `key`. Aborts if `key` is already
@@ -393,6 +409,25 @@ module deepbook::big_vector {
         let (ix, leaf, off) = self.find_leaf(key);
         if (off >= leaf.keys.length()) {
             (leaf.next(), 0)
+        } else {
+            (SliceRef { ix }, off)
+        }
+    }
+
+    /// TODO: fix
+    public fun slice_before<E: store>(
+        self: &BigVector<E>,
+        key: u128,
+    ): (SliceRef, u64) {
+        // Consult ashok on actual implementation
+
+        if (self.root_id == NO_SLICE) {
+            return (SliceRef { ix: NO_SLICE }, 0)
+        };
+
+        let (ix, leaf, off) = self.find_leaf(key);
+        if (off <= leaf.keys.length()) {
+            (leaf.prev(), 0)
         } else {
             (SliceRef { ix }, off)
         }
