@@ -44,9 +44,16 @@ module deepbook::math {
         (is_round_down, (x * (FLOAT_SCALING as u128) / y) as u64)
     }
 
-    /// return the minimum of two numbers
     public(package) fun min(x: u64, y: u64): u64 {
         if (x <= y) {
+            x
+        } else {
+            y
+        }
+    }
+    
+    public(package) fun max(x: u64, y: u64): u64 {
+        if (x > y) {
             x
         } else {
             y

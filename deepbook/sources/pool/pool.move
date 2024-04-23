@@ -7,7 +7,7 @@ module deepbook::pool {
         table::{Self, Table},
         vec_set::VecSet,
         vec_map::{Self, VecMap},
-        coin::{Self, Coin, TreasuryCap},
+        coin::{Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
         event,
@@ -177,77 +177,37 @@ module deepbook::pool {
 
         assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
         assert!(price % self.tick_size == 0, EOrderInvalidPrice);
-        // Check quantity is above minimum quantity (in base asset)
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
+        // Calculate total Base, Quote, DEEP to be transferred.
         let maker_fee = self.pool_state.maker_fee();
-        let mut fee_quantity;
-        let mut place_quantity = quantity;
-        // If order fee is paid in DEEP tokens
-        if (self.fee_is_deep()) {
-            let config = self.deep_config.borrow();
-            // quantity is always in terms of base asset, deep_per_base will always be available
-            // TODO: make sure there is mul_down and mul_up for rounding
-            let deep_quantity = math::mul(config.deep_per_base(), quantity);
-            fee_quantity = math::mul(deep_quantity, maker_fee);
-            self.deposit_deep(account, fee_quantity, ctx);
-        }
-        // If unverified pool, fees paid in base/quote assets
-        else {
-            fee_quantity = math::mul(quantity, maker_fee); // if q = 100, fee = 0.1, fee_q = 10 (in base assets)
-            place_quantity = place_quantity - fee_quantity; // if q = 100, fee_q = 10, place_q = 90 (in base assets)
-            if (is_bid) {
-                fee_quantity = math::mul(fee_quantity, price); // if price = 5, fee_q = 50 (in quote assets)
-                self.deposit_quote(account, fee_quantity, ctx);
-            } else {
-                self.deposit_base(account, fee_quantity, ctx);
-            };
-        };
-
-        let user_data = &mut self.users[account.owner()];
-        let (available_base_amount, available_quote_amount) = user_data.settle_amounts();
-
-        if (is_bid) {
-            // Deposit quote asset if there's not enough in custodian
-            // Convert input quantity into quote quantity
-            let quote_quantity = math::mul(quantity, price);
-            if (available_quote_amount < quantity){
-                let difference = quote_quantity - available_quote_amount;
-                let quote: Coin<QuoteAsset> = account.withdraw(difference, ctx);
-                self.quote_balances.join(quote.into_balance());
-                user_data.set_settle_amounts(
-                    available_base_amount,
-                    0,
-                    ctx
-                );
-            } else {
-                user_data.set_settle_amounts(
-                    available_base_amount,
-                    available_quote_amount - quote_quantity,
-                    ctx
-                );
-            };
+        let (base_quantity, quote_quantity) = if (is_bid) {
+            (0, math::mul(quantity, price))
         } else {
-            // Deposit base asset if there's not enough in custodian
-            if (available_base_amount < quantity){
-                let difference = quantity - available_base_amount;
-                let base = account.withdraw(difference, ctx);
-                self.base_balances.join(base.into_balance());
-                user_data.set_settle_amounts(
-                    0,
-                    available_quote_amount,
-                    ctx
-                );
-            } else {
-                user_data.set_settle_amounts(
-                    available_base_amount - quantity,
-                    available_quote_amount,
-                    ctx
-                );
-            };
+            (quantity, 0)
         };
+        let (base_fee, quote_fee, deep_fee) = if (self.fee_is_deep()) {
+            let config = self.deep_config.borrow();
+            let quote_fee = math::mul(config.deep_per_base(), base_quantity) + 
+                math::mul(config.deep_per_quote(), quote_quantity);
+            
+            (0, 0, quote_fee)
+        } else {
+            let base_fee = math::mul(base_quantity, maker_fee); // TODO: taker_fee, decimal places
+            let quote_fee = math::mul(quote_quantity, maker_fee);
+            
+            (base_fee, quote_fee, 0)
+        };
+        
+        // Transfer Base, Quote, Fee to Pool.
+        if (base_quantity + base_fee > 0) self.deposit_base(account, base_quantity + base_fee, ctx);
+        if (quote_quantity + quote_fee > 0) self.deposit_quote(account, quote_quantity + quote_fee, ctx);
+        if (deep_fee > 0) self.deposit_deep(account, deep_fee, ctx);
+
+        let place_quantity = math::max(base_quantity, quote_quantity);
+        let fee_quantity = math::max(math::max(base_fee, quote_fee), deep_fee);
 
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
@@ -263,14 +223,14 @@ module deepbook::pool {
             (base_fills, quote_fills, 0)
         } else {
             self.internal_inject_limit_order(
-            order_id,
-            client_order_id,
-            price,
-            place_quantity,
-            fee_quantity,
-            is_bid,
-            expire_timestamp,
-            ctx
+              order_id,
+              client_order_id,
+              price,
+              place_quantity,
+              fee_quantity,
+              is_bid,
+              expire_timestamp,
+              ctx
             );
             event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
                 pool_id: self.id.to_inner(),
@@ -476,30 +436,6 @@ module deepbook::pool {
         self.deepbook_balance
             .split(amount)
             .into_coin(ctx)
-    }
-
-    /// Withdraw settled funds back into user account
-    public(package) fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        ctx: &mut TxContext,
-    ) {
-        // Get the valid user information
-        let user_data = &mut self.users[account.owner()];
-        let (base_amount, quote_amount) = user_data.settle_amounts();
-
-        // Take the valid amounts from the pool balances, deposit into user account
-        if (base_amount > 0) {
-            let base_coin = coin::from_balance(self.base_balances.split(base_amount), ctx);
-            account.deposit(base_coin);
-        };
-        if (quote_amount > 0) {
-            let quote_coin = coin::from_balance(self.quote_balances.split(quote_amount), ctx);
-            account.deposit(quote_coin);
-        };
-
-        // Reset the user's settled amounts
-        user_data.set_settle_amounts(0, 0, ctx);
     }
 
     /// Cancel all orders for an account. Withdraw settled funds back into user account.
