@@ -245,55 +245,13 @@ module deepbook::pool {
             };
         };
 
-        // calculate current order quantities
-
+        // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
 
-        if (is_bid) {
-            // TODO: Think of a better implementation inside BigVec
-            let (ref, _) = self.asks.slice_following(order_id);
-            let mut ask = self.asks.borrow_prev_mut(order_id);
-            while (place_quantity > 0 && !ref.slice_is_null()) {
-                // Match with existing asks
-                // If quantity left, inject limit order
-                // Match
-                let matched_quantity = math::min(ask.quantity, place_quantity);
-                ask.quantity = ask.quantity - matched_quantity;
-                place_quantity = place_quantity - matched_quantity;
-                // TODO: Double check rounding here
-                let fee_subtracted = math::div(math::mul(matched_quantity, ask.original_fee_quantity), ask.original_quantity);
-                ask.fee_quantity = ask.fee_quantity - fee_subtracted;
-                // If ask quantity is 0, remove the order
-                if (ask.quantity == 0) {
-                    self.asks.remove(ask.order_id);
-                };
-                ask = self.asks.borrow_prev_mut(order_id);
-
-                // TODO: reconcile maker order that's been taken
-            }
+        place_quantity = if (is_bid) {
+            match_bid(self, order_id, place_quantity)
         } else {
-            // TODO: Think of a better implementation inside BigVec
-            let (ref, _) = self.bids.slice_following(order_id);
-            let mut bid = self.bids.borrow_next_mut(order_id);
-            // There is a valid bid that matches
-            while (place_quantity > 0 && !ref.slice_is_null()) {
-                // Match with existing bids
-                // If quantity left, inject limit order
-                // Match
-                let matched_quantity = math::min(bid.quantity, place_quantity);
-                bid.quantity = bid.quantity - matched_quantity;
-                place_quantity = place_quantity - matched_quantity;
-                // TODO: Double check rounding here
-                let fee_subtracted = math::div(math::mul(matched_quantity, bid.original_fee_quantity), bid.original_quantity);
-                bid.fee_quantity = bid.fee_quantity - fee_subtracted;
-                // If bid quantity is 0, remove the order
-                if (bid.quantity == 0) {
-                    self.bids.remove(bid.order_id);
-                };
-                bid = self.bids.borrow_next_mut(order_id)
-
-                // TODO: reconcile maker order that's been taken
-            }
+            match_ask(self, order_id, place_quantity)
         };
 
         // All quantity has been matched, no need to inject order
@@ -324,6 +282,70 @@ module deepbook::pool {
 
             order_id
         }
+    }
+
+    /// Matches bid, returns remaining quantity
+    fun match_bid<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+        place_quantity: u64,
+    ): u64 {
+        let mut remaining_quantity = place_quantity;
+        // TODO: Think of a better implementation inside BigVec
+        let (ref, _) = self.asks.slice_before(order_id);
+        let mut ask = self.asks.borrow_prev_mut(order_id);
+        while (remaining_quantity > 0 && !ref.slice_is_null()) {
+            // Match with existing asks
+            // If quantity left, inject limit order
+            // Match
+            let matched_quantity = math::min(ask.quantity, remaining_quantity);
+            ask.quantity = ask.quantity - matched_quantity;
+            remaining_quantity = remaining_quantity - matched_quantity;
+            // TODO: Double check rounding here
+            let fee_subtracted = math::div(math::mul(matched_quantity, ask.original_fee_quantity), ask.original_quantity);
+            ask.fee_quantity = ask.fee_quantity - fee_subtracted;
+            // If ask quantity is 0, remove the order
+            if (ask.quantity == 0) {
+                self.asks.remove(ask.order_id);
+            };
+            ask = self.asks.borrow_prev_mut(order_id);
+
+            // TODO: reconcile maker order that's been taken
+        };
+
+        remaining_quantity
+    }
+
+    fun match_ask<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+        place_quantity: u64,
+    ): u64 {
+        let mut remaining_quantity = place_quantity;
+        // TODO: Think of a better implementation inside BigVec
+        let (ref, _) = self.bids.slice_following(order_id);
+        let mut bid = self.bids.borrow_next_mut(order_id);
+        // There is a valid bid that matches
+        while (remaining_quantity > 0 && !ref.slice_is_null()) {
+            // Match with existing bids
+            // If quantity left, inject limit order
+            // Match
+            let matched_quantity = math::min(bid.quantity, remaining_quantity);
+            bid.quantity = bid.quantity - matched_quantity;
+            remaining_quantity = remaining_quantity - matched_quantity;
+            // TODO: Double check rounding here
+            let fee_subtracted = math::div(math::mul(matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+            bid.fee_quantity = bid.fee_quantity - fee_subtracted;
+            // If bid quantity is 0, remove the order
+            if (bid.quantity == 0) {
+                self.bids.remove(bid.order_id);
+            };
+            bid = self.bids.borrow_next_mut(order_id)
+
+            // TODO: reconcile maker order that's been taken
+        };
+
+        remaining_quantity
     }
 
     /// Place a market order to the order book.
