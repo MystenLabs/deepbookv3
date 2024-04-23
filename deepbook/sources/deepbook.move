@@ -94,14 +94,6 @@ module deepbook::deepbook {
         state.unstake(pool, ctx)
     }
 
-    public fun withdraw_settled_funds<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        ctx: &mut TxContext
-    ) {
-        pool.withdraw_settled_funds(account, ctx);
-    }
-
     /// Public facing function to submit a proposal.
     public fun submit_proposal<BaseAsset, QuoteAsset>(
         state: &mut State,

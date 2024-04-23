@@ -26,4 +26,12 @@ module deepbook::math {
         assert!(result > 0, EUnderflow);
         result
     }
+
+    public(package) fun max(x: u64, y: u64): u64 {
+        if (x > y) {
+            x
+        } else {
+            y
+        }
+    }
 }
