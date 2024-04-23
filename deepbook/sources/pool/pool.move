@@ -250,7 +250,6 @@ module deepbook::pool {
         // During matching, reduce quantity as necessary from exisiting orders
         // 2) After matching phrase done, if quantity left, inject limit order
 
-
         let order_id = self.internal_inject_limit_order(
             client_order_id,
             price,

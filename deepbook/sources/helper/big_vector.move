@@ -23,7 +23,7 @@ module deepbook::big_vector {
     use fun deepbook::utils::pop_until as vector.pop_until;
     use fun deepbook::utils::pop_n as vector.pop_n;
 
-    public struct BigVector<phantom E> has key, store {
+    public struct BigVector<phantom E: store> has key, store {
         id: UID,
 
         /// How deep the tree structure is.
