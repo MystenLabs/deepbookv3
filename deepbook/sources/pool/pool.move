@@ -175,8 +175,7 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
-    /// Will return (VecMap: BaseAsset, VecMap: QuoteAsset, u128) where the
-    /// two VecMaps contain qty -> price of filled quantities at each price level
+    /// Will return (settled_base_quantity, settled_quote_quantity, u128)
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -187,7 +186,7 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): (u128) {
+    ): (u64, u64, u128) {
         // Refresh state as necessary if first order of epoch
         self.refresh(ctx);
 
@@ -287,10 +286,15 @@ module deepbook::pool {
         };
 
         //////////////////////////////////// ORDER SECTION ////////////////////////////////////
+        let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
+            (net_base_qty, 0)
+        } else {
+            (0, net_quote_qty)
+        };
 
         // All quantity has been matched, no need to inject order
         if (quantity == 0) {
-            0
+            (settled_base_quantity, settled_quote_quantity, 0)
         } else {
             self.internal_inject_limit_order(
               order_id,
@@ -313,7 +317,7 @@ module deepbook::pool {
                 expire_timestamp: 0,
             });
 
-            order_id
+            (settled_base_quantity, settled_quote_quantity, order_id)
         }
     }
 
