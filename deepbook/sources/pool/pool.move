@@ -308,11 +308,11 @@ module deepbook::pool {
         let mut base_filled = vec_map::empty<u64,u64>();
         // TODO: Think of a better implementation inside BigVec
         let (ref, _) = self.asks.slice_before(order_id);
-        let mut ask = self.asks.borrow_prev_mut(order_id);
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
             // Match with existing asks
             // If quantity left, inject limit order
             // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
+            let ask = self.asks.borrow_prev_mut(order_id);
             let matched_quantity = math::min(ask.quantity, remaining_quantity);
             ask.quantity = ask.quantity - matched_quantity;
             remaining_quantity = remaining_quantity - matched_quantity;
@@ -329,7 +329,6 @@ module deepbook::pool {
             if (ask.quantity == 0) {
                 self.asks.remove(ask.order_id);
             };
-            ask = self.asks.borrow_prev_mut(order_id);
 
             // TODO: reconcile maker order that's been taken, send quote asset to maker
         };
@@ -348,9 +347,8 @@ module deepbook::pool {
         let mut quote_filled = vec_map::empty<u64,u64>();
         // TODO: Think of a better implementation inside BigVec
         let (ref, _) = self.bids.slice_following(order_id);
-        let mut bid = self.bids.borrow_next_mut(order_id);
-        // There is a valid bid that matches
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
+            let bid = self.bids.borrow_next_mut(order_id);
             // Match with existing bids
             // If quantity left, inject limit order
             // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
@@ -370,7 +368,6 @@ module deepbook::pool {
             if (bid.quantity == 0) {
                 self.bids.remove(bid.order_id);
             };
-            bid = self.bids.borrow_next_mut(order_id)
 
             // TODO: reconcile maker order that's been taken, send base asset to maker
         };
