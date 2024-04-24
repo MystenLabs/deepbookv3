@@ -15,7 +15,7 @@ module deepbook::deepbook {
     use deepbook::{
         state::State,
         pool::{Order, Pool, DEEP},
-        account::Account,
+        account::{Account, TradeProof},
     };
 
     // POOL MANAGEMENT
@@ -125,6 +125,7 @@ module deepbook::deepbook {
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         client_order_id: u64,
         price: u64,
         quantity: u64,
@@ -135,6 +136,7 @@ module deepbook::deepbook {
     ): u128 {
         pool.place_limit_order(
             account,
+            proof,
             client_order_id,
             price,
             quantity,
@@ -167,19 +169,21 @@ module deepbook::deepbook {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         client_order_id: u128,
         ctx: &mut TxContext,
     ): Order {
-        pool.cancel_order(account, client_order_id, ctx)
+        pool.cancel_order(account, proof, client_order_id, ctx)
     }
 
     /// Public facing function to cancel all orders.
     public fun cancel_all_orders<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         ctx: &mut TxContext,
     ): vector<Order> {
-        pool.cancel_all(account, ctx)
+        pool.cancel_all(account, proof, ctx)
     }
 
     /// Public facing function to get open orders for a user.
