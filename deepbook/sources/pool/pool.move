@@ -372,18 +372,21 @@ module deepbook::pool {
             // Match with existing asks
             // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
             let ask = self.asks.borrow_prev_mut(order_id);
-            let matched_quantity = math::min(ask.quantity, remaining_quantity);
-            ask.quantity = ask.quantity - matched_quantity;
-            remaining_quantity = remaining_quantity - matched_quantity;
+            let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
+            ask.quantity = ask.quantity - base_matched_quantity;
+            remaining_quantity = remaining_quantity - base_matched_quantity;
             // TODO: Double check rounding here. Have a round up function?
-            let fee_subtracted = math::div(math::mul(matched_quantity, ask.original_fee_quantity), ask.original_quantity);
+            let fee_subtracted = math::div(math::mul(base_matched_quantity, ask.original_fee_quantity), ask.original_quantity);
             ask.fee_quantity = ask.fee_quantity - fee_subtracted;
 
             // TODO: Round up?
-            let quote_qty = math::mul(matched_quantity, ask.price);
+            let quote_qty = math::mul(base_matched_quantity, ask.price);
+
+            // Update maker quote balances
+            self.users[ask.owner].add_settled_quote_amount(quote_qty);
 
             let fill = OrderFill {
-                base_qty: matched_quantity,
+                base_qty: base_matched_quantity,
                 quote_qty: quote_qty,
                 price: ask.price,
                 maker: ask.owner,
@@ -391,10 +394,13 @@ module deepbook::pool {
                 is_bid: true, // is a bid
             };
             fills.push_back(fill);
-            net_base_qty = net_base_qty + matched_quantity;
+            net_base_qty = net_base_qty + base_matched_quantity;
             net_quote_qty = net_quote_qty + quote_qty;
             // If ask quantity is 0, remove the order
             if (ask.quantity == 0) {
+                // Remove order from user's open orders
+                self.users[ask.owner].remove_open_order(ask.order_id);
+                // Remove order from pool
                 self.asks.remove(ask.order_id);
             };
             (ref, _) = self.asks.slice_before(order_id);
@@ -419,17 +425,20 @@ module deepbook::pool {
             // Match with existing bids
             // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
             let bid = self.bids.borrow_next_mut(order_id);
-            let matched_quantity = math::min(bid.quantity, remaining_quantity);
-            bid.quantity = bid.quantity - matched_quantity;
-            remaining_quantity = remaining_quantity - matched_quantity;
+            let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
+            bid.quantity = bid.quantity - base_matched_quantity;
+            remaining_quantity = remaining_quantity - base_matched_quantity;
             // TODO: Double check rounding here
-            let fee_subtracted = math::div(math::mul(matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+            let fee_subtracted = math::div(math::mul(base_matched_quantity, bid.original_fee_quantity), bid.original_quantity);
             bid.fee_quantity = bid.fee_quantity - fee_subtracted;
 
-            let quote_qty = math::mul(matched_quantity, bid.price);
+            let quote_qty = math::mul(base_matched_quantity, bid.price);
+
+            // Update maker quote balances
+            self.users[bid.owner].add_settled_base_amount(base_matched_quantity);
 
             let fill = OrderFill {
-                base_qty: matched_quantity,
+                base_qty: base_matched_quantity,
                 quote_qty: quote_qty,
                 price: bid.price,
                 maker: bid.owner,
@@ -438,10 +447,13 @@ module deepbook::pool {
             };
 
             fills.push_back(fill);
-            net_base_qty = net_base_qty + matched_quantity;
-            net_quote_qty = net_quote_qty + math::mul(matched_quantity, bid.price);
+            net_base_qty = net_base_qty + base_matched_quantity;
+            net_quote_qty = net_quote_qty + math::mul(base_matched_quantity, bid.price);
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
+                // Remove order from user's open orders
+                self.users[bid.owner].remove_open_order(bid.order_id);
+                // Remove order from pool
                 self.bids.remove(bid.order_id);
             };
 
