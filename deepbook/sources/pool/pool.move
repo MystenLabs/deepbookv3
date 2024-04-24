@@ -240,30 +240,25 @@ module deepbook::pool {
         // 2. Separate taker/maker (1 is withdrawal, 2 is deposit for match, 3 is withdraw for match, 4 is deposit for maker/limit)
 
         let (net_base_qty, net_quote_qty, fills, quantity) =
-        if (is_bid) {
-            match_bid(self, account.owner(), order_id, quantity)
-        } else {
-            match_ask(self, account.owner(), order_id, quantity)
-        };
+            if (is_bid) {
+                match_bid(self, account.owner(), order_id, quantity)
+            } else {
+                match_ask(self, account.owner(), order_id, quantity)
+            };
+
+        //////////////////////////////////// TAKER SECTION ////////////////////////////////////
 
         // Calculate the net quantity to be deposited and placed
-        let (taker_base_qty, taker_quote_qty) = if (is_bid) {
-            (0, net_quote_qty)
-        } else {
-            (net_base_qty, 0)
-        };
-
-        // Calculate the quantity to be placed
-        let (maker_base_quantity, maker_quote_quantity) = if (is_bid) {
-            (0, math::mul(quantity, price))
-        } else {
-            (quantity, 0)
-        };
+        let (taker_base_qty, taker_quote_qty) =
+            if (is_bid) {
+                (0, net_quote_qty)
+            } else {
+                (net_base_qty, 0)
+            };
 
         // Calculate total Base, Quote, DEEP to be transferred.
-        let maker_fee = self.pool_state.maker_fee();
-        let taker_fee = self.pool_state.taker_fee();
         let config = self.deep_config.borrow();
+        let taker_fee = self.pool_state.taker_fee();
 
         // taker fees
         let (taker_base_fee, taker_quote_fee, taker_deep_fee) = if (self.fee_is_deep()) {
@@ -280,42 +275,56 @@ module deepbook::pool {
             }
         };
 
-        // maker fees
-        let (maker_base_fee, maker_quote_fee, maker_deep_fee) = if (self.fee_is_deep()) {
-            let quote_fee = math::mul(config.deep_per_base(), maker_base_quantity) +
-                math::mul(config.deep_per_quote(), maker_quote_quantity);
+        let (total_taker_base_qty, total_taker_quote_qty) =
+            (taker_base_qty + taker_base_fee, taker_quote_qty + taker_quote_fee);
 
-            (0, 0, quote_fee)
+        // Transfer Base, Quote, Deep to Pool based on taker quantities and fees
+
+        if (total_taker_base_qty > 0) self.deposit_base(account, total_taker_base_qty, ctx);
+        if (total_taker_quote_qty > 0) self.deposit_quote(account, total_taker_quote_qty, ctx);
+        if (taker_deep_fee > 0) self.deposit_deep(account, taker_deep_fee, ctx);
+
+        //////////////////////////////////// MAKER SECTION ////////////////////////////////////
+
+        let config = self.deep_config.borrow();
+        let maker_fee = self.pool_state.maker_fee();
+
+        // Calculate the quantity to be placed
+        let (maker_base_quantity, maker_quote_quantity) = if (is_bid) {
+            (0, math::mul(quantity, price))
         } else {
-            let base_fee = math::mul(maker_base_quantity, maker_fee);
-            let quote_fee = math::mul(maker_quote_quantity, maker_fee);
-
-            (base_fee, quote_fee, 0)
+            (quantity, 0)
         };
 
-        let (total_base_fee, total_quote_fee, total_deep_fee) = (
-            taker_base_fee + maker_base_fee,
-            taker_quote_fee + maker_quote_fee,
-            taker_deep_fee + maker_deep_fee
-        );
+        let (maker_base_fee, maker_quote_fee, maker_deep_fee) =
+            if (self.fee_is_deep()) {
+                let quote_fee = math::mul(config.deep_per_base(), maker_base_quantity) +
+                    math::mul(config.deep_per_quote(), maker_quote_quantity);
 
-        let fee_quantity = math::max(math::max(total_base_fee, total_quote_fee), total_deep_fee);
+                (0, 0, quote_fee)
+            } else {
+                let base_fee = math::mul(maker_base_quantity, maker_fee);
+                let quote_fee = math::mul(maker_quote_quantity, maker_fee);
+
+                (base_fee, quote_fee, 0)
+            };
+
+        let fee_quantity = math::max(math::max(maker_base_fee, maker_quote_fee), maker_deep_fee);
 
         // Transfer Base, Quote, Fee to Pool.
-        let (total_base_qty, total_quote_qty) =
-            (taker_base_qty + maker_base_quantity + total_base_fee, taker_quote_qty + maker_quote_quantity + total_quote_fee);
-        if (total_base_qty > 0) self.deposit_base(account, total_base_qty, ctx);
-        if (total_quote_qty > 0) self.deposit_quote(account, total_quote_qty, ctx);
-        if (total_deep_fee > 0) self.deposit_deep(account, total_deep_fee, ctx);
+        let (total_maker_base_qty, total_maker_quote_qty) = (maker_base_quantity + maker_base_fee, maker_quote_quantity + maker_quote_fee);
+        if (total_maker_base_qty > 0) self.deposit_base(account, total_maker_base_qty, ctx);
+        if (total_maker_quote_qty > 0) self.deposit_quote(account, total_maker_quote_qty, ctx);
+        if (maker_deep_fee > 0) self.deposit_deep(account, maker_deep_fee, ctx);
 
-        // Withdraw assets from taker orders
+        // Withdraw assets from taker orders to account
         if (is_bid) {
             self.withdraw_base(account, net_base_qty, ctx);
         } else {
             self.withdraw_quote(account, net_quote_qty, ctx);
         };
 
-        // TODO: Send appropriate funds to other maker's accounts
+        // TODO: maker accounts
 
         // All quantity has been matched, no need to inject order
         if (quantity == 0) {
