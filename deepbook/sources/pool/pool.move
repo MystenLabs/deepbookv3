@@ -199,32 +199,6 @@ module deepbook::pool {
 
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
-
-        // TODO: open to brainstorming a better return type here.
-        // Can simply return base_fills/quote_fills and have
-        // separate function calculate net_base_qty/net_quote_qty
-
-        // 1. VecMap of address -> quantity filled in base asset (if bid then empty, only if ask)
-        // 2. VecMap of address -> quantity filled in quote asset (if ask then empty, only if bid)
-        // 3. Base_qty_received (if ask then empty, only if bid)
-        // 4. Quote_qty_received (if bid then empty, only if ask)
-        // 5. Base_fills of qty -> price (if ask then empty, only if bid. Optional)
-        // 6. Quote_fills of qty -> price (if bid then empty, only if ask. Optional)
-        // 7. Quantity remaining to be placed after taker fills(in base asset terms)
-
-        // Thinking about a fill struct, which looks like the following
-        // struct Fill {
-        //     base_qty: u64,
-        //     quote_qty: u64,
-        //     price: u64,
-        //     base_owner: address,
-        //     quote_owner: address,
-        //     is_bid: bool,
-        // } (This replaces 1-6, if we simply have a vector<Fill>)
-
-        // 1. No longer transferring to accounts, use settled funds (withdraw settled funds, called everytime new trade initiated. Withdraw everytime.)
-        // 2. Separate taker/maker (1 is withdrawal, 2 is deposit for match, 3 is withdraw for match, 4 is deposit for maker/limit)
-
         let (net_base_qty, net_quote_qty, quantity) =
             if (is_bid) {
                 match_bid(self, account.owner(), order_id, client_order_id, quantity)
@@ -303,12 +277,16 @@ module deepbook::pool {
         if (total_maker_quote_qty > 0) self.deposit_quote(account, total_maker_quote_qty, ctx);
         if (maker_deep_fee > 0) self.deposit_deep(account, maker_deep_fee, ctx);
 
+        //////////////////////////////////// WITHDRAWAL SECTION ////////////////////////////////////
+
         // Withdraw assets from taker orders to account
         if (is_bid) {
             self.withdraw_base(account, net_base_qty, ctx);
         } else {
             self.withdraw_quote(account, net_quote_qty, ctx);
         };
+
+        //////////////////////////////////// ORDER SECTION ////////////////////////////////////
 
         // All quantity has been matched, no need to inject order
         if (quantity == 0) {
@@ -407,7 +385,6 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        // TODO: Think of a better implementation inside BigVec
         let (mut ref, _) = self.bids.slice_following(order_id);
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
             // Match with existing bids
