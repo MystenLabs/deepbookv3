@@ -6,7 +6,6 @@ module deepbook::pool {
         balance::{Self,Balance},
         table::{Self, Table},
         vec_set::VecSet,
-        vec_map::{Self, VecMap},
         coin::{Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
@@ -95,6 +94,24 @@ module deepbook::pool {
         price: u64
     }
 
+    /// Emitted when a maker order is filled.
+    public struct OrderFilled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        /// object ID of the pool the order was placed on
+        pool_id: ID,
+        /// ID of the order within the pool
+        order_id: u128,
+        /// ID of the order defined by maker client
+        maker_client_order_id: u64,
+        /// ID of the order defined by taker client
+        taker_client_order_id: u64,
+        base_qty: u64,
+        quote_qty: u64,
+        price: u64,
+        maker_address: address,
+        taker_address: address,
+        is_bid: bool,
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Temporary to represent DEEP token, remove after we have the open-sourced the DEEP token contract
@@ -155,37 +172,6 @@ module deepbook::pool {
         burnt_balance: Balance<DEEP>,
     }
 
-    public struct OrderFilled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
-        /// object ID of the pool the order was placed on
-        pool_id: ID,
-        /// ID of the order within the pool
-        order_id: u128,
-        /// ID of the order defined by maker client
-        maker_client_order_id: u64,
-        /// ID of the order defined by taker client
-        taker_client_order_id: u64,
-        is_bid: bool,
-        /// owner ID of the `AccountCap` that filled the order
-        taker_address: address,
-        /// owner ID of the `AccountCap` that placed the order
-        maker_address: address,
-        original_quantity: u64,
-        base_asset_quantity_filled: u64,
-        base_asset_quantity_remaining: u64,
-        price: u64,
-        taker_commission: u64,
-        maker_rebates: u64
-    }
-
-    public struct OrderFill has store, drop {
-        base_qty: u64,
-        quote_qty: u64,
-        price: u64,
-        maker: address,
-        taker: address,
-        is_bid: bool,
-    }
-
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
@@ -239,11 +225,11 @@ module deepbook::pool {
         // 1. No longer transferring to accounts, use settled funds (withdraw settled funds, called everytime new trade initiated. Withdraw everytime.)
         // 2. Separate taker/maker (1 is withdrawal, 2 is deposit for match, 3 is withdraw for match, 4 is deposit for maker/limit)
 
-        let (net_base_qty, net_quote_qty, fills, quantity) =
+        let (net_base_qty, net_quote_qty, quantity) =
             if (is_bid) {
-                match_bid(self, account.owner(), order_id, quantity)
+                match_bid(self, account.owner(), order_id, client_order_id, quantity)
             } else {
-                match_ask(self, account.owner(), order_id, quantity)
+                match_ask(self, account.owner(), order_id, client_order_id, quantity)
             };
 
         //////////////////////////////////// TAKER SECTION ////////////////////////////////////
@@ -324,8 +310,6 @@ module deepbook::pool {
             self.withdraw_quote(account, net_quote_qty, ctx);
         };
 
-        // TODO: maker accounts
-
         // All quantity has been matched, no need to inject order
         if (quantity == 0) {
             0
@@ -360,12 +344,12 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         taker: address,
         order_id: u128,
+        client_order_id: u64,
         quantity: u64, // in base asset
-    ): (u64, u64, vector<OrderFill>, u64) {
+    ): (u64, u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        let mut fills = vector[];
         // TODO: Think of a better implementation inside BigVec
         let (mut ref, _) = self.asks.slice_before(order_id);
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
@@ -385,15 +369,19 @@ module deepbook::pool {
             // Update maker quote balances
             self.users[ask.owner].add_settled_quote_amount(quote_qty);
 
-            let fill = OrderFill {
+            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                pool_id: self.id.to_inner(),
+                order_id: ask.order_id,
+                maker_client_order_id: ask.client_order_id,
+                taker_client_order_id: client_order_id,
                 base_qty: base_matched_quantity,
-                quote_qty: quote_qty,
+                quote_qty,
                 price: ask.price,
-                maker: ask.owner,
-                taker,
+                maker_address: ask.owner,
+                taker_address: taker,
                 is_bid: true, // is a bid
-            };
-            fills.push_back(fill);
+            });
+
             net_base_qty = net_base_qty + base_matched_quantity;
             net_quote_qty = net_quote_qty + quote_qty;
             // If ask quantity is 0, remove the order
@@ -406,19 +394,19 @@ module deepbook::pool {
             (ref, _) = self.asks.slice_before(order_id);
         };
 
-        (net_base_qty, net_quote_qty, fills, remaining_quantity)
+        (net_base_qty, net_quote_qty, remaining_quantity)
     }
 
     fun match_ask<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         taker: address,
         order_id: u128,
+        client_order_id: u64,
         quantity: u64, // in base asset
-    ): (u64, u64, vector<OrderFill>, u64) {
+    ): (u64, u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        let mut fills = vector[];
         // TODO: Think of a better implementation inside BigVec
         let (mut ref, _) = self.bids.slice_following(order_id);
         while (remaining_quantity > 0 && !ref.slice_is_null()) {
@@ -437,16 +425,19 @@ module deepbook::pool {
             // Update maker quote balances
             self.users[bid.owner].add_settled_base_amount(base_matched_quantity);
 
-            let fill = OrderFill {
+            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                pool_id: self.id.to_inner(),
+                order_id: bid.order_id,
+                maker_client_order_id: bid.client_order_id,
+                taker_client_order_id: client_order_id,
                 base_qty: base_matched_quantity,
-                quote_qty: quote_qty,
+                quote_qty,
                 price: bid.price,
-                maker: bid.owner,
-                taker: taker,
+                maker_address: bid.owner,
+                taker_address: taker,
                 is_bid: false, // is an ask
-            };
+            });
 
-            fills.push_back(fill);
             net_base_qty = net_base_qty + base_matched_quantity;
             net_quote_qty = net_quote_qty + math::mul(base_matched_quantity, bid.price);
             // If bid quantity is 0, remove the order
@@ -460,33 +451,7 @@ module deepbook::pool {
             (ref, _) = self.bids.slice_following(order_id);
         };
 
-        (net_base_qty, net_quote_qty, fills, remaining_quantity)
-    }
-
-    fun emit_order_filled<BaseAsset, QuoteAsset>(
-        pool_id: ID,
-        taker_client_id: u64,
-        taker_address: address,
-        order: &Order,
-        base_asset_quantity_filled: u64,
-        taker_commission: u64,
-        maker_rebates: u64
-    ) {
-        event::emit(OrderFilled<BaseAsset, QuoteAsset> {
-            pool_id,
-            order_id: order.order_id,
-            taker_client_order_id: taker_client_id,
-            taker_address,
-            maker_client_order_id: order.client_order_id,
-            is_bid: order.is_bid,
-            maker_address: order.owner,
-            original_quantity: order.original_quantity,
-            base_asset_quantity_filled,
-            base_asset_quantity_remaining: order.quantity - base_asset_quantity_filled,
-            price: order.price,
-            taker_commission,
-            maker_rebates
-        })
+        (net_base_qty, net_quote_qty, remaining_quantity)
     }
 
     /// Place a market order to the order book.

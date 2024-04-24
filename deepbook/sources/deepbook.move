@@ -10,7 +10,6 @@ module deepbook::deepbook {
         sui::SUI,
         clock::Clock,
         vec_set::VecSet,
-        vec_map::VecMap,
     };
 
     use deepbook::{
