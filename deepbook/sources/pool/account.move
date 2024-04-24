@@ -1,16 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO: I think it might make more sense to represent ownership by a "Capability",
-// instead of by address. That allows for flexible access control (someone could wrap their AccountCap)
-// and pass it to others.
-// Is this intented to be a shared object or an owned object? Important: You cannot promote owned to shared!
-
-/// The Account is a shared object and holds all of the balances for a user.
-/// It is passed into Pools for placing orders.
-
-
-
+/// The Account is a shared object that holds all of the balances for a user. A combination of Account and 
+/// TradeProof are passed into Pool to perform trades. A TradeProof can be generated in two ways: by the 
+/// owner directly, or by any TradeCap owner. The owner can generate a TradeProof without the risk of 
+/// equivocation. The TradeCap owner, due to it being an owned object, risks equivocation when generating 
+/// a TradeProof. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::account {
     use sui::{
         bag::{Self, Bag},
