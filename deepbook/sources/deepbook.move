@@ -133,7 +133,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): (VecMap<u64,u64>, VecMap<u64,u64>, u128) {
+    ): u128 {
         pool.place_limit_order(
             account,
             client_order_id,

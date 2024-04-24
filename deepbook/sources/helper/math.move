@@ -18,6 +18,17 @@ module deepbook::math {
         result
     }
 
+    // TODO: verify logic here
+    public(package) fun mul_round_up(x: u64, y: u64): u64 {
+        let (is_round_down, result) = unsafe_mul_round(x, y);
+        assert!(result > 0, EUnderflow);
+        if (is_round_down) {
+            result + 1
+        } else {
+            result
+        }
+    }
+
     // multiply two floating numbers
     // also returns whether the result is rounded down
     public(package) fun unsafe_mul_round(x: u64, y: u64): (bool, u64) {
@@ -51,7 +62,7 @@ module deepbook::math {
             y
         }
     }
-    
+
     public(package) fun max(x: u64, y: u64): u64 {
         if (x > y) {
             x
