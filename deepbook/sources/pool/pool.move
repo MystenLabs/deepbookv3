@@ -46,6 +46,8 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
+    const MIN_ORDER_ID: u128 = 0; // update
+    const MAX_ORDER_ID: u128 = 1 << 128 - 1; //update
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -333,11 +335,11 @@ module deepbook::pool {
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
         // TODO: Think of a better implementation inside BigVec
-        let (mut ref, _) = self.asks.slice_before(order_id);
-        while (remaining_quantity > 0 && !ref.slice_is_null()) {
+        // let (mut ref, _) = self.asks.slice_following(MIN_ORDER_ID);
+        let mut ask = self.asks.borrow_next_mut(MIN_ORDER_ID);
+        while (remaining_quantity > 0 && ask.order_id >= order_id) {
             // Match with existing asks
             // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
-            let ask = self.asks.borrow_prev_mut(order_id);
             let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
             ask.quantity = ask.quantity - base_matched_quantity;
             remaining_quantity = remaining_quantity - base_matched_quantity;
@@ -373,7 +375,7 @@ module deepbook::pool {
                 // Remove order from pool
                 self.asks.remove(ask.order_id);
             };
-            (ref, _) = self.asks.slice_before(order_id);
+            ask = self.asks.borrow_next_mut(MIN_ORDER_ID);
         };
 
         (net_base_qty, net_quote_qty, remaining_quantity)
@@ -389,11 +391,10 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        let (mut ref, _) = self.bids.slice_following(order_id);
-        while (remaining_quantity > 0 && !ref.slice_is_null()) {
+        let mut bid = self.asks.borrow_prev_mut(MAX_ORDER_ID);
+        while (remaining_quantity > 0 && bid.order_id <= order_id) {
             // Match with existing bids
             // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
-            let bid = self.bids.borrow_next_mut(order_id);
             let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
             bid.quantity = bid.quantity - base_matched_quantity;
             remaining_quantity = remaining_quantity - base_matched_quantity;
@@ -429,7 +430,7 @@ module deepbook::pool {
                 self.bids.remove(bid.order_id);
             };
 
-            (ref, _) = self.bids.slice_following(order_id);
+            bid = self.asks.borrow_prev_mut(MAX_ORDER_ID);
         };
 
         (net_base_qty, net_quote_qty, remaining_quantity)
