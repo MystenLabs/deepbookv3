@@ -46,8 +46,8 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
-    const MIN_ORDER_ID: u128 = 0; // update
-    const MAX_ORDER_ID: u128 = 1 << 128 - 1; //update
+    const MIN_ORDER_ID: u128 = 0;
+    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -204,7 +204,7 @@ module deepbook::pool {
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
         // matched_qty, matched_value
         // update
-        let (net_base_qty, net_quote_qty, quantity) =
+        let (net_base_qty, net_quote_qty) =
             if (is_bid) {
                 match_bid(self, account.owner(), order_id, client_order_id, quantity)
             } else {
@@ -268,12 +268,13 @@ module deepbook::pool {
         //////////////////////////////////// MAKER SECTION ////////////////////////////////////
 
         let maker_fee = self.pool_state.maker_fee();
+        let remaining_quantity = quantity - net_base_qty;
 
         // Calculate the quantity to be placed
         let (maker_base_quantity, maker_quote_quantity) = if (is_bid) {
-            (0, math::mul(quantity, price))
+            (0, math::mul(remaining_quantity, price))
         } else {
-            (quantity, 0)
+            (remaining_quantity, 0)
         };
 
         let (maker_base_fee, maker_quote_fee, maker_deep_fee) =
@@ -306,14 +307,14 @@ module deepbook::pool {
         };
 
         // All quantity has been matched, no need to inject order
-        if (quantity == 0) {
+        if (remaining_quantity == 0) {
             (settled_base_quantity, settled_quote_quantity, 0)
         } else {
             self.internal_inject_limit_order(
               order_id,
               client_order_id,
               price,
-              quantity,
+              remaining_quantity,
               fee_quantity,
               is_bid,
               expire_timestamp,
@@ -325,7 +326,7 @@ module deepbook::pool {
                 client_order_id,
                 is_bid,
                 owner: account.owner(),
-                original_quantity: quantity,
+                original_quantity: remaining_quantity,
                 price,
                 expire_timestamp: 0,
             });
@@ -334,14 +335,14 @@ module deepbook::pool {
         }
     }
 
-    /// Matches bid, returns remaining quantity unmatched
+    /// Matches bid, returns (base_qty_matched, quote_qty_matched)
     fun match_bid<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         taker: address,
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
-    ): (u64, u64, u64) {
+    ): (u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
@@ -349,8 +350,10 @@ module deepbook::pool {
 
         // This means there are no asks in the book
         if (ref.is_null()) {
-            return (0, 0, quantity)
+            return (0, 0)
         };
+
+        // Fetches initial order
         let mut ask = self.asks.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && ask.order_id >= order_id) {
             // Match with existing asks
@@ -413,16 +416,17 @@ module deepbook::pool {
             }
         };
 
-        (net_base_qty, net_quote_qty, remaining_quantity)
+        (net_base_qty, net_quote_qty)
     }
 
+    /// Matches ask, returns (base_qty_matched, quote_qty_matched)
     fun match_ask<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         taker: address,
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
-    ): (u64, u64, u64) {
+    ): (u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
@@ -430,7 +434,7 @@ module deepbook::pool {
 
         // This means there are no bids in the book
         if (ref.is_null()) {
-            return (0, 0, quantity)
+            return (0, 0)
         };
         let mut bid = self.bids.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && bid.order_id <= order_id) {
@@ -492,7 +496,7 @@ module deepbook::pool {
             }
         };
 
-        (net_base_qty, net_quote_qty, remaining_quantity)
+        (net_base_qty, net_quote_qty)
     }
 
     /// Place a market order to the order book.
