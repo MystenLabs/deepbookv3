@@ -211,9 +211,54 @@ module deepbook::pool {
                 match_ask(self, account.owner(), order_id, client_order_id, quantity)
             };
 
-        //////////////////////////////////// TAKER SECTION ////////////////////////////////////
+        transfer_taker(self, account, net_base_qty, net_quote_qty, is_bid, ctx);
+        let remaining_quantity = quantity - net_base_qty;
+        let fee_quantity = transfer_maker(self, account, remaining_quantity, price, is_bid, ctx);
 
-        // Calculate the net quantity to be deposited and placed
+        let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
+            (net_base_qty, 0)
+        } else {
+            (0, net_quote_qty)
+        };
+
+        // All quantity has been matched, no need to inject order
+        if (remaining_quantity == 0) {
+            (settled_base_quantity, settled_quote_quantity, 0)
+        } else {
+            self.internal_inject_limit_order(
+              order_id,
+              client_order_id,
+              price,
+              remaining_quantity,
+              fee_quantity,
+              is_bid,
+              expire_timestamp,
+              ctx
+            );
+            event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
+                pool_id: self.id.to_inner(),
+                order_id,
+                client_order_id,
+                is_bid,
+                owner: account.owner(),
+                original_quantity: remaining_quantity,
+                price,
+                expire_timestamp: 0,
+            });
+
+            (settled_base_quantity, settled_quote_quantity, order_id)
+        }
+    }
+
+    /// Given output from order matching, deposits assets from account into pool and withdraws from pool to account
+    fun transfer_taker<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        net_base_qty: u64,
+        net_quote_qty: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ) {
         let (taker_base_qty, taker_quote_qty) =
             if (is_bid) {
                 (0, net_quote_qty)
@@ -264,11 +309,18 @@ module deepbook::pool {
         } else {
             self.withdraw_quote(account, net_quote_qty, ctx);
         };
+    }
 
-        //////////////////////////////////// MAKER SECTION ////////////////////////////////////
-
+    /// Given output from order matching, deposits assets from account into pool to prepare order placement. Returns fee quantity
+    fun transfer_maker<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        remaining_quantity: u64,
+        price: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ): u64 {
         let maker_fee = self.pool_state.maker_fee();
-        let remaining_quantity = quantity - net_base_qty;
 
         // Calculate the quantity to be placed
         let (maker_base_quantity, maker_quote_quantity) = if (is_bid) {
@@ -291,48 +343,13 @@ module deepbook::pool {
                 (base_fee, quote_fee, 0)
             };
 
-        let fee_quantity = math::max(math::max(maker_base_fee, maker_quote_fee), maker_deep_fee);
-
         // Transfer Base, Quote, Fee to Pool.
         let (total_maker_base_qty, total_maker_quote_qty) = (maker_base_quantity + maker_base_fee, maker_quote_quantity + maker_quote_fee);
         if (total_maker_base_qty > 0) self.deposit_base(account, total_maker_base_qty, ctx);
         if (total_maker_quote_qty > 0) self.deposit_quote(account, total_maker_quote_qty, ctx);
         if (maker_deep_fee > 0) self.deposit_deep(account, maker_deep_fee, ctx);
 
-        //////////////////////////////////// ORDER SECTION ////////////////////////////////////
-        let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
-            (net_base_qty, 0)
-        } else {
-            (0, net_quote_qty)
-        };
-
-        // All quantity has been matched, no need to inject order
-        if (remaining_quantity == 0) {
-            (settled_base_quantity, settled_quote_quantity, 0)
-        } else {
-            self.internal_inject_limit_order(
-              order_id,
-              client_order_id,
-              price,
-              remaining_quantity,
-              fee_quantity,
-              is_bid,
-              expire_timestamp,
-              ctx
-            );
-            event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-                pool_id: self.id.to_inner(),
-                order_id,
-                client_order_id,
-                is_bid,
-                owner: account.owner(),
-                original_quantity: remaining_quantity,
-                price,
-                expire_timestamp: 0,
-            });
-
-            (settled_base_quantity, settled_quote_quantity, order_id)
-        }
+        math::max(math::max(maker_base_fee, maker_quote_fee), maker_deep_fee)
     }
 
     /// Matches bid, returns (base_qty_matched, quote_qty_matched)
