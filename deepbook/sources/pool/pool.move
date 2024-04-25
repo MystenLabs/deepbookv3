@@ -206,9 +206,9 @@ module deepbook::pool {
         // update
         let (net_base_qty, net_quote_qty) =
             if (is_bid) {
-                match_bid(self, account.owner(), order_id, client_order_id, quantity)
+                match_bid(self, account.owner(), order_id, client_order_id, quantity, ctx)
             } else {
-                match_ask(self, account.owner(), order_id, client_order_id, quantity)
+                match_ask(self, account.owner(), order_id, client_order_id, quantity, ctx)
             };
 
         transfer_taker(self, account, net_base_qty, net_quote_qty, is_bid, ctx);
@@ -359,6 +359,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        ctx: &TxContext,
     ): (u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
@@ -385,9 +386,12 @@ module deepbook::pool {
             // TODO: Round up?
             let quote_qty = math::mul(base_matched_quantity, ask.price);
 
+            // refresh this user as necessary
+            self.users[ask.owner].refresh(ctx);
             // Update maker quote balances
-            // TODO: make sure user is refreshed?
             self.users[ask.owner].add_settled_quote_amount(quote_qty);
+            // alternative is get_user_mut, but I don't like using this function
+            // also will run into mutable reference transfer issues
 
             // Update individual maker volume
             self.users[ask.owner].increase_maker_volume(base_matched_quantity);
@@ -443,6 +447,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        ctx: &TxContext,
     ): (u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
@@ -466,6 +471,9 @@ module deepbook::pool {
 
             let quote_qty = math::mul(base_matched_quantity, bid.price);
 
+
+            // refresh this user as necessary
+            self.users[bid.owner].refresh(ctx);
             // Update maker quote balances
             self.users[bid.owner].add_settled_base_amount(base_matched_quantity);
 
