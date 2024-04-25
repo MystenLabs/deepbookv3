@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The Account is a shared object that holds all of the balances for a user. A combination of Account and 
-/// TradeProof are passed into Pool to perform trades. A TradeProof can be generated in two ways: by the 
-/// owner directly, or by any TradeCap owner. The owner can generate a TradeProof without the risk of 
-/// equivocation. The TradeCap owner, due to it being an owned object, risks equivocation when generating 
-/// a TradeProof. Generally, a high frequency trading engine will trade as the default owner.
+/// The Account is a shared object that holds all of the balances for a user. A combination of `Account` and 
+/// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the 
+/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of 
+/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating 
+/// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::account {
     use sui::{
         bag::{Self, Bag},
@@ -23,27 +23,25 @@ module deepbook::account {
 
     const MAX_TRADE_CAPS: u64 = 10;
 
-    /// A shared object that's passed into Pools for placing orders.
+    /// A shared object that is passed into pools for placing orders. 
     public struct Account has key {
         id: UID,
-        /// The owner of the account.
         owner: address,
-        /// Stores the Coin Balances for this account.
         balances: Bag,
         allow_listed: vector<ID>,
     }
 
-    /// Identifier for balance
+    /// Balance identifier.
     public struct BalanceKey<phantom T> has store, copy, drop {}
 
-    /// Owners of a TradeCap can mint TradeProofs.
+    /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
     public struct TradeCap has key, store {
         id: UID,
         account_id: ID,
     }
 
-    /// Owner and TradeCap owners can generate a TradeProof.
-    /// TradeProof is used to validate the account when trading on DeepBook.
+    /// Account owner and `TradeCap` owners can generate a `TradeProof`.
+    /// `TradeProof` is used to validate the account when trading on DeepBook.
     public struct TradeProof has drop {
         account_id: ID,
     }
@@ -61,8 +59,7 @@ module deepbook::account {
         transfer::share_object(account);
     }
 
-    /// Mint a TradeCap. Any owner of a TradeCap can mint a TradeProof, 
-    /// which is used to validate the account when trading on DeepBook.
+    /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
     public fun mint_trade_cap(account: &mut Account, ctx: &mut TxContext): TradeCap {
         account.validate_owner(ctx);
         assert!(account.allow_listed.length() < MAX_TRADE_CAPS, EMaxTradeCapsReached);
@@ -76,7 +73,7 @@ module deepbook::account {
         }
     }
 
-    /// Revoke a TradeCap. Only the owner can revoke a TradeCap.
+    /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
     public fun revoke_trade_cap(account: &mut Account, trade_cap_id: &ID, ctx: &TxContext) {
         account.validate_owner(ctx);
 
@@ -85,7 +82,7 @@ module deepbook::account {
         account.allow_listed.swap_remove(idx);
     }
 
-    /// Generate a TradeProof by the owner. The owner does not pass a capability,
+    /// Generate a `TradeProof` by the owner. The owner does not require a capability
     /// and can generate TradeProofs without the risk of equivocation.
     public fun generate_proof_as_owner(account: &mut Account, ctx: &TxContext): TradeProof {
         account.validate_owner(ctx);
@@ -95,8 +92,8 @@ module deepbook::account {
         }
     }
 
-    /// Generate a TradeProof with a TradeCap.
-    /// Risk of equivocation since TradeCap is an owned object.
+    /// Generate a `TradeProof` with a `TradeCap`.
+    /// Risk of equivocation since `TradeCap` is an owned object.
     public fun generate_proof_as_trader(account: &mut Account, trade_cap: &TradeCap): TradeProof {
         account.validate_trader(trade_cap);
 
@@ -163,7 +160,7 @@ module deepbook::account {
         acc_balance.split(amount).into_coin(ctx)
     }
 
-    /// Returns the owner of the account
+    /// Returns the owner of the account.
     public fun owner(account: &Account): address {
         account.owner
     }
