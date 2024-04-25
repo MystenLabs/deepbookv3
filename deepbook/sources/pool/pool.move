@@ -179,7 +179,8 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
-    /// Will return (settled_base_quantity, settled_quote_quantity, u128)
+    /// Will return (settled_base_quantity, settled_quote_quantity, order_id
+    /// if limit order placed and 0 otherwise)
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -202,8 +203,6 @@ module deepbook::pool {
 
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
-        // matched_qty, matched_value
-        // update
         let (net_base_qty, net_quote_qty) =
             if (is_bid) {
                 match_bid(self, account.owner(), order_id, client_order_id, quantity, ctx)
@@ -379,27 +378,23 @@ module deepbook::pool {
             let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
             ask.quantity = ask.quantity - base_matched_quantity;
             remaining_quantity = remaining_quantity - base_matched_quantity;
-            // TODO: Double check rounding here. Have a round up function?
+            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
             let fee_subtracted = math::div(math::mul(base_matched_quantity, ask.original_fee_quantity), ask.original_quantity);
             ask.fee_quantity = ask.fee_quantity - fee_subtracted;
 
-            // TODO: Round up?
-            let quote_qty = math::mul(base_matched_quantity, ask.price);
+            // Rounded up, because maker gets rounding advantage
+            let quote_qty = math::mul_round_up(base_matched_quantity, ask.price);
 
             // refresh this user as necessary
             self.users[ask.owner].refresh(ctx);
             // Update maker quote balances
             self.users[ask.owner].add_settled_quote_amount(quote_qty);
-            // alternative is get_user_mut, but I don't like using this function
-            // also will run into mutable reference transfer issues
-
             // Update individual maker volume
             self.users[ask.owner].increase_maker_volume(base_matched_quantity);
-
             // Update all volume
             self.pool_state.increase_maker_volume(base_matched_quantity);
 
-            // Check if user is a valid staker
+            // Check if user is a valid staker. Could separate out into a function
             let (cur_stake, _) = self.users[ask.owner].stake();
             if (cur_stake >= self.pool_state.stake_required()) {
                 self.pool_state.increase_staked_maker_volume(base_matched_quantity);
@@ -465,25 +460,23 @@ module deepbook::pool {
             let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
             bid.quantity = bid.quantity - base_matched_quantity;
             remaining_quantity = remaining_quantity - base_matched_quantity;
-            // TODO: Double check rounding here
+            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
             let fee_subtracted = math::div(math::mul(base_matched_quantity, bid.original_fee_quantity), bid.original_quantity);
             bid.fee_quantity = bid.fee_quantity - fee_subtracted;
 
+            // Rounded up, because maker gets rounding advantage
             let quote_qty = math::mul(base_matched_quantity, bid.price);
 
-
-            // refresh this user as necessary
+            // Refresh this user as necessary
             self.users[bid.owner].refresh(ctx);
             // Update maker quote balances
             self.users[bid.owner].add_settled_base_amount(base_matched_quantity);
-
             // Update individual maker volume
             self.users[bid.owner].increase_maker_volume(base_matched_quantity);
-
             // Update all volume
             self.pool_state.increase_maker_volume(base_matched_quantity);
 
-            // Check if user is a valid staker
+            // Check if user is a valid staker. Could separate out into a function
             let (cur_stake, _) = self.users[bid.owner].stake();
             if (cur_stake >= self.pool_state.stake_required()) {
                 self.pool_state.increase_staked_maker_volume(base_matched_quantity);
@@ -991,15 +984,6 @@ module deepbook::pool {
     ): bool {
         self.deep_config.is_some()
     }
-
-    // /// Returns if a user has >= minimum stake for a pool
-    // fun valid_staker<BaseAsset, QuoteAsset>(
-    //     _self: &mut Pool<BaseAsset, QuoteAsset>,
-    //     user: address,
-    // ): bool {
-    //     let (cur_stake, _) = _self.users[user].stake();
-    //     (cur_stake >= _self.pool_state.stake_required())
-    // }
 
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
