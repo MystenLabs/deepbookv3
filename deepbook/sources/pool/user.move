@@ -127,4 +127,12 @@ module deepbook::user {
     ) {
         self.settled_quote_amount = self.settled_quote_amount + amount;
     }
+
+    /// Increase maker volume for user
+    public(package) fun increase_maker_volume(
+        self: &mut User,
+        volume: u64,
+    ) {
+        self.maker_volume = self.maker_volume + volume;
+    }
 }

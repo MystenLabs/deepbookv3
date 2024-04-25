@@ -87,6 +87,21 @@ module deepbook::pool_state {
         }
     }
 
+    public(package) fun increase_maker_volume(
+        state: &mut PoolState,
+        volume: u64,
+    ) {
+        state.current_state.total_maker_volume = state.current_state.total_maker_volume + volume;
+    }
+
+    public(package) fun increase_staked_maker_volume(
+        state: &mut PoolState,
+        volume: u64,
+    ) {
+        state.current_state.total_staked_maker_volume = state.current_state.total_staked_maker_volume + volume;
+    }
+
+
     public(package) fun maker_fee(state: &PoolState): u64 {
         state.current_state.maker_fee
     }

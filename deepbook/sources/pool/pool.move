@@ -200,9 +200,11 @@ module deepbook::pool {
 
         // Encode the order_id
         let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+        // matched_qty, matched_value
+        // update
         let (net_base_qty, net_quote_qty, quantity) =
             if (is_bid) {
-                match_bid(self, account.owner(), order_id, client_order_id, quantity)
+                match_bid(self, account.owner(), order_id, client_order_id, quantity, ctx)
             } else {
                 match_ask(self, account.owner(), order_id, client_order_id, quantity)
             };
@@ -217,12 +219,21 @@ module deepbook::pool {
                 (net_base_qty, 0)
             };
 
+        // Discounted taker fees if above minimum stake
+        let (cur_stake, _) = self.users[account.owner()].stake();
+        let above_min_stake = (cur_stake >= self.pool_state.stake_required());
+
+        let taker_fee = if (above_min_stake) {
+            math::div(self.pool_state.taker_fee(), 2)
+        } else {
+            self.pool_state.taker_fee()
+        };
+
         // Calculate total Base, Quote, DEEP to be transferred.
-        let config = self.deep_config.borrow();
-        let taker_fee = self.pool_state.taker_fee();
 
         // taker fees
         let (taker_base_fee, taker_quote_fee, taker_deep_fee) = if (self.fee_is_deep()) {
+            let config = self.deep_config.borrow();
             if (is_bid) {
                 (0, 0, math::mul(taker_fee, math::mul(config.deep_per_base(), net_base_qty)))
             } else {
@@ -245,9 +256,15 @@ module deepbook::pool {
         if (total_taker_quote_qty > 0) self.deposit_quote(account, total_taker_quote_qty, ctx);
         if (taker_deep_fee > 0) self.deposit_deep(account, taker_deep_fee, ctx);
 
+        // Withdraw assets from taker orders to account
+        if (is_bid) {
+            self.withdraw_base(account, net_base_qty, ctx);
+        } else {
+            self.withdraw_quote(account, net_quote_qty, ctx);
+        };
+
         //////////////////////////////////// MAKER SECTION ////////////////////////////////////
 
-        let config = self.deep_config.borrow();
         let maker_fee = self.pool_state.maker_fee();
 
         // Calculate the quantity to be placed
@@ -259,6 +276,7 @@ module deepbook::pool {
 
         let (maker_base_fee, maker_quote_fee, maker_deep_fee) =
             if (self.fee_is_deep()) {
+                let config = self.deep_config.borrow();
                 let quote_fee = math::mul(config.deep_per_base(), maker_base_quantity) +
                     math::mul(config.deep_per_quote(), maker_quote_quantity);
 
@@ -277,15 +295,6 @@ module deepbook::pool {
         if (total_maker_base_qty > 0) self.deposit_base(account, total_maker_base_qty, ctx);
         if (total_maker_quote_qty > 0) self.deposit_quote(account, total_maker_quote_qty, ctx);
         if (maker_deep_fee > 0) self.deposit_deep(account, maker_deep_fee, ctx);
-
-        //////////////////////////////////// WITHDRAWAL SECTION ////////////////////////////////////
-
-        // Withdraw assets from taker orders to account
-        if (is_bid) {
-            self.withdraw_base(account, net_base_qty, ctx);
-        } else {
-            self.withdraw_quote(account, net_quote_qty, ctx);
-        };
 
         //////////////////////////////////// ORDER SECTION ////////////////////////////////////
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
@@ -330,6 +339,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        ctx: &mut TxContext,
     ): (u64, u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
@@ -351,7 +361,20 @@ module deepbook::pool {
             let quote_qty = math::mul(base_matched_quantity, ask.price);
 
             // Update maker quote balances
+            // TODO: make sure user is refreshed?
             self.users[ask.owner].add_settled_quote_amount(quote_qty);
+
+            // Update individual maker volume
+            self.users[ask.owner].increase_maker_volume(base_matched_quantity);
+
+            // Update all volume
+            self.pool_state.increase_maker_volume(base_matched_quantity);
+
+            // Check if user is a valid staker
+            let (cur_stake, _) = self.users[ask.owner].stake();
+            if (cur_stake >= self.pool_state.stake_required()) {
+                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
+            };
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
@@ -406,6 +429,18 @@ module deepbook::pool {
 
             // Update maker quote balances
             self.users[bid.owner].add_settled_base_amount(base_matched_quantity);
+
+            // Update individual maker volume
+            self.users[bid.owner].increase_maker_volume(base_matched_quantity);
+
+            // Update all volume
+            self.pool_state.increase_maker_volume(base_matched_quantity);
+
+            // Check if user is a valid staker
+            let (cur_stake, _) = self.users[bid.owner].stake();
+            if (cur_stake >= self.pool_state.stake_required()) {
+                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
+            };
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
@@ -903,6 +938,15 @@ module deepbook::pool {
     ): bool {
         self.deep_config.is_some()
     }
+
+    /// Returns if a user has >= minimum stake for a pool
+    // fun valid_staker<BaseAsset, QuoteAsset>(
+    //     _self: &mut Pool<BaseAsset, QuoteAsset>,
+    //     user: address,
+    // ): bool {
+    //     let (cur_stake, _) = _self.users[user].stake();
+    //     (cur_stake >= _self.pool_state.stake_required())
+    // }
 
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
