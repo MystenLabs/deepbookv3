@@ -518,16 +518,43 @@ module deepbook::pool {
     }
 
     /// Place a market order to the order book.
+    /// Will return (settled_base_quantity, settled_quote_quantity)
     public(package) fun place_market_order<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _account: &mut Account,
-        _client_order_id: u64,
-        _quantity: u64, // in base asset
-        _is_bid: bool, // true for bid, false for ask
-        _ctx: &mut TxContext,
-    ): u128 {
-        // TODO: implement
-        0
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        client_order_id: u64,
+        quantity: u64, // in base asset
+        is_bid: bool, // true for bid, false for ask
+        ctx: &mut TxContext,
+    ): (u64, u64) {
+        // Refresh state as necessary if first order of epoch
+        self.refresh(ctx);
+
+        let price = if (is_bid) {
+            MAX_PRICE
+        } else {
+            MIN_PRICE
+        };
+
+        assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
+        assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
+
+        // Encode the order_id
+        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+        let (net_base_qty, net_quote_qty) =
+            if (is_bid) {
+                match_bid(self, account.owner(), order_id, client_order_id, quantity, ctx)
+            } else {
+                match_ask(self, account.owner(), order_id, client_order_id, quantity, ctx)
+            };
+
+        transfer_taker(self, account, net_base_qty, net_quote_qty, is_bid, ctx);
+
+        if (is_bid) {
+            (net_base_qty, 0)
+        } else {
+            (0, net_quote_qty)
+        }
     }
 
     /// Given an amount in and direction, calculate amount out

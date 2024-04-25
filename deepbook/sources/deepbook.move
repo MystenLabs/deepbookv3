@@ -153,7 +153,7 @@ module deepbook::deepbook {
         quantity: u64,
         is_bid: bool,
         ctx: &mut TxContext,
-    ): u128 {
+    ): (u64, u64) {
         pool.place_market_order(
             account,
             client_order_id,
