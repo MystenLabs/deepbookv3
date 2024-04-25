@@ -19,7 +19,7 @@ module deepbook::account {
     const EAccountBalanceTooLow: u64 = 3;
     const ENoBalance: u64 = 4;
     const EMaxTradeCapsReached: u64 = 5;
-    const EUserNotAllowListed: u64 = 6;
+    const ETradeCapNotInList: u64 = 6;
 
     const MAX_TRADE_CAPS: u64 = 10;
 
@@ -30,7 +30,6 @@ module deepbook::account {
         owner: address,
         /// Stores the Coin Balances for this account.
         balances: Bag,
-        trade_cap_count: u64,
         allow_listed: vector<ID>,
     }
 
@@ -54,7 +53,6 @@ module deepbook::account {
             id: object::new(ctx),
             owner: ctx.sender(),
             balances: bag::new(ctx),
-            trade_cap_count: 0,
             allow_listed: vector[],
         }
     }
@@ -67,11 +65,10 @@ module deepbook::account {
     /// which is used to validate the account when trading on DeepBook.
     public fun mint_trade_cap(account: &mut Account, ctx: &mut TxContext): TradeCap {
         account.validate_owner(ctx);
-        assert!(account.trade_cap_count < MAX_TRADE_CAPS, EMaxTradeCapsReached);
+        assert!(account.allow_listed.length() < MAX_TRADE_CAPS, EMaxTradeCapsReached);
 
         let id = object::new(ctx);
         account.allow_listed.push_back(id.to_inner());
-        account.trade_cap_count = account.trade_cap_count + 1;
 
         TradeCap {
             id,
@@ -82,19 +79,10 @@ module deepbook::account {
     /// Revoke a TradeCap. Only the owner can revoke a TradeCap.
     public fun revoke_trade_cap(account: &mut Account, trade_cap_id: &ID, ctx: &TxContext) {
         account.validate_owner(ctx);
-        let mut i = 0;
-        let len = account.allow_listed.length();
-        while (i < len) {
-            if (&account.allow_listed[i] == trade_cap_id) {
-                account.allow_listed.swap_remove(i);
-                break;
-            };
-            i = i + 1;
-        };
 
-        assert!(i < len, EUserNotAllowListed);
-
-        account.trade_cap_count = account.trade_cap_count - 1;
+        let (exists, idx) = account.allow_listed.index_of(trade_cap_id);
+        assert!(exists, ETradeCapNotInList);
+        account.allow_listed.swap_remove(idx);
     }
 
     /// Generate a TradeProof by the owner. The owner does not pass a capability,
