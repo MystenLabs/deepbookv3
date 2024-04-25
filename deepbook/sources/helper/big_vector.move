@@ -251,12 +251,28 @@ module deepbook::big_vector {
         &mut slice[offset]
     }
 
-    /// Access the element at index `ix` or greater in `self`, mutably.
-    /// TODO: fix
-    public fun borrow_next_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
-        let (ref, offset) = self.slice_following(ix);
+    /// This assumes SliceRef is not null. Returns value at offset `offset` in slice `ref`
+    public fun borrow_mut_ref_offset<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): &mut E {
         let slice = self.borrow_slice_mut(ref);
         &mut slice[offset]
+    }
+
+    /// Return whether there is a valid next value in BigVector
+    public fun valid_next<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): bool {
+        let slice = self.borrow_slice(ref);
+        (offset + 1 < slice.vals.length() || !slice.next().is_null())
+    }
+
+    /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
+    public fun borrow_mut_next<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
+        let slice = self.borrow_slice_mut(ref);
+        if (offset + 1 < slice.vals.length()) {
+            (ref, offset + 1, &mut slice[offset + 1])
+        } else {
+            let next_ref = slice.next();
+            let next_slice = self.borrow_slice_mut(next_ref);
+            (next_ref, 0, &mut next_slice.vals[0])
+        }
     }
 
     /// Access the element at index `ix` or less in `self`, mutably.

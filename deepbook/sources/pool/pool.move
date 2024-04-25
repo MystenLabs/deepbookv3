@@ -204,7 +204,7 @@ module deepbook::pool {
         // update
         let (net_base_qty, net_quote_qty, quantity) =
             if (is_bid) {
-                match_bid(self, account.owner(), order_id, client_order_id, quantity, ctx)
+                match_bid(self, account.owner(), order_id, client_order_id, quantity)
             } else {
                 match_ask(self, account.owner(), order_id, client_order_id, quantity)
             };
@@ -339,14 +339,17 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
-        ctx: &mut TxContext,
     ): (u64, u64, u64) {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        // TODO: Think of a better implementation inside BigVec
-        // let (mut ref, _) = self.asks.slice_following(MIN_ORDER_ID);
-        let mut ask = self.asks.borrow_next_mut(MIN_ORDER_ID);
+        let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
+
+        // This means there are no asks in the book
+        if (ref.is_null()) {
+            return (0, 0, quantity)
+        };
+        let mut ask = self.asks.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && ask.order_id >= order_id) {
             // Match with existing asks
             // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
@@ -398,7 +401,13 @@ module deepbook::pool {
                 // Remove order from pool
                 self.asks.remove(ask.order_id);
             };
-            ask = self.asks.borrow_next_mut(MIN_ORDER_ID);
+
+            // Traverse to valid next order if exists, otherwise break from loop
+            if (self.asks.valid_next(ref, offset)){
+                (ref, offset, ask) = self.asks.borrow_mut_next(ref, offset);
+            } else {
+                break
+            }
         };
 
         (net_base_qty, net_quote_qty, remaining_quantity)
@@ -414,7 +423,13 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        let mut bid = self.asks.borrow_prev_mut(MAX_ORDER_ID);
+        let (mut ref, mut offset) = self.bids.slice_following(MAX_ORDER_ID);
+
+        // This means there are no bids in the book
+        if (ref.is_null()) {
+            return (0, 0, quantity)
+        };
+        let mut bid = self.bids.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && bid.order_id <= order_id) {
             // Match with existing bids
             // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
@@ -465,7 +480,12 @@ module deepbook::pool {
                 self.bids.remove(bid.order_id);
             };
 
-            bid = self.asks.borrow_prev_mut(MAX_ORDER_ID);
+            // Traverse to valid next order if exists, otherwise break from loop
+            if (self.bids.valid_next(ref, offset)){
+                (ref, offset, bid) = self.bids.borrow_mut_next(ref, offset);
+            } else {
+                break
+            }
         };
 
         (net_base_qty, net_quote_qty, remaining_quantity)
@@ -939,7 +959,7 @@ module deepbook::pool {
         self.deep_config.is_some()
     }
 
-    /// Returns if a user has >= minimum stake for a pool
+    // /// Returns if a user has >= minimum stake for a pool
     // fun valid_staker<BaseAsset, QuoteAsset>(
     //     _self: &mut Pool<BaseAsset, QuoteAsset>,
     //     user: address,
