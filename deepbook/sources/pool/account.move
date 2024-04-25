@@ -21,7 +21,7 @@ module deepbook::account {
     const EMaxTradeCapsReached: u64 = 5;
     const ETradeCapNotInList: u64 = 6;
 
-    const MAX_TRADE_CAPS: u64 = 10;
+    const MAX_TRADE_CAPS: u64 = 1000;
 
     /// A shared object that is passed into pools for placing orders. 
     public struct Account has key {
