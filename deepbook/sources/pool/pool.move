@@ -101,7 +101,9 @@ module deepbook::pool {
         /// object ID of the pool the order was placed on
         pool_id: ID,
         /// ID of the order within the pool
-        order_id: u128,
+        maker_order_id: u128,
+        /// ID of the taker order
+        taker_order_id: u128,
         /// ID of the order defined by maker client
         maker_client_order_id: u64,
         /// ID of the order defined by taker client
@@ -381,7 +383,8 @@ module deepbook::pool {
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
-                order_id: ask.order_id,
+                maker_order_id: ask.order_id,
+                taker_order_id: order_id,
                 maker_client_order_id: ask.client_order_id,
                 taker_client_order_id: client_order_id,
                 base_qty: base_matched_quantity,
@@ -459,7 +462,8 @@ module deepbook::pool {
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
-                order_id: bid.order_id,
+                maker_order_id: bid.order_id,
+                taker_order_id: order_id,
                 maker_client_order_id: bid.client_order_id,
                 taker_client_order_id: client_order_id,
                 base_qty: base_matched_quantity,
