@@ -423,7 +423,7 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_qty = 0;
         let mut net_quote_qty = 0;
-        let (mut ref, mut offset) = self.bids.slice_following(MAX_ORDER_ID);
+        let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
 
         // This means there are no bids in the book
         if (ref.is_null()) {
@@ -481,8 +481,8 @@ module deepbook::pool {
             };
 
             // Traverse to valid next order if exists, otherwise break from loop
-            if (self.bids.valid_next(ref, offset)){
-                (ref, offset, bid) = self.bids.borrow_mut_next(ref, offset);
+            if (self.bids.valid_prev(ref, offset)){
+                (ref, offset, bid) = self.bids.borrow_prev_mut(ref, offset);
             } else {
                 break
             }

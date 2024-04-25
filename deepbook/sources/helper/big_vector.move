@@ -264,6 +264,7 @@ module deepbook::big_vector {
     }
 
     /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
+    /// Assumes valid_next is true
     public fun borrow_mut_next<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
         let slice = self.borrow_slice_mut(ref);
         if (offset + 1 < slice.vals.length()) {
@@ -275,12 +276,25 @@ module deepbook::big_vector {
         }
     }
 
-    /// Access the element at index `ix` or less in `self`, mutably.
-    /// TODO: fix
-    public fun borrow_prev_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
-        let (ref, offset) = self.slice_before(ix);
+    /// Return whether there is a valid prev value in BigVector
+    public fun valid_prev<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): bool {
+        let slice = self.borrow_slice(ref);
+        (offset > 0 || !slice.prev().is_null())
+    }
+
+    /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
+    /// Assumes valid_prev is true
+    public fun borrow_prev_mut<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
         let slice = self.borrow_slice_mut(ref);
-        &mut slice[offset]
+        if (offset > 0) {
+            (ref, offset - 1, &mut slice[offset - 1])
+        } else {
+            let prev_ref = slice.prev();
+            // Borrow the previous slice and get the last element
+            let prev_slice = self.borrow_slice_mut(prev_ref);
+            let last_index = prev_slice.vals.length() - 1;
+            (prev_ref, last_index, &mut prev_slice[last_index])
+        }
     }
 
     // === BigVector Mutators ===
@@ -430,22 +444,32 @@ module deepbook::big_vector {
         }
     }
 
-    /// TODO: fix
     public fun slice_before<E: store>(
         self: &BigVector<E>,
         key: u128,
     ): (SliceRef, u64) {
-        // Consult ashok on actual implementation
-
         if (self.root_id == NO_SLICE) {
             return (SliceRef { ix: NO_SLICE }, 0)
         };
 
         let (ix, leaf, off) = self.find_leaf(key);
-        if (off <= leaf.keys.length()) {
-            (leaf.prev(), 0)
+
+        // If the key index is 0 or the key is less than the first key in the leaf
+        if (off == 0 || key < leaf.keys[0]) {
+            let prev_ref = leaf.prev();
+            if (prev_ref.is_null()) {
+                // If there is no previous slice, return NO_SLICE
+                (SliceRef { ix: NO_SLICE }, 0)
+            } else {
+                // Borrow the previous slice to get the last key's index
+                let prev_slice = self.borrow_slice(prev_ref);
+                (prev_ref, prev_slice.keys.length() - 1)
+            }
         } else {
-            (SliceRef { ix }, off)
+            // Return the current slice with the index decremented by one if the key does not exactly match
+            // or use the found offset otherwise
+            let actual_offset = off - 1;
+            (SliceRef { ix }, actual_offset)
         }
     }
 
