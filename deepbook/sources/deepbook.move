@@ -13,10 +13,29 @@ module deepbook::deepbook {
     };
 
     use deepbook::{
-        state::State,
+        state::{Self, State},
         pool::{Order, Pool, DEEP},
         account::{Account, TradeProof},
     };
+
+    // INIT
+
+    /// DeepBookAdminCap is used to call admin functions.
+    public struct DeepBookAdminCap has key, store {
+        id: UID,
+    }
+
+    /// The one-time-witness used to claim Publisher object.
+    public struct DEEPBOOK has drop {}
+
+    fun init(otw: DEEPBOOK, ctx: &mut TxContext) {
+        sui::package::claim_and_keep(otw, ctx);
+        state::create_and_share(ctx);
+        let cap = DeepBookAdminCap {
+            id: object::new(ctx),
+        };
+        transfer::transfer(cap, ctx.sender());
+    }
 
     // POOL MANAGEMENT
 
@@ -36,6 +55,7 @@ module deepbook::deepbook {
 
     /// Public facing function to set a pool as stable.
     public fun set_pool_as_stable<BaseAsset, QuoteAsset>(
+        _cap: &DeepBookAdminCap,
         state: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         stable: bool,
@@ -46,6 +66,7 @@ module deepbook::deepbook {
 
     /// Public facing function to add a reference pool.
     public fun add_reference_pool<BaseAsset, QuoteAsset>(
+        _cap: &DeepBookAdminCap,
         state: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
     ) {

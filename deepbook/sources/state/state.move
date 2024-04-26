@@ -5,8 +5,8 @@ module deepbook::state { // Consider renaming this module
     use std::ascii::String;
 
     use sui::{
-        balance::Balance,
-        table::Table,
+        balance::{Self, Balance},
+        table::{Self, Table},
         sui::SUI,
         coin::Coin,
         clock::Clock,
@@ -16,20 +16,18 @@ module deepbook::state { // Consider renaming this module
         pool::{Pool, DEEP, Self},
         pool_state,
         pool_metadata::{Self, PoolMetadata},
-        deep_reference_price::DeepReferencePools,
+        deep_reference_price::{Self, DeepReferencePools},
     };
 
     const EPoolDoesNotExist: u64 = 1;
     const EPoolAlreadyExists: u64 = 2;
     const ENotEnoughStake: u64 = 3;
 
-    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1000; // TODO
-    // const STABLE_TAKER_FEE: u64 = 100;
-    // const STABLE_MAKER_FEE: u64 = 50;
-    const VOLATILE_TAKER_FEE: u64 = 1000;
-    const VOLATILE_MAKER_FEE: u64 = 500;
+    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100;
+    const DEFAULT_TAKER_FEE: u64 = 1000;
+    const DEFAULT_MAKER_FEE: u64 = 500;
 
-    public struct State has key, store {
+    public struct State has key {
         id: UID,
         // TODO: upgrade-ability plan? do we need?
         pools: Table<String, PoolMetadata>,
@@ -39,6 +37,17 @@ module deepbook::state { // Consider renaming this module
         // string concatenation of base and quote no longer needed
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
+    }
+
+    /// Create a new State and share it. Called once during init.
+    public(package) fun create_and_share(ctx: &mut TxContext) {
+        let state = State {
+            id: object::new(ctx),
+            pools: table::new(ctx),
+            deep_reference_pools: deep_reference_price::new(),
+            vault: balance::zero(),
+        };
+        transfer::share_object(state);
     }
 
     /// Create a new pool. Calls create_pool inside Pool then registers it in
@@ -53,8 +62,8 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext,
     ) {
         let pool = pool::create_pool<BaseAsset, QuoteAsset>(
-            VOLATILE_TAKER_FEE,
-            VOLATILE_MAKER_FEE,
+            DEFAULT_TAKER_FEE,
+            DEFAULT_MAKER_FEE,
             tick_size,
             lot_size,
             min_size,
@@ -72,7 +81,6 @@ module deepbook::state { // Consider renaming this module
     /// Set the as stable or volatile. This changes the fee structure of the pool.
     /// New proposals will be asserted against the new fee structure.
     public(package) fun set_pool_as_stable<BaseAsset, QuoteAsset>(
-        // cap: DeepbookAdminCap, TODO
         self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         stable: bool,
@@ -108,12 +116,9 @@ module deepbook::state { // Consider renaming this module
     public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
         self: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
-        // cap: &DeepbookAdminCap, TODO
     ) {
         self.deep_reference_pools.add_reference_pool(reference_pool);
     }
-
-    // STAKE
 
     /// Stake DEEP in the pool. This will increase the user's voting power next epoch
     /// Individual user stakes are stored inside of the pool.
@@ -128,10 +133,8 @@ module deepbook::state { // Consider renaming this module
     ) {
         let user = ctx.sender();
         let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
-
         self.get_pool_metadata_mut(pool, ctx)
             .add_voting_power(total_user_stake, amount.value());
-
         self.vault.join(amount.into_balance());
     }
 
@@ -145,17 +148,12 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext
     ): Coin<DEEP> {
         let user = ctx.sender();
-
-        // total amount staked before this epoch, total amount staked during this epoch
         let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
-
         self.get_pool_metadata_mut(pool, ctx)
             .remove_voting_power(user_old_stake, user_new_stake);
 
         self.vault.split(user_old_stake + user_new_stake).into_coin(ctx)
     }
-
-    // GOVERNANCE
 
     /// Submit a proposal to change the fee structure of a pool.
     /// The user submitting this proposal must have vested stake in the pool.
@@ -167,9 +165,7 @@ module deepbook::state { // Consider renaming this module
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        let user = ctx.sender();
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
-        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let (user, _) = assert_participant(pool, ctx);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
@@ -184,9 +180,7 @@ module deepbook::state { // Consider renaming this module
         proposal_id: u64,
         ctx: &TxContext,
     ) {
-        let user = ctx.sender();
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
-        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let (user, user_stake) = assert_participant(pool, ctx);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
@@ -205,8 +199,7 @@ module deepbook::state { // Consider renaming this module
         pool.set_next_epoch(pool_state);
     }
 
-    // HELPERS
-
+    /// Check whether pool exists, refresh and return its metadata.
     fun get_pool_metadata_mut<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
@@ -218,5 +211,17 @@ module deepbook::state { // Consider renaming this module
         let pool_metadata = &mut self.pools[pool_key];
         pool_metadata.refresh(ctx);
         pool_metadata
+    }
+
+    /// Check whether user can submit and vote on proposals.
+    fun assert_participant<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext
+    ): (address, u64) {
+        let user = ctx.sender();
+        let (user_stake, _) = pool.get_user_stake(user, ctx);
+        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+
+        (user, user_stake)
     }
 }
