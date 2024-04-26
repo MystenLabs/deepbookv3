@@ -5,7 +5,7 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
-        vec_set::VecSet,
+        vec_set::{Self, VecSet},
         coin::{Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
@@ -363,6 +363,7 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_quantity = 0;
         let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
         let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
 
         // This means there are no asks in the book
@@ -421,8 +422,8 @@ module deepbook::pool {
             if (ask.quantity == 0) {
                 // Remove order from user's open orders
                 ask_owner.remove_open_order(ask.order_id);
-                // Remove order from pool
-                self.asks.remove(ask.order_id);
+                // Add order id to be removed
+                matched_orders.push_back(ask.order_id);
             };
 
             // Traverse to valid next order if exists, otherwise break from loop
@@ -431,6 +432,13 @@ module deepbook::pool {
             } else {
                 break
             }
+        };
+
+        // Iterate over matched_orders and remove from asks
+        let mut i = 0;
+        while (i < matched_orders.length()) {
+            self.asks.remove(matched_orders[i]);
+            i = i + 1;
         };
 
         (net_base_quantity, net_quote_quantity)
@@ -448,6 +456,7 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_quantity = 0;
         let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
         let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
 
         // This means there are no bids in the book
@@ -504,8 +513,8 @@ module deepbook::pool {
             if (bid.quantity == 0) {
                 // Remove order from user's open orders
                 self.users[bid.owner].remove_open_order(bid.order_id);
-                // Remove order from pool
-                self.bids.remove(bid.order_id);
+                // Add order id to be removed
+                matched_orders.push_back(bid.order_id);
             };
 
             // Traverse to valid next order if exists, otherwise break from loop
@@ -514,6 +523,13 @@ module deepbook::pool {
             } else {
                 break
             }
+        };
+
+        // Iterate over matched_orders and remove from bids
+        let mut i = 0;
+        while (i < matched_orders.length()) {
+            self.bids.remove(matched_orders[i]);
+            i = i + 1;
         };
 
         (net_base_quantity, net_quote_quantity)
