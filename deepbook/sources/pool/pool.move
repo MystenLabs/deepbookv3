@@ -532,14 +532,14 @@ module deepbook::pool {
         // Refresh state as necessary if first order of epoch
         self.refresh(ctx);
 
+        assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
+        assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
+
         let price = if (is_bid) {
             MAX_PRICE
         } else {
             MIN_PRICE
         };
-
-        assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
-        assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
