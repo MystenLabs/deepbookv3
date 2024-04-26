@@ -5,7 +5,7 @@ module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
         table::{Self, Table},
-        vec_set::{Self, VecSet},
+        vec_set::VecSet,
         coin::{Coin, TreasuryCap},
         clock::Clock,
         sui::SUI,
