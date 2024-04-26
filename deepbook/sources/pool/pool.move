@@ -202,8 +202,7 @@ module deepbook::pool {
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
-        // Encode the order_id
-        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+        let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
                 self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
@@ -211,30 +210,30 @@ module deepbook::pool {
                 self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
             };
 
-        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
-        let remaining_quantity = quantity - net_base_quantity;
-        let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
-
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
             (net_base_quantity, 0)
         } else {
             (0, net_quote_quantity)
         };
 
-        // All quantity has been matched, no need to inject order
+        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
+        let remaining_quantity = quantity - net_base_quantity;
         if (remaining_quantity == 0) {
             (settled_base_quantity, settled_quote_quantity, 0)
         } else {
+            let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
+
             self.internal_inject_limit_order(
-              order_id,
-              client_order_id,
-              price,
-              remaining_quantity,
-              fee_quantity,
-              is_bid,
-              expire_timestamp,
-              ctx
+                order_id,
+                client_order_id,
+                price,
+                remaining_quantity,
+                fee_quantity,
+                is_bid,
+                expire_timestamp,
+                ctx
             );
+
             event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
                 pool_id: self.id.to_inner(),
                 order_id,
@@ -243,7 +242,7 @@ module deepbook::pool {
                 owner: account.owner(),
                 original_quantity: remaining_quantity,
                 price,
-                expire_timestamp: 0,
+                expire_timestamp,
             });
 
             (settled_base_quantity, settled_quote_quantity, order_id)
@@ -343,20 +342,20 @@ module deepbook::pool {
         quantity: u64, // in base asset
         ctx: &TxContext,
     ): (u64, u64) {
-        let mut remaining_quantity = quantity;
-        let mut net_base_quantity = 0;
-        let mut net_quote_quantity = 0;
-        let mut matched_orders = vector[];
         let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
-
         // This means there are no asks in the book
         if (ref.is_null()) {
             return (0, 0)
         };
 
+        let mut remaining_quantity = quantity;
+        let mut net_base_quantity = 0;
+        let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
+
         // Fetches initial order
         let mut ask = self.asks.borrow_mut_ref_offset(ref, offset);
-        while (remaining_quantity > 0 && order_id >= ask.order_id) {
+        while (remaining_quantity > 0 && order_id > ask.order_id) {
             // Match with existing asks
             // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
             let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
@@ -436,18 +435,19 @@ module deepbook::pool {
         quantity: u64, // in base asset
         ctx: &TxContext,
     ): (u64, u64) {
-        let mut remaining_quantity = quantity;
-        let mut net_base_quantity = 0;
-        let mut net_quote_quantity = 0;
-        let mut matched_orders = vector[];
         let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
-
         // This means there are no bids in the book
         if (ref.is_null()) {
             return (0, 0)
         };
+
+        let mut remaining_quantity = quantity;
+        let mut net_base_quantity = 0;
+        let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
+
         let mut bid = self.bids.borrow_mut_ref_offset(ref, offset);
-        while (remaining_quantity > 0 && order_id <= bid.order_id ) {
+        while (remaining_quantity > 0 && order_id < bid.order_id ) {
             // Match with existing bids
             // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
             let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
@@ -541,8 +541,7 @@ module deepbook::pool {
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
-        // Encode the order_id
-        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+        let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
                 self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
