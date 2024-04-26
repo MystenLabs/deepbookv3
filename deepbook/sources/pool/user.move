@@ -4,7 +4,7 @@
 /// The user module manages user data and operations for the current epoch.
 /// This includes the user's open orders, maker volume, stake amount, and unclaimed rebates.
 /// When the epoch changes, the first user action triggers the necessary calculation for that user
-/// for the previous epoch. 
+/// for the previous epoch.
 module deepbook::user {
     use sui::vec_set::{Self, VecSet};
 
@@ -16,9 +16,11 @@ module deepbook::user {
         stake_amount: u64,
         new_stake_amount: u64,
         unclaimed_rebates: u64,
+        settled_base_amount: u64,
+        settled_quote_amount: u64,
     }
 
-    public(package) fun new_user(user: address): User {
+    public(package) fun new(user: address): User {
         User {
             user,
             last_refresh_epoch: 0,
@@ -27,6 +29,8 @@ module deepbook::user {
             stake_amount: 0,
             new_stake_amount: 0,
             unclaimed_rebates: 0,
+            settled_base_amount: 0,
+            settled_quote_amount: 0,
         }
     }
 
@@ -106,5 +110,29 @@ module deepbook::user {
         self.open_orders.remove(&order_id);
 
         order_id
+    }
+
+    /// Add to the user's settled base amount.
+    public(package) fun add_settled_base_amount(
+        self: &mut User,
+        amount: u64,
+    ) {
+        self.settled_base_amount = self.settled_base_amount + amount;
+    }
+
+    /// Add to the user's settled quote amount.
+    public(package) fun add_settled_quote_amount(
+        self: &mut User,
+        amount: u64,
+    ) {
+        self.settled_quote_amount = self.settled_quote_amount + amount;
+    }
+
+    /// Increase maker volume for user
+    public(package) fun increase_maker_volume(
+        self: &mut User,
+        volume: u64,
+    ) {
+        self.maker_volume = self.maker_volume + volume;
     }
 }

@@ -42,9 +42,12 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
+    // Assuming 10k orders per second in a pool, would take over 50 million years to overflow
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
+    const MIN_ORDER_ID: u128 = 0;
+    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -73,7 +76,6 @@ module deepbook::pool {
         /// owner ID of the `AccountCap` that placed the order
         owner: address,
         original_quantity: u64,
-        base_asset_quantity_placed: u64,
         price: u64,
         expire_timestamp: u64
     }
@@ -94,6 +96,26 @@ module deepbook::pool {
         price: u64
     }
 
+    /// Emitted when a maker order is filled.
+    public struct OrderFilled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        /// object ID of the pool the order was placed on
+        pool_id: ID,
+        /// ID of the order within the pool
+        maker_order_id: u128,
+        /// ID of the taker order
+        taker_order_id: u128,
+        /// ID of the order defined by maker client
+        maker_client_order_id: u64,
+        /// ID of the order defined by taker client
+        taker_client_order_id: u64,
+        base_quantity: u64,
+        quote_quantity: u64,
+        price: u64,
+        maker_address: address,
+        taker_address: address,
+        is_bid: bool,
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Temporary to represent DEEP token, remove after we have the open-sourced the DEEP token contract
@@ -105,7 +127,7 @@ module deepbook::pool {
         // ID of the order within the pool
         order_id: u128,
         // ID of the order defined by client
-        client_order_id: u64, // TODO: What does this ID do?
+        client_order_id: u64,
         // Price, only used for limit orders
         price: u64,
         // Quantity (in base asset terms) when the order is placed
@@ -157,6 +179,8 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
+    /// Will return (settled_base_quantity, settled_quote_quantity, order_id
+    /// if limit order placed and 0 otherwise)
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -168,7 +192,7 @@ module deepbook::pool {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): u128 {
+    ): (u64, u64, u128) {
         // Refresh state as necessary if first order of epoch
         self.refresh(ctx);
 
@@ -178,63 +202,364 @@ module deepbook::pool {
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
-        // Calculate total Base, Quote, DEEP to be transferred.
+        let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
+        let (net_base_quantity, net_quote_quantity) =
+            if (is_bid) {
+                self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
+            } else {
+                self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
+            };
+
+        let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
+            (net_base_quantity, 0)
+        } else {
+            (0, net_quote_quantity)
+        };
+
+        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
+        let remaining_quantity = quantity - net_base_quantity;
+        if (remaining_quantity == 0) {
+            (settled_base_quantity, settled_quote_quantity, 0)
+        } else {
+            let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
+
+            self.internal_inject_limit_order(
+                order_id,
+                client_order_id,
+                price,
+                remaining_quantity,
+                fee_quantity,
+                is_bid,
+                expire_timestamp,
+                ctx
+            );
+
+            event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
+                pool_id: self.id.to_inner(),
+                order_id,
+                client_order_id,
+                is_bid,
+                owner: account.owner(),
+                original_quantity: remaining_quantity,
+                price,
+                expire_timestamp,
+            });
+
+            (settled_base_quantity, settled_quote_quantity, order_id)
+        }
+    }
+
+    /// Given output from order matching, deposits assets from account into pool and withdraws from pool to account
+    fun transfer_taker<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        net_base_quantity: u64,
+        net_quote_quantity: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ) {
+        // Discounted taker fees if above minimum stake
+        let (cur_stake, _) = self.users[account.owner()].stake();
+        let above_min_stake = (cur_stake >= self.pool_state.stake_required());
+        let taker_fee = if (above_min_stake) {
+            math::div(self.pool_state.taker_fee(), 2)
+        } else {
+            self.pool_state.taker_fee()
+        };
+
+        if (is_bid) {
+            // transfer quote out from account to pool, transfer base from pool to account
+            if (self.fee_is_deep()) {
+                let deep_quantity = math::mul(taker_fee, math::mul(net_quote_quantity, self.deep_config.borrow().deep_per_quote()));
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_quote(account, proof, net_quote_quantity, ctx);
+            } else {
+                let quote_fee = math::mul(taker_fee, net_quote_quantity);
+                self.deposit_quote(account, proof, net_quote_quantity + quote_fee, ctx);
+            };
+            self.withdraw_base(account, proof, net_base_quantity, ctx);
+        } else {
+            // transfer base out from account to pool, transfer quote from pool to account
+            if (self.fee_is_deep()) {
+                let deep_quantity = math::mul(taker_fee, math::mul(net_base_quantity, self.deep_config.borrow().deep_per_base()));
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_base(account, proof, net_base_quantity, ctx);
+            } else {
+                let base_fee = math::mul(taker_fee, net_base_quantity);
+                self.deposit_quote(account, proof, net_base_quantity + base_fee, ctx);
+            };
+            self.withdraw_base(account, proof,net_quote_quantity, ctx);
+        };
+    }
+
+    /// Given output from order matching, deposits assets from account into pool to prepare order placement. Returns fee quantity
+    fun transfer_maker<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        remaining_quantity: u64,
+        price: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
+    ): u64 {
         let maker_fee = self.pool_state.maker_fee();
-        let (base_quantity, quote_quantity) = if (is_bid) {
-            (0, math::mul(quantity, price))
+        let quote_quantity = math::mul(remaining_quantity, price);
+
+        if (is_bid) {
+            // transfer quote out from account to pool, transfer base from pool to account
+            if (self.fee_is_deep()) {
+                let deep_quantity = math::mul(maker_fee, math::mul(quote_quantity, self.deep_config.borrow().deep_per_quote()));
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_quote(account, proof, quote_quantity, ctx);
+                deep_quantity
+            } else {
+                let quote_fee = math::mul(maker_fee, quote_quantity);
+                self.deposit_quote(account, proof, quote_quantity + quote_fee, ctx);
+                quote_fee
+            }
         } else {
-            (quantity, 0)
+            // transfer base out from account to pool, transfer quote from pool to account
+            if (self.fee_is_deep()) {
+                let deep_quantity = math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_base()));
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_base(account, proof, remaining_quantity, ctx);
+                deep_quantity
+            } else {
+                let base_fee = math::mul(maker_fee, remaining_quantity);
+                self.deposit_quote(account, proof, remaining_quantity + base_fee, ctx);
+                base_fee
+            }
+        }
+    }
+
+    /// Matches bid, returns (base_quantity_matched, quote_quantity_matched)
+    fun match_bid<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        taker: address,
+        order_id: u128,
+        client_order_id: u64,
+        quantity: u64, // in base asset
+        ctx: &TxContext,
+    ): (u64, u64) {
+        let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
+        // This means there are no asks in the book
+        if (ref.is_null()) {
+            return (0, 0)
         };
-        let (base_fee, quote_fee, deep_fee) = if (self.fee_is_deep()) {
-            let config = self.deep_config.borrow();
-            let quote_fee = math::mul(config.deep_per_base(), base_quantity) + 
-                math::mul(config.deep_per_quote(), quote_quantity);
-            
-            (0, 0, quote_fee)
-        } else {
-            let base_fee = math::mul(base_quantity, maker_fee); // TODO: taker_fee, decimal places
-            let quote_fee = math::mul(quote_quantity, maker_fee);
-            
-            (base_fee, quote_fee, 0)
+
+        let mut remaining_quantity = quantity;
+        let mut net_base_quantity = 0;
+        let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
+
+        // Fetches initial order
+        let mut ask = self.asks.borrow_mut_ref_offset(ref, offset);
+        while (remaining_quantity > 0 && order_id > ask.order_id) {
+            // Match with existing asks
+            // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
+            let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
+            ask.quantity = ask.quantity - base_matched_quantity;
+            remaining_quantity = remaining_quantity - base_matched_quantity;
+            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
+            let fee_subtracted = math::div(math::mul(base_matched_quantity, ask.original_fee_quantity), ask.original_quantity);
+            ask.fee_quantity = ask.fee_quantity - fee_subtracted;
+
+            // Rounded up, because maker gets rounding advantage
+            let quote_quantity = math::mul_round_up(base_matched_quantity, ask.price);
+
+            // refresh this user as necessary
+            let ask_owner = &mut self.users[ask.owner];
+            ask_owner.refresh(ctx);
+            // Update maker quote balances
+            ask_owner.add_settled_quote_amount(quote_quantity);
+            // Update individual maker volume
+            ask_owner.increase_maker_volume(base_matched_quantity);
+            // Update all volume
+            self.pool_state.increase_maker_volume(base_matched_quantity);
+
+            // Check if user is a valid staker. Could separate out into a function
+            let (cur_stake, _) = ask_owner.stake();
+            if (cur_stake >= self.pool_state.stake_required()) {
+                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
+            };
+
+            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                pool_id: self.id.to_inner(),
+                maker_order_id: ask.order_id,
+                taker_order_id: order_id,
+                maker_client_order_id: ask.client_order_id,
+                taker_client_order_id: client_order_id,
+                base_quantity: base_matched_quantity,
+                quote_quantity,
+                price: ask.price,
+                maker_address: ask.owner,
+                taker_address: taker,
+                is_bid: true, // is a bid
+            });
+
+            net_base_quantity = net_base_quantity + base_matched_quantity;
+            net_quote_quantity = net_quote_quantity + quote_quantity;
+            // If ask quantity is 0, remove the order
+            if (ask.quantity == 0) {
+                // Remove order from user's open orders
+                ask_owner.remove_open_order(ask.order_id);
+                // Add order id to be removed
+                matched_orders.push_back(ask.order_id);
+            };
+
+            // Traverse to valid next order if exists, otherwise break from loop
+            if (self.asks.valid_next(ref, offset)){
+                (ref, offset, ask) = self.asks.borrow_mut_next(ref, offset);
+            } else {
+                break
+            }
         };
 
-        // Transfer Base, Quote, Fee to Pool.
-        if (base_quantity + base_fee > 0) self.deposit_base(account, proof, base_quantity + base_fee, ctx);
-        if (quote_quantity + quote_fee > 0) self.deposit_quote(account, proof, quote_quantity + quote_fee, ctx);
-        if (deep_fee > 0) self.deposit_deep(account, proof, deep_fee, ctx);
+        // Iterate over matched_orders and remove from asks
+        let mut i = 0;
+        while (i < matched_orders.length()) {
+            self.asks.remove(matched_orders[i]);
+            i = i + 1;
+        };
 
-        let place_quantity = math::max(base_quantity, quote_quantity);
-        let fee_quantity = math::max(math::max(base_fee, quote_fee), deep_fee);
-        let order_id = self.internal_place_limit_order(client_order_id, price, place_quantity, fee_quantity, is_bid, expire_timestamp, ctx);
-        event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-            pool_id: self.id.to_inner(),
-            order_id,
-            client_order_id,
-            is_bid,
-            owner: account.owner(),
-            original_quantity: quantity,
-            base_asset_quantity_placed: quantity,
-            price,
-            expire_timestamp: 0, // TODO
-        });
+        (net_base_quantity, net_quote_quantity)
+    }
 
-        order_id
+    /// Matches ask, returns (base_quantity_matched, quote_quantity_matched)
+    fun match_ask<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        taker: address,
+        order_id: u128,
+        client_order_id: u64,
+        quantity: u64, // in base asset
+        ctx: &TxContext,
+    ): (u64, u64) {
+        let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
+        // This means there are no bids in the book
+        if (ref.is_null()) {
+            return (0, 0)
+        };
+
+        let mut remaining_quantity = quantity;
+        let mut net_base_quantity = 0;
+        let mut net_quote_quantity = 0;
+        let mut matched_orders = vector[];
+
+        let mut bid = self.bids.borrow_mut_ref_offset(ref, offset);
+        while (remaining_quantity > 0 && order_id < bid.order_id ) {
+            // Match with existing bids
+            // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
+            let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
+            bid.quantity = bid.quantity - base_matched_quantity;
+            remaining_quantity = remaining_quantity - base_matched_quantity;
+            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
+            let fee_subtracted = math::div(math::mul(base_matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+            bid.fee_quantity = bid.fee_quantity - fee_subtracted;
+
+            // Rounded up, because maker gets rounding advantage
+            let quote_quantity = math::mul_round_up(base_matched_quantity, bid.price);
+
+            // Refresh this user as necessary
+            let bid_owner = &mut self.users[bid.owner];
+            bid_owner.refresh(ctx);
+            // Update maker quote balances
+            bid_owner.add_settled_base_amount(base_matched_quantity);
+            // Update individual maker volume
+            bid_owner.increase_maker_volume(base_matched_quantity);
+            // Update all volume
+            self.pool_state.increase_maker_volume(base_matched_quantity);
+
+            // Check if user is a valid staker. Could separate out into a function
+            let (cur_stake, _) = bid_owner.stake();
+            if (cur_stake >= self.pool_state.stake_required()) {
+                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
+            };
+
+            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                pool_id: self.id.to_inner(),
+                maker_order_id: bid.order_id,
+                taker_order_id: order_id,
+                maker_client_order_id: bid.client_order_id,
+                taker_client_order_id: client_order_id,
+                base_quantity: base_matched_quantity,
+                quote_quantity,
+                price: bid.price,
+                maker_address: bid.owner,
+                taker_address: taker,
+                is_bid: false, // is an ask
+            });
+
+            net_base_quantity = net_base_quantity + base_matched_quantity;
+            net_quote_quantity = net_quote_quantity + math::mul(base_matched_quantity, bid.price);
+            // If bid quantity is 0, remove the order
+            if (bid.quantity == 0) {
+                // Remove order from user's open orders
+                self.users[bid.owner].remove_open_order(bid.order_id);
+                // Add order id to be removed
+                matched_orders.push_back(bid.order_id);
+            };
+
+            // Traverse to valid next order if exists, otherwise break from loop
+            if (self.bids.valid_prev(ref, offset)){
+                (ref, offset, bid) = self.bids.borrow_prev_mut(ref, offset);
+            } else {
+                break
+            }
+        };
+
+        // Iterate over matched_orders and remove from bids
+        let mut i = 0;
+        while (i < matched_orders.length()) {
+            self.bids.remove(matched_orders[i]);
+            i = i + 1;
+        };
+
+        (net_base_quantity, net_quote_quantity)
     }
 
     /// Place a market order to the order book.
+    /// Will return (settled_base_quantity, settled_quote_quantity)
     public(package) fun place_market_order<BaseAsset, QuoteAsset>(
-        _self: &mut Pool<BaseAsset, QuoteAsset>,
-        _account: &mut Account,
-        _client_order_id: u64,
-        _quantity: u64, // in base asset
-        _is_bid: bool, // true for bid, false for ask
-        _ctx: &mut TxContext,
-    ): u128 {
-        // TODO: implement
-        0
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        client_order_id: u64,
+        quantity: u64, // in base asset
+        is_bid: bool, // true for bid, false for ask
+        ctx: &mut TxContext,
+    ): (u64, u64) {
+        // Refresh state as necessary if first order of epoch
+        self.refresh(ctx);
+
+        assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
+        assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
+
+        let price = if (is_bid) {
+            MAX_PRICE
+        } else {
+            MIN_PRICE
+        };
+
+        let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
+        let (net_base_quantity, net_quote_quantity) =
+            if (is_bid) {
+                self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
+            } else {
+                self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
+            };
+
+        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
+
+        if (is_bid) {
+            (net_base_quantity, 0)
+        } else {
+            (0, net_quote_quantity)
+        }
     }
 
     /// Given an amount in and direction, calculate amount out
+    /// Will return (amount_out, amount_in_used)
     public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>,
         _amount_in: u64,
@@ -348,7 +673,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): vector<Order>{
         let mut cancelled_orders = vector[];
-        let user_open_orders = self.users[ctx.sender()].open_orders();
+        let user_open_orders = self.users[account.owner()].open_orders();
 
         let orders_vector = user_open_orders.into_keys();
         let len = orders_vector.length();
@@ -619,8 +944,9 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun internal_place_limit_order<BaseAsset, QuoteAsset>(
+    fun internal_inject_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
         client_order_id: u64,
         price: u64,
         quantity: u64,
@@ -628,8 +954,7 @@ module deepbook::pool {
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
         ctx: &TxContext,
-    ): u128 {
-        let order_id = encode_order_id(is_bid, price, get_order_id(self, is_bid));
+    ) {
 
         // Create Order
         let order = Order {
@@ -657,8 +982,6 @@ module deepbook::pool {
         // Add order to user's open orders
         let user_data = &mut self.users[ctx.sender()];
         user_data.add_open_order(order_id);
-
-        order_id
     }
 
     /// Cancels an order and returns the order details

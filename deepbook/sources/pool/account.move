@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The Account is a shared object that holds all of the balances for a user. A combination of `Account` and 
-/// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the 
-/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of 
-/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating 
+/// The Account is a shared object that holds all of the balances for a user. A combination of `Account` and
+/// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
+/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of
+/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::account {
     use sui::{
@@ -23,7 +23,7 @@ module deepbook::account {
 
     const MAX_TRADE_CAPS: u64 = 1000;
 
-    /// A shared object that is passed into pools for placing orders. 
+    /// A shared object that is passed into pools for placing orders.
     public struct Account has key {
         id: UID,
         owner: address,
@@ -55,6 +55,7 @@ module deepbook::account {
         }
     }
 
+    #[allow(lint(share_owned))]
     public fun share(account: Account) {
         transfer::share_object(account);
     }
