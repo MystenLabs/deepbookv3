@@ -151,6 +151,7 @@ module deepbook::deepbook {
     public fun place_market_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         client_order_id: u64,
         quantity: u64,
         is_bid: bool,
@@ -158,6 +159,7 @@ module deepbook::deepbook {
     ): (u64, u64) {
         pool.place_market_order(
             account,
+            proof,
             client_order_id,
             quantity,
             is_bid,

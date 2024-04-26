@@ -211,9 +211,9 @@ module deepbook::pool {
                 self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
             };
 
-        self.transfer_taker(account, net_base_quantity, net_quote_quantity, is_bid, ctx);
+        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
         let remaining_quantity = quantity - net_base_quantity;
-        let fee_quantity = self.transfer_maker(account, remaining_quantity, price, is_bid, ctx);
+        let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
 
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
             (net_base_quantity, 0)
@@ -254,6 +254,7 @@ module deepbook::pool {
     fun transfer_taker<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         net_base_quantity: u64,
         net_quote_quantity: u64,
         is_bid: bool,
@@ -272,24 +273,24 @@ module deepbook::pool {
             // transfer quote out from account to pool, transfer base from pool to account
             if (self.fee_is_deep()) {
                 let deep_quantity = math::mul(taker_fee, math::mul(net_quote_quantity, self.deep_config.borrow().deep_per_quote()));
-                self.deposit_deep(account, deep_quantity, ctx);
-                self.deposit_quote(account, net_quote_quantity, ctx);
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_quote(account, proof, net_quote_quantity, ctx);
             } else {
                 let quote_fee = math::mul(taker_fee, net_quote_quantity);
-                self.deposit_quote(account, net_quote_quantity + quote_fee, ctx);
+                self.deposit_quote(account, proof, net_quote_quantity + quote_fee, ctx);
             };
-            self.withdraw_base(account, net_base_quantity, ctx);
+            self.withdraw_base(account, proof, net_base_quantity, ctx);
         } else {
             // transfer base out from account to pool, transfer quote from pool to account
             if (self.fee_is_deep()) {
                 let deep_quantity = math::mul(taker_fee, math::mul(net_base_quantity, self.deep_config.borrow().deep_per_base()));
-                self.deposit_deep(account, deep_quantity, ctx);
-                self.deposit_base(account, net_base_quantity, ctx);
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_base(account, proof, net_base_quantity, ctx);
             } else {
                 let base_fee = math::mul(taker_fee, net_base_quantity);
-                self.deposit_quote(account, net_base_quantity + base_fee, ctx);
+                self.deposit_quote(account, proof, net_base_quantity + base_fee, ctx);
             };
-            self.withdraw_base(account, net_quote_quantity, ctx);
+            self.withdraw_base(account, proof,net_quote_quantity, ctx);
         };
     }
 
@@ -297,6 +298,7 @@ module deepbook::pool {
     fun transfer_maker<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         remaining_quantity: u64,
         price: u64,
         is_bid: bool,
@@ -309,24 +311,24 @@ module deepbook::pool {
             // transfer quote out from account to pool, transfer base from pool to account
             if (self.fee_is_deep()) {
                 let deep_quantity = math::mul(maker_fee, math::mul(quote_quantity, self.deep_config.borrow().deep_per_quote()));
-                self.deposit_deep(account, deep_quantity, ctx);
-                self.deposit_quote(account, quote_quantity, ctx);
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_quote(account, proof, quote_quantity, ctx);
                 deep_quantity
             } else {
                 let quote_fee = math::mul(maker_fee, quote_quantity);
-                self.deposit_quote(account, quote_quantity + quote_fee, ctx);
+                self.deposit_quote(account, proof, quote_quantity + quote_fee, ctx);
                 quote_fee
             }
         } else {
             // transfer base out from account to pool, transfer quote from pool to account
             if (self.fee_is_deep()) {
                 let deep_quantity = math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_base()));
-                self.deposit_deep(account, deep_quantity, ctx);
-                self.deposit_base(account, remaining_quantity, ctx);
+                self.deposit_deep(account, proof, deep_quantity, ctx);
+                self.deposit_base(account, proof, remaining_quantity, ctx);
                 deep_quantity
             } else {
                 let base_fee = math::mul(maker_fee, remaining_quantity);
-                self.deposit_quote(account, remaining_quantity + base_fee, ctx);
+                self.deposit_quote(account, proof, remaining_quantity + base_fee, ctx);
                 base_fee
             }
         }
@@ -521,6 +523,7 @@ module deepbook::pool {
     public(package) fun place_market_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
+        proof: &TradeProof,
         client_order_id: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
@@ -547,7 +550,7 @@ module deepbook::pool {
                 self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
             };
 
-        self.transfer_taker(account, net_base_quantity, net_quote_quantity, is_bid, ctx);
+        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
 
         if (is_bid) {
             (net_base_quantity, 0)
@@ -671,7 +674,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): vector<Order>{
         let mut cancelled_orders = vector[];
-        let user_open_orders = self.users[ctx.sender()].open_orders();
+        let user_open_orders = self.users[account.owner()].open_orders();
 
         let orders_vector = user_open_orders.into_keys();
         let len = orders_vector.length();
