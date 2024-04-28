@@ -231,7 +231,7 @@ module deepbook::pool {
                 fee_quantity,
                 is_bid,
                 expire_timestamp,
-                ctx
+                account.owner(),
             );
 
             event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
@@ -955,7 +955,7 @@ module deepbook::pool {
         fee_quantity: u64,
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
-        ctx: &TxContext,
+        owner: address,
     ) {
 
         // Create Order
@@ -969,7 +969,7 @@ module deepbook::pool {
             fee_quantity,
             fee_is_deep: self.fee_is_deep(),
             is_bid,
-            owner: ctx.sender(),
+            owner,
             expire_timestamp,
             self_matching_prevention: 0, // TODO
         };
@@ -982,7 +982,7 @@ module deepbook::pool {
         };
 
         // Add order to user's open orders
-        let user_data = &mut self.users[ctx.sender()];
+        let user_data = &mut self.users[owner];
         user_data.add_open_order(order_id);
     }
 

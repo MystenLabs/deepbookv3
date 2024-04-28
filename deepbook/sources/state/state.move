@@ -8,7 +8,6 @@ module deepbook::state { // Consider renaming this module
         balance::{Self, Balance},
         table::{Self, Table},
         sui::SUI,
-        coin::Coin,
         clock::Clock,
     };
 
@@ -166,12 +165,15 @@ module deepbook::state { // Consider renaming this module
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user: address,
+        account: &Account,
+        proof: &TradeProof,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
         ctx: &TxContext,
     ) {
+        let (user, _) = assert_participant(pool, account, proof, ctx);
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
@@ -182,11 +184,13 @@ module deepbook::state { // Consider renaming this module
     public(package) fun vote<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        user: address,
+        account: &Account,
+        proof: &TradeProof,
         proposal_id: u64,
         ctx: &TxContext,
     ) {
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
+        let (user, user_stake) = assert_participant(pool, account, proof, ctx);
+
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         let pool_state = if (winning_proposal.is_none()) {
