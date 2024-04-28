@@ -97,8 +97,35 @@ module benchmark::pool {
         order_id
     }
 
+    public fun cancel_first_ask_critbit(
+        self: &mut Pool,
+    ) {
+        let asks = &mut self.asks_critbit;
+        let (_, tick_index) = asks.min_leaf();
+        let tick_level = asks.borrow_mut_leaf_by_index(tick_index);
+        tick_level.open_orders.pop_front();
+    }
+
+    public fun cancel_first_bid_critbit(
+        self: &mut Pool,
+    ) {
+        let bids = &mut self.bids_critbit;
+        let (_, tick_index) = bids.max_leaf();
+        let tick_level = bids.borrow_mut_leaf_by_index(tick_index);
+        tick_level.open_orders.pop_back();
+    }
+
+    // fun destroy_empty_level(level: TickLevel) {
+    //     let TickLevel {
+    //         price: _,
+    //         open_orders: orders,
+    //     } = level;
+
+    //     orders.destroy_empty();
+    // }
+
     public fun place_limit_order_bigvec(
-        pool: &mut Pool,
+        self: &mut Pool,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -108,13 +135,13 @@ module benchmark::pool {
         let order_id;
         let open_orders: &mut BigVector<Order>;
         if (is_bid) {
-            order_id = encode_order_id(price, pool.next_bid_order_id);
-            pool.next_bid_order_id = pool.next_bid_order_id - 1;
-            open_orders = &mut pool.bids_bigvec;
+            order_id = encode_order_id(price, self.next_bid_order_id);
+            self.next_bid_order_id = self.next_bid_order_id - 1;
+            open_orders = &mut self.bids_bigvec;
         } else {
-            order_id = encode_order_id(price, pool.next_ask_order_id);
-            pool.next_ask_order_id = pool.next_ask_order_id + 1;
-            open_orders = &mut pool.asks_bigvec;
+            order_id = encode_order_id(price, self.next_ask_order_id);
+            self.next_ask_order_id = self.next_ask_order_id + 1;
+            open_orders = &mut self.asks_bigvec;
         };
 
         let order = Order {
@@ -132,12 +159,29 @@ module benchmark::pool {
             quantity,
             owner: owner,
         });
-        if (!pool.user_open_orders.contains(owner)) {
-            pool.user_open_orders.add(owner, linked_table::new(ctx));
+        if (!self.user_open_orders.contains(owner)) {
+            self.user_open_orders.add(owner, linked_table::new(ctx));
         };
-        pool.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
+        self.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
 
         order_id
+    }
+
+    public fun cancel_first_ask_bigvec(
+        self: &mut Pool,
+    ) {
+        let (ref, offset) = self.asks_bigvec.slice_following(0);
+        let ask = self.asks_bigvec.borrow_mut_ref_offset(ref, offset);
+        self.asks_bigvec.remove(ask.order_id);
+    }
+
+    public fun cancel_first_bid_bigvec(
+        self: &mut Pool,
+    ) {
+        let max_order_id = 1 << 128 - 1;
+        let (ref, offset) = self.bids_bigvec.slice_before(max_order_id);
+        let bid = self.bids_bigvec.borrow_mut_ref_offset(ref, offset);
+        self.bids_bigvec.remove(bid.order_id);
     }
 
     fun encode_order_id(
