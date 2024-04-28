@@ -762,7 +762,8 @@ module deepbook::pool {
         self.get_user_mut(user, ctx).increase_stake(amount)
     }
 
-    /// Removes a user's stake
+    /// Removes a user's stake. 
+    /// Returns the total amount staked before this epoch and the total amount staked during this epoch.
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,

@@ -7,7 +7,7 @@ module deepbook::deep_reference_price {
         ascii::String,
     };
 
-    use sui::vec_map::VecMap;
+    use sui::vec_map::{Self, VecMap};
 
     use deepbook::pool::{Pool, DEEP}; // TODO: DEEP token
 
@@ -20,11 +20,16 @@ module deepbook::deep_reference_price {
         reference_pools: VecMap<String, String>,
     }
 
+    public(package) fun new(): DeepReferencePools {
+        DeepReferencePools {
+            reference_pools: vec_map::empty(),
+        }
+    }
+
     /// Add a reference pool. Can be performed by the DeepbookAdminCap owner.
     public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
         deep_reference_price: &mut DeepReferencePools,
         pool: &Pool<BaseAsset, QuoteAsset>,
-        // cap: &DeepbookAdminCap TODO
     ) {
         let (base, quote) = pool.get_base_quote_types();
         let deep_type = type_name::get<DEEP>().into_string();
