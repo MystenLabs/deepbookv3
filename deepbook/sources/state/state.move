@@ -13,6 +13,7 @@ module deepbook::state { // Consider renaming this module
     };
 
     use deepbook::{
+        account::{Account, TradeProof},
         pool::{Pool, DEEP, Self},
         pool_state,
         pool_metadata::{Self, PoolMetadata},
@@ -128,14 +129,17 @@ module deepbook::state { // Consider renaming this module
     public(package) fun stake<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        amount: Coin<DEEP>,
-        ctx: &TxContext,
+        account: &mut Account,
+        proof: &TradeProof,
+        amount: u64,
+        ctx: &mut TxContext,
     ) {
-        let user = ctx.sender();
-        let total_user_stake = pool.increase_user_stake(user, amount.value(), ctx);
+        let user = account.owner();
+        let total_user_stake = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .add_voting_power(total_user_stake, amount.value());
-        self.vault.join(amount.into_balance());
+            .add_voting_power(total_user_stake, amount);
+        let balance = account.withdraw_with_proof<DEEP>(proof, amount, ctx).into_balance();
+        self.vault.join(balance);
     }
 
     /// Unstake DEEP in the pool. This will decrease the user's voting power.
@@ -145,14 +149,16 @@ module deepbook::state { // Consider renaming this module
     public(package) fun unstake<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
         ctx: &mut TxContext
-    ): Coin<DEEP> {
-        let user = ctx.sender();
+    ) {
+        let user = account.owner();
         let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
         self.get_pool_metadata_mut(pool, ctx)
             .remove_voting_power(user_old_stake, user_new_stake);
-
-        self.vault.split(user_old_stake + user_new_stake).into_coin(ctx)
+        let balance = self.vault.split(user_old_stake + user_new_stake).into_coin(ctx);
+        account.deposit_with_proof<DEEP>(proof, balance);
     }
 
     /// Submit a proposal to change the fee structure of a pool.
@@ -160,13 +166,12 @@ module deepbook::state { // Consider renaming this module
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        let (user, _) = assert_participant(pool, ctx);
-
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
     }
@@ -177,11 +182,11 @@ module deepbook::state { // Consider renaming this module
     public(package) fun vote<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
         proposal_id: u64,
         ctx: &TxContext,
     ) {
-        let (user, user_stake) = assert_participant(pool, ctx);
-
+        let (user_stake, _) = pool.get_user_stake(user, ctx);
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
         let pool_state = if (winning_proposal.is_none()) {
@@ -216,9 +221,13 @@ module deepbook::state { // Consider renaming this module
     /// Check whether user can submit and vote on proposals.
     fun assert_participant<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &Account,
+        proof: &TradeProof,
         ctx: &TxContext
     ): (address, u64) {
-        let user = ctx.sender();
+        account.validate_proof(proof);
+
+        let user = account.owner();
         let (user_stake, _) = pool.get_user_stake(user, ctx);
         assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 

@@ -6,7 +6,6 @@
 module deepbook::deepbook {
     use sui::{
         balance::Balance,
-        coin::Coin,
         sui::SUI,
         clock::Clock,
         vec_set::VecSet,
@@ -14,7 +13,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::{Self, State},
-        pool::{Order, Pool, DEEP},
+        pool::{Order, Pool},
         account::{Account, TradeProof},
     };
 
@@ -89,9 +88,11 @@ module deepbook::deepbook {
     /// Public facing function to remove a deep price point from a specific pool.
     public fun claim_rebates<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
         ctx: &mut TxContext
-    ): Coin<DEEP> {
-        pool.claim_rebates(ctx)
+    ) {
+        pool.claim_rebates(account, proof, ctx)
     }
 
     // GOVERNANCE
@@ -100,32 +101,39 @@ module deepbook::deepbook {
     public fun stake<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        amount: Coin<DEEP>,
+        account: &mut Account,
+        proof: &TradeProof,
+        amount: u64,
         ctx: &mut TxContext,
     ) {
-        state.stake(pool, amount, ctx);
+        state.stake(pool, account, proof, amount, ctx)
     }
 
     /// Public facing function to unstake DEEP tokens from a specific pool.
     public fun unstake<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
         ctx: &mut TxContext
-    ): Coin<DEEP> {
-        state.unstake(pool, ctx)
+    ) {
+        state.unstake(pool, account, proof, ctx)
     }
 
     /// Public facing function to submit a proposal.
     public fun submit_proposal<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &Account,
+        proof: &TradeProof,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
+        account.validate_proof(proof);
         state.submit_proposal(
-            pool, maker_fee, taker_fee, stake_required, ctx
+            pool, account.owner(), maker_fee, taker_fee, stake_required, ctx
         );
     }
 
@@ -133,10 +141,13 @@ module deepbook::deepbook {
     public fun vote<BaseAsset, QuoteAsset>(
         state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &Account,
+        proof: &TradeProof,
         proposal_id: u64,
         ctx: &mut TxContext,
     ) {
-        state.vote(pool, proposal_id, ctx);
+        account.validate_proof(proof);
+        state.vote(pool, account.owner(), proposal_id, ctx);
     }
 
     // ORDERS

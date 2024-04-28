@@ -120,7 +120,7 @@ module deepbook::account {
         proof: &TradeProof,
         coin: Coin<T>,
     ) {
-        proof.validate_proof(account);
+        account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
         let to_deposit = coin.into_balance();
@@ -151,7 +151,7 @@ module deepbook::account {
         amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
-        proof.validate_proof(account);
+        account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
         assert!(account.balances.contains(key), ENoBalance);
@@ -174,7 +174,7 @@ module deepbook::account {
         assert!(account.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
     }
 
-    fun validate_proof(proof: &TradeProof, account: &Account) {
+    public fun validate_proof(account: &Account, proof: &TradeProof) {
         assert!(object::id(account) == proof.account_id, EInvalidProof);
     }
 }
