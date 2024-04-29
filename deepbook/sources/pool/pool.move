@@ -231,7 +231,7 @@ module deepbook::pool {
                 fee_quantity,
                 is_bid,
                 expire_timestamp,
-                ctx
+                account.owner(),
             );
 
             event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
@@ -656,13 +656,14 @@ module deepbook::pool {
     /// Claim the rebates for the user
     public(package) fun claim_rebates<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
         ctx: &mut TxContext
-    ): Coin<DEEP> {
-        let user = self.get_user_mut(ctx.sender(), ctx);
+    ) {
+        let user = self.get_user_mut(account.owner(), ctx);
         let amount = user.reset_rebates();
-        self.deepbook_balance
-            .split(amount)
-            .into_coin(ctx)
+        let coin = self.deepbook_balance.split(amount).into_coin(ctx);
+        account.deposit_with_proof<DEEP>(proof, coin);
     }
 
     /// Cancel all orders for an account. Withdraw settled funds back into user account.
@@ -879,7 +880,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let base = user_account.withdraw_with_proof(proof, amount, ctx);
+        let base = user_account.withdraw_with_proof<BaseAsset>(proof, amount, ctx);
         self.base_balances.join(base.into_balance());
     }
 
@@ -890,7 +891,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let quote = user_account.withdraw_with_proof(proof, amount, ctx);
+        let quote = user_account.withdraw_with_proof<QuoteAsset>(proof, amount, ctx);
         self.quote_balances.join(quote.into_balance());
     }
 
@@ -901,7 +902,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = user_account.withdraw_with_proof(proof, amount, ctx);
+        let coin = user_account.withdraw_with_proof<DEEP>(proof, amount, ctx);
         self.deepbook_balance.join(coin.into_balance());
     }
 
@@ -913,7 +914,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.base_balances.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof(proof, coin);
+        user_account.deposit_with_proof<BaseAsset>(proof, coin);
     }
 
     fun withdraw_quote<BaseAsset, QuoteAsset>(
@@ -924,7 +925,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.quote_balances.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof(proof, coin);
+        user_account.deposit_with_proof<QuoteAsset>(proof, coin);
     }
 
     fun withdraw_deep<BaseAsset, QuoteAsset>(
@@ -935,7 +936,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.deepbook_balance.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof(proof, coin);
+        user_account.deposit_with_proof<DEEP>(proof, coin);
     }
 
     #[allow(unused_function)]
@@ -954,7 +955,7 @@ module deepbook::pool {
         fee_quantity: u64,
         is_bid: bool, // true for bid, false for ask
         expire_timestamp: u64, // Expiration timestamp in ms
-        ctx: &TxContext,
+        owner: address,
     ) {
 
         // Create Order
@@ -968,7 +969,7 @@ module deepbook::pool {
             fee_quantity,
             fee_is_deep: self.fee_is_deep(),
             is_bid,
-            owner: ctx.sender(),
+            owner,
             expire_timestamp,
             self_matching_prevention: 0, // TODO
         };
@@ -981,7 +982,7 @@ module deepbook::pool {
         };
 
         // Add order to user's open orders
-        let user_data = &mut self.users[ctx.sender()];
+        let user_data = &mut self.users[owner];
         user_data.add_open_order(order_id);
     }
 
