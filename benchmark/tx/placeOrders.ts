@@ -59,14 +59,14 @@ const prepareCoinObjects = async (toAddress: string, chunks: number, baseCoinId:
 
 // return array of addresses
 const prepCoins = async () => {
-    let numCoins = 250;
-    let coinAmount = 20_000_000;
+    let numCoins = 100;
+    let coinAmount = 25_000_000;
     for (let j = 0; j < 400; j++) {
         let res = await prepareCoinObjects(owner, numCoins, coin, coinAmount) as any[]
         let futures: any[] = []
         for (let i = 0; i < numCoins; i++) {
             console.log(res[i])
-            futures.push(placeOrderCritbit(res[i]))
+            futures.push(placeOrdersBigVec(res[i]))
         }
 
         console.log('got all futures ' + j)
@@ -96,18 +96,23 @@ const placeOrderCritbit = async (gasCoin: any) => {
     return execute(txb)
 }
 
-const placeOrdersBigVec = async () => {
+const placeOrdersBigVec = async (gasCoin: any) => {
     console.log(`Placing order`)
     let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    let price = randomInt(1, 1000000000)
+    let amount = randomInt(1, 1000000000)
     txb.moveCall({
         target: `${poolPackage}::pool::place_limit_order_bigvec`,
         arguments: [
             txb.object(poolObj),
-            txb.pure(1),
-            txb.pure(1),
+            txb.pure(price),
+            txb.pure(amount),
             txb.pure(false)
         ]
     })
+
+    return execute(txb)
 }
 
 const cancelFirstAskCritbit = async (gasCoin: any) => {
@@ -151,7 +156,7 @@ const execute = async (txb: TransactionBlock) => {
             totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
         }
         let data = `${++iteration} ${totalStorageCost} ${totalStorageRebate} ${totalNonRefundableStorageFee} \n`
-        appendFileSync('critbit_place.txt', data)
+        appendFileSync('bigvec_place.txt', data)
     }).catch((err) => {
         console.log(err)
     })
