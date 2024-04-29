@@ -13,9 +13,10 @@ let totalStorageCost = 0;
 let totalStorageRebate = 0;
 let totalNonRefundableStorageFee = 0;
 
-const get100Coins = async () => {
+// return array of addresses
+const splitAndGetCoins = async () => {
     let txb = new TransactionBlock();
-    let numCoins = 2;
+    let numCoins = 10;
     let coinSize = 200_000_000;
 
     const coins = txb.splitCoins(txb.gas, [...Array(numCoins)].map(() => coinSize))
@@ -25,109 +26,59 @@ const get100Coins = async () => {
         txb.transferObjects([coins[i]], "0xc5f61ed5855f7a4eff602dfe82ce72dbfa8d8c136d6df13d0405d064a6451bb6")
     }
     
-    await client.signAndExecuteTransactionBlock({
-        transactionBlock: txb,
-        signer: keypair,
-        options: {
-            showObjectChanges: true,
-            showEffects: true
-        }
-    }).then((res) => {
-        let gas = res.effects?.gasUsed;
-        if (gas) {
-            totalComputationCost += +gas.computationCost
-            totalStorageCost += +gas.storageCost
-            totalStorageRebate += +gas.storageRebate
-            totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
-        }
-        console.log(`Computation cost:              ${totalComputationCost}`)
-        console.log(`Storage cost:                  ${totalStorageCost}`)
-        console.log(`Storage rebate:                ${totalStorageRebate}`)
-        console.log(`Non-refundable storage fee:    ${totalNonRefundableStorageFee}`)
-    }).catch((err) => {
-        console.log(err)
-    })
+    await execute(txb, 1)
 }
 
-const place100OrdersCritbit = async () => {
-    let txb = new TransactionBlock();
-    for (let j = 0; j < 10; j++) {
-        for (let i = 0; i < 100; i++) {
-            txb.moveCall({
-                target: `${poolPackage}::pool::place_limit_order_critbit`,
-                arguments: [
-                    txb.object(poolObj),
-                    txb.pure(1),
-                    txb.pure(1),
-                    txb.pure(false)
-                ]
-            })
-            txb.moveCall({
-                target: `${poolPackage}::pool::place_limit_order_critbit`,
-                arguments: [
-                    txb.object(poolObj),
-                    txb.pure(1),
-                    txb.pure(1),
-                    txb.pure(false)
-                ]
-            })
-        }
-    
-        await execute(txb, j)
-    }
-    
-}
-
-const placeOrders = async () => {
+const placeOrderCritbit = async () => {
     console.log(`Placing order`)
+    let txb = new TransactionBlock();
+    txb.moveCall({
+        target: `${poolPackage}::pool::place_limit_order_critbit`,
+        arguments: [
+            txb.object(poolObj),
+            txb.pure(1),
+            txb.pure(1),
+            txb.pure(false)
+        ]
+    })
+    
+    await execute(txb, 1)
+}
 
-    for (let i = 0; i < 10; i++) {
-        let txb = new TransactionBlock();
-        txb.moveCall({
-            target: `${poolPackage}::pool::place_limit_order_critbit`,
-            arguments: [
-                txb.object(poolObj),
-                txb.pure(1),
-                txb.pure(1),
-                txb.pure(false)
-            ]
-        })
-
-        await client.signAndExecuteTransactionBlock({
-            transactionBlock: txb,
-            signer: keypair,
-            options: {
-                showObjectChanges: true,
-                showEffects: true
-            }
-        }).then((res) => {
-            let gas = res.effects?.gasUsed;
-            if (gas) {
-                totalComputationCost += +gas.computationCost
-                totalStorageCost += +gas.storageCost
-                totalStorageRebate += +gas.storageRebate
-                totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
-            }
-            console.log(`${totalComputationCost}`)
-            console.log(`${totalStorageCost}`)
-            console.log(`${totalStorageRebate}`)
-            console.log(`${totalNonRefundableStorageFee}`)
-        }).catch((err) => {
-            console.log(err)
-        })
-    }
+const placeOrdersBigVec = async () => {
+    console.log(`Placing order`)
+    let txb = new TransactionBlock();
+    txb.moveCall({
+        target: `${poolPackage}::pool::place_limit_order_bigvec`,
+        arguments: [
+            txb.object(poolObj),
+            txb.pure(1),
+            txb.pure(1),
+            txb.pure(false)
+        ]
+    })
 }
 
 const cancelFirstAskCritbit = async () => {
     let txb = new TransactionBlock();
-    for (let i = 0; i < 1000; i++) {
-        txb.moveCall({
-            target: `${poolPackage}::pool::cancel_first_ask_critbit`,
-            arguments: [
-                txb.object(poolObj),
-            ]
-        })
-    }
+    txb.moveCall({
+        target: `${poolPackage}::pool::cancel_first_ask_critbit`,
+        arguments: [
+            txb.object(poolObj),
+        ]
+    })
+
+    execute(txb, 1)
+}
+
+const cancelFirstAskBigVec = async () => {
+    let txb = new TransactionBlock();
+    txb.moveCall({
+        target: `${poolPackage}::pool::cancel_first_ask_bigvec`,
+        arguments: [
+            txb.object(poolObj),
+        ]
+    })
 
     execute(txb, 1)
 }
@@ -160,4 +111,4 @@ const execute = async (txb: TransactionBlock, iter: number) => {
 // get100Coins()
 // placeOrders()
 // cancelFirstAskCritbit()
-place100OrdersCritbit()
+placeOrderCritbit()
