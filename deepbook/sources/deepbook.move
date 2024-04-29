@@ -220,11 +220,11 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to get open orders for a user.
-    public fun get_open_orders<BaseAsset, QuoteAsset>(
+    public fun user_open_orders<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         user: address,
     ): VecSet<u128> {
-        pool.get_open_orders(user)
+        pool.user_open_orders(user)
     }
 
     /// Public facing function to get amount_out given amount_in.

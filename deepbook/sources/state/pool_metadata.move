@@ -86,10 +86,10 @@ module deepbook::pool_metadata {
     /// Validation of the user, amount, and total_user_stake is done in State.
     public(package) fun add_voting_power(
         self: &mut PoolMetadata,
-        total_user_stake: u64,
+        old_user_stake: u64,
         new_user_stake: u64,
     ) {
-        let new_voting_power = calculate_new_voting_power(total_user_stake, new_user_stake);
+        let new_voting_power = calculate_new_voting_power(old_user_stake, new_user_stake);
         self.new_voting_power = self.new_voting_power + new_voting_power;
     }
 
@@ -121,14 +121,13 @@ module deepbook::pool_metadata {
     /// Given a user's total stake and new stake from this epoch,
     /// calculate the new voting power to add to the governance.
     fun calculate_new_voting_power(
-        total_stake: u64,
+        old_stake: u64,
         new_stake: u64,
     ): u64 {
-        let prev_stake = total_stake - new_stake;
-        if (prev_stake >= VOTING_POWER_CUTOFF) {
+        if (old_stake >= VOTING_POWER_CUTOFF) {
             return new_stake / 2
         };
-        let amount_till_cutoff = VOTING_POWER_CUTOFF - prev_stake;
+        let amount_till_cutoff = VOTING_POWER_CUTOFF - old_stake;
         if (amount_till_cutoff >= new_stake) {
             return new_stake
         };

@@ -14,7 +14,7 @@ module deepbook::state { // Consider renaming this module
     use deepbook::{
         account::{Account, TradeProof},
         pool::{Pool, DEEP, Self},
-        pool_state,
+        state_manager,
         pool_metadata::{Self, PoolMetadata},
         deep_reference_price::{Self, DeepReferencePools},
     };
@@ -134,9 +134,9 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext,
     ) {
         let user = account.owner();
-        let total_user_stake = pool.increase_user_stake(user, amount, ctx);
+        let (old_stake, new_stake) = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .add_voting_power(total_user_stake, amount);
+            .add_voting_power(old_stake, new_stake);
         let balance = account.withdraw_with_proof<DEEP>(proof, amount, ctx).into_balance();
         self.vault.join(balance);
     }
@@ -164,7 +164,7 @@ module deepbook::state { // Consider renaming this module
     /// The user submitting this proposal must have vested stake in the pool.
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         account: &Account,
         proof: &TradeProof,
         maker_fee: u64,
@@ -200,12 +200,10 @@ module deepbook::state { // Consider renaming this module
                 .borrow()
                 .get_proposal_params();
 
-            let pool_state = pool_state::new_pool_epoch_state_with_gov_params(
-                stake_required, taker_fee, maker_fee
-            );
-            option::some(pool_state)
+            let fees = state_manager::new_fees(taker_fee, maker_fee, stake_required);
+            option::some(fees)
         };
-        pool.set_next_epoch(pool_state);
+        pool.set_next_fees(pool_state);
     }
 
     /// Check whether pool exists, refresh and return its metadata.
@@ -224,7 +222,7 @@ module deepbook::state { // Consider renaming this module
 
     /// Check whether user can submit and vote on proposals.
     fun assert_participant<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
         account: &Account,
         proof: &TradeProof,
         ctx: &TxContext
