@@ -115,12 +115,8 @@ module deepbook::state_manager {
     }
     
     /// Get the total maker volume for the current epoch.
-    public(package) fun maker_fee(self: &StateManager, epoch: u64): u64 {
-        if (self.epoch == epoch) {
-            self.trade_params.maker_fee
-        } else {
-            self.next_trade_params.maker_fee
-        }
+    public(package) fun maker_fee(self: &StateManager): u64 {
+        self.trade_params.maker_fee
     }
 
     /// Taker fee for a user. If the user has enough stake and has traded a certain amount of volume,
