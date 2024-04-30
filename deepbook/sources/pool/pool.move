@@ -125,6 +125,7 @@ module deepbook::pool {
         maker_address: address,
         taker_address: address,
         is_bid: bool,
+        timestamp: u64,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
@@ -215,9 +216,9 @@ module deepbook::pool {
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
-                self.match_bid(account.owner(), order_id, client_order_id, quantity)
+                self.match_bid(account.owner(), order_id, client_order_id, quantity, clock)
             } else {
-                self.match_ask(account.owner(), order_id, client_order_id, quantity)
+                self.match_ask(account.owner(), order_id, client_order_id, quantity, clock)
             };
 
         if (order_type == POST_ONLY) {
@@ -353,6 +354,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        clock: &Clock,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
         // This means there are no asks in the book
@@ -397,6 +399,7 @@ module deepbook::pool {
                 maker_address: ask.owner,
                 taker_address: taker,
                 is_bid: true, // is a bid
+                timestamp: clock.timestamp_ms(),
             });
 
             net_base_quantity = net_base_quantity + base_matched_quantity;
@@ -434,6 +437,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        clock: &Clock,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
         // This means there are no bids in the book
@@ -477,6 +481,7 @@ module deepbook::pool {
                 maker_address: bid.owner,
                 taker_address: taker,
                 is_bid: false, // is an ask
+                timestamp: clock.timestamp_ms(),
             });
 
             net_base_quantity = net_base_quantity + base_matched_quantity;
