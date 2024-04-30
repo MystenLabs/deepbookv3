@@ -161,6 +161,7 @@ module deepbook::deepbook {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -172,6 +173,7 @@ module deepbook::deepbook {
             account,
             proof,
             client_order_id,
+            order_type,
             price,
             quantity,
             is_bid,
@@ -189,6 +191,7 @@ module deepbook::deepbook {
         client_order_id: u64,
         quantity: u64,
         is_bid: bool,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): (u64, u64) {
         pool.place_market_order(
@@ -197,6 +200,7 @@ module deepbook::deepbook {
             client_order_id,
             quantity,
             is_bid,
+            clock,
             ctx,
         )
     }
