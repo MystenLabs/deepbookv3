@@ -115,12 +115,8 @@ module deepbook::state_manager {
     }
     
     /// Get the total maker volume for the current epoch.
-    public(package) fun maker_fee(self: &StateManager, epoch: u64): u64 {
-        if (self.epoch == epoch) {
-            self.trade_params.maker_fee
-        } else {
-            self.next_trade_params.maker_fee
-        }
+    public(package) fun maker_fee(self: &StateManager): u64 {
+        self.trade_params.maker_fee
     }
 
     /// Taker fee for a user. If the user has enough stake and has traded a certain amount of volume,
@@ -254,6 +250,18 @@ module deepbook::state_manager {
         } else {
             user.settled_quote_amount = user.settled_quote_amount + amount;
         }
+    }
+
+    public(package) fun reset_user_settled_amounts(
+        self: &mut StateManager,
+        user: address,
+    ): (u64, u64) {
+        let user = update_user(self, user);
+        let (base_amount, quote_amount) = (user.settled_base_amount, user.settled_quote_amount);
+        user.settled_base_amount = 0;
+        user.settled_quote_amount = 0;
+
+        (base_amount, quote_amount)
     }
 
     /// Increase maker volume for the user.

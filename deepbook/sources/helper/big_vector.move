@@ -284,7 +284,7 @@ module deepbook::big_vector {
 
     /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
     /// Assumes valid_prev is true
-    public fun borrow_prev_mut<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
+    public fun borrow_mut_prev<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
         let slice = self.borrow_slice_mut(ref);
         if (offset > 0) {
             (ref, offset - 1, &mut slice[offset - 1])
