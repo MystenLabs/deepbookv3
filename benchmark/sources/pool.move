@@ -36,8 +36,8 @@ module benchmark::pool {
             asks_critbit: critbit::new(ctx),
             bids_bigvec: big_vector::empty(10000, 1000, ctx),
             asks_bigvec: big_vector::empty(10000, 1000, ctx),
-            next_bid_order_id: 0,
-            next_ask_order_id: 1000000,
+            next_bid_order_id: 1000000,
+            next_ask_order_id: 0,
             user_open_orders: table::new(ctx),
         };
 

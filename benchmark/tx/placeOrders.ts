@@ -11,13 +11,15 @@ let owner = "0x02031593be871e2a24b69895e134d51f98ff78aff49b28e7f498c3abba41305c"
 let coin = "0x638de21ba1c5076010eaa3f81198af0166e00682e0c96e04755a5395adc90779"
 let poolPackage = "0xe31e536d5d8bbfb0f370b4859171d8ae08c8014d83a826fc094a3a391496504d"
 let poolObj = "0xdd060b33e3acf223533e7a3a8c6f4f83dccc5c4b2c346494cd7ce0f29e8a36c9"
+let vecPackage = "0x51e541d9c17845560d1cac7f6ed1435619d69ce547a7a54bc00f7ee78d1b2790"
+let vec = "0x10626540277eb43f703b68ba4ff8cf367e5c853ceed28cc69a7508af523c284e"
 const client = new SuiClient({ url: "https://suins-rpc.testnet.sui.io" });
 let keypair = Ed25519Keypair.deriveKeypair(process.env.ADMIN_PHRASE!)
 let totalComputationCost = 0;
 let totalStorageCost = 0;
 let totalStorageRebate = 0;
 let totalNonRefundableStorageFee = 0;
-let iteration = 0;
+let iteration = 1000;
 
 /* get X amount of chunks of Coins based on amount per tx. */
 const prepareCoinObjects = async (toAddress: string, chunks: number, baseCoinId: string, amountPerChunk: number) => {
@@ -59,14 +61,14 @@ const prepareCoinObjects = async (toAddress: string, chunks: number, baseCoinId:
 
 // return array of addresses
 const prepCoins = async () => {
-    let numCoins = 100;
-    let coinAmount = 25_000_000;
-    for (let j = 0; j < 400; j++) {
+    let numCoins = 50;
+    let coinAmount = 10_000_000;
+    for (let j = 0; j < 20; j++) {
         let res = await prepareCoinObjects(owner, numCoins, coin, coinAmount) as any[]
         let futures: any[] = []
         for (let i = 0; i < numCoins; i++) {
             console.log(res[i])
-            futures.push(placeOrdersBigVec(res[i]))
+            futures.push(vectorTest(res[i]))
         }
 
         console.log('got all futures ' + j)
@@ -89,7 +91,7 @@ const placeOrderCritbit = async (gasCoin: any) => {
             txb.object(poolObj),
             txb.pure(price),
             txb.pure(amount),
-            txb.pure(false)
+            txb.pure(true)
         ]
     })
     
@@ -97,7 +99,6 @@ const placeOrderCritbit = async (gasCoin: any) => {
 }
 
 const placeOrdersBigVec = async (gasCoin: any) => {
-    console.log(`Placing order`)
     let txb = new TransactionBlock();
     txb.setGasPayment([gasCoin])
     let price = randomInt(1, 1000000000)
@@ -139,6 +140,20 @@ const cancelFirstAskBigVec = async () => {
     execute(txb)
 }
 
+const vectorTest = async (gasCoin: any) => {
+    let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    txb.moveCall({
+        target: `${vecPackage}::vector::add_to_table`,
+        arguments: [
+            txb.object(vec),
+            txb.pure(iteration)
+        ]
+    })
+
+    return execute(txb)
+}
+
 const execute = async (txb: TransactionBlock) => {
     await client.signAndExecuteTransactionBlock({
         transactionBlock: txb,
@@ -154,9 +169,10 @@ const execute = async (txb: TransactionBlock) => {
             totalStorageCost += +gas.storageCost
             totalStorageRebate += +gas.storageRebate
             totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
+
+            let data = `${++iteration} ${totalStorageCost} ${totalStorageRebate} ${totalNonRefundableStorageFee} ${+gas.storageCost} ${+gas.storageRebate} ${+gas.nonRefundableStorageFee} \n`
+            appendFileSync('vec_prepend.txt', data)
         }
-        let data = `${++iteration} ${totalStorageCost} ${totalStorageRebate} ${totalNonRefundableStorageFee} \n`
-        appendFileSync('bigvec_place.txt', data)
     }).catch((err) => {
         console.log(err)
     })
