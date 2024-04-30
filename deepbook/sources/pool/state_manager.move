@@ -270,7 +270,6 @@ module deepbook::state_manager {
         
         if (user.old_stake >= self.trade_params.stake_required) {
             self.volumes.total_staked_maker_volume = self.volumes.total_staked_maker_volume + volume;
-            // if this is the user's first volume for this epoch, increment users_with_rebates
             if (user_volume == volume) {
                 self.increment_users_with_rebates();
             };
