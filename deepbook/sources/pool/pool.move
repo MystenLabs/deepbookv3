@@ -193,7 +193,7 @@ module deepbook::pool {
     /// 1. Transfer any settled funds from the pool to the account.
     /// 2. Match the order against the order book if possible. Transfer balances from taker orders.
     /// 3. If there is remaining quantity, inject the order into the order book. Transfer balances for maker orders.
-    /// 4. Return (filled_base_quantity, filled_quote_quantity, order_id).
+    /// 4. Return an OrderPlaced object.
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -237,7 +237,6 @@ module deepbook::pool {
                 price,
                 expire_timestamp,
             };
-            event::emit(order_placed);
 
             return order_placed
         };
