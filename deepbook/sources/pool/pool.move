@@ -35,6 +35,9 @@ module deepbook::pool {
     const EOrderBelowMinimumSize: u64 = 7;
     const EOrderInvalidLotSize: u64 = 8;
     const EInvalidExpireTimestamp: u64 = 9;
+    const EPOSTOrderCrossesOrderbook: u64 = 10;
+    const EFOKOrderCannotBeFullyFilled: u64 = 11;
+    const EInvalidOrderType: u64 = 12;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -47,6 +50,17 @@ module deepbook::pool {
     const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+
+    // Restrictions on limit orders.
+    const NO_RESTRICTION: u8 = 0;
+    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
+    const IMMEDIATE_OR_CANCEL: u8 = 1;
+    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
+    const FILL_OR_KILL: u8 = 2;
+    // Mandates that the entire order be passive. Otherwise, cancel the order.
+    const POST_ONLY: u8 = 3;
+    // Maximum restriction value
+    const MAX_RESTRICTION: u8 = 3;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -125,6 +139,8 @@ module deepbook::pool {
         order_id: u128,
         // ID of the order defined by client
         client_order_id: u64,
+        // Order type
+        order_type: u8,
         // Price, only used for limit orders
         price: u64,
         // Quantity (in base asset terms) when the order is placed
@@ -178,6 +194,7 @@ module deepbook::pool {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
@@ -193,6 +210,7 @@ module deepbook::pool {
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
+        assert!(order_type >= NO_RESTRICTION && order_type <= MAX_RESTRICTION, EInvalidOrderType);
 
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
@@ -202,6 +220,14 @@ module deepbook::pool {
                 self.match_ask(account.owner(), order_id, client_order_id, quantity)
             };
 
+        if (order_type == POST_ONLY) {
+            assert!(net_base_quantity == 0, EPOSTOrderCrossesOrderbook);
+        };
+
+        if (order_type == FILL_OR_KILL) {
+            assert!(net_base_quantity == quantity, EFOKOrderCannotBeFullyFilled);
+        };
+
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
             (net_base_quantity, 0)
         } else {
@@ -210,7 +236,7 @@ module deepbook::pool {
 
         self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
         let remaining_quantity = quantity - net_base_quantity;
-        if (remaining_quantity == 0) {
+        if (remaining_quantity == 0 || order_type == IMMEDIATE_OR_CANCEL) {
             (settled_base_quantity, settled_quote_quantity, 0)
         } else {
             let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
@@ -218,6 +244,7 @@ module deepbook::pool {
             self.internal_inject_limit_order(
                 order_id,
                 client_order_id,
+                order_type,
                 price,
                 remaining_quantity,
                 fee_quantity,
@@ -721,7 +748,7 @@ module deepbook::pool {
         self.state_manager.increase_user_stake(user, amount)
     }
 
-    /// Removes a user's stake. 
+    /// Removes a user's stake.
     /// Returns the total amount staked before this epoch and the total amount staked during this epoch.
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -729,7 +756,7 @@ module deepbook::pool {
         ctx: &TxContext
     ): (u64, u64) {
         self.state_manager.refresh(ctx.epoch());
-        
+
         self.state_manager.remove_user_stake(user)
     }
 
@@ -797,7 +824,7 @@ module deepbook::pool {
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
-        
+
     /// This will be automatically called if not enough assets in settled_funds for a trade
     /// User cannot manually deposit. Funds are withdrawn from user account and merged into pool balances.
     fun deposit_base<BaseAsset, QuoteAsset>(
@@ -877,6 +904,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
@@ -889,6 +917,7 @@ module deepbook::pool {
         let order = Order {
             order_id,
             client_order_id,
+            order_type,
             price,
             original_quantity: quantity,
             quantity,
