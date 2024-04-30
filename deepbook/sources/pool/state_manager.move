@@ -105,12 +105,12 @@ module deepbook::state_manager {
     /// Set the fee parameters for the next epoch. Pushed by governance.
     public(package) fun set_next_trade_params(
         self: &mut StateManager,
-        fees: Option<TradeParams>,
+        next_trade_params: Option<TradeParams>,
     ) {
-        if (fees.is_some()) {
-            self.trade_params = *fees.borrow();
+        if (next_trade_params.is_some()) {
+            self.next_trade_params = *next_trade_params.borrow();
         } else {
-            self.trade_params = self.next_trade_params;
+            self.next_trade_params = self.trade_params;
         }
     }
     
@@ -278,19 +278,6 @@ module deepbook::state_manager {
         self.volumes.total_maker_volume = self.volumes.total_maker_volume + volume;
     }
 
-    fun increment_users_with_rebates(self: &mut StateManager) {
-        self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
-    }
-
-    fun decrement_users_with_rebates(self: &mut StateManager, epoch: u64) {
-        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
-        let volumes = &mut self.historic_volumes[epoch];
-        volumes.users_with_rebates = volumes.users_with_rebates - 1;
-        if (volumes.users_with_rebates == 0) {
-            self.historic_volumes.remove(epoch);
-        }
-    }
-
     /// Add new user or refresh an existing user.
     public(package) fun update_user(
         self: &mut StateManager,
@@ -298,9 +285,7 @@ module deepbook::state_manager {
     ): &mut User {
         let epoch = self.epoch;
         add_new_user_if_not_exist(self, user, epoch);
-        
-        // If this user has unclaimed rebates from a historic epoch, decrement users_with_rebates.
-        // If users_with_rebates for that epoch drops to 0, it will automatically drop from the Table.
+
         let user_copy = self.users[user];
         if (user_copy.epoch < epoch &&
             user_copy.maker_volume > 0 &&
@@ -339,6 +324,27 @@ module deepbook::state_manager {
                 settled_quote_amount: 0,
             });
         };
+    }
+
+    /// Increment the number of users with rebates for this epoch.
+    /// Called when a staked user generates their first volume for this epoch.
+    /// This user will be eligible for rebates, so historic records of this epoch
+    /// must be maintained until the user calculates their rebates.
+    fun increment_users_with_rebates(self: &mut StateManager) {
+        self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+    }
+
+    /// Decrement the number of users with rebates for the given epoch.
+    /// Called when a staked user calculates their rebates for a historic epoch.
+    /// If the number of users with rebates drops to 0, the historic volumes for that epoch
+    /// can be removed.
+    fun decrement_users_with_rebates(self: &mut StateManager, epoch: u64) {
+        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
+        let volumes = &mut self.historic_volumes[epoch];
+        volumes.users_with_rebates = volumes.users_with_rebates - 1;
+        if (volumes.users_with_rebates == 0) {
+            self.historic_volumes.remove(epoch);
+        }
     }
 
     /// Given the epoch's volume data and the user's volume data,
