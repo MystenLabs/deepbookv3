@@ -87,6 +87,7 @@ module deepbook::pool {
         /// owner ID of the `AccountCap` that placed the order
         owner: address,
         original_quantity: u64,
+        filled_quantity: u64,
         price: u64,
         expire_timestamp: u64
     }
@@ -205,7 +206,7 @@ module deepbook::pool {
         expire_timestamp: u64,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): (u64, u64, u128) {
+    ): OrderPlaced<BaseAsset, QuoteAsset> {
         self.state_manager.refresh(ctx.epoch());
 
         assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
@@ -224,7 +225,22 @@ module deepbook::pool {
 
         if (order_type == POST_ONLY) assert!(filled_base_quantity == 0, EPOSTOrderCrossesOrderbook);
         if (order_type == FILL_OR_KILL) assert!(filled_base_quantity == quantity, EFOKOrderCannotBeFullyFilled);
-        if (order_type == IMMEDIATE_OR_CANCEL) return (filled_base_quantity, filled_quote_quantity, 0);
+        if (order_type == IMMEDIATE_OR_CANCEL) {
+            let order_placed = OrderPlaced<BaseAsset, QuoteAsset> {
+                pool_id: self.id.to_inner(),
+                order_id,
+                client_order_id,
+                is_bid,
+                owner: account.owner(),
+                original_quantity: quantity,
+                filled_quantity: filled_base_quantity,
+                price,
+                expire_timestamp,
+            };
+            event::emit(order_placed);
+
+            return order_placed
+        };
 
         let remaining_quantity = quantity - filled_base_quantity;
         if (remaining_quantity > 0) {
@@ -241,20 +257,22 @@ module deepbook::pool {
                 expire_timestamp,
                 account.owner(),
             );
-
-            event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
-                pool_id: self.id.to_inner(),
-                order_id,
-                client_order_id,
-                is_bid,
-                owner: account.owner(),
-                original_quantity: remaining_quantity,
-                price,
-                expire_timestamp,
-            });
         };
 
-        (filled_base_quantity, filled_quote_quantity, order_id)
+        let order_placed = OrderPlaced<BaseAsset, QuoteAsset> {
+            pool_id: self.id.to_inner(),
+            order_id,
+            client_order_id,
+            is_bid,
+            owner: account.owner(),
+            original_quantity: quantity,
+            filled_quantity: filled_base_quantity,
+            price,
+            expire_timestamp,
+        };
+        event::emit(order_placed);
+
+        order_placed
     }
 
     /// Given base quantity and quote quantity, deposit the necessary funds from the account
