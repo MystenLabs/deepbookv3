@@ -131,9 +131,11 @@ module deepbook::deepbook {
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
+        account.validate_proof(proof);
+
         state.submit_proposal(
-            pool, account, proof, maker_fee, taker_fee, stake_required, ctx
-        );
+            pool, account.owner(), maker_fee, taker_fee, stake_required, ctx
+        )
     }
 
     /// Public facing function to vote on a proposal.
@@ -146,7 +148,8 @@ module deepbook::deepbook {
         ctx: &mut TxContext,
     ) {
         account.validate_proof(proof);
-        state.vote(pool, account, proof, proposal_id, ctx);
+
+        state.vote(pool, account.owner(), proposal_id, ctx)
     }
 
     // ORDERS

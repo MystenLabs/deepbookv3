@@ -20,7 +20,7 @@ module deepbook::pool {
         deep_price::{Self, DeepPrice},
         big_vector::{Self, BigVector},
         account::{Account, TradeProof},
-        state_manager::{Self, StateManager, Fees},
+        state_manager::{Self, StateManager, TradeParams},
         utils::{Self, encode_order_id},
         math,
     };
@@ -760,7 +760,7 @@ module deepbook::pool {
     /// The next pool state is moved to current pool state.
     public(package) fun set_next_fees<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        fees: Option<Fees>,
+        fees: Option<TradeParams>,
     ) {
         self.state_manager.set_next_fees(fees);
     }

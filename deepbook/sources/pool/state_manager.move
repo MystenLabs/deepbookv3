@@ -15,7 +15,7 @@ module deepbook::state_manager {
     const EUserNotFound: u64 = 1;
     
     /// Parameters that can be updated by governance.
-    public struct Fees has store, copy, drop {
+    public struct TradeParams has store, copy, drop {
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
@@ -42,20 +42,20 @@ module deepbook::state_manager {
 
     public struct StateManager has store {
         epoch: u64,
-        fees: Fees,
-        next_fees: Fees,
+        fees: TradeParams,
+        next_fees: TradeParams,
         volumes: Volumes,
         historic_volumes: Table<u64, Volumes>,
         users: Table<address, User>,
         balance_to_burn: u64,
     }
 
-    public(package) fun new_fees(
+    public(package) fun new_trade_params(
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
-    ): Fees {
-        Fees {
+    ): TradeParams {
+        TradeParams {
             taker_fee,
             maker_fee,
             stake_required,
@@ -68,8 +68,8 @@ module deepbook::state_manager {
         stake_required: u64,
         ctx: &mut TxContext,
     ): StateManager {
-        let fees = new_fees(taker_fee, maker_fee, stake_required);
-        let next_fees = new_fees(taker_fee, maker_fee, stake_required);
+        let fees = new_trade_params(taker_fee, maker_fee, stake_required);
+        let next_fees = new_trade_params(taker_fee, maker_fee, stake_required);
         let volumes = Volumes {
             total_maker_volume: 0,
             total_staked_maker_volume: 0,
@@ -100,7 +100,7 @@ module deepbook::state_manager {
     /// Set the fee parameters for the next epoch. Pushed by governance.
     public(package) fun set_next_fees(
         self: &mut StateManager,
-        fees: Option<Fees>,
+        fees: Option<TradeParams>,
     ) {
         if (fees.is_some()) {
             self.next_fees = *fees.borrow();
