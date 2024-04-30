@@ -211,9 +211,10 @@ module deepbook::deepbook {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u128,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): Order {
-        pool.cancel_order(account, proof, client_order_id, ctx)
+        pool.cancel_order(account, proof, client_order_id, clock, ctx)
     }
 
     /// Public facing function to cancel all orders.
@@ -221,9 +222,10 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): vector<Order> {
-        pool.cancel_all(account, proof, ctx)
+        pool.cancel_all(account, proof, clock, ctx)
     }
 
     /// Public facing function to get open orders for a user.

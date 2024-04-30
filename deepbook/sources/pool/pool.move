@@ -104,6 +104,7 @@ module deepbook::pool {
         owner: address,
         original_quantity: u64,
         base_asset_quantity_canceled: u64,
+        timestamp: u64,
         price: u64
     }
 
@@ -611,6 +612,7 @@ module deepbook::pool {
         account: &mut Account,
         proof: &TradeProof,
         order_id: u128,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): Order {
         // Order cancelled and returned
@@ -622,11 +624,18 @@ module deepbook::pool {
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
             // deposit quote asset back into user account
-            let quote_asset_quantity = math::mul(order_cancelled.quantity, order_cancelled.price);
-            self.withdraw_quote(account, proof, quote_asset_quantity, ctx)
+            let mut quote_quantity = math::mul(order_cancelled.quantity, order_cancelled.price);
+            if (!order_cancelled.fee_is_deep) {
+                quote_quantity = quote_quantity + order_cancelled.fee_quantity;
+            };
+            self.withdraw_quote(account, proof, quote_quantity, ctx)
         } else {
             // deposit base asset back into user account
-            self.withdraw_base(account, proof, order_cancelled.quantity, ctx)
+            let mut base_quantity = order_cancelled.quantity;
+            if (!order_cancelled.fee_is_deep) {
+                base_quantity = base_quantity + order_cancelled.fee_quantity;
+            };
+            self.withdraw_base(account, proof, base_quantity, ctx)
         };
 
         // withdraw fees into user account
@@ -634,14 +643,6 @@ module deepbook::pool {
         if (order_cancelled.fee_is_deep) {
             // withdraw deepbook fees
             self.withdraw_deep(account, proof, order_cancelled.fee_quantity, ctx)
-        } else if (order_cancelled.is_bid) {
-            // withdraw quote asset fees
-            // can be combined with withdrawal above, separate now for clarity
-            self.withdraw_quote(account, proof, order_cancelled.fee_quantity, ctx)
-        } else {
-            // withdraw base asset fees
-            // can be combined with withdrawal above, separate now for clarity
-            self.withdraw_base(account, proof, order_cancelled.fee_quantity, ctx)
         };
 
         // Emit order cancelled event
@@ -653,7 +654,8 @@ module deepbook::pool {
             owner: order_cancelled.owner,
             original_quantity: order_cancelled.original_quantity,
             base_asset_quantity_canceled: order_cancelled.quantity,
-            price: order_cancelled.price
+            price: order_cancelled.price,
+            timestamp: clock.timestamp_ms(),
         });
 
         order_cancelled
@@ -677,6 +679,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): vector<Order>{
         let mut cancelled_orders = vector[];
@@ -687,7 +690,7 @@ module deepbook::pool {
         let mut i = 0;
         while (i < len) {
             let key = orders_vector[i];
-            let cancelled_order = cancel_order(self, account, proof, key, ctx);
+            let cancelled_order = cancel_order(self, account, proof, key, clock, ctx);
             cancelled_orders.push_back(cancelled_order);
             i = i + 1;
         };
