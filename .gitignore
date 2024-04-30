@@ -17,3 +17,4 @@ node_modules
 
 # misc
 .env
+**/benchmark_data
