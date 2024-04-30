@@ -14,7 +14,7 @@ module deepbook::state { // Consider renaming this module
     use deepbook::{
         account::{Account, TradeProof},
         pool::{Pool, DEEP, Self},
-        pool_state,
+        state_manager,
         pool_metadata::{Self, PoolMetadata},
         deep_reference_price::{Self, DeepReferencePools},
     };
@@ -134,9 +134,9 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext,
     ) {
         let user = account.owner();
-        let total_user_stake = pool.increase_user_stake(user, amount, ctx);
+        let (old_stake, new_stake) = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .add_voting_power(total_user_stake, amount);
+            .add_voting_power(old_stake, new_stake);
         let balance = account.withdraw_with_proof<DEEP>(proof, amount, ctx).into_balance();
         self.vault.join(balance);
     }
@@ -153,10 +153,10 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext
     ) {
         let user = account.owner();
-        let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
+        let (old_stake, new_stake) = pool.remove_user_stake(user, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .remove_voting_power(user_old_stake, user_new_stake);
-        let balance = self.vault.split(user_old_stake + user_new_stake).into_coin(ctx);
+            .remove_voting_power(old_stake, new_stake);
+        let balance = self.vault.split(old_stake + new_stake).into_coin(ctx);
         account.deposit_with_proof<DEEP>(proof, balance);
     }
 
@@ -164,15 +164,15 @@ module deepbook::state { // Consider renaming this module
     /// The user submitting this proposal must have vested stake in the pool.
     public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut State,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &Account,
-        proof: &TradeProof,
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        let (user, _) = assert_participant(pool, account, proof, ctx);
+        let (stake, _) = pool.get_user_stake(user, ctx);
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
@@ -184,15 +184,15 @@ module deepbook::state { // Consider renaming this module
     public(package) fun vote<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &Account,
-        proof: &TradeProof,
+        user: address,
         proposal_id: u64,
         ctx: &TxContext,
     ) {
-        let (user, user_stake) = assert_participant(pool, account, proof, ctx);
+        let (stake, _) = pool.get_user_stake(user, ctx);
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
+        let winning_proposal = pool_metadata.vote(proposal_id, user, stake);
         let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
@@ -200,12 +200,10 @@ module deepbook::state { // Consider renaming this module
                 .borrow()
                 .get_proposal_params();
 
-            let pool_state = pool_state::new_pool_epoch_state_with_gov_params(
-                stake_required, taker_fee, maker_fee
-            );
-            option::some(pool_state)
+            let fees = state_manager::new_trade_params(taker_fee, maker_fee, stake_required);
+            option::some(fees)
         };
-        pool.set_next_epoch(pool_state);
+        pool.set_next_fees(pool_state);
     }
 
     /// Check whether pool exists, refresh and return its metadata.
@@ -220,21 +218,5 @@ module deepbook::state { // Consider renaming this module
         let pool_metadata = &mut self.pools[pool_key];
         pool_metadata.refresh(ctx);
         pool_metadata
-    }
-
-    /// Check whether user can submit and vote on proposals.
-    fun assert_participant<BaseAsset, QuoteAsset>(
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &Account,
-        proof: &TradeProof,
-        ctx: &TxContext
-    ): (address, u64) {
-        account.validate_proof(proof);
-
-        let user = account.owner();
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
-        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
-
-        (user, user_stake)
     }
 }

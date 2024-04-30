@@ -131,9 +131,11 @@ module deepbook::deepbook {
         stake_required: u64,
         ctx: &mut TxContext,
     ) {
+        account.validate_proof(proof);
+
         state.submit_proposal(
-            pool, account, proof, maker_fee, taker_fee, stake_required, ctx
-        );
+            pool, account.owner(), maker_fee, taker_fee, stake_required, ctx
+        )
     }
 
     /// Public facing function to vote on a proposal.
@@ -146,7 +148,8 @@ module deepbook::deepbook {
         ctx: &mut TxContext,
     ) {
         account.validate_proof(proof);
-        state.vote(pool, account, proof, proposal_id, ctx);
+
+        state.vote(pool, account.owner(), proposal_id, ctx)
     }
 
     // ORDERS
@@ -220,11 +223,11 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to get open orders for a user.
-    public fun get_open_orders<BaseAsset, QuoteAsset>(
+    public fun user_open_orders<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         user: address,
     ): VecSet<u128> {
-        pool.get_open_orders(user)
+        pool.user_open_orders(user)
     }
 
     /// Public facing function to get amount_out given amount_in.

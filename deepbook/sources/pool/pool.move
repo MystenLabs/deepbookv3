@@ -4,7 +4,6 @@
 module deepbook::pool {
     use sui::{
         balance::{Self,Balance},
-        table::{Self, Table},
         vec_set::VecSet,
         coin::{Coin, TreasuryCap},
         clock::Clock,
@@ -18,11 +17,10 @@ module deepbook::pool {
     };
 
     use deepbook::{
-        pool_state::{Self, PoolState, PoolEpochState},
         deep_price::{Self, DeepPrice},
         big_vector::{Self, BigVector},
         account::{Account, TradeProof},
-        user::User,
+        state_manager::{Self, StateManager, TradeParams},
         utils::{Self, encode_order_id},
         math,
     };
@@ -33,11 +31,10 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
-    const EUserNotFound: u64 = 6;
-    const EOrderInvalidPrice: u64 = 7;
-    const EOrderBelowMinimumSize: u64 = 8;
-    const EOrderInvalidLotSize: u64 = 9;
-    const EInvalidExpireTimestamp: u64 = 10;
+    const EOrderInvalidPrice: u64 = 6;
+    const EOrderBelowMinimumSize: u64 = 7;
+    const EOrderInvalidLotSize: u64 = 8;
+    const EInvalidExpireTimestamp: u64 = 9;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -160,7 +157,6 @@ module deepbook::pool {
         next_bid_order_id: u64, // increments for each bid order
         next_ask_order_id: u64, // increments for each ask order
         deep_config: Option<DeepPrice>,
-        users: Table<address, User>,
         // Potentially change to - epoch_data: Table<u64, LinkedTable<address, User>>
         // We can only check 1k dynamic fields in Table for a transaction, cannot verify that all addresses are after epoch x for last_refresh_epoch
 
@@ -169,11 +165,7 @@ module deepbook::pool {
         quote_balances: Balance<QuoteAsset>,
         deepbook_balance: Balance<DEEP>,
 
-        // Historical, current, and next PoolData
-        pool_state: PoolState,
-
-        // Store burned DEEP tokens
-        burnt_balance: Balance<DEEP>,
+        state_manager: StateManager,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
@@ -194,7 +186,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (u64, u64, u128) {
         // Refresh state as necessary if first order of epoch
-        self.refresh(ctx);
+        self.state_manager.refresh(ctx.epoch());
 
         assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
         assert!(price % self.tick_size == 0, EOrderInvalidPrice);
@@ -205,9 +197,9 @@ module deepbook::pool {
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
-                self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
+                self.match_bid(account.owner(), order_id, client_order_id, quantity)
             } else {
-                self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
+                self.match_ask(account.owner(), order_id, client_order_id, quantity)
             };
 
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
@@ -260,13 +252,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         // Discounted taker fees if above minimum stake
-        let (cur_stake, _) = self.users[account.owner()].stake();
-        let above_min_stake = (cur_stake >= self.pool_state.stake_required());
-        let taker_fee = if (above_min_stake) {
-            math::div(self.pool_state.taker_fee(), 2)
-        } else {
-            self.pool_state.taker_fee()
-        };
+        let taker_fee = self.state_manager.taker_fee_for_user(account.owner());
 
         if (is_bid) {
             // transfer quote out from account to pool, transfer base from pool to account
@@ -303,7 +289,7 @@ module deepbook::pool {
         is_bid: bool,
         ctx: &mut TxContext,
     ): u64 {
-        let maker_fee = self.pool_state.maker_fee();
+        let maker_fee = self.state_manager.maker_fee(ctx.epoch());
         let quote_quantity = math::mul(remaining_quantity, price);
 
         if (is_bid) {
@@ -340,7 +326,6 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
-        ctx: &TxContext,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
         // This means there are no asks in the book
@@ -368,21 +353,10 @@ module deepbook::pool {
             // Rounded up, because maker gets rounding advantage
             let quote_quantity = math::mul_round_up(base_matched_quantity, ask.price);
 
-            // refresh this user as necessary
-            let ask_owner = &mut self.users[ask.owner];
-            ask_owner.refresh(ctx);
             // Update maker quote balances
-            ask_owner.add_settled_quote_amount(quote_quantity);
-            // Update individual maker volume
-            ask_owner.increase_maker_volume(base_matched_quantity);
-            // Update all volume
-            self.pool_state.increase_maker_volume(base_matched_quantity);
-
-            // Check if user is a valid staker. Could separate out into a function
-            let (cur_stake, _) = ask_owner.stake();
-            if (cur_stake >= self.pool_state.stake_required()) {
-                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
-            };
+            self.state_manager.add_user_settled_amount(ask.owner, quote_quantity, false);
+            // Update volumes
+            self.state_manager.increase_maker_volume(ask.owner, base_matched_quantity);
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
@@ -403,7 +377,7 @@ module deepbook::pool {
             // If ask quantity is 0, remove the order
             if (ask.quantity == 0) {
                 // Remove order from user's open orders
-                ask_owner.remove_open_order(ask.order_id);
+                self.state_manager.remove_user_open_order(ask.owner, ask.order_id);
                 // Add order id to be removed
                 matched_orders.push_back(ask.order_id);
             };
@@ -433,7 +407,6 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
-        ctx: &TxContext,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
         // This means there are no bids in the book
@@ -460,21 +433,10 @@ module deepbook::pool {
             // Rounded up, because maker gets rounding advantage
             let quote_quantity = math::mul_round_up(base_matched_quantity, bid.price);
 
-            // Refresh this user as necessary
-            let bid_owner = &mut self.users[bid.owner];
-            bid_owner.refresh(ctx);
-            // Update maker quote balances
-            bid_owner.add_settled_base_amount(base_matched_quantity);
-            // Update individual maker volume
-            bid_owner.increase_maker_volume(base_matched_quantity);
-            // Update all volume
-            self.pool_state.increase_maker_volume(base_matched_quantity);
-
-            // Check if user is a valid staker. Could separate out into a function
-            let (cur_stake, _) = bid_owner.stake();
-            if (cur_stake >= self.pool_state.stake_required()) {
-                self.pool_state.increase_staked_maker_volume(base_matched_quantity);
-            };
+            // Update maker base balances
+            self.state_manager.add_user_settled_amount(bid.owner, base_matched_quantity, true);
+            // Update volumes
+            self.state_manager.increase_maker_volume(bid.owner, base_matched_quantity);
 
             event::emit(OrderFilled<BaseAsset, QuoteAsset>{
                 pool_id: self.id.to_inner(),
@@ -495,7 +457,7 @@ module deepbook::pool {
             // If bid quantity is 0, remove the order
             if (bid.quantity == 0) {
                 // Remove order from user's open orders
-                self.users[bid.owner].remove_open_order(bid.order_id);
+                self.state_manager.remove_user_open_order(bid.owner, bid.order_id);
                 // Add order id to be removed
                 matched_orders.push_back(bid.order_id);
             };
@@ -530,7 +492,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (u64, u64) {
         // Refresh state as necessary if first order of epoch
-        self.refresh(ctx);
+        self.state_manager.refresh(ctx.epoch());
 
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
@@ -544,9 +506,9 @@ module deepbook::pool {
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
-                self.match_bid(account.owner(), order_id, client_order_id, quantity, ctx)
+                self.match_bid(account.owner(), order_id, client_order_id, quantity)
             } else {
-                self.match_ask(account.owner(), order_id, client_order_id, quantity, ctx)
+                self.match_ask(account.owner(), order_id, client_order_id, quantity)
             };
 
         self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
@@ -610,8 +572,7 @@ module deepbook::pool {
         let order_cancelled = self.internal_cancel_order(order_id);
 
         // remove order from user's open orders
-        let user_data = &mut self.users[account.owner()];
-        user_data.remove_open_order(order_id);
+        self.state_manager.remove_user_open_order(account.owner(), order_id);
 
         // withdraw main assets back into user account
         if (order_cancelled.is_bid) {
@@ -660,8 +621,8 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &mut TxContext
     ) {
-        let user = self.get_user_mut(account.owner(), ctx);
-        let amount = user.reset_rebates();
+        self.state_manager.refresh(ctx.epoch());
+        let amount = self.state_manager.reset_user_rebates(account.owner());
         let coin = self.deepbook_balance.split(amount).into_coin(ctx);
         account.deposit_with_proof<DEEP>(proof, coin);
     }
@@ -674,7 +635,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): vector<Order>{
         let mut cancelled_orders = vector[];
-        let user_open_orders = self.users[account.owner()].open_orders();
+        let user_open_orders = self.state_manager.user_open_orders(account.owner());
 
         let orders_vector = user_open_orders.into_keys();
         let len = orders_vector.length();
@@ -690,14 +651,11 @@ module deepbook::pool {
     }
 
     /// Get all open orders for a user.
-    public(package) fun get_open_orders<BaseAsset, QuoteAsset>(
+    public(package) fun user_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         user: address,
     ): VecSet<u128> {
-        assert!(self.users.contains(user), EUserNotFound);
-        let user_data = &self.users[user];
-
-        user_data.open_orders()
+        self.state_manager.user_open_orders(user)
     }
 
     /// Creates a new pool for trading and returns pool_key, called by state module
@@ -734,7 +692,6 @@ module deepbook::pool {
             asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
-            users: table::new(ctx),
             deep_config: option::none(),
             tick_size,
             lot_size,
@@ -742,8 +699,7 @@ module deepbook::pool {
             base_balances: balance::zero(),
             quote_balances: balance::zero(),
             deepbook_balance: balance::zero(),
-            burnt_balance: balance::zero(),
-            pool_state: pool_state::new(0, taker_fee, maker_fee, ctx),
+            state_manager: state_manager::new(taker_fee, maker_fee, 0, ctx),
         });
 
         // TODO: reconsider sending the Coin here. User pays gas;
@@ -759,8 +715,10 @@ module deepbook::pool {
         user: address,
         amount: u64,
         ctx: &TxContext,
-    ): u64 {
-        self.get_user_mut(user, ctx).increase_stake(amount)
+    ): (u64, u64) {
+        self.state_manager.refresh(ctx.epoch());
+
+        self.state_manager.increase_user_stake(user, amount)
     }
 
     /// Removes a user's stake. 
@@ -770,20 +728,18 @@ module deepbook::pool {
         user: address,
         ctx: &TxContext
     ): (u64, u64) {
-        self.get_user_mut(user, ctx).remove_stake()
+        self.state_manager.refresh(ctx.epoch());
+        
+        self.state_manager.remove_user_stake(user)
     }
 
     /// Get the user's (current, next) stake amounts
     public(package) fun get_user_stake<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &Pool<BaseAsset, QuoteAsset>,
         user: address,
         ctx: &TxContext,
     ): (u64, u64) {
-        if (!self.users.contains(user)) {
-            (0, 0)
-        } else {
-            self.get_user_mut(user, ctx).stake()
-        }
+        self.state_manager.user_stake(user, ctx.epoch())
     }
 
     /// Add a new price point to the pool.
@@ -801,22 +757,14 @@ module deepbook::pool {
             .add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
-    /// First interaction of each epoch processes this state update
-    public(package) fun refresh<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
-    ) {
-        self.pool_state.refresh(ctx); // change to by account?
-    }
-
     /// Update the pool's next pool state.
     /// During an epoch refresh, the current pool state is moved to historical pool state.
     /// The next pool state is moved to current pool state.
-    public(package) fun set_next_epoch<BaseAsset, QuoteAsset>(
+    public(package) fun set_next_fees<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        next_epoch_pool_state: Option<PoolEpochState>,
+        fees: Option<TradeParams>,
     ) {
-        self.pool_state.set_next_epoch(next_epoch_pool_state);
+        self.state_manager.set_next_fees(fees);
     }
 
     /// Get the base and quote asset of pool, return as ascii strings
@@ -849,28 +797,7 @@ module deepbook::pool {
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
-
-    /// Get the user object, refresh the user, and burn the DEEP tokens if necessary
-    ///
-    /// TODO: remove hidden mutation from access function.
-    /// TODO: context should not be an argument here.
-    fun get_user_mut<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        user: address,
-        ctx: &TxContext
-    ): &mut User {
-        assert!(self.users.contains(user), EUserNotFound);
-
-        let user = &mut self.users[user];
-        let burn_amount = user.refresh(ctx);
-        if (burn_amount > 0) {
-            let burnt_balance = self.deepbook_balance.split(burn_amount);
-            self.burnt_balance.join(burnt_balance);
-        };
-
-        user
-    }
-
+        
     /// This will be automatically called if not enough assets in settled_funds for a trade
     /// User cannot manually deposit. Funds are withdrawn from user account and merged into pool balances.
     fun deposit_base<BaseAsset, QuoteAsset>(
@@ -982,8 +909,7 @@ module deepbook::pool {
         };
 
         // Add order to user's open orders
-        let user_data = &mut self.users[owner];
-        user_data.add_open_order(order_id);
+        self.state_manager.add_user_open_order(owner, order_id);
     }
 
     /// Cancels an order and returns the order details
@@ -1025,8 +951,8 @@ module deepbook::pool {
 
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
-        let amount = self.burnt_balance.value();
-        let burnt = self.burnt_balance.split(amount);
+        let amount = self.state_manager.reset_burn_balance();
+        let burnt = self.deepbook_balance.split(amount);
         tcap.supply_mut().decrease_supply(burnt);
     }
     // Will be replaced by actual deep token package dependency
