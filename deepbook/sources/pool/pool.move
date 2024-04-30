@@ -616,49 +616,49 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): Order {
         // Order cancelled and returned
-        let order_cancelled = self.internal_cancel_order(order_id);
+        let cancelled_order = self.internal_cancel_order(order_id);
 
         // remove order from user's open orders
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 
         // withdraw main assets back into user account
-        if (order_cancelled.is_bid) {
+        if (cancelled_order.is_bid) {
             // deposit quote asset back into user account
-            let mut quote_quantity = math::mul(order_cancelled.quantity, order_cancelled.price);
-            if (!order_cancelled.fee_is_deep) {
-                quote_quantity = quote_quantity + order_cancelled.fee_quantity;
+            let mut quote_quantity = math::mul(cancelled_order.quantity, cancelled_order.price);
+            if (!cancelled_order.fee_is_deep) {
+                quote_quantity = quote_quantity + cancelled_order.fee_quantity;
             };
             self.withdraw_quote(account, proof, quote_quantity, ctx)
         } else {
             // deposit base asset back into user account
-            let mut base_quantity = order_cancelled.quantity;
-            if (!order_cancelled.fee_is_deep) {
-                base_quantity = base_quantity + order_cancelled.fee_quantity;
+            let mut base_quantity = cancelled_order.quantity;
+            if (!cancelled_order.fee_is_deep) {
+                base_quantity = base_quantity + cancelled_order.fee_quantity;
             };
             self.withdraw_base(account, proof, base_quantity, ctx)
         };
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
-        if (order_cancelled.fee_is_deep) {
+        if (cancelled_order.fee_is_deep) {
             // withdraw deepbook fees
-            self.withdraw_deep(account, proof, order_cancelled.fee_quantity, ctx)
+            self.withdraw_deep(account, proof, cancelled_order.fee_quantity, ctx)
         };
 
         // Emit order cancelled event
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(), // Get inner id from UID
-            order_id: order_cancelled.order_id,
-            client_order_id: order_cancelled.client_order_id,
-            is_bid: order_cancelled.is_bid,
-            owner: order_cancelled.owner,
-            original_quantity: order_cancelled.original_quantity,
-            base_asset_quantity_canceled: order_cancelled.quantity,
-            price: order_cancelled.price,
+            order_id: cancelled_order.order_id,
+            client_order_id: cancelled_order.client_order_id,
+            is_bid: cancelled_order.is_bid,
+            owner: cancelled_order.owner,
+            original_quantity: cancelled_order.original_quantity,
+            base_asset_quantity_canceled: cancelled_order.quantity,
+            price: cancelled_order.price,
             timestamp: clock.timestamp_ms(),
         });
 
-        order_cancelled
+        cancelled_order
     }
 
     /// Claim the rebates for the user
