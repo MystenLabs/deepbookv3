@@ -171,8 +171,8 @@ module deepbook::state { // Consider renaming this module
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
-        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let (stake, _) = pool.get_user_stake(user, ctx);
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
@@ -188,11 +188,11 @@ module deepbook::state { // Consider renaming this module
         proposal_id: u64,
         ctx: &TxContext,
     ) {
-        let (user_stake, _) = pool.get_user_stake(user, ctx);
-        assert!(user_stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let (stake, _) = pool.get_user_stake(user, ctx);
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        let winning_proposal = pool_metadata.vote(proposal_id, user, user_stake);
+        let winning_proposal = pool_metadata.vote(proposal_id, user, stake);
         let pool_state = if (winning_proposal.is_none()) {
             option::none()
         } else {
