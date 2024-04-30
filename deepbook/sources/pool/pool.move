@@ -170,9 +170,8 @@ module deepbook::pool {
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
-    /// Place a limit order to the order book.
-    /// Will return (settled_base_quantity, settled_quote_quantity, order_id
-    /// if limit order placed and 0 otherwise)
+    /// Place a limit order to the order book. Any settled amounts from previuos maker fills will be transferred to the account.
+    /// Returns (filled_base_quantity, filled_quote_quantity, order_id).
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -185,7 +184,6 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &mut TxContext,
     ): (u64, u64, u128) {
-        // Refresh state as necessary if first order of epoch
         self.state_manager.refresh(ctx.epoch());
 
         assert!(price >= MIN_PRICE && price <= MAX_PRICE, EOrderInvalidPrice);
@@ -194,28 +192,22 @@ module deepbook::pool {
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
 
+        self.transfer_settled_amounts(account, proof, ctx);
+
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
-        let (net_base_quantity, net_quote_quantity) =
+        let (filled_base_quantity, filled_quote_quantity) =
             if (is_bid) {
                 self.match_bid(account.owner(), order_id, client_order_id, quantity)
             } else {
                 self.match_ask(account.owner(), order_id, client_order_id, quantity)
             };
+        self.transfer_taker(account, proof, filled_base_quantity, filled_quote_quantity, is_bid, ctx);
 
-        let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
-            (net_base_quantity, 0)
-        } else {
-            (0, net_quote_quantity)
-        };
-
-        self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
-        let remaining_quantity = quantity - net_base_quantity;
-        if (remaining_quantity == 0) {
-            (settled_base_quantity, settled_quote_quantity, 0)
-        } else {
+        let remaining_quantity = quantity - filled_base_quantity;
+        if (remaining_quantity > 0) {
             let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
 
-            self.internal_inject_limit_order(
+            self.inject_limit_order(
                 order_id,
                 client_order_id,
                 price,
@@ -236,64 +228,63 @@ module deepbook::pool {
                 price,
                 expire_timestamp,
             });
+        };
 
-            (settled_base_quantity, settled_quote_quantity, order_id)
-        }
+        (filled_base_quantity, filled_quote_quantity, order_id)
     }
 
-    /// Given output from order matching, deposits assets from account into pool and withdraws from pool to account
+    /// Given output from order matching, deposits assets from account into pool and withdraws from pool to account.
     fun transfer_taker<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
-        net_base_quantity: u64,
-        net_quote_quantity: u64,
+        filled_base_quantity: u64,
+        filled_quote_quantity: u64,
         is_bid: bool,
         ctx: &mut TxContext,
     ) {
-        // Discounted taker fees if above minimum stake
         let taker_fee = self.state_manager.taker_fee_for_user(account.owner());
 
         if (is_bid) {
-            // transfer quote out from account to pool, transfer base from pool to account
+            // Transfer quote out from account to pool, transfer base from pool to account.
             if (self.fee_is_deep()) {
-                let deep_quantity = math::mul(taker_fee, math::mul(net_quote_quantity, self.deep_config.borrow().deep_per_quote()));
+                let deep_quantity = math::mul(taker_fee, math::mul(filled_quote_quantity, self.deep_config.borrow().deep_per_quote()));
                 self.deposit_deep(account, proof, deep_quantity, ctx);
-                self.deposit_quote(account, proof, net_quote_quantity, ctx);
+                self.deposit_quote(account, proof, filled_quote_quantity, ctx);
             } else {
-                let quote_fee = math::mul(taker_fee, net_quote_quantity);
-                self.deposit_quote(account, proof, net_quote_quantity + quote_fee, ctx);
+                let quote_fee = math::mul(taker_fee, filled_quote_quantity);
+                self.deposit_quote(account, proof, filled_quote_quantity + quote_fee, ctx);
             };
-            self.withdraw_base(account, proof, net_base_quantity, ctx);
+            self.withdraw_base(account, proof, filled_base_quantity, ctx);
         } else {
-            // transfer base out from account to pool, transfer quote from pool to account
+            // Transfer base out from account to pool, transfer quote from pool to account.
             if (self.fee_is_deep()) {
-                let deep_quantity = math::mul(taker_fee, math::mul(net_base_quantity, self.deep_config.borrow().deep_per_base()));
+                let deep_quantity = math::mul(taker_fee, math::mul(filled_base_quantity, self.deep_config.borrow().deep_per_base()));
                 self.deposit_deep(account, proof, deep_quantity, ctx);
-                self.deposit_base(account, proof, net_base_quantity, ctx);
+                self.deposit_base(account, proof, filled_base_quantity, ctx);
             } else {
-                let base_fee = math::mul(taker_fee, net_base_quantity);
-                self.deposit_quote(account, proof, net_base_quantity + base_fee, ctx);
+                let base_fee = math::mul(taker_fee, filled_base_quantity);
+                self.deposit_quote(account, proof, filled_base_quantity + base_fee, ctx);
             };
-            self.withdraw_base(account, proof,net_quote_quantity, ctx);
+            self.withdraw_base(account, proof,filled_quote_quantity, ctx);
         };
     }
 
-    /// Given output from order matching, deposits assets from account into pool to prepare order placement. Returns fee quantity
+    /// Given quantity, deposits assets from account into pool to prepare order placement. Returns fee quantity.
     fun transfer_maker<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
-        remaining_quantity: u64,
+        quantity: u64,
         price: u64,
         is_bid: bool,
         ctx: &mut TxContext,
     ): u64 {
         let maker_fee = self.state_manager.maker_fee(ctx.epoch());
-        let quote_quantity = math::mul(remaining_quantity, price);
+        let quote_quantity = math::mul(quantity, price);
 
         if (is_bid) {
-            // transfer quote out from account to pool, transfer base from pool to account
+            // Transfer quote out from account to pool, transfer base from pool to account.
             if (self.fee_is_deep()) {
                 let deep_quantity = math::mul(maker_fee, math::mul(quote_quantity, self.deep_config.borrow().deep_per_quote()));
                 self.deposit_deep(account, proof, deep_quantity, ctx);
@@ -305,18 +296,30 @@ module deepbook::pool {
                 quote_fee
             }
         } else {
-            // transfer base out from account to pool, transfer quote from pool to account
+            // Transfer base out from account to pool, transfer quote from pool to account.
             if (self.fee_is_deep()) {
-                let deep_quantity = math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_base()));
+                let deep_quantity = math::mul(maker_fee, math::mul(quantity, self.deep_config.borrow().deep_per_base()));
                 self.deposit_deep(account, proof, deep_quantity, ctx);
-                self.deposit_base(account, proof, remaining_quantity, ctx);
+                self.deposit_base(account, proof, quantity, ctx);
                 deep_quantity
             } else {
-                let base_fee = math::mul(maker_fee, remaining_quantity);
-                self.deposit_quote(account, proof, remaining_quantity + base_fee, ctx);
+                let base_fee = math::mul(maker_fee, quantity);
+                self.deposit_quote(account, proof, quantity + base_fee, ctx);
                 base_fee
             }
         }
+    }
+
+    /// Transfer any settled amounts from the pool to the account.
+    fun transfer_settled_amounts<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        ctx: &mut TxContext,
+    ) {
+        let (base_amount, quote_amount) = self.state_manager.reset_user_settled_amounts(account.owner());
+        self.withdraw_base(account, proof, base_amount, ctx);
+        self.withdraw_quote(account, proof, quote_amount, ctx);
     }
 
     /// Matches bid, returns (base_quantity_matched, quote_quantity_matched)
@@ -873,7 +876,7 @@ module deepbook::pool {
     }
 
     /// Balance accounting happens before this function is called
-    fun internal_inject_limit_order<BaseAsset, QuoteAsset>(
+    fun inject_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
         client_order_id: u64,

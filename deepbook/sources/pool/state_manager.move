@@ -251,6 +251,18 @@ module deepbook::state_manager {
         }
     }
 
+    public(package) fun reset_user_settled_amounts(
+        self: &mut StateManager,
+        user: address,
+    ): (u64, u64) {
+        let user = update_user(self, user);
+        let (base_amount, quote_amount) = (user.settled_base_amount, user.settled_quote_amount);
+        user.settled_base_amount = 0;
+        user.settled_quote_amount = 0;
+
+        (base_amount, quote_amount)
+    }
+
     /// Increase maker volume for the user.
     /// Increase the total maker volume.
     /// If the user has enough stake, increase the total staked maker volume.
