@@ -30,7 +30,7 @@ jobs:
     - name: Install Sui using Homebrew
       run: brew install sui
 
-    - name: Run move tests in all package subdirectories, with exclusions
+    - name: Run move tests in all package subdirectories, with optional exclusions
       run: |
         exclude_dirs=() # Add excluded directories to this array
         for dir in packages/*; do

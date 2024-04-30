@@ -7,7 +7,7 @@ script_dir=$(dirname "$(readlink -f "$0")")
 root_dir=$(dirname "$script_dir")
 
 # List of directories to exclude from processing
-exclude_dirs=("governance")
+exclude_dirs=()
 
 # Convert excluded directories to a lookup-ready string pattern
 exclude_pattern=$(IFS="|"; echo "${exclude_dirs[*]}")
