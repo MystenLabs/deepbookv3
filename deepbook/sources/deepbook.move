@@ -161,6 +161,7 @@ module deepbook::deepbook {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -172,6 +173,7 @@ module deepbook::deepbook {
             account,
             proof,
             client_order_id,
+            order_type,
             price,
             quantity,
             is_bid,
@@ -189,6 +191,7 @@ module deepbook::deepbook {
         client_order_id: u64,
         quantity: u64,
         is_bid: bool,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): (u64, u64) {
         pool.place_market_order(
@@ -197,6 +200,7 @@ module deepbook::deepbook {
             client_order_id,
             quantity,
             is_bid,
+            clock,
             ctx,
         )
     }
@@ -207,9 +211,10 @@ module deepbook::deepbook {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u128,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): Order {
-        pool.cancel_order(account, proof, client_order_id, ctx)
+        pool.cancel_order(account, proof, client_order_id, clock, ctx)
     }
 
     /// Public facing function to cancel all orders.
@@ -217,9 +222,10 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): vector<Order> {
-        pool.cancel_all(account, proof, ctx)
+        pool.cancel_all(account, proof, clock, ctx)
     }
 
     /// Public facing function to get open orders for a user.

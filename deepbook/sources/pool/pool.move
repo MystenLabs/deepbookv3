@@ -35,6 +35,9 @@ module deepbook::pool {
     const EOrderBelowMinimumSize: u64 = 7;
     const EOrderInvalidLotSize: u64 = 8;
     const EInvalidExpireTimestamp: u64 = 9;
+    const EPOSTOrderCrossesOrderbook: u64 = 10;
+    const EFOKOrderCannotBeFullyFilled: u64 = 11;
+    const EInvalidOrderType: u64 = 12;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -47,6 +50,17 @@ module deepbook::pool {
     const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+
+    // Restrictions on limit orders.
+    const NO_RESTRICTION: u8 = 0;
+    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
+    const IMMEDIATE_OR_CANCEL: u8 = 1;
+    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
+    const FILL_OR_KILL: u8 = 2;
+    // Mandates that the entire order be passive. Otherwise, cancel the order.
+    const POST_ONLY: u8 = 3;
+    // Maximum restriction value
+    const MAX_RESTRICTION: u8 = 3;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -90,6 +104,7 @@ module deepbook::pool {
         owner: address,
         original_quantity: u64,
         base_asset_quantity_canceled: u64,
+        timestamp: u64,
         price: u64
     }
 
@@ -111,6 +126,7 @@ module deepbook::pool {
         maker_address: address,
         taker_address: address,
         is_bid: bool,
+        timestamp: u64,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Structs <<<<<<<<<<<<<<<<<<<<<<<<
@@ -125,6 +141,8 @@ module deepbook::pool {
         order_id: u128,
         // ID of the order defined by client
         client_order_id: u64,
+        // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
+        order_type: u8,
         // Price, only used for limit orders
         price: u64,
         // Quantity (in base asset terms) when the order is placed
@@ -178,6 +196,7 @@ module deepbook::pool {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
@@ -193,14 +212,23 @@ module deepbook::pool {
         assert!(quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(quantity % self.lot_size == 0, EOrderInvalidLotSize);
         assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
+        assert!(order_type >= NO_RESTRICTION && order_type <= MAX_RESTRICTION, EInvalidOrderType);
 
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
-                self.match_bid(account.owner(), order_id, client_order_id, quantity)
+                self.match_bid(account.owner(), order_id, client_order_id, quantity, clock)
             } else {
-                self.match_ask(account.owner(), order_id, client_order_id, quantity)
+                self.match_ask(account.owner(), order_id, client_order_id, quantity, clock)
             };
+
+        if (order_type == POST_ONLY) {
+            assert!(net_base_quantity == 0, EPOSTOrderCrossesOrderbook);
+        };
+
+        if (order_type == FILL_OR_KILL) {
+            assert!(net_base_quantity == quantity, EFOKOrderCannotBeFullyFilled);
+        };
 
         let (settled_base_quantity, settled_quote_quantity) = if (is_bid) {
             (net_base_quantity, 0)
@@ -210,7 +238,7 @@ module deepbook::pool {
 
         self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
         let remaining_quantity = quantity - net_base_quantity;
-        if (remaining_quantity == 0) {
+        if (remaining_quantity == 0 || order_type == IMMEDIATE_OR_CANCEL) {
             (settled_base_quantity, settled_quote_quantity, 0)
         } else {
             let fee_quantity = self.transfer_maker(account, proof, remaining_quantity, price, is_bid, ctx);
@@ -218,6 +246,7 @@ module deepbook::pool {
             self.internal_inject_limit_order(
                 order_id,
                 client_order_id,
+                order_type,
                 price,
                 remaining_quantity,
                 fee_quantity,
@@ -326,6 +355,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        clock: &Clock,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.asks.slice_following(MIN_ORDER_ID);
         // This means there are no asks in the book
@@ -336,50 +366,57 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_quantity = 0;
         let mut net_quote_quantity = 0;
-        let mut matched_orders = vector[];
+        let mut orders_to_remove = vector[];
 
         // Fetches initial order
         let mut ask = self.asks.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && order_id > ask.order_id) {
-            // Match with existing asks
-            // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
-            let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
-            ask.quantity = ask.quantity - base_matched_quantity;
-            remaining_quantity = remaining_quantity - base_matched_quantity;
-            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
-            let fee_subtracted = math::div(math::mul(base_matched_quantity, ask.original_fee_quantity), ask.original_quantity);
-            ask.fee_quantity = ask.fee_quantity - fee_subtracted;
+            let mut expired_order = false;
+            if (ask.expire_timestamp < clock.timestamp_ms()) {
+                expired_order = true;
+            } else {
+                // Match with existing asks
+                // We want to buy 1 BTC, if there's 0.5BTC at $50k, we want to buy 0.5BTC at $50k
+                let base_matched_quantity = math::min(ask.quantity, remaining_quantity);
+                ask.quantity = ask.quantity - base_matched_quantity;
+                remaining_quantity = remaining_quantity - base_matched_quantity;
+                // fee_subtracted is rounded down (in case of very small fills, this can be 0)
+                let fee_subtracted = math::div(math::mul(base_matched_quantity, ask.original_fee_quantity), ask.original_quantity);
+                ask.fee_quantity = ask.fee_quantity - fee_subtracted;
 
-            // Rounded up, because maker gets rounding advantage
-            let quote_quantity = math::mul_round_up(base_matched_quantity, ask.price);
+                // Rounded up, because maker gets rounding advantage
+                let quote_quantity = math::mul_round_up(base_matched_quantity, ask.price);
 
-            // Update maker quote balances
-            self.state_manager.add_user_settled_amount(ask.owner, quote_quantity, false);
-            // Update volumes
-            self.state_manager.increase_maker_volume(ask.owner, base_matched_quantity);
+                // Update maker quote balances
+                self.state_manager.add_user_settled_amount(ask.owner, quote_quantity, false);
+                // Update volumes
+                self.state_manager.increase_maker_volume(ask.owner, base_matched_quantity);
 
-            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
-                pool_id: self.id.to_inner(),
-                maker_order_id: ask.order_id,
-                taker_order_id: order_id,
-                maker_client_order_id: ask.client_order_id,
-                taker_client_order_id: client_order_id,
-                base_quantity: base_matched_quantity,
-                quote_quantity,
-                price: ask.price,
-                maker_address: ask.owner,
-                taker_address: taker,
-                is_bid: true, // is a bid
-            });
+                event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                    pool_id: self.id.to_inner(),
+                    maker_order_id: ask.order_id,
+                    taker_order_id: order_id,
+                    maker_client_order_id: ask.client_order_id,
+                    taker_client_order_id: client_order_id,
+                    base_quantity: base_matched_quantity,
+                    quote_quantity,
+                    price: ask.price,
+                    maker_address: ask.owner,
+                    taker_address: taker,
+                    is_bid: true, // is a bid
+                    timestamp: clock.timestamp_ms(),
+                });
 
-            net_base_quantity = net_base_quantity + base_matched_quantity;
-            net_quote_quantity = net_quote_quantity + quote_quantity;
+                net_base_quantity = net_base_quantity + base_matched_quantity;
+                net_quote_quantity = net_quote_quantity + quote_quantity;
+            };
+
             // If ask quantity is 0, remove the order
-            if (ask.quantity == 0) {
+            if (ask.quantity == 0 || expired_order) {
                 // Remove order from user's open orders
                 self.state_manager.remove_user_open_order(ask.owner, ask.order_id);
                 // Add order id to be removed
-                matched_orders.push_back(ask.order_id);
+                orders_to_remove.push_back(ask.order_id);
             };
 
             // Traverse to valid next order if exists, otherwise break from loop
@@ -392,8 +429,8 @@ module deepbook::pool {
 
         // Iterate over matched_orders and remove from asks
         let mut i = 0;
-        while (i < matched_orders.length()) {
-            self.asks.remove(matched_orders[i]);
+        while (i < orders_to_remove.length()) {
+            self.asks.remove(orders_to_remove[i]);
             i = i + 1;
         };
 
@@ -407,6 +444,7 @@ module deepbook::pool {
         order_id: u128,
         client_order_id: u64,
         quantity: u64, // in base asset
+        clock: &Clock,
     ): (u64, u64) {
         let (mut ref, mut offset) = self.bids.slice_before(MAX_ORDER_ID);
         // This means there are no bids in the book
@@ -417,49 +455,56 @@ module deepbook::pool {
         let mut remaining_quantity = quantity;
         let mut net_base_quantity = 0;
         let mut net_quote_quantity = 0;
-        let mut matched_orders = vector[];
+        let mut orders_to_remove = vector[];
 
         let mut bid = self.bids.borrow_mut_ref_offset(ref, offset);
         while (remaining_quantity > 0 && order_id < bid.order_id ) {
-            // Match with existing bids
-            // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
-            let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
-            bid.quantity = bid.quantity - base_matched_quantity;
-            remaining_quantity = remaining_quantity - base_matched_quantity;
-            // fee_subtracted is rounded down (in case of very small fills, this can be 0)
-            let fee_subtracted = math::div(math::mul(base_matched_quantity, bid.original_fee_quantity), bid.original_quantity);
-            bid.fee_quantity = bid.fee_quantity - fee_subtracted;
+            let mut expired_order = false;
+            if (bid.expire_timestamp < clock.timestamp_ms()) {
+                expired_order = true;
+            } else {
+                // Match with existing bids
+                // We want to sell 1 BTC, if there's bid 0.5BTC at $50k, we want to sell 0.5BTC at $50k
+                let base_matched_quantity = math::min(bid.quantity, remaining_quantity);
+                bid.quantity = bid.quantity - base_matched_quantity;
+                remaining_quantity = remaining_quantity - base_matched_quantity;
+                // fee_subtracted is rounded down (in case of very small fills, this can be 0)
+                let fee_subtracted = math::div(math::mul(base_matched_quantity, bid.original_fee_quantity), bid.original_quantity);
+                bid.fee_quantity = bid.fee_quantity - fee_subtracted;
 
-            // Rounded up, because maker gets rounding advantage
-            let quote_quantity = math::mul_round_up(base_matched_quantity, bid.price);
+                // Rounded up, because maker gets rounding advantage
+                let quote_quantity = math::mul_round_up(base_matched_quantity, bid.price);
 
-            // Update maker base balances
-            self.state_manager.add_user_settled_amount(bid.owner, base_matched_quantity, true);
-            // Update volumes
-            self.state_manager.increase_maker_volume(bid.owner, base_matched_quantity);
+                // Update maker base balances
+                self.state_manager.add_user_settled_amount(bid.owner, base_matched_quantity, true);
+                // Update volumes
+                self.state_manager.increase_maker_volume(bid.owner, base_matched_quantity);
 
-            event::emit(OrderFilled<BaseAsset, QuoteAsset>{
-                pool_id: self.id.to_inner(),
-                maker_order_id: bid.order_id,
-                taker_order_id: order_id,
-                maker_client_order_id: bid.client_order_id,
-                taker_client_order_id: client_order_id,
-                base_quantity: base_matched_quantity,
-                quote_quantity,
-                price: bid.price,
-                maker_address: bid.owner,
-                taker_address: taker,
-                is_bid: false, // is an ask
-            });
+                event::emit(OrderFilled<BaseAsset, QuoteAsset>{
+                    pool_id: self.id.to_inner(),
+                    maker_order_id: bid.order_id,
+                    taker_order_id: order_id,
+                    maker_client_order_id: bid.client_order_id,
+                    taker_client_order_id: client_order_id,
+                    base_quantity: base_matched_quantity,
+                    quote_quantity,
+                    price: bid.price,
+                    maker_address: bid.owner,
+                    taker_address: taker,
+                    is_bid: false, // is an ask
+                    timestamp: clock.timestamp_ms(),
+                });
 
-            net_base_quantity = net_base_quantity + base_matched_quantity;
-            net_quote_quantity = net_quote_quantity + math::mul(base_matched_quantity, bid.price);
+                net_base_quantity = net_base_quantity + base_matched_quantity;
+                net_quote_quantity = net_quote_quantity + math::mul(base_matched_quantity, bid.price);
+            };
+
             // If bid quantity is 0, remove the order
-            if (bid.quantity == 0) {
+            if (bid.quantity == 0 || expired_order) {
                 // Remove order from user's open orders
                 self.state_manager.remove_user_open_order(bid.owner, bid.order_id);
                 // Add order id to be removed
-                matched_orders.push_back(bid.order_id);
+                orders_to_remove.push_back(bid.order_id);
             };
 
             // Traverse to valid next order if exists, otherwise break from loop
@@ -472,8 +517,8 @@ module deepbook::pool {
 
         // Iterate over matched_orders and remove from bids
         let mut i = 0;
-        while (i < matched_orders.length()) {
-            self.bids.remove(matched_orders[i]);
+        while (i < orders_to_remove.length()) {
+            self.bids.remove(orders_to_remove[i]);
             i = i + 1;
         };
 
@@ -489,6 +534,7 @@ module deepbook::pool {
         client_order_id: u64,
         quantity: u64, // in base asset
         is_bid: bool, // true for bid, false for ask
+        clock: &Clock,
         ctx: &mut TxContext,
     ): (u64, u64) {
         // Refresh state as necessary if first order of epoch
@@ -506,9 +552,9 @@ module deepbook::pool {
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
         let (net_base_quantity, net_quote_quantity) =
             if (is_bid) {
-                self.match_bid(account.owner(), order_id, client_order_id, quantity)
+                self.match_bid(account.owner(), order_id, client_order_id, quantity, clock)
             } else {
-                self.match_ask(account.owner(), order_id, client_order_id, quantity)
+                self.match_ask(account.owner(), order_id, client_order_id, quantity, clock)
             };
 
         self.transfer_taker(account, proof, net_base_quantity, net_quote_quantity, is_bid, ctx);
@@ -566,52 +612,53 @@ module deepbook::pool {
         account: &mut Account,
         proof: &TradeProof,
         order_id: u128,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): Order {
         // Order cancelled and returned
-        let order_cancelled = self.internal_cancel_order(order_id);
+        let cancelled_order = self.internal_cancel_order(order_id);
 
         // remove order from user's open orders
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 
         // withdraw main assets back into user account
-        if (order_cancelled.is_bid) {
+        if (cancelled_order.is_bid) {
             // deposit quote asset back into user account
-            let quote_asset_quantity = math::mul(order_cancelled.quantity, order_cancelled.price);
-            self.withdraw_quote(account, proof, quote_asset_quantity, ctx)
+            let mut quote_quantity = math::mul(cancelled_order.quantity, cancelled_order.price);
+            if (!cancelled_order.fee_is_deep) {
+                quote_quantity = quote_quantity + cancelled_order.fee_quantity;
+            };
+            self.withdraw_quote(account, proof, quote_quantity, ctx)
         } else {
             // deposit base asset back into user account
-            self.withdraw_base(account, proof, order_cancelled.quantity, ctx)
+            let mut base_quantity = cancelled_order.quantity;
+            if (!cancelled_order.fee_is_deep) {
+                base_quantity = base_quantity + cancelled_order.fee_quantity;
+            };
+            self.withdraw_base(account, proof, base_quantity, ctx)
         };
 
         // withdraw fees into user account
         // if pool is verified at the time of order placement, fees are in deepbook tokens
-        if (order_cancelled.fee_is_deep) {
+        if (cancelled_order.fee_is_deep) {
             // withdraw deepbook fees
-            self.withdraw_deep(account, proof, order_cancelled.fee_quantity, ctx)
-        } else if (order_cancelled.is_bid) {
-            // withdraw quote asset fees
-            // can be combined with withdrawal above, separate now for clarity
-            self.withdraw_quote(account, proof, order_cancelled.fee_quantity, ctx)
-        } else {
-            // withdraw base asset fees
-            // can be combined with withdrawal above, separate now for clarity
-            self.withdraw_base(account, proof, order_cancelled.fee_quantity, ctx)
+            self.withdraw_deep(account, proof, cancelled_order.fee_quantity, ctx)
         };
 
         // Emit order cancelled event
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id: self.id.to_inner(), // Get inner id from UID
-            order_id: order_cancelled.order_id,
-            client_order_id: order_cancelled.client_order_id,
-            is_bid: order_cancelled.is_bid,
-            owner: order_cancelled.owner,
-            original_quantity: order_cancelled.original_quantity,
-            base_asset_quantity_canceled: order_cancelled.quantity,
-            price: order_cancelled.price
+            order_id: cancelled_order.order_id,
+            client_order_id: cancelled_order.client_order_id,
+            is_bid: cancelled_order.is_bid,
+            owner: cancelled_order.owner,
+            original_quantity: cancelled_order.original_quantity,
+            base_asset_quantity_canceled: cancelled_order.quantity,
+            price: cancelled_order.price,
+            timestamp: clock.timestamp_ms(),
         });
 
-        order_cancelled
+        cancelled_order
     }
 
     /// Claim the rebates for the user
@@ -632,6 +679,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
+        clock: &Clock,
         ctx: &mut TxContext,
     ): vector<Order>{
         let mut cancelled_orders = vector[];
@@ -642,7 +690,7 @@ module deepbook::pool {
         let mut i = 0;
         while (i < len) {
             let key = orders_vector[i];
-            let cancelled_order = cancel_order(self, account, proof, key, ctx);
+            let cancelled_order = cancel_order(self, account, proof, key, clock, ctx);
             cancelled_orders.push_back(cancelled_order);
             i = i + 1;
         };
@@ -721,7 +769,7 @@ module deepbook::pool {
         self.state_manager.increase_user_stake(user, amount)
     }
 
-    /// Removes a user's stake. 
+    /// Removes a user's stake.
     /// Returns the total amount staked before this epoch and the total amount staked during this epoch.
     public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -729,7 +777,7 @@ module deepbook::pool {
         ctx: &TxContext
     ): (u64, u64) {
         self.state_manager.refresh(ctx.epoch());
-        
+
         self.state_manager.remove_user_stake(user)
     }
 
@@ -797,7 +845,7 @@ module deepbook::pool {
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Internal Functions <<<<<<<<<<<<<<<<<<<<<<<<
-        
+
     /// This will be automatically called if not enough assets in settled_funds for a trade
     /// User cannot manually deposit. Funds are withdrawn from user account and merged into pool balances.
     fun deposit_base<BaseAsset, QuoteAsset>(
@@ -877,6 +925,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order_id: u128,
         client_order_id: u64,
+        order_type: u8,
         price: u64,
         quantity: u64,
         fee_quantity: u64,
@@ -889,6 +938,7 @@ module deepbook::pool {
         let order = Order {
             order_id,
             client_order_id,
+            order_type,
             price,
             original_quantity: quantity,
             quantity,
