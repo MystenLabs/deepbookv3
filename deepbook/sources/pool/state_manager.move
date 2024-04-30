@@ -13,6 +13,7 @@ module deepbook::state_manager {
     };
 
     const EUserNotFound: u64 = 1;
+    const EHistoricVolumesNotFound: u64 = 2;
     
     /// Parameters that can be updated by governance.
     public struct TradeParams has store, copy, drop {
@@ -26,6 +27,7 @@ module deepbook::state_manager {
         total_maker_volume: u64,
         total_staked_maker_volume: u64,
         total_fees_collected: u64,
+        users_with_rebates: u64,
     }
 
     /// User data that is updated every epoch.
@@ -42,8 +44,8 @@ module deepbook::state_manager {
 
     public struct StateManager has store {
         epoch: u64,
-        fees: TradeParams,
-        next_fees: TradeParams,
+        trade_params: TradeParams,
+        next_trade_params: TradeParams,
         volumes: Volumes,
         historic_volumes: Table<u64, Volumes>,
         users: Table<address, User>,
@@ -68,17 +70,18 @@ module deepbook::state_manager {
         stake_required: u64,
         ctx: &mut TxContext,
     ): StateManager {
-        let fees = new_trade_params(taker_fee, maker_fee, stake_required);
-        let next_fees = new_trade_params(taker_fee, maker_fee, stake_required);
+        let trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
+        let next_trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
         let volumes = Volumes {
             total_maker_volume: 0,
             total_staked_maker_volume: 0,
             total_fees_collected: 0,
+            users_with_rebates: 0,
         };
         StateManager {
             epoch: ctx.epoch(),
-            fees,
-            next_fees,
+            trade_params,
+            next_trade_params,
             volumes,
             historic_volumes: table::new(ctx),
             users: table::new(ctx),
@@ -92,29 +95,31 @@ module deepbook::state_manager {
         epoch: u64,
     ) {
         if (self.epoch == epoch) return;
-        self.historic_volumes.add(self.epoch, self.volumes);
-        self.fees = self.next_fees;
+        if (self.volumes.users_with_rebates > 0) {
+            self.historic_volumes.add(self.epoch, self.volumes);
+        };
+        self.trade_params = self.next_trade_params;
         self.epoch = epoch;
     }
 
     /// Set the fee parameters for the next epoch. Pushed by governance.
-    public(package) fun set_next_fees(
+    public(package) fun set_next_trade_params(
         self: &mut StateManager,
         fees: Option<TradeParams>,
     ) {
         if (fees.is_some()) {
-            self.next_fees = *fees.borrow();
+            self.trade_params = *fees.borrow();
         } else {
-            self.next_fees = self.fees;
+            self.trade_params = self.next_trade_params;
         }
     }
     
     /// Get the total maker volume for the current epoch.
     public(package) fun maker_fee(self: &StateManager, epoch: u64): u64 {
         if (self.epoch == epoch) {
-            self.fees.maker_fee
+            self.trade_params.maker_fee
         } else {
-            self.next_fees.maker_fee
+            self.next_trade_params.maker_fee
         }
     }
 
@@ -126,19 +131,19 @@ module deepbook::state_manager {
     ): u64 {
         let user = update_user(self, user);
         // TODO: user has to trade a certain amount of volume first
-        if (user.old_stake >= self.fees.stake_required) {
-            self.fees.taker_fee / 2
+        if (user.old_stake >= self.trade_params.stake_required) {
+            self.trade_params.taker_fee / 2
         } else {
-            self.fees.taker_fee
+            self.trade_params.taker_fee
         }
     }
 
     /// Get the total maker volume for the current epoch.
     public(package) fun stake_required(self: &StateManager, epoch: u64): u64 {
         if (self.epoch == epoch) {
-            self.fees.stake_required
+            self.trade_params.stake_required
         } else {
-            self.next_fees.stake_required
+            self.next_trade_params.stake_required
         }
     }
 
@@ -261,11 +266,29 @@ module deepbook::state_manager {
     ) {
         let user = update_user(self, user);
         user.maker_volume = user.maker_volume + volume;
+        let user_volume = user.maker_volume;
         
-        if (user.old_stake >= self.fees.stake_required) {
+        if (user.old_stake >= self.trade_params.stake_required) {
             self.volumes.total_staked_maker_volume = self.volumes.total_staked_maker_volume + volume;
+            // if this is the user's first volume for this epoch, increment users_with_rebates
+            if (user_volume == volume) {
+                self.increment_users_with_rebates();
+            };
         };
         self.volumes.total_maker_volume = self.volumes.total_maker_volume + volume;
+    }
+
+    fun increment_users_with_rebates(self: &mut StateManager) {
+        self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+    }
+
+    fun decrement_users_with_rebates(self: &mut StateManager, epoch: u64) {
+        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
+        let volumes = &mut self.historic_volumes[epoch];
+        volumes.users_with_rebates = volumes.users_with_rebates - 1;
+        if (volumes.users_with_rebates == 0) {
+            self.historic_volumes.remove(epoch);
+        }
     }
 
     /// Add new user or refresh an existing user.
@@ -275,10 +298,19 @@ module deepbook::state_manager {
     ): &mut User {
         let epoch = self.epoch;
         add_new_user_if_not_exist(self, user, epoch);
+        
+        // If this user has unclaimed rebates from a historic epoch, decrement users_with_rebates.
+        // If users_with_rebates for that epoch drops to 0, it will automatically drop from the Table.
+        let user_copy = self.users[user];
+        if (user_copy.epoch < epoch &&
+            user_copy.maker_volume > 0 &&
+            user_copy.old_stake >= self.trade_params.stake_required
+        ) {
+            self.decrement_users_with_rebates(user_copy.epoch);
+        };
 
         let user = &mut self.users[user];
         if (user.epoch == epoch) return user;
-        
         let (rebates, burns) = calculate_rebate_and_burn_amounts(user);
         user.epoch = epoch;
         user.maker_volume = 0;

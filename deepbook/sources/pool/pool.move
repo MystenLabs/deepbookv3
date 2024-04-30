@@ -760,11 +760,11 @@ module deepbook::pool {
     /// Update the pool's next pool state.
     /// During an epoch refresh, the current pool state is moved to historical pool state.
     /// The next pool state is moved to current pool state.
-    public(package) fun set_next_fees<BaseAsset, QuoteAsset>(
+    public(package) fun set_next_trade_params<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         fees: Option<TradeParams>,
     ) {
-        self.state_manager.set_next_fees(fees);
+        self.state_manager.set_next_trade_params(fees);
     }
 
     /// Get the base and quote asset of pool, return as ascii strings

@@ -193,7 +193,7 @@ module deepbook::state { // Consider renaming this module
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
         let winning_proposal = pool_metadata.vote(proposal_id, user, stake);
-        let pool_state = if (winning_proposal.is_none()) {
+        let next_trade_params = if (winning_proposal.is_none()) {
             option::none()
         } else {
             let (stake_required, taker_fee, maker_fee) = winning_proposal
@@ -203,7 +203,7 @@ module deepbook::state { // Consider renaming this module
             let fees = state_manager::new_trade_params(taker_fee, maker_fee, stake_required);
             option::some(fees)
         };
-        pool.set_next_fees(pool_state);
+        pool.set_next_trade_params(next_trade_params);
     }
 
     /// Check whether pool exists, refresh and return its metadata.
