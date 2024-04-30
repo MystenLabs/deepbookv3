@@ -153,10 +153,10 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext
     ) {
         let user = account.owner();
-        let (user_old_stake, user_new_stake) = pool.remove_user_stake(user, ctx);
+        let (old_stake, new_stake) = pool.remove_user_stake(user, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .remove_voting_power(user_old_stake, user_new_stake);
-        let balance = self.vault.split(user_old_stake + user_new_stake).into_coin(ctx);
+            .remove_voting_power(old_stake, new_stake);
+        let balance = self.vault.split(old_stake + new_stake).into_coin(ctx);
         account.deposit_with_proof<DEEP>(proof, balance);
     }
 

@@ -717,6 +717,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ): (u64, u64) {
         self.state_manager.refresh(ctx.epoch());
+
         self.state_manager.increase_user_stake(user, amount)
     }
 
@@ -728,6 +729,7 @@ module deepbook::pool {
         ctx: &TxContext
     ): (u64, u64) {
         self.state_manager.refresh(ctx.epoch());
+        
         self.state_manager.remove_user_stake(user)
     }
 

@@ -86,10 +86,10 @@ module deepbook::pool_metadata {
     /// Validation of the user, amount, and total_user_stake is done in State.
     public(package) fun add_voting_power(
         self: &mut PoolMetadata,
-        old_user_stake: u64,
-        new_user_stake: u64,
+        old_stake: u64,
+        new_stake: u64,
     ) {
-        let new_voting_power = calculate_new_voting_power(old_user_stake, new_user_stake);
+        let new_voting_power = calculate_new_voting_power(old_stake, new_stake);
         self.new_voting_power = self.new_voting_power + new_voting_power;
     }
 
