@@ -141,7 +141,7 @@ module deepbook::pool {
         order_id: u128,
         // ID of the order defined by client
         client_order_id: u64,
-        // Order type
+        // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
         order_type: u8,
         // Price, only used for limit orders
         price: u64,
