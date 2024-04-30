@@ -2,15 +2,25 @@ name: Move Test CI
 
 on:
   pull_request:
+      paths:
+        - '.github/workflows/**'
+        - 'packages/**'
+  push:
+    branches:
+      - main
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - name: Install Homebrew
       run: |
@@ -23,10 +33,27 @@ jobs:
     - name: Run move tests in all package subdirectories, with exclusions
       run: |
         exclude_dirs=() # Add excluded directories to this array
-        for dir in *; do
+        for dir in packages/*; do
           dir_name=$(basename "$dir")
           if [[ ! " ${exclude_dirs[@]} " =~ " ${dir_name} " ]] && [ -d "$dir" ]; then
             echo "Running sui move test in $dir"
             (cd "$dir" && sui move test)
           fi
         done
+
+    - name: Run documentation script
+      run: |
+        bash ./scripts/docgen.sh
+      shell: bash
+
+    - name: Check for changes in move-docs directories
+      run: |
+        output=$(git status --porcelain | grep ' packages/.*/move-docs/' || true)
+        echo "Filtered git status output: $output"
+        if [[ -n "$output" ]]; then
+          echo "Changes in move-docs directories are not committed. Please commit these changes by running scripts/docgen.sh before merging."
+          exit 1  # Fail the job to indicate that documentation is not up-to-date
+        else
+          echo "No changes in move-docs directories. Documentation is up-to-date."
+        fi
+      shell: bash
