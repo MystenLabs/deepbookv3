@@ -125,8 +125,6 @@ module deepbook::order {
         }
     }
 
-    // ACCESSORS
-
     public(package) fun order_id(self: &Order): u128 {
         self.order_id
     }

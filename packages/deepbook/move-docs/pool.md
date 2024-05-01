@@ -6,17 +6,13 @@
 
 
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
--  [Struct `OrderPlaced`](#0x0_pool_OrderPlaced)
--  [Struct `OrderCanceled`](#0x0_pool_OrderCanceled)
--  [Struct `OrderFilled`](#0x0_pool_OrderFilled)
 -  [Struct `DEEP`](#0x0_pool_DEEP)
--  [Struct `Order`](#0x0_pool_Order)
 -  [Resource `Pool`](#0x0_pool_Pool)
 -  [Constants](#@Constants_0)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `transfer_trade_balances`](#0x0_pool_transfer_trade_balances)
 -  [Function `transfer_settled_amounts`](#0x0_pool_transfer_settled_amounts)
--  [Function `match_order`](#0x0_pool_match_order)
+-  [Function `execute_market_order`](#0x0_pool_execute_market_order)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
 -  [Function `get_level2_bids`](#0x0_pool_get_level2_bids)
@@ -43,7 +39,6 @@
 -  [Function `withdraw_deep`](#0x0_pool_withdraw_deep)
 -  [Function `send_treasury`](#0x0_pool_send_treasury)
 -  [Function `inject_limit_order`](#0x0_pool_inject_limit_order)
--  [Function `internal_cancel_order`](#0x0_pool_internal_cancel_order)
 -  [Function `order_is_bid`](#0x0_pool_order_is_bid)
 -  [Function `get_order_id`](#0x0_pool_get_order_id)
 -  [Function `fee_is_deep`](#0x0_pool_fee_is_deep)
@@ -54,6 +49,7 @@
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
@@ -130,252 +126,6 @@ Emitted when a new pool is created
 
 </details>
 
-<a name="0x0_pool_OrderPlaced"></a>
-
-## Struct `OrderPlaced`
-
-Emitted when a maker order is injected into the order book.
-
-
-<pre><code><b>struct</b> <a href="pool.md#0x0_pool_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
- object ID of the pool the order was placed on
-</dd>
-<dt>
-<code>order_id: u128</code>
-</dt>
-<dd>
- ID of the order within the pool
-</dd>
-<dt>
-<code>client_order_id: u64</code>
-</dt>
-<dd>
- ID of the order defined by client
-</dd>
-<dt>
-<code>is_bid: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
-</dt>
-<dd>
- owner ID of the <code>AccountCap</code> that placed the order
-</dd>
-<dt>
-<code>original_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>filled_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>price: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>expire_timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_pool_OrderCanceled"></a>
-
-## Struct `OrderCanceled`
-
-Emitted when a maker order is canceled.
-
-
-<pre><code><b>struct</b> <a href="pool.md#0x0_pool_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
- object ID of the pool the order was placed on
-</dd>
-<dt>
-<code>order_id: u128</code>
-</dt>
-<dd>
- ID of the order within the pool
-</dd>
-<dt>
-<code>client_order_id: u64</code>
-</dt>
-<dd>
- ID of the order defined by client
-</dd>
-<dt>
-<code>is_bid: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
-</dt>
-<dd>
- owner ID of the <code>AccountCap</code> that canceled the order
-</dd>
-<dt>
-<code>original_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>base_asset_quantity_canceled: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>price: u64</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_pool_OrderFilled"></a>
-
-## Struct `OrderFilled`
-
-Emitted when a maker order is filled.
-
-
-<pre><code><b>struct</b> <a href="pool.md#0x0_pool_OrderFilled">OrderFilled</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
- object ID of the pool the order was placed on
-</dd>
-<dt>
-<code>maker_order_id: u128</code>
-</dt>
-<dd>
- ID of the order within the pool
-</dd>
-<dt>
-<code>taker_order_id: u128</code>
-</dt>
-<dd>
- ID of the taker order
-</dd>
-<dt>
-<code>maker_client_order_id: u64</code>
-</dt>
-<dd>
- ID of the order defined by maker client
-</dd>
-<dt>
-<code>taker_client_order_id: u64</code>
-</dt>
-<dd>
- ID of the order defined by taker client
-</dd>
-<dt>
-<code>base_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>quote_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>price: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>maker_address: <b>address</b></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>taker_address: <b>address</b></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>is_bid: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
 <a name="0x0_pool_DEEP"></a>
 
 ## Struct `DEEP`
@@ -404,111 +154,13 @@ Temporary to represent DEEP token, remove after we have the open-sourced the DEE
 
 </details>
 
-<a name="0x0_pool_Order"></a>
-
-## Struct `Order`
-
-For each pool, order id is incremental and unique for each opening order.
-Orders that are submitted earlier has lower order ids.
-
-
-<pre><code><b>struct</b> <a href="pool.md#0x0_pool_Order">Order</a> <b>has</b> drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>order_id: u128</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>order_type: u8</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>price: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>original_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>original_fee_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>fee_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>fee_is_deep: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>is_bid: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>expire_timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>self_matching_prevention: u8</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
 <a name="0x0_pool_Pool"></a>
 
 ## Resource `Pool`
 
+Pool holds everything related to the pool. next_bid_order_id increments for each bid order,
+next_ask_order_id decrements for each ask order. All funds for live orders and settled funds
+are held in base_balances, quote_balances, and deepbook_balance.
 
 
 <pre><code><b>struct</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> key
@@ -546,13 +198,13 @@ Orders that are submitted earlier has lower order ids.
 
 </dd>
 <dt>
-<code>bids: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="pool.md#0x0_pool_Order">pool::Order</a>&gt;</code>
+<code>bids: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>asks: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="pool.md#0x0_pool_Order">pool::Order</a>&gt;</code>
+<code>asks: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;</code>
 </dt>
 <dd>
 
@@ -609,20 +261,20 @@ Orders that are submitted earlier has lower order ids.
 ## Constants
 
 
-<a name="0x0_pool_EFOKOrderCannotBeFullyFilled"></a>
+<a name="0x0_pool_MAX_PRICE"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>: u64 = 11;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>: u64 = 4611686018427387904;
 </code></pre>
 
 
 
-<a name="0x0_pool_EInvalidExpireTimestamp"></a>
+<a name="0x0_pool_MIN_PRICE"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>: u64 = 9;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
 </code></pre>
 
 
@@ -654,56 +306,11 @@ Orders that are submitted earlier has lower order ids.
 
 
 
-<a name="0x0_pool_EInvalidOrderType"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderType">EInvalidOrderType</a>: u64 = 12;
-</code></pre>
-
-
-
 <a name="0x0_pool_EInvalidTickSize"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>: u64 = 3;
-</code></pre>
-
-
-
-<a name="0x0_pool_EOrderBelowMinimumSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 7;
-</code></pre>
-
-
-
-<a name="0x0_pool_EOrderInvalidLotSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 8;
-</code></pre>
-
-
-
-<a name="0x0_pool_EOrderInvalidPrice"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EOrderInvalidPrice">EOrderInvalidPrice</a>: u64 = 6;
-</code></pre>
-
-
-
-<a name="0x0_pool_EPOSTOrderCrossesOrderbook"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>: u64 = 10;
 </code></pre>
 
 
@@ -717,47 +324,11 @@ Orders that are submitted earlier has lower order ids.
 
 
 
-<a name="0x0_pool_FILL_OR_KILL"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_FILL_OR_KILL">FILL_OR_KILL</a>: u8 = 2;
-</code></pre>
-
-
-
-<a name="0x0_pool_IMMEDIATE_OR_CANCEL"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>: u8 = 1;
-</code></pre>
-
-
-
 <a name="0x0_pool_MAX_ORDER_ID"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>: u64 = 4611686018427387904;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_RESTRICTION"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_RESTRICTION">MAX_RESTRICTION</a>: u8 = 3;
 </code></pre>
 
 
@@ -780,38 +351,11 @@ Orders that are submitted earlier has lower order ids.
 
 
 
-<a name="0x0_pool_MIN_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
-</code></pre>
-
-
-
-<a name="0x0_pool_NO_RESTRICTION"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_NO_RESTRICTION">NO_RESTRICTION</a>: u8 = 0;
-</code></pre>
-
-
-
 <a name="0x0_pool_POOL_CREATION_FEE"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
-</code></pre>
-
-
-
-<a name="0x0_pool_POST_ONLY"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_POST_ONLY">POST_ONLY</a>: u8 = 3;
 </code></pre>
 
 
@@ -848,13 +392,16 @@ Orders that are submitted earlier has lower order ids.
 ## Function `place_limit_order`
 
 Place a limit order to the order book.
-1. Transfer any settled funds from the pool to the account.
-2. Match the order against the order book if possible. Transfer balances from taker orders.
-3. If there is remaining quantity, inject the order into the order book. Transfer balances for maker orders.
-4. Return an OrderPlaced object.
+1. Refresh the state.
+2. Transfer any settled funds from the pool to the account.
+3. Match the order against the order book if possible.
+4. Transfer balances for the executed quantity as well as the remaining quantity.
+5. Assert for any order restrictions.
+6. If there is remaining quantity, inject the order into the order book.
+7. Return the Order object.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_OrderPlaced">pool::OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -875,72 +422,33 @@ Place a limit order to the order book.
     expire_timestamp: u64,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): <a href="pool.md#0x0_pool_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; {
+): Order {
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.refresh(ctx.epoch());
-
-    <b>assert</b>!(price &gt;= <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a> && price &lt;= <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, <a href="pool.md#0x0_pool_EOrderInvalidPrice">EOrderInvalidPrice</a>);
-    <b>assert</b>!(price % self.tick_size == 0, <a href="pool.md#0x0_pool_EOrderInvalidPrice">EOrderInvalidPrice</a>);
-    <b>assert</b>!(quantity &gt;= self.min_size, <a href="pool.md#0x0_pool_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
-    <b>assert</b>!(quantity % self.lot_size == 0, <a href="pool.md#0x0_pool_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(expire_timestamp &gt; <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(), <a href="pool.md#0x0_pool_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
-    <b>assert</b>!(order_type &gt;= <a href="pool.md#0x0_pool_NO_RESTRICTION">NO_RESTRICTION</a> && order_type &lt;= <a href="pool.md#0x0_pool_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="pool.md#0x0_pool_EInvalidOrderType">EInvalidOrderType</a>);
 
     self.<a href="pool.md#0x0_pool_transfer_settled_amounts">transfer_settled_amounts</a>(<a href="account.md#0x0_account">account</a>, proof, ctx);
 
-    <b>let</b> order_id = encode_order_id(is_bid, price, self.<a href="pool.md#0x0_pool_get_order_id">get_order_id</a>(is_bid));
-    <b>let</b> (filled_base_quantity, filled_quote_quantity) =
-        self.<a href="pool.md#0x0_pool_match_order">match_order</a>(<a href="account.md#0x0_account">account</a>.owner(), order_id, client_order_id, quantity, is_bid, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
-    self.<a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>(<a href="account.md#0x0_account">account</a>, proof, filled_base_quantity, filled_quote_quantity, is_bid, <b>true</b>, ctx);
+    <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(is_bid, price, self.<a href="pool.md#0x0_pool_get_order_id">get_order_id</a>(is_bid));
+    <b>let</b> fee_is_deep = self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>();
+    <b>let</b> owner = <a href="account.md#0x0_account">account</a>.owner();
+    <b>let</b> pool_id = self.id.to_inner();
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> =
+        <a href="order.md#0x0_order_initial_order">order::initial_order</a>(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
+    self.<a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>(&<b>mut</b> <a href="order.md#0x0_order">order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
 
-    <b>if</b> (order_type == <a href="pool.md#0x0_pool_POST_ONLY">POST_ONLY</a>) <b>assert</b>!(filled_base_quantity == 0, <a href="pool.md#0x0_pool_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>);
-    <b>if</b> (order_type == <a href="pool.md#0x0_pool_FILL_OR_KILL">FILL_OR_KILL</a>) <b>assert</b>!(filled_base_quantity == quantity, <a href="pool.md#0x0_pool_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>);
-    <b>if</b> (order_type == <a href="pool.md#0x0_pool_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>) {
-        <b>let</b> order_placed = <a href="pool.md#0x0_pool_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; {
-            pool_id: self.id.to_inner(),
-            order_id,
-            client_order_id,
-            is_bid,
-            owner: <a href="account.md#0x0_account">account</a>.owner(),
-            original_quantity: quantity,
-            filled_quantity: filled_base_quantity,
-            price,
-            expire_timestamp,
-        };
+    self.<a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>(<a href="account.md#0x0_account">account</a>, proof, &<b>mut</b> <a href="order.md#0x0_order">order</a>, ctx);
 
-        <b>return</b> order_placed
+    <a href="order.md#0x0_order">order</a>.assert_post_only();
+    <a href="order.md#0x0_order">order</a>.assert_fill_or_kill();
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.is_immediate_or_cancel() || <a href="order.md#0x0_order">order</a>.is_complete()) {
+        <b>return</b> <a href="order.md#0x0_order">order</a>
     };
 
-    <b>let</b> remaining_quantity = quantity - filled_base_quantity;
-    <b>if</b> (remaining_quantity &gt; 0) {
-        <b>let</b> fee_quantity = self.<a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>(<a href="account.md#0x0_account">account</a>, proof, remaining_quantity, price, is_bid, <b>false</b>, ctx);
-
-        self.<a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>(
-            order_id,
-            client_order_id,
-            order_type,
-            price,
-            remaining_quantity,
-            fee_quantity,
-            is_bid,
-            expire_timestamp,
-            <a href="account.md#0x0_account">account</a>.owner(),
-        );
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.remaining_quantity() &gt; 0) {
+        <b>let</b> copy_order = <a href="order.md#0x0_order">order</a>.copy_order();
+        self.<a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>(copy_order);
     };
 
-    <b>let</b> order_placed = <a href="pool.md#0x0_pool_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; {
-        pool_id: self.id.to_inner(),
-        order_id,
-        client_order_id,
-        is_bid,
-        owner: <a href="account.md#0x0_account">account</a>.owner(),
-        original_quantity: quantity,
-        filled_quantity: filled_base_quantity,
-        price,
-        expire_timestamp,
-    };
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(order_placed);
-
-    order_placed
+    <a href="order.md#0x0_order">order</a>
 }
 </code></pre>
 
@@ -952,12 +460,14 @@ Place a limit order to the order book.
 
 ## Function `transfer_trade_balances`
 
-Given base quantity and quote quantity, deposit the necessary funds from the account
-into the pool and vise versa. If orders have already matched, is_taker, then an additional
-transfer must be made in the reverse direction of the opposite asset.
+Given an order, transfer the appropriate balances. Up until this point, any partial fills have been executed
+and the remaining quantity is the only quantity left to be injected into the order book.
+1. Transfer the taker balances while applying taker fees.
+2. Transfer the maker balances while applying maker fees.
+3. Update the total fees for the order.
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, base_quantity: u64, quote_quantity: u64, is_bid: bool, is_taker: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -970,45 +480,69 @@ transfer must be made in the reverse direction of the opposite asset.
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,
-    base_quantity: u64,
-    quote_quantity: u64,
-    is_bid: bool,
-    is_taker: bool,
+    <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
     ctx: &<b>mut</b> TxContext,
-): u64 {
-    <b>let</b> fee = <b>if</b> (is_taker) {
-        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.taker_fee_for_user(<a href="account.md#0x0_account">account</a>.owner())
+) {
+    <b>let</b> (<b>mut</b> base_in, <b>mut</b> base_out) = (0, 0);
+    <b>let</b> (<b>mut</b> quote_in, <b>mut</b> quote_out) = (0, 0);
+    <b>let</b> <b>mut</b> deep_in = 0;
+    <b>let</b> (taker_fee, maker_fee) = (self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.taker_fee_for_user(<a href="account.md#0x0_account">account</a>.owner()), self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.maker_fee());
+    <b>let</b> (executed_quantity, remaining_quantity, cumulative_quote_quantity) =
+        (<a href="order.md#0x0_order">order</a>.executed_quantity(), <a href="order.md#0x0_order">order</a>.remaining_quantity(), <a href="order.md#0x0_order">order</a>.cumulative_quote_quantity());
+
+    // Calculate the taker balances. These are derived from executed quantity.
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
+        quote_in = quote_in + cumulative_quote_quantity;
+        base_out = base_out + executed_quantity;
+        <b>if</b> (self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+            deep_in = deep_in + math::mul(taker_fee, math::mul(executed_quantity, self.deep_config.borrow().deep_per_quote()));
+        } <b>else</b> {
+            quote_in = quote_in + math::mul(taker_fee, executed_quantity);
+        }
     } <b>else</b> {
-        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.maker_fee()
+        base_in = base_in + executed_quantity;
+        quote_out = quote_out + cumulative_quote_quantity;
+        <b>if</b> (self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+            deep_in = deep_in + math::mul(taker_fee, math::mul(executed_quantity, self.deep_config.borrow().deep_per_base()));
+        } <b>else</b> {
+            base_in = base_in + math::mul(taker_fee, executed_quantity);
+        }
     };
 
-    <b>if</b> (is_bid) {
-        // Transfer quote out from <a href="account.md#0x0_account">account</a> <b>to</b> <a href="pool.md#0x0_pool">pool</a>, and <b>if</b> taker, <a href="dependencies/sui-framework/transfer.md#0x2_transfer">transfer</a> base from <a href="pool.md#0x0_pool">pool</a> <b>to</b> <a href="account.md#0x0_account">account</a>.
-        <b>if</b> (is_taker) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
+    // Calculate the maker balances. These are derived from the remaining quantity.
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
+        quote_in = quote_in + remaining_quantity * <a href="order.md#0x0_order">order</a>.price();
         <b>if</b> (self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
-            <b>let</b> deep_quantity = math::mul(fee, math::mul(quote_quantity, self.deep_config.borrow().deep_per_quote()));
-            self.<a href="pool.md#0x0_pool_deposit_deep">deposit_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_quantity, ctx);
-            self.<a href="pool.md#0x0_pool_deposit_quote">deposit_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx);
-            deep_quantity
+            deep_in = deep_in + math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_quote()));
         } <b>else</b> {
-            <b>let</b> quote_fee = math::mul(fee, quote_quantity);
-            self.<a href="pool.md#0x0_pool_deposit_quote">deposit_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity + quote_fee, ctx);
-            quote_fee
+            quote_in = quote_in + math::mul(maker_fee, quote_in);
         }
     } <b>else</b> {
-        // Transfer base out from <a href="account.md#0x0_account">account</a> <b>to</b> <a href="pool.md#0x0_pool">pool</a>, and <b>if</b> taker, <a href="dependencies/sui-framework/transfer.md#0x2_transfer">transfer</a> quote from <a href="pool.md#0x0_pool">pool</a> <b>to</b> <a href="account.md#0x0_account">account</a>.
-        <b>if</b> (is_taker) self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx);
+        base_in = base_in + remaining_quantity;
         <b>if</b> (self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
-            <b>let</b> deep_quantity = math::mul(fee, math::mul(base_quantity, self.deep_config.borrow().deep_per_base()));
-            self.<a href="pool.md#0x0_pool_deposit_deep">deposit_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_quantity, ctx);
-            self.<a href="pool.md#0x0_pool_deposit_base">deposit_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
-            deep_quantity
+            deep_in = deep_in + math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_base()));
         } <b>else</b> {
-            <b>let</b> base_fee = math::mul(fee, base_quantity);
-            self.<a href="pool.md#0x0_pool_deposit_base">deposit_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity + base_fee, ctx);
-            base_fee
+            base_in = base_in + math::mul(maker_fee, base_in);
         }
-    }
+    };
+
+    // Calculate the total fees for the <a href="order.md#0x0_order">order</a>.
+    <b>let</b> total_fees = <b>if</b> (self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+        deep_in
+    } <b>else</b> {
+        <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
+            quote_in - <a href="order.md#0x0_order">order</a>.original_quantity() * <a href="order.md#0x0_order">order</a>.price()
+        } <b>else</b> {
+            base_in - <a href="order.md#0x0_order">order</a>.original_quantity()
+        }
+    };
+    <a href="order.md#0x0_order">order</a>.set_total_fees(total_fees);
+
+    <b>if</b> (base_in &gt; 0) self.<a href="pool.md#0x0_pool_deposit_base">deposit_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_in, ctx);
+    <b>if</b> (base_out &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_out, ctx);
+    <b>if</b> (quote_in &gt; 0) self.<a href="pool.md#0x0_pool_deposit_quote">deposit_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_in, ctx);
+    <b>if</b> (quote_out &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_out, ctx);
+    <b>if</b> (deep_in &gt; 0) self.<a href="pool.md#0x0_pool_deposit_deep">deposit_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_in, ctx);
 }
 </code></pre>
 
@@ -1048,16 +582,16 @@ Transfer any settled amounts from the pool to the account.
 
 </details>
 
-<a name="0x0_pool_match_order"></a>
+<a name="0x0_pool_execute_market_order"></a>
 
-## Function `match_order`
+## Function `execute_market_order`
 
 Matches the given order and quantity against the order book.
 If is_bid, it will match against asks, otherwise against bids.
-Returns (base_quantity_matched, quote_quantity_matched).
+Mutates the order and the maker order as necessary.
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_match_order">match_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, taker: <b>address</b>, order_id: u128, client_order_id: u64, quantity: u64, is_bid: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>): (u64, u64)
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
 </code></pre>
 
 
@@ -1066,16 +600,12 @@ Returns (base_quantity_matched, quote_quantity_matched).
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_match_order">match_order</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    taker: <b>address</b>,
-    order_id: u128,
-    client_order_id: u64,
-    quantity: u64,
-    is_bid: bool,
+    <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
-): (u64, u64) {
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
+) {
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
         <b>let</b> (ref, offset) = self.asks.slice_following(<a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>);
         (ref, offset, &<b>mut</b> self.asks)
     } <b>else</b> {
@@ -1083,66 +613,40 @@ Returns (base_quantity_matched, quote_quantity_matched).
         (ref, offset, &<b>mut</b> self.bids)
     };
 
-    <b>if</b> (ref.is_null()) {
-        <b>return</b> (0, 0)
-    };
+    <b>if</b> (ref.is_null()) <b>return</b>;
 
-    <b>let</b> <b>mut</b> remaining_quantity = quantity;
     <b>let</b> <b>mut</b> net_base_quantity = 0;
     <b>let</b> <b>mut</b> net_quote_quantity = 0;
-    <b>let</b> <b>mut</b> orders_to_remove = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> remove_order_ids = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> remove_order_owners = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> order = book_side.borrow_mut_ref_offset(ref, offset);
-    <b>while</b> (remaining_quantity &gt; 0 && ((is_bid && order_id &lt; order.order_id) || (!is_bid && order_id &gt; order.order_id)) ) {
-        <b>let</b> <b>mut</b> expired_order = <b>false</b>;
-        <b>if</b> (order.expire_timestamp &lt; <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()) {
-            expired_order = <b>true</b>;
-        } <b>else</b> {
-            // Match <b>with</b> existing orders.
-            <b>let</b> base_matched_quantity = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(order.quantity, remaining_quantity);
-            order.quantity = order.quantity - base_matched_quantity;
-            remaining_quantity = remaining_quantity - base_matched_quantity;
-            // fee_subtracted is rounded down (in case of very small fills, this can be 0).
-            <b>let</b> fee_subtracted = math::div(math::mul(base_matched_quantity, order.original_fee_quantity), order.original_quantity);
-            order.fee_quantity = order.fee_quantity - fee_subtracted;
-
-            // Rounded up, maker gets rounding advantage.
-            <b>let</b> quote_matched_quantity = math::mul_round_up(base_matched_quantity, order.price);
-
-            // Update maker base balances.
-            self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.add_user_settled_amount(order.owner, base_matched_quantity, is_bid);
-            // Update volumes.
-            self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.increase_maker_volume(order.owner, base_matched_quantity);
-
-            <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_OrderFilled">OrderFilled</a>&lt;BaseAsset, QuoteAsset&gt;{
-                pool_id: self.id.to_inner(),
-                maker_order_id: order.order_id,
-                taker_order_id: order_id,
-                maker_client_order_id: order.client_order_id,
-                taker_client_order_id: client_order_id,
-                base_quantity: base_matched_quantity,
-                quote_quantity: quote_matched_quantity,
-                price: order.price,
-                maker_address: order.owner,
-                taker_address: taker,
-                is_bid,
-                timestamp: <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(),
-            });
-
-            net_base_quantity = net_base_quantity + base_matched_quantity;
-            net_quote_quantity = net_quote_quantity + quote_matched_quantity;
+    <b>let</b> <b>mut</b> other_order = book_side.borrow_mut_ref_offset(ref, offset);
+    <b>while</b> (<a href="order.md#0x0_order">order</a>.remaining_quantity() &gt; 0 && <a href="order.md#0x0_order">order</a>.can_match(other_order) ) {
+        <b>if</b> (other_order.is_expired(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms())) {
+            other_order.set_expired();
+            remove_order_ids.push_back(other_order.order_id());
+            remove_order_owners.push_back(other_order.owner());
+            <b>continue</b>
         };
 
-        <b>if</b> (order.quantity == 0 || expired_order) {
-            self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(order.owner, order.order_id);
-            orders_to_remove.push_back(order.order_id);
+        <b>let</b> (filled_quantity, quote_quantity) =
+            <a href="order.md#0x0_order">order</a>.match_orders(other_order, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+        net_base_quantity = net_base_quantity + filled_quantity;
+        net_quote_quantity = net_quote_quantity + quote_quantity;
+
+        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.add_user_settled_amount(other_order.owner(), filled_quantity, other_order.is_bid());
+        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.increase_maker_volume(other_order.owner(), filled_quantity);
+
+        <b>if</b> (other_order.is_complete()) {
+            remove_order_ids.push_back(other_order.order_id());
+            remove_order_owners.push_back(other_order.owner());
         };
 
-        // Traverse <b>to</b> valid next order <b>if</b> exists, otherwise <b>break</b> from <b>loop</b>.
-        <b>if</b> (is_bid && book_side.valid_next(ref, offset)) {
-            (ref, offset, order) = book_side.borrow_mut_next(ref, offset)
-        } <b>else</b> <b>if</b> (!is_bid && book_side.valid_prev(ref, offset)) {
-            (ref, offset, order) = book_side.borrow_mut_prev(ref, offset)
+        // Traverse <b>to</b> valid next <a href="order.md#0x0_order">order</a> <b>if</b> exists, otherwise <b>break</b> from <b>loop</b>.
+        <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid() && book_side.valid_next(ref, offset)) {
+            (ref, offset, other_order) = book_side.borrow_mut_next(ref, offset)
+        } <b>else</b> <b>if</b> (!<a href="order.md#0x0_order">order</a>.is_bid() && book_side.valid_prev(ref, offset)) {
+            (ref, offset, other_order) = book_side.borrow_mut_prev(ref, offset)
         } <b>else</b> {
             <b>break</b>
         }
@@ -1150,12 +654,11 @@ Returns (base_quantity_matched, quote_quantity_matched).
 
     // Iterate over orders_to_remove and remove from the book.
     <b>let</b> <b>mut</b> i = 0;
-    <b>while</b> (i &lt; orders_to_remove.length()) {
-        book_side.remove(orders_to_remove[i]);
+    <b>while</b> (i &lt; remove_order_ids.length()) {
+        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(remove_order_owners[i], remove_order_ids[i]);
+        book_side.remove(remove_order_ids[i]);
         i = i + 1;
     };
-
-    (net_base_quantity, net_quote_quantity)
 }
 </code></pre>
 
@@ -1167,11 +670,11 @@ Returns (base_quantity_matched, quote_quantity_matched).
 
 ## Function `place_market_order`
 
-Place a market order to the order book. Quantity is in base asset terms.
-Will return (settled_base_quantity, settled_quote_quantity).
+Place a market order. Quantity is in base asset terms. Calls place_limit_order with
+a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, quantity: u64, is_bid: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, quantity: u64, is_bid: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1189,23 +692,19 @@ Will return (settled_base_quantity, settled_quote_quantity).
     is_bid: bool,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): (u64, u64) {
-    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.refresh(ctx.epoch());
-
-    <b>assert</b>!(quantity &gt;= self.min_size, <a href="pool.md#0x0_pool_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
-    <b>assert</b>!(quantity % self.lot_size == 0, <a href="pool.md#0x0_pool_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-
-    <b>let</b> price = <b>if</b> (is_bid) {
-        <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>
-    } <b>else</b> {
-        <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>
-    };
-
-    <b>let</b> order_id = encode_order_id(is_bid, price, self.<a href="pool.md#0x0_pool_get_order_id">get_order_id</a>(is_bid));
-    <b>let</b> (filled_base_quantity, filled_quote_quantity) = self.<a href="pool.md#0x0_pool_match_order">match_order</a>(<a href="account.md#0x0_account">account</a>.owner(), order_id, client_order_id, quantity, is_bid, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
-    self.<a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>(<a href="account.md#0x0_account">account</a>, proof, filled_base_quantity, filled_quote_quantity, is_bid, <b>true</b>, ctx);
-
-    (filled_base_quantity, filled_quote_quantity)
+): Order {
+    self.<a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>(
+        <a href="account.md#0x0_account">account</a>,
+        proof,
+        client_order_id,
+        <a href="order.md#0x0_order_fill_or_kill">order::fill_or_kill</a>(),
+        <b>if</b> (is_bid) <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a> <b>else</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>,
+        quantity,
+        is_bid,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(),
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    )
 }
 </code></pre>
 
@@ -1337,10 +836,14 @@ Get the n ticks from the mid price
 
 ## Function `cancel_order`
 
-Cancel an order by order_id. Withdraw settled funds back into user account.
+1. Remove the order from the order book and from the user's open orders.
+2. Refund the user for the remaining quantity and fees.
+2a. If the order is a bid, refund the quote asset + non deep fee.
+2b. If the order is an ask, refund the base asset + non deep fee.
+3. If the order was placed with deep fees, refund the deep fees.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_Order">pool::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1356,51 +859,36 @@ Cancel an order by order_id. Withdraw settled funds back into user account.
     order_id: u128,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): <a href="pool.md#0x0_pool_Order">Order</a> {
-    // <a href="pool.md#0x0_pool_Order">Order</a> cancelled and returned
-    <b>let</b> cancelled_order = self.<a href="pool.md#0x0_pool_internal_cancel_order">internal_cancel_order</a>(order_id);
-
-    // remove order from user's open orders
+): Order {
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (<a href="pool.md#0x0_pool_order_is_bid">order_is_bid</a>(order_id)) {
+        self.bids.remove(order_id)
+    } <b>else</b> {
+        self.asks.remove(order_id)
+    };
+    <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(<a href="account.md#0x0_account">account</a>.owner(), order_id);
 
-    // withdraw main assets back into user <a href="account.md#0x0_account">account</a>
-    <b>if</b> (cancelled_order.is_bid) {
-        // deposit quote asset back into user <a href="account.md#0x0_account">account</a>
-        <b>let</b> <b>mut</b> quote_quantity = math::mul(cancelled_order.quantity, cancelled_order.price);
-        <b>if</b> (!cancelled_order.fee_is_deep) {
-            quote_quantity = quote_quantity + cancelled_order.fee_quantity;
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
+        <b>let</b> <b>mut</b> quote_quantity = math::mul(<a href="order.md#0x0_order">order</a>.remaining_quantity(), <a href="order.md#0x0_order">order</a>.price());
+        <b>if</b> (!<a href="order.md#0x0_order">order</a>.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+            quote_quantity = quote_quantity + <a href="order.md#0x0_order">order</a>.fees_to_refund();
         };
         self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx)
     } <b>else</b> {
-        // deposit base asset back into user <a href="account.md#0x0_account">account</a>
-        <b>let</b> <b>mut</b> base_quantity = cancelled_order.quantity;
-        <b>if</b> (!cancelled_order.fee_is_deep) {
-            base_quantity = base_quantity + cancelled_order.fee_quantity;
+        <b>let</b> <b>mut</b> base_quantity = <a href="order.md#0x0_order">order</a>.remaining_quantity();
+        <b>if</b> (!<a href="order.md#0x0_order">order</a>.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+            base_quantity = base_quantity + <a href="order.md#0x0_order">order</a>.fees_to_refund();
         };
         self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx)
     };
 
-    // withdraw fees into user <a href="account.md#0x0_account">account</a>
-    // <b>if</b> <a href="pool.md#0x0_pool">pool</a> is verified at the time of order placement, fees are in <a href="deepbook.md#0x0_deepbook">deepbook</a> tokens
-    <b>if</b> (cancelled_order.fee_is_deep) {
-        // withdraw <a href="deepbook.md#0x0_deepbook">deepbook</a> fees
-        self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, cancelled_order.fee_quantity, ctx)
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>()) {
+        self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, <a href="order.md#0x0_order">order</a>.fees_to_refund(), ctx)
     };
 
-    // Emit order cancelled <a href="dependencies/sui-framework/event.md#0x2_event">event</a>
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
-        pool_id: self.id.to_inner(), // Get inner id from UID
-        order_id: cancelled_order.order_id,
-        client_order_id: cancelled_order.client_order_id,
-        is_bid: cancelled_order.is_bid,
-        owner: cancelled_order.owner,
-        original_quantity: cancelled_order.original_quantity,
-        base_asset_quantity_canceled: cancelled_order.quantity,
-        price: cancelled_order.price,
-        timestamp: <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(),
-    });
+    <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 
-    cancelled_order
+    <a href="order.md#0x0_order">order</a>
 }
 </code></pre>
 
@@ -1448,7 +936,7 @@ Claim the rebates for the user
 Cancel all orders for an account. Withdraw settled funds back into user account.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_cancel_all">cancel_all</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="pool.md#0x0_pool_Order">pool::Order</a>&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_cancel_all">cancel_all</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
 </code></pre>
 
 
@@ -1463,7 +951,7 @@ Cancel all orders for an account. Withdraw settled funds back into user account.
     proof: &TradeProof,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="pool.md#0x0_pool_Order">Order</a>&gt;{
+): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;Order&gt;{
     <b>let</b> <b>mut</b> cancelled_orders = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>let</b> user_open_orders = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_user_open_orders">user_open_orders</a>(<a href="account.md#0x0_account">account</a>.owner());
 
@@ -2050,7 +1538,7 @@ Send fees collected in input tokens to treasury
 Balance accounting happens before this function is called
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, order_id: u128, client_order_id: u64, order_type: u8, price: u64, quantity: u64, fee_quantity: u64, is_bid: bool, expire_timestamp: u64, owner: <b>address</b>)
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order.md#0x0_order">order</a>: <a href="order.md#0x0_order_Order">order::Order</a>)
 </code></pre>
 
 
@@ -2061,75 +1549,17 @@ Balance accounting happens before this function is called
 
 <pre><code><b>fun</b> <a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    order_id: u128,
-    client_order_id: u64,
-    order_type: u8,
-    price: u64,
-    quantity: u64,
-    fee_quantity: u64,
-    is_bid: bool, // <b>true</b> for bid, <b>false</b> for ask
-    expire_timestamp: u64, // Expiration timestamp in ms
-    owner: <b>address</b>,
+    <a href="order.md#0x0_order">order</a>: Order,
 ) {
-
-    // Create <a href="pool.md#0x0_pool_Order">Order</a>
-    <b>let</b> order = <a href="pool.md#0x0_pool_Order">Order</a> {
-        order_id,
-        client_order_id,
-        order_type,
-        price,
-        original_quantity: quantity,
-        quantity,
-        original_fee_quantity: fee_quantity,
-        fee_quantity,
-        fee_is_deep: self.<a href="pool.md#0x0_pool_fee_is_deep">fee_is_deep</a>(),
-        is_bid,
-        owner,
-        expire_timestamp,
-        self_matching_prevention: 0, // TODO
-    };
-
-    // Insert order into order books
-    <b>if</b> (is_bid){
-        self.bids.insert(order_id, order);
+    <a href="order.md#0x0_order">order</a>.emit_order_placed&lt;BaseAsset, QuoteAsset&gt;();
+    <b>let</b> (order_id, owner) = (<a href="order.md#0x0_order">order</a>.order_id(), <a href="order.md#0x0_order">order</a>.owner());
+    <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
+        self.bids.insert(order_id, <a href="order.md#0x0_order">order</a>);
     } <b>else</b> {
-        self.asks.insert(order_id, order);
+        self.asks.insert(order_id, <a href="order.md#0x0_order">order</a>);
     };
 
-    // Add order <b>to</b> user's open orders
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.add_user_open_order(owner, order_id);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_internal_cancel_order"></a>
-
-## Function `internal_cancel_order`
-
-Cancels an order and returns the order details
-
-
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_internal_cancel_order">internal_cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, order_id: u128): <a href="pool.md#0x0_pool_Order">pool::Order</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_internal_cancel_order">internal_cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    order_id: u128,
-): <a href="pool.md#0x0_pool_Order">Order</a> {
-    <b>if</b> (<a href="pool.md#0x0_pool_order_is_bid">order_is_bid</a>(order_id)) {
-        self.bids.remove(order_id)
-    } <b>else</b> {
-        self.asks.remove(order_id)
-    }
 }
 </code></pre>
 

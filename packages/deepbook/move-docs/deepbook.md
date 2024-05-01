@@ -31,6 +31,7 @@ TODO: No authorization checks are implemented;
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
+<b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
 <b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
@@ -430,7 +431,7 @@ TODO: add other return values
 Public facing function to place a limit order.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_OrderPlaced">pool::OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -451,7 +452,7 @@ Public facing function to place a limit order.
     expire_timestamp: u64, // Expiration timestamp in ms
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): OrderPlaced&lt;BaseAsset, QuoteAsset&gt; {
+): Order {
     <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_place_limit_order">place_limit_order</a>(
         <a href="account.md#0x0_account">account</a>,
         proof,
@@ -478,7 +479,7 @@ Public facing function to place a limit order.
 Public facing function to place a market order.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, quantity: u64, is_bid: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (u64, u64)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, quantity: u64, is_bid: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -496,7 +497,7 @@ Public facing function to place a market order.
     is_bid: bool,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
-): (u64, u64) {
+): Order {
     <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_place_market_order">place_market_order</a>(
         <a href="account.md#0x0_account">account</a>,
         proof,
@@ -520,7 +521,7 @@ Public facing function to place a market order.
 Public facing function to cancel an order.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_Order">pool::Order</a>
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -552,7 +553,7 @@ Public facing function to cancel an order.
 Public facing function to cancel all orders.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_cancel_all_orders">cancel_all_orders</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="pool.md#0x0_pool_Order">pool::Order</a>&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_cancel_all_orders">cancel_all_orders</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
 </code></pre>
 
 
