@@ -1138,15 +1138,13 @@ if there is no matching key-value pair.
     <b>if</b> (off == 0) {
         <b>let</b> prev_ref = leaf.prev();
         <b>if</b> (prev_ref.is_null()) {
-            <b>return</b> (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a> }, 0)
+            (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a> }, 0)
         } <b>else</b> {
-            // Fetch the last element of the previous slice
             <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
-            <b>return</b> (prev_ref, prev_slice.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
+            (prev_ref, prev_slice.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
         }
     } <b>else</b> {
-        // Return the current slice <b>with</b> the index decremented by one
-        <b>return</b> (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off - 1)
+        (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off - 1)
     }
 }
 </code></pre>

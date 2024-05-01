@@ -454,15 +454,13 @@ module deepbook::big_vector {
         if (off == 0) {
             let prev_ref = leaf.prev();
             if (prev_ref.is_null()) {
-                return (SliceRef { ix: NO_SLICE }, 0)
+                (SliceRef { ix: NO_SLICE }, 0)
             } else {
-                // Fetch the last element of the previous slice
                 let prev_slice = self.borrow_slice(prev_ref);
-                return (prev_ref, prev_slice.keys.length() - 1)
+                (prev_ref, prev_slice.keys.length() - 1)
             }
         } else {
-            // Return the current slice with the index decremented by one
-            return (SliceRef { ix }, off - 1)
+            (SliceRef { ix }, off - 1)
         }
     }
 
