@@ -735,15 +735,6 @@ Orders that are submitted earlier has lower order ids.
 
 
 
-<a name="0x0_pool_MAX_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
 <a name="0x0_pool_MAX_PRICE"></a>
 
 
@@ -767,15 +758,6 @@ Orders that are submitted earlier has lower order ids.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ASK_ORDER_ID">MIN_ASK_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>: u128 = 0;
 </code></pre>
 
 
@@ -1076,10 +1058,10 @@ Returns (base_quantity_matched, quote_quantity_matched).
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ): (u64, u64) {
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
-        <b>let</b> (ref, offset) = self.asks.slice_following(<a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &<b>mut</b> self.asks)
     } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.slice_before(<a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.bids.max_slice();
         (ref, offset, &<b>mut</b> self.bids)
     };
 
@@ -1092,7 +1074,8 @@ Returns (base_quantity_matched, quote_quantity_matched).
     <b>let</b> <b>mut</b> net_quote_quantity = 0;
     <b>let</b> <b>mut</b> orders_to_remove = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> order = book_side.borrow_mut_ref_offset(ref, offset);
+    // This assumes ref is not null. Returns value at offset `offset` in slice `ref`
+    <b>let</b> <b>mut</b> order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
     <b>while</b> (remaining_quantity &gt; 0 && ((is_bid && order_id &lt; order.order_id) || (!is_bid && order_id &gt; order.order_id)) ) {
         <b>let</b> <b>mut</b> expired_order = <b>false</b>;
         <b>if</b> (order.expire_timestamp &lt; <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()) {
