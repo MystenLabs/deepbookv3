@@ -10,7 +10,7 @@ import { SUI_CLOCK_OBJECT_ID } from "@mysten/sui.js/utils";
 const ENV = 'testnet';
 
 // The package id of the `deepbook` package
-const DEEPBOOK_PACKAGE_ID = `0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463`;
+const DEEPBOOK_PACKAGE_ID = ``;
 
 // =================================================================
 // Transactions
