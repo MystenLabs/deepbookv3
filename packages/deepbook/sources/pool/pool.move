@@ -46,8 +46,6 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
-    const MIN_ORDER_ID: u128 = 0;
-    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -347,10 +345,10 @@ module deepbook::pool {
         clock: &Clock,
     ): (u64, u64) {
         let (mut ref, mut offset, book_side) = if (is_bid) {
-            let (ref, offset) = self.asks.slice_following(MIN_ORDER_ID);
+            let (ref, offset) = self.asks.min_slice();
             (ref, offset, &mut self.asks)
         } else {
-            let (ref, offset) = self.bids.slice_before(MAX_ORDER_ID);
+            let (ref, offset) = self.bids.max_slice();
             (ref, offset, &mut self.bids)
         };
 
@@ -419,10 +417,6 @@ module deepbook::pool {
                 break
             }
         };
-
-        // ask orderbook: [1,2,3] [5,6,7]
-        // place a buy order at 2.5
-        // first_leaf/last_leaf functions
 
         // Iterate over orders_to_remove and remove from the book.
         let mut i = 0;
