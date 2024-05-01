@@ -1,6 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Order module defines the order struct and its methods.
+/// All order matching happens in this module.
 module deepbook::order {
     use sui::event;
     use deepbook::math;
