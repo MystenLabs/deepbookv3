@@ -37,7 +37,7 @@ All order matching happens in this module.
 -  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
 -  [Function `match_orders`](#0x0_order_match_orders)
--  [Function `update_fill_status`](#0x0_order_update_fill_status)
+-  [Function `add_fill`](#0x0_order_add_fill)
 -  [Function `emit_order_filled`](#0x0_order_emit_order_filled)
 -  [Function `emit_order_placed`](#0x0_order_emit_order_placed)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
@@ -1260,17 +1260,10 @@ Updates the orders to reflect their state after the match.
     maker: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     timestamp: u64,
 ): (u64, u64) {
-    <b>let</b> taker_remaining_quantity = taker.original_quantity - taker.executed_quantity;
-    <b>let</b> maker_remaining_quantity = maker.original_quantity - maker.executed_quantity;
-    <b>let</b> filled_quantity = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(taker_remaining_quantity, maker_remaining_quantity);
+    <b>let</b> filled_quantity = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(taker.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(), maker.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>());
     <b>let</b> quote_quantity = math::mul(filled_quantity, maker.price);
-    taker.<a href="order.md#0x0_order_update_fill_status">update_fill_status</a>();
-    maker.<a href="order.md#0x0_order_update_fill_status">update_fill_status</a>();
-
-    taker.executed_quantity = taker.executed_quantity + filled_quantity;
-    maker.executed_quantity = maker.executed_quantity + filled_quantity;
-    taker.cumulative_quote_quantity = taker.cumulative_quote_quantity + quote_quantity;
-    maker.cumulative_quote_quantity = maker.cumulative_quote_quantity + quote_quantity;
+    taker.<a href="order.md#0x0_order_add_fill">add_fill</a>(filled_quantity, quote_quantity);
+    maker.<a href="order.md#0x0_order_add_fill">add_fill</a>(filled_quantity, quote_quantity);
 
     <b>let</b> maker_fees = math::div(math::mul(filled_quantity, maker.total_fees), maker.original_quantity);
     maker.paid_fees = maker.paid_fees + maker_fees;
@@ -1285,14 +1278,15 @@ Updates the orders to reflect their state after the match.
 
 </details>
 
-<a name="0x0_order_update_fill_status"></a>
+<a name="0x0_order_add_fill"></a>
 
-## Function `update_fill_status`
+## Function `add_fill`
 
-Updates the order status based on the filled quantity.
+Increase the executed quantity and cumulative quote quantity for the order.
+Update the order status based on the executed quantity.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_update_fill_status">update_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_add_fill">add_fill</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, fill_quantity: u64, quote_quantity: u64)
 </code></pre>
 
 
@@ -1301,7 +1295,10 @@ Updates the order status based on the filled quantity.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_update_fill_status">update_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_add_fill">add_fill</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, fill_quantity: u64, quote_quantity: u64) {
+    self.executed_quantity = self.executed_quantity + fill_quantity;
+    self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
+
     <b>if</b> (self.executed_quantity == self.original_quantity) {
         self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
     } <b>else</b> <b>if</b> (self.executed_quantity &gt; 0) {

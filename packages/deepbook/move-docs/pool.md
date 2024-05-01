@@ -12,7 +12,7 @@
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `transfer_trade_balances`](#0x0_pool_transfer_trade_balances)
 -  [Function `transfer_settled_amounts`](#0x0_pool_transfer_settled_amounts)
--  [Function `execute_market_order`](#0x0_pool_execute_market_order)
+-  [Function `match_against_book`](#0x0_pool_match_against_book)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
 -  [Function `get_level2_bids`](#0x0_pool_get_level2_bids)
@@ -433,7 +433,7 @@ Place a limit order to the order book.
     <b>let</b> pool_id = self.id.to_inner();
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> =
         <a href="order.md#0x0_order_initial_order">order::initial_order</a>(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
-    self.<a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>(&<b>mut</b> <a href="order.md#0x0_order">order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
+    self.<a href="pool.md#0x0_pool_match_against_book">match_against_book</a>(&<b>mut</b> <a href="order.md#0x0_order">order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
 
     self.<a href="pool.md#0x0_pool_transfer_trade_balances">transfer_trade_balances</a>(<a href="account.md#0x0_account">account</a>, proof, &<b>mut</b> <a href="order.md#0x0_order">order</a>, ctx);
 
@@ -444,8 +444,8 @@ Place a limit order to the order book.
     };
 
     <b>if</b> (<a href="order.md#0x0_order">order</a>.remaining_quantity() &gt; 0) {
-        <b>let</b> copy_order = <a href="order.md#0x0_order">order</a>.copy_order();
-        self.<a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>(copy_order);
+        <b>let</b> order_copy = <a href="order.md#0x0_order">order</a>.copy_order();
+        self.<a href="pool.md#0x0_pool_inject_limit_order">inject_limit_order</a>(order_copy);
     };
 
     <a href="order.md#0x0_order">order</a>
@@ -582,16 +582,16 @@ Transfer any settled amounts from the pool to the account.
 
 </details>
 
-<a name="0x0_pool_execute_market_order"></a>
+<a name="0x0_pool_match_against_book"></a>
 
-## Function `execute_market_order`
+## Function `match_against_book`
 
 Matches the given order and quantity against the order book.
 If is_bid, it will match against asks, otherwise against bids.
 Mutates the order and the maker order as necessary.
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_match_against_book">match_against_book</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
 </code></pre>
 
 
@@ -600,7 +600,7 @@ Mutates the order and the maker order as necessary.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_execute_market_order">execute_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_match_against_book">match_against_book</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,

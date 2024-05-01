@@ -246,17 +246,10 @@ module deepbook::order {
         maker: &mut Order,
         timestamp: u64,
     ): (u64, u64) {
-        let taker_remaining_quantity = taker.original_quantity - taker.executed_quantity;
-        let maker_remaining_quantity = maker.original_quantity - maker.executed_quantity;
-        let filled_quantity = math::min(taker_remaining_quantity, maker_remaining_quantity);
+        let filled_quantity = math::min(taker.remaining_quantity(), maker.remaining_quantity());
         let quote_quantity = math::mul(filled_quantity, maker.price);
-        taker.update_fill_status();
-        maker.update_fill_status();
-
-        taker.executed_quantity = taker.executed_quantity + filled_quantity;
-        maker.executed_quantity = maker.executed_quantity + filled_quantity;
-        taker.cumulative_quote_quantity = taker.cumulative_quote_quantity + quote_quantity;
-        maker.cumulative_quote_quantity = maker.cumulative_quote_quantity + quote_quantity;
+        taker.add_fill(filled_quantity, quote_quantity);
+        maker.add_fill(filled_quantity, quote_quantity);
 
         let maker_fees = math::div(math::mul(filled_quantity, maker.total_fees), maker.original_quantity);
         maker.paid_fees = maker.paid_fees + maker_fees;
@@ -266,8 +259,12 @@ module deepbook::order {
         (filled_quantity, quote_quantity,)
     }
 
-    /// Updates the order status based on the filled quantity.
-    public(package) fun update_fill_status(self: &mut Order) {
+    /// Increase the executed quantity and cumulative quote quantity for the order.
+    /// Update the order status based on the executed quantity.
+    public(package) fun add_fill(self: &mut Order, fill_quantity: u64, quote_quantity: u64) {
+        self.executed_quantity = self.executed_quantity + fill_quantity;
+        self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
+
         if (self.executed_quantity == self.original_quantity) {
             self.status = FILLED;
         } else if (self.executed_quantity > 0) {

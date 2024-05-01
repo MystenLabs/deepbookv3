@@ -117,7 +117,7 @@ module deepbook::pool {
         let pool_id = self.id.to_inner();
         let mut order = 
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
-        self.execute_market_order(&mut order, clock);
+        self.match_against_book(&mut order, clock);
         
         self.transfer_trade_balances(account, proof, &mut order, ctx);
 
@@ -128,8 +128,8 @@ module deepbook::pool {
         };
         
         if (order.remaining_quantity() > 0) {
-            let copy_order = order.copy_order();
-            self.inject_limit_order(copy_order);
+            let order_copy = order.copy_order();
+            self.inject_limit_order(order_copy);
         };
 
         order
@@ -224,7 +224,7 @@ module deepbook::pool {
     /// Matches the given order and quantity against the order book.
     /// If is_bid, it will match against asks, otherwise against bids.
     /// Mutates the order and the maker order as necessary.
-    fun execute_market_order<BaseAsset, QuoteAsset>(
+    fun match_against_book<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         order: &mut Order,
         clock: &Clock,
