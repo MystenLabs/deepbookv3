@@ -29,13 +29,13 @@ const placeOrder = (
     expireTimestamp: number,
 ) => {
     const txb = new TransactionBlock();
-    // Result types: [0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::pool::OrderPlaced<Type_0,Type_1>]
+    // Result types: [DEEPBOOK_PACKAGE_ID::pool::OrderPlaced<Type_0,Type_1>]
     const result = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::deepbook::place_limit_order`,
         arguments: [
-            txb.object(poolID), // 0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::pool::Pool<Type_0,Type_1>
-            txb.object(accountID), // 0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::account::Account
-            txb.object(proofID), // 0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::account::TradeProof
+            txb.object(poolID),
+            txb.object(accountID),
+            txb.object(proofID),
             txb.pure.u64(clientOrderID),
             txb.pure.u8(orderType),
             txb.pure.u64(price),
@@ -66,7 +66,7 @@ const shareAccount = (
     txb.moveCall({
 		target: `${DEEPBOOK_PACKAGE_ID}::account::share`,
 		arguments: [
-			txb.object(accountID), // 0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::account::Account
+			txb.object(accountID),
 		],
     });
 }
