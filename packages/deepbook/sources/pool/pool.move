@@ -139,13 +139,13 @@ module deepbook::pool {
     /// Orders that are submitted earlier has lower order ids.
     public struct Order has store, drop {
         // ID of the order within the pool
-        order_id: u128,
+        order_id: u128, // TODO: remove
         // ID of the order defined by client
         client_order_id: u64,
         // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
         order_type: u8,
         // Price, only used for limit orders
-        price: u64,
+        price: u64, // TODO: remove
         // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
         // Quantity of the order currently held
@@ -219,7 +219,7 @@ module deepbook::pool {
         self.transfer_settled_amounts(account, proof, ctx);
 
         let order_id = encode_order_id(is_bid, price, self.get_order_id(is_bid));
-        let (filled_base_quantity, filled_quote_quantity) = 
+        let (filled_base_quantity, filled_quote_quantity) =
             self.match_order(account.owner(), order_id, client_order_id, quantity, is_bid, clock);
         self.transfer_trade_balances(account, proof, filled_base_quantity, filled_quote_quantity, is_bid, true, ctx);
 
@@ -275,7 +275,7 @@ module deepbook::pool {
     }
 
     /// Given base quantity and quote quantity, deposit the necessary funds from the account
-    /// into the pool and vise versa. If orders have already matched, is_taker, then an additional 
+    /// into the pool and vise versa. If orders have already matched, is_taker, then an additional
     /// transfer must be made in the reverse direction of the opposite asset.
     fun transfer_trade_balances<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -353,7 +353,7 @@ module deepbook::pool {
             let (ref, offset) = self.bids.slice_before(MAX_ORDER_ID);
             (ref, offset, &mut self.bids)
         };
-        
+
         if (ref.is_null()) {
             return (0, 0)
         };
@@ -363,7 +363,8 @@ module deepbook::pool {
         let mut net_quote_quantity = 0;
         let mut orders_to_remove = vector[];
 
-        let mut order = book_side.borrow_mut_ref_offset(ref, offset);
+        // This assumes ref is not null. Returns value at offset `offset` in slice `ref`
+        let mut order = &mut book_side.borrow_slice_mut(ref)[offset];
         while (remaining_quantity > 0 && ((is_bid && order_id < order.order_id) || (!is_bid && order_id > order.order_id)) ) {
             let mut expired_order = false;
             if (order.expire_timestamp < clock.timestamp_ms()) {
@@ -403,7 +404,7 @@ module deepbook::pool {
                 net_base_quantity = net_base_quantity + base_matched_quantity;
                 net_quote_quantity = net_quote_quantity + quote_matched_quantity;
             };
-            
+
             if (order.quantity == 0 || expired_order) {
                 self.state_manager.remove_user_open_order(order.owner, order.order_id);
                 orders_to_remove.push_back(order.order_id);
@@ -418,6 +419,10 @@ module deepbook::pool {
                 break
             }
         };
+
+        // ask orderbook: [1,2,3] [5,6,7]
+        // place a buy order at 2.5
+        // first_leaf/last_leaf functions
 
         // Iterate over orders_to_remove and remove from the book.
         let mut i = 0;
