@@ -16,6 +16,7 @@ const DEEPBOOK_PACKAGE_ID = `0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a
 // Transactions
 // =================================================================
 
+/// Places an order in the pool
 const placeOrder = (
     poolID: string,
     accountID: string,
@@ -47,9 +48,9 @@ const placeOrder = (
     });
 }
 
+/// Create an account and transfers it to the active address
 const createAccount = () => {
     const txb = new TransactionBlock();
-    // Result types: [0xde8bfc352d9c5e2e1ac20499a43368937a0d64c857d42772a0cb7c2c91db3463::account::Account]
     const account = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::account::new`,
     });
@@ -57,6 +58,7 @@ const createAccount = () => {
     txb.transferObjects([account], txb.pure.address(getActiveAddress()));
 }
 
+/// Makes an Account object shared
 const shareAccount = (
     accountID: string,
 ) => {
@@ -73,7 +75,12 @@ const shareAccount = (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // Run against mainnet
+    // Uncomment the transactions you want to execute
+    // createAccount();
+    // shareAccount();
+    // placeOrder();
+
+    // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
 
     console.dir(res, { depth: null });
