@@ -604,10 +604,10 @@ Mutates the order and the maker order as necessary.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (order_info.is_bid()) {
-        <b>let</b> (ref, offset) = self.asks.slice_following(<a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &<b>mut</b> self.asks)
     } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.slice_before(<a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.bids.max_slice();
         (ref, offset, &<b>mut</b> self.bids)
     };
 
@@ -615,7 +615,7 @@ Mutates the order and the maker order as necessary.
 
     <b>let</b> <b>mut</b> fills = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> maker_order = book_side.borrow_mut_ref_offset(ref, offset);
+    <b>let</b> <b>mut</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
     <b>while</b> (order_info.crosses_price(maker_order) ) {
         fills.push_back(order_info.match_maker(maker_order, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()));
 

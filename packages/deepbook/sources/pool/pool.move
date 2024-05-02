@@ -40,8 +40,6 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
-    const MIN_ORDER_ID: u128 = 0;
-    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
