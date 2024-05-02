@@ -13,7 +13,6 @@
 
 
 <pre><code><b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
-<b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map">0x2::vec_map</a>;
 </code></pre>
@@ -39,7 +38,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 <dl>
 <dt>
-<code>reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>&gt;</code>
+<code>reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>&gt;</code>
 </dt>
 <dd>
 
@@ -110,7 +109,7 @@ Add a reference pool. Can be performed by the DeepbookAdminCap owner.
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
 ) {
     <b>let</b> (base, quote) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
-    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
 
     <b>assert</b>!(base == deep_type || quote == deep_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
 

@@ -3,8 +3,7 @@
 
 module deepbook::deep_reference_price {
     use std::{
-        type_name,
-        ascii::String,
+        type_name::{Self, TypeName},
     };
 
     use sui::vec_map::{Self, VecMap};
@@ -17,7 +16,7 @@ module deepbook::deep_reference_price {
     /// DEEP/SUI, DEEP/USDC, DEEP/WETH
     public struct DeepReferencePools has store {
         // Base or quote -> pool_key
-        reference_pools: VecMap<String, PoolKey>,
+        reference_pools: VecMap<TypeName, PoolKey>,
     }
 
     public(package) fun new(): DeepReferencePools {
@@ -32,7 +31,7 @@ module deepbook::deep_reference_price {
         pool: &Pool<BaseAsset, QuoteAsset>,
     ) {
         let (base, quote) = pool.get_base_quote_types();
-        let deep_type = type_name::get<DEEP>().into_string();
+        let deep_type = type_name::get<DEEP>();
 
         assert!(base == deep_type || quote == deep_type, EIneligiblePool);
 

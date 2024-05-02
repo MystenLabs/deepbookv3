@@ -12,7 +12,6 @@ module deepbook::pool {
     };
 
     use std::{
-        ascii::String,
         type_name::{Self, TypeName},
     };
 
@@ -588,10 +587,10 @@ module deepbook::pool {
     /// Get the base and quote asset of pool, return as ascii strings
     public(package) fun get_base_quote_types<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
-    ): (String, String) {
+    ): (TypeName, TypeName) {
         (
-            type_name::get<BaseAsset>().into_string(),
-            type_name::get<QuoteAsset>().into_string()
+            type_name::get<BaseAsset>(),
+            type_name::get<QuoteAsset>()
         )
     }
 
