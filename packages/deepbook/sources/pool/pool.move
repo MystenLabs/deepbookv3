@@ -13,7 +13,7 @@ module deepbook::pool {
 
     use std::{
         ascii::String,
-        type_name,
+        type_name::{Self, TypeName},
     };
 
     use deepbook::{
@@ -83,6 +83,11 @@ module deepbook::pool {
         deepbook_balance: Balance<DEEP>,
 
         state_manager: StateManager,
+    }
+
+    public struct PoolKey has copy, drop, store {
+        base: TypeName,
+        quote: TypeName,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
@@ -506,8 +511,8 @@ module deepbook::pool {
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
-            bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
-            asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
+            bids: big_vector::empty(10000, 1000, ctx), // TODO: update base on benchmark
+            asks: big_vector::empty(10000, 1000, ctx), // TODO: update base on benchmark
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
             deep_config: deep_price::new(),
@@ -590,16 +595,27 @@ module deepbook::pool {
         )
     }
 
-    /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-    /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
+    /// Get the pool key
     public(package) fun key<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>
-    ): String {
-        let (base, quote) = get_base_quote_types(self);
-        if (utils::compare(&base, &quote)) {
-            utils::concat_ascii(base, quote)
-        } else {
-            utils::concat_ascii(quote, base)
+        _self: &Pool<BaseAsset, QuoteAsset>
+    ): PoolKey {
+        let base_type = type_name::get<BaseAsset>();
+        let quote_type = type_name::get<QuoteAsset>();
+        PoolKey {
+            base: base_type,
+            quote: quote_type,
+        }
+    }
+
+    // Get the reverse pool key for validation
+    public(package) fun rev_key<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>
+    ): PoolKey {
+        let base_type = type_name::get<BaseAsset>();
+        let quote_type = type_name::get<QuoteAsset>();
+        PoolKey {
+            base: base_type,
+            quote: quote_type,
         }
     }
 

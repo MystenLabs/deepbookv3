@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::state { // Consider renaming this module
-    use std::ascii::String;
-
     use sui::{
         balance::{Self, Balance},
-        table::{Self, Table},
+        bag::{Self, Bag},
         sui::SUI,
         clock::Clock,
     };
@@ -30,11 +28,7 @@ module deepbook::state { // Consider renaming this module
     public struct State has key {
         id: UID,
         // TODO: upgrade-ability plan? do we need?
-        pools: Table<String, PoolMetadata>,
-        // pools: Bag, (other places where table is used as well)
-        // bag::add<Key,Value>()
-        // key = PoolKey<Base, Quote>
-        // string concatenation of base and quote no longer needed
+        pools: Bag,
         deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
@@ -43,7 +37,7 @@ module deepbook::state { // Consider renaming this module
     public(package) fun create_and_share(ctx: &mut TxContext) {
         let state = State {
             id: object::new(ctx),
-            pools: table::new(ctx),
+            pools: bag::new(ctx),
             deep_reference_pools: deep_reference_price::new(),
             vault: balance::zero(),
         };
@@ -71,7 +65,7 @@ module deepbook::state { // Consider renaming this module
             ctx
         );
 
-        assert!(!self.pools.contains(pool.key()), EPoolAlreadyExists);
+        assert!(!self.pools.contains(pool.key()) && !self.pools.contains(pool.rev_key()), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
         self.pools.add(pool.key(), pool_metadata);
@@ -215,7 +209,7 @@ module deepbook::state { // Consider renaming this module
         let pool_key = pool.key();
         assert!(self.pools.contains(pool_key), EPoolDoesNotExist);
 
-        let pool_metadata = &mut self.pools[pool_key];
+        let pool_metadata: &mut PoolMetadata = &mut self.pools[pool_key];
         pool_metadata.refresh(ctx);
         pool_metadata
     }

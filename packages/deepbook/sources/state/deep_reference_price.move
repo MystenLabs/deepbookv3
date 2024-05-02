@@ -9,7 +9,7 @@ module deepbook::deep_reference_price {
 
     use sui::vec_map::{Self, VecMap};
 
-    use deepbook::pool::{Pool, DEEP}; // TODO: DEEP token
+    use deepbook::pool::{Pool, PoolKey, DEEP}; // TODO: DEEP token
 
     const EIneligiblePool: u64 = 1;
 
@@ -17,7 +17,7 @@ module deepbook::deep_reference_price {
     /// DEEP/SUI, DEEP/USDC, DEEP/WETH
     public struct DeepReferencePools has store {
         // Base or quote -> pool_key
-        reference_pools: VecMap<String, String>,
+        reference_pools: VecMap<String, PoolKey>,
     }
 
     public(package) fun new(): DeepReferencePools {
