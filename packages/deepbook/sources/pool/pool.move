@@ -152,7 +152,7 @@ module deepbook::pool {
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
 
         // Calculate the taker balances. These are derived from executed quantity.
-        let (base_fee, quote_fee, deep_fee) = 
+        let (base_fee, quote_fee, deep_fee) =
             self.deep_config.calculate_fees(taker_fee, executed_quantity, cumulative_quote_quantity);
         let mut total_fees = base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
@@ -165,7 +165,7 @@ module deepbook::pool {
         };
 
         // Calculate the maker balances. These are derived from the remaining quantity.
-        let (base_fee, quote_fee, deep_fee) = 
+        let (base_fee, quote_fee, deep_fee) =
             self.deep_config.calculate_fees(maker_fee, executed_quantity, remaining_quantity * order_info.price());
         total_fees = total_fees + base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
@@ -669,14 +669,6 @@ module deepbook::pool {
         }
     }
 
-    /// Returns if the order fee is paid in deep tokens
-    fun fee_is_deep<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>
-    ): bool {
-        self.deep_config.is_some()
-    }
-
-
     /// Get the n ticks from the best bid or ask
     /// Returns two vectors of u64.
     /// The first is a list of all valid prices.
@@ -744,7 +736,7 @@ module deepbook::pool {
 
         (price_vec, depth_vec)
     }
-    
+
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
         let amount = self.state_manager.reset_burn_balance();
