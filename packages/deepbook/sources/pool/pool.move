@@ -32,6 +32,8 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
+    const EInvalidPriceRange: u64 = 6;
+    const EInvalidTicks: u64 = 7;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -310,6 +312,8 @@ module deepbook::pool {
         price_high: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
+        assert!(price_low <= price_high, EInvalidPriceRange);
+
         let mut price_vec = vector[];
         let mut depth_vec = vector[];
 
@@ -336,7 +340,7 @@ module deepbook::pool {
             if (orderbook.valid_next(ref, offset)) {
                 (ref, offset, order) = orderbook.borrow_next(ref, offset);
                 let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
-                if (order_price > cur_price) {
+                if (order_price != cur_price) {
                     price_vec.push_back(cur_price);
                     depth_vec.push_back(cur_quantity);
                     cur_quantity = 0;
@@ -354,12 +358,18 @@ module deepbook::pool {
     }
 
     /// Get the n ticks from the mid price
+    /// Returns four vectors of u64.
+    /// The first two are the bid prices and quantities.
+    /// The latter two are the ask prices and quantities.
     public(package) fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _ticks: u64,
-    ): (vector<u64>, vector<u64>) {
+        self: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
         // TODO: implement
-        (vector[], vector[])
+        let (bid_price, bid_quantity) = self.get_level2_ticks(ticks, true);
+        let (ask_price, ask_quantity) = self.get_level2_ticks(ticks, false);
+
+        (bid_price, bid_quantity, ask_price, ask_quantity)
     }
 
     /// 1. Remove the order from the order book and from the user's open orders.
@@ -691,6 +701,75 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>
     ): bool {
         self.deep_config.is_some()
+    }
+
+
+    /// Get the n ticks from the best bid or ask
+    /// Returns two vectors of u64.
+    /// The first is a list of all valid prices.
+    /// The latter is the corresponding quantity list.
+    fun get_level2_ticks<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+        is_bid: bool,
+    ): (vector<u64>, vector<u64>) {
+        // TODO: Consider making this a public function
+        assert!(ticks > 0, EInvalidTicks);
+
+        let mut price_vec = vector[];
+        let mut depth_vec = vector[];
+
+        let orderbook;
+        if (is_bid) {
+            orderbook = &self.bids;
+        } else {
+            orderbook = &self.asks;
+        };
+        // find the largest order in bid or smallest order in ask
+        let (mut ref, mut offset) = if (is_bid) {
+            orderbook.max_slice()
+        } else {
+            orderbook.min_slice()
+        };
+        // Check if orderbook is empty
+        if (ref.is_null()) {
+            return (price_vec, depth_vec)
+        };
+
+        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+        let mut ticks_left = ticks;
+
+        while (ticks_left > 0) {
+            let condition = if (is_bid) {
+                orderbook.valid_prev(ref, offset)
+            } else {
+                orderbook.valid_next(ref, offset)
+            };
+            if (condition) {
+                (ref, offset, order) = if (is_bid) {
+                    orderbook.borrow_prev(ref, offset)
+                } else {
+                    orderbook.borrow_next(ref, offset)
+                };
+                let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
+                if (order_price != cur_price) {
+                    price_vec.push_back(cur_price);
+                    depth_vec.push_back(cur_quantity);
+                    cur_quantity = 0;
+                    cur_price = order_price;
+                    ticks_left = ticks_left - 1;
+                };
+                cur_quantity = cur_quantity + order.book_quantity();
+            } else {
+                price_vec.push_back(cur_price);
+                depth_vec.push_back(cur_quantity);
+                break
+            }
+        };
+
+        (price_vec, depth_vec)
     }
 
     #[allow(unused_function)]

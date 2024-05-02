@@ -260,7 +260,7 @@ module deepbook::deepbook {
     public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
-    ): (vector<u64>, vector<u64>) {
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
         pool.get_level2_ticks_from_mid(ticks)
     }
 }
