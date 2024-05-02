@@ -259,6 +259,21 @@ module deepbook::big_vector {
 
     /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
     /// Assumes valid_next is true
+    /// Returns the next slice reference, the offset within the slice, and the immutable reference to the value
+    public fun borrow_next<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
+        let slice = self.borrow_slice(ref);
+        if (offset + 1 < slice.vals.length()) {
+            (ref, offset + 1, &slice[offset + 1])
+        } else {
+            let next_ref = slice.next();
+            let next_slice = self.borrow_slice(next_ref);
+            (next_ref, 0, &next_slice.vals[0])
+        }
+    }
+
+    /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
+    /// Assumes valid_next is true
+    /// Returns the next slice reference, the offset within the slice, and the mutable reference to the value
     public fun borrow_mut_next<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
         let slice = self.borrow_slice_mut(ref);
         if (offset + 1 < slice.vals.length()) {
@@ -278,6 +293,23 @@ module deepbook::big_vector {
 
     /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
     /// Assumes valid_prev is true
+    /// Returns the prev slice reference, the offset within the slice, and the immutable reference to the value
+    public fun borrow_prev<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
+        let slice = self.borrow_slice(ref);
+        if (offset > 0) {
+            (ref, offset - 1, &slice[offset - 1])
+        } else {
+            let prev_ref = slice.prev();
+            // Borrow the previous slice and get the last element
+            let prev_slice = self.borrow_slice(prev_ref);
+            let last_index = prev_slice.vals.length() - 1;
+            (prev_ref, last_index, &prev_slice[last_index])
+        }
+    }
+
+    /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
+    /// Assumes valid_prev is true
+    /// Returns the prev slice reference, the offset within the slice, and the mutable reference to the value
     public fun borrow_mut_prev<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
         let slice = self.borrow_slice_mut(ref);
         if (offset > 0) {
