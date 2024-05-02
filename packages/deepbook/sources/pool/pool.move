@@ -23,7 +23,6 @@ module deepbook::pool {
         account::{Account, TradeProof},
         state_manager::{Self, StateManager, TradeParams},
         utils,
-        math,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -75,7 +74,7 @@ module deepbook::pool {
         asks: BigVector<Order>,
         next_bid_order_id: u64,
         next_ask_order_id: u64,
-        deep_config: Option<DeepPrice>,
+        deep_config: DeepPrice,
 
         base_balances: Balance<BaseAsset>,
         quote_balances: Balance<QuoteAsset>,
@@ -110,7 +109,7 @@ module deepbook::pool {
         self.transfer_settled_amounts(account, proof, ctx);
 
         let order_id = utils::encode_order_id(is_bid, price, self.get_order_id(is_bid));
-        let fee_is_deep = self.fee_is_deep();
+        let fee_is_deep = self.deep_config.verified();
         let owner = account.owner();
         let pool_id = self.id.to_inner();
         let mut order_info = 
@@ -148,55 +147,34 @@ module deepbook::pool {
         let (mut quote_in, mut quote_out) = (0, 0);
         let mut deep_in = 0;
         let (taker_fee, maker_fee) = self.state_manager.fees_for_user(account.owner());
-        let (executed_quantity, remaining_quantity, cumulative_quote_quantity) = 
-            (order_info.executed_quantity(), order_info.remaining_quantity(), order_info.cumulative_quote_quantity());
+        let executed_quantity = order_info.executed_quantity();
+        let remaining_quantity = order_info.remaining_quantity();
+        let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
 
         // Calculate the taker balances. These are derived from executed quantity.
+        let (base_fee, quote_fee, deep_fee) = 
+            self.deep_config.calculate_fees(taker_fee, executed_quantity, cumulative_quote_quantity);
+        let mut total_fees = base_fee + quote_fee + deep_fee;
+        deep_in = deep_in + deep_fee;
         if (order_info.is_bid()) {
-            quote_in = quote_in + cumulative_quote_quantity;
+            quote_in = quote_in + cumulative_quote_quantity + quote_fee;
             base_out = base_out + executed_quantity;
-            if (self.fee_is_deep()) {
-                deep_in = deep_in + math::mul(taker_fee, math::mul(executed_quantity, self.deep_config.borrow().deep_per_quote()));
-            } else {
-                quote_in = quote_in + math::mul(taker_fee, executed_quantity);
-            }
         } else {
-            base_in = base_in + executed_quantity;
+            base_in = base_in + executed_quantity + base_fee;
             quote_out = quote_out + cumulative_quote_quantity;
-            if (self.fee_is_deep()) {
-                deep_in = deep_in + math::mul(taker_fee, math::mul(executed_quantity, self.deep_config.borrow().deep_per_base()));
-            } else {
-                base_in = base_in + math::mul(taker_fee, executed_quantity);
-            }
         };
 
         // Calculate the maker balances. These are derived from the remaining quantity.
+        let (base_fee, quote_fee, deep_fee) = 
+            self.deep_config.calculate_fees(maker_fee, executed_quantity, remaining_quantity * order_info.price());
+        total_fees = total_fees + base_fee + quote_fee + deep_fee;
+        deep_in = deep_in + deep_fee;
         if (order_info.is_bid()) {
-            quote_in = quote_in + remaining_quantity * order_info.price();
-            if (self.fee_is_deep()) {
-                deep_in = deep_in + math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_quote()));
-            } else {
-                quote_in = quote_in + math::mul(maker_fee, quote_in);
-            }
+            quote_in = quote_in + remaining_quantity * order_info.price() + quote_fee;
         } else {
-            base_in = base_in + remaining_quantity;
-            if (self.fee_is_deep()) {
-                deep_in = deep_in + math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_base()));
-            } else {
-                base_in = base_in + math::mul(maker_fee, base_in);
-            }
+            base_in = base_in + remaining_quantity + base_fee;
         };
 
-        // Calculate the total fees for the order.
-        let total_fees = if (self.fee_is_deep()) {
-            deep_in
-        } else {
-            if (order_info.is_bid()) {
-                quote_in - order_info.original_quantity() * order_info.price()
-            } else {
-                base_in - order_info.original_quantity()
-            }
-        };
         order_info.set_total_fees(total_fees);
 
         if (base_in > 0) self.deposit_base(account, proof, base_in, ctx);
@@ -441,7 +419,7 @@ module deepbook::pool {
             asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
-            deep_config: option::none(),
+            deep_config: deep_price::new(),
             tick_size,
             lot_size,
             min_size,
@@ -498,12 +476,7 @@ module deepbook::pool {
         quote_conversion_rate: u64,
         timestamp: u64,
     ) {
-        if (self.deep_config.is_none()) {
-            self.deep_config.fill(deep_price::empty());
-        };
-        self.deep_config
-            .borrow_mut()
-            .add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
+        self.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
     /// Update the pool's next pool state.
@@ -653,13 +626,6 @@ module deepbook::pool {
             self.next_ask_order_id = self.next_ask_order_id + 1;
             self.next_ask_order_id
         }
-    }
-
-    /// Returns if the order fee is paid in deep tokens
-    fun fee_is_deep<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>
-    ): bool {
-        self.deep_config.is_some()
     }
 
     #[allow(unused_function)]
