@@ -260,7 +260,7 @@ module deepbook::big_vector {
     /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
     /// Assumes valid_next is true
     /// Returns the next slice reference, the offset within the slice, and the immutable reference to the value
-    public fun borrow_next<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
+    public fun borrow_next<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
         let slice = self.borrow_slice(ref);
         if (offset + 1 < slice.vals.length()) {
             (ref, offset + 1, &slice[offset + 1])
@@ -294,7 +294,7 @@ module deepbook::big_vector {
     /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
     /// Assumes valid_prev is true
     /// Returns the prev slice reference, the offset within the slice, and the immutable reference to the value
-    public fun borrow_prev<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
+    public fun borrow_prev<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
         let slice = self.borrow_slice(ref);
         if (offset > 0) {
             (ref, offset - 1, &slice[offset - 1])
