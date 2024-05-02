@@ -35,10 +35,10 @@ module deepbook::order {
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
 
-    /// OrderInfo struct represents all the information about an order.
+    /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and 
-    /// gets updated as the order gets filled. It is returned to the user at the 
-    /// end of the order lifecycle.
+    /// gets updated until it is completed or placed in the book. 
+    /// It is returned to the user at the end of the order lifecycle.
     public struct OrderInfo has store, drop {
         // ID of the pool
         pool_id: ID,

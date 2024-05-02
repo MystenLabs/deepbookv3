@@ -61,10 +61,10 @@ All order matching happens in this module.
 
 ## Struct `OrderInfo`
 
-OrderInfo struct represents all the information about an order.
+OrderInfo struct represents all order information.
 This objects gets created at the beginning of the order lifecycle and
-gets updated as the order gets filled. It is returned to the user at the
-end of the order lifecycle.
+gets updated until it is completed or placed in the book.
+It is returned to the user at the end of the order lifecycle.
 
 
 <pre><code><b>struct</b> <a href="order.md#0x0_order_OrderInfo">OrderInfo</a> <b>has</b> drop, store
