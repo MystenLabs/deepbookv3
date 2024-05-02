@@ -23,6 +23,7 @@ module deepbook::pool {
         account::{Account, TradeProof},
         state_manager::{Self, StateManager, TradeParams},
         utils,
+        math,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -270,14 +271,61 @@ module deepbook::pool {
     }
 
     /// Given an amount in and direction, calculate amount out
+    /// For bids, amount_in is in quote asset terms and amount_out is in base asset terms
+    /// For asks, amount_in is in base asset terms and amount_out is in quote asset terms
     /// Will return (amount_out, amount_in_used)
     public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _amount_in: u64,
-        _is_bid: bool,
-    ): u64 {
-        // TODO: implement
-        0
+        self: &Pool<BaseAsset, QuoteAsset>,
+        amount_in: u64,
+        is_bid: bool,
+    ): (u64, u64) {
+        let (mut ref, mut offset, orderbook) = if (is_bid) {
+            let (ref, offset) = self.asks.min_slice();
+            (ref, offset, &self.asks)
+        } else {
+            let (ref, offset) = self.bids.max_slice();
+            (ref, offset, &self.bids)
+        };
+
+        if (ref.is_null()) return (0, 0);
+
+        let mut amount_out = 0;
+        let mut amount_in_left = amount_in;
+
+        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+
+        while (amount_in_left > 0) {
+            if (is_bid) {
+                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                amount_out = amount_out + math::div(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            } else {
+                let matched_amount = math::min(amount_in_left, cur_quantity);
+                amount_out = amount_out + math::mul(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            };
+
+            let valid_order = if (is_bid) {
+                orderbook.valid_next(ref, offset)
+            } else {
+                orderbook.valid_prev(ref, offset)
+            };
+            if (valid_order) {
+                (ref, offset, order) = if (is_bid) {
+                    orderbook.borrow_next(ref, offset)
+                } else {
+                    orderbook.borrow_prev(ref, offset)
+                };
+                (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
+                cur_quantity = order.book_quantity();
+            } else {
+                break
+            };
+        };
+
+        (amount_out, amount_in - amount_in_left)
     }
 
     /// Get the level2 bids or asks between price_low and price_high.
@@ -343,7 +391,6 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
     ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
-        // TODO: implement
         let (bid_price, bid_quantity) = self.get_level2_ticks(ticks, true);
         let (ask_price, ask_quantity) = self.get_level2_ticks(ticks, false);
 
@@ -707,12 +754,12 @@ module deepbook::pool {
         let mut ticks_left = ticks;
 
         while (ticks_left > 0) {
-            let condition = if (is_bid) {
+            let valid_order = if (is_bid) {
                 orderbook.valid_prev(ref, offset)
             } else {
                 orderbook.valid_next(ref, offset)
             };
-            if (condition) {
+            if (valid_order) {
                 (ref, offset, order) = if (is_bid) {
                     orderbook.borrow_prev(ref, offset)
                 } else {

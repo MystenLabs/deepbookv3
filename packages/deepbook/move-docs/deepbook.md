@@ -608,10 +608,10 @@ Public facing function to get open orders for a user.
 
 ## Function `get_amount_out`
 
-Public facing function to get amount_out given amount_in.
+Public facing function to get (amount_out, amount_in_used).
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64, is_bid: bool): u64
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64, is_bid: bool): (u64, u64)
 </code></pre>
 
 
@@ -624,7 +624,7 @@ Public facing function to get amount_out given amount_in.
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     amount_in: u64,
     is_bid: bool,
-): u64 {
+): (u64, u64) {
     <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>(amount_in, is_bid)
 }
 </code></pre>

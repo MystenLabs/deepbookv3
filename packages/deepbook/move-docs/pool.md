@@ -47,6 +47,7 @@
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
@@ -674,10 +675,12 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 ## Function `get_amount_out`
 
 Given an amount in and direction, calculate amount out
+For bids, amount_in is in quote asset terms and amount_out is in base asset terms
+For asks, amount_in is in base asset terms and amount_out is in quote asset terms
 Will return (amount_out, amount_in_used)
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _amount_in: u64, _is_bid: bool): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64, is_bid: bool): (u64, u64)
 </code></pre>
 
 
@@ -687,12 +690,57 @@ Will return (amount_out, amount_in_used)
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _amount_in: u64,
-    _is_bid: bool,
-): u64 {
-    // TODO: implement
-    0
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    amount_in: u64,
+    is_bid: bool,
+): (u64, u64) {
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, orderbook) = <b>if</b> (is_bid) {
+        <b>let</b> (ref, offset) = self.asks.min_slice();
+        (ref, offset, &self.asks)
+    } <b>else</b> {
+        <b>let</b> (ref, offset) = self.bids.max_slice();
+        (ref, offset, &self.bids)
+    };
+
+    <b>if</b> (ref.is_null()) <b>return</b> (0, 0);
+
+    <b>let</b> <b>mut</b> amount_out = 0;
+    <b>let</b> <b>mut</b> amount_in_left = amount_in;
+
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+
+    <b>while</b> (amount_in_left &gt; 0) {
+        <b>if</b> (is_bid) {
+            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+            amount_out = amount_out + math::div(matched_amount, cur_price);
+            amount_in_left = amount_in_left - matched_amount;
+        } <b>else</b> {
+            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+            amount_out = amount_out + math::mul(matched_amount, cur_price);
+            amount_in_left = amount_in_left - matched_amount;
+        };
+
+        <b>let</b> valid_order = <b>if</b> (is_bid) {
+            orderbook.valid_next(ref, offset)
+        } <b>else</b> {
+            orderbook.valid_prev(ref, offset)
+        };
+        <b>if</b> (valid_order) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
+                orderbook.borrow_next(ref, offset)
+            } <b>else</b> {
+                orderbook.borrow_prev(ref, offset)
+            };
+            (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+            cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+        } <b>else</b> {
+            <b>break</b>
+        };
+    };
+
+    (amount_out, amount_in - amount_in_left)
 }
 </code></pre>
 
@@ -798,7 +846,6 @@ The latter two are the ask prices and quantities.
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
     <b>let</b> (bid_price, bid_quantity) = self.<a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>(ticks, <b>true</b>);
     <b>let</b> (ask_price, ask_quantity) = self.<a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>(ticks, <b>false</b>);
 
@@ -1638,12 +1685,12 @@ The latter is the corresponding quantity list.
     <b>let</b> <b>mut</b> ticks_left = ticks;
 
     <b>while</b> (ticks_left &gt; 0) {
-        <b>let</b> condition = <b>if</b> (is_bid) {
+        <b>let</b> valid_order = <b>if</b> (is_bid) {
             orderbook.valid_prev(ref, offset)
         } <b>else</b> {
             orderbook.valid_next(ref, offset)
         };
-        <b>if</b> (condition) {
+        <b>if</b> (valid_order) {
             (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
                 orderbook.borrow_prev(ref, offset)
             } <b>else</b> {
