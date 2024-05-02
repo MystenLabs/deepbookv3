@@ -187,7 +187,7 @@ module deepbook::order {
 
     /// Asserts that the order doesn't have any fills.
     public(package) fun assert_post_only(self: &Order) {
-        if (self.order_type == POST_ONLY) 
+        if (self.order_type == POST_ONLY)
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
     }
 

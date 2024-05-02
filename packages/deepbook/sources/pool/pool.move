@@ -40,8 +40,6 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
-    const MIN_ORDER_ID: u128 = 0;
-    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -113,10 +111,10 @@ module deepbook::pool {
         let fee_is_deep = self.fee_is_deep();
         let owner = account.owner();
         let pool_id = self.id.to_inner();
-        let mut order = 
+        let mut order =
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
         self.match_against_book(&mut order, clock);
-        
+
         self.transfer_trade_balances(account, proof, &mut order, ctx);
 
         order.assert_post_only();
@@ -124,7 +122,7 @@ module deepbook::pool {
         if (order.is_immediate_or_cancel() || order.is_complete()) {
             return order
         };
-        
+
         if (order.remaining_quantity() > 0) {
             let order_copy = order.copy_order();
             self.inject_limit_order(order_copy);
@@ -149,7 +147,7 @@ module deepbook::pool {
         let (mut quote_in, mut quote_out) = (0, 0);
         let mut deep_in = 0;
         let (taker_fee, maker_fee) = (self.state_manager.taker_fee_for_user(account.owner()), self.state_manager.maker_fee());
-        let (executed_quantity, remaining_quantity, cumulative_quote_quantity) = 
+        let (executed_quantity, remaining_quantity, cumulative_quote_quantity) =
             (order.executed_quantity(), order.remaining_quantity(), order.cumulative_quote_quantity());
 
         // Calculate the taker balances. These are derived from executed quantity.
@@ -228,13 +226,13 @@ module deepbook::pool {
         clock: &Clock,
     ) {
         let (mut ref, mut offset, book_side) = if (order.is_bid()) {
-            let (ref, offset) = self.asks.slice_following(MIN_ORDER_ID);
+            let (ref, offset) = self.asks.min_slice();
             (ref, offset, &mut self.asks)
         } else {
-            let (ref, offset) = self.bids.slice_before(MAX_ORDER_ID);
+            let (ref, offset) = self.bids.max_slice();
             (ref, offset, &mut self.bids)
         };
-        
+
         if (ref.is_null()) return;
 
         let mut executed_base_quantity = 0;
@@ -242,7 +240,7 @@ module deepbook::pool {
         let mut remove_order_ids = vector[];
         let mut remove_order_owners = vector[];
 
-        let mut other_order = book_side.borrow_mut_ref_offset(ref, offset);
+        let mut other_order = &mut book_side.borrow_slice_mut(ref)[offset];
         while (order.remaining_quantity() > 0 && order.can_match(other_order) ) {
             if (other_order.is_expired(clock.timestamp_ms())) {
                 other_order.set_expired();
@@ -251,7 +249,7 @@ module deepbook::pool {
                 continue
             };
 
-            let (filled_quantity, quote_quantity) = 
+            let (filled_quantity, quote_quantity) =
                 order.match_orders(other_order, clock.timestamp_ms());
             executed_base_quantity = executed_base_quantity + filled_quantity;
             executed_quote_quantity = executed_quote_quantity + quote_quantity;

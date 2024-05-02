@@ -251,12 +251,6 @@ module deepbook::big_vector {
         &mut slice[offset]
     }
 
-    /// This assumes SliceRef is not null. Returns value at offset `offset` in slice `ref`
-    public fun borrow_mut_ref_offset<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): &mut E {
-        let slice = self.borrow_slice_mut(ref);
-        &mut slice[offset]
-    }
-
     /// Return whether there is a valid next value in BigVector
     public fun valid_next<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): bool {
         let slice = self.borrow_slice(ref);
@@ -444,6 +438,10 @@ module deepbook::big_vector {
         }
     }
 
+    /// Find the slice that contains the key-value pair corresponding
+    /// to the previous key in `self`. Returns the reference to the slice
+    /// and the local offset within the slice if it exists, or (NO_SLICE, 0),
+    /// if there is no matching key-value pair.
     public fun slice_before<E: store>(
         self: &BigVector<E>,
         key: u128,
@@ -453,24 +451,47 @@ module deepbook::big_vector {
         };
 
         let (ix, leaf, off) = self.find_leaf(key);
-
-        // If the key index is 0 or the key is less than the first key in the leaf
-        if (off == 0 || key < leaf.keys[0]) {
+        if (off == 0) {
             let prev_ref = leaf.prev();
             if (prev_ref.is_null()) {
-                // If there is no previous slice, return NO_SLICE
                 (SliceRef { ix: NO_SLICE }, 0)
             } else {
-                // Borrow the previous slice to get the last key's index
                 let prev_slice = self.borrow_slice(prev_ref);
                 (prev_ref, prev_slice.keys.length() - 1)
             }
         } else {
-            // Return the current slice with the index decremented by one if the key does not exactly match
-            // or use the found offset otherwise
-            let actual_offset = off - 1;
-            (SliceRef { ix }, actual_offset)
+            (SliceRef { ix }, off - 1)
         }
+    }
+
+    /// Find the slice that contains the key-value pair corresponding
+    /// to the minimum key in `self`. Returns the reference to the
+    /// slice and the local offset within the slice if it exists, or
+    /// (NO_SLICE, 0), if there is no matching key-value pair.
+    public fun min_slice<E: store>(
+        self: &BigVector<E>,
+    ): (SliceRef, u64) {
+        if (self.root_id == NO_SLICE) {
+            return (SliceRef { ix: NO_SLICE }, 0)
+        };
+
+        let (ix, _, off) = self.find_min_leaf();
+        (SliceRef { ix }, off)
+    }
+
+    /// Find the slice that contains the key-value pair corresponding
+    /// to the maximum key in `self`. Returns the reference to the
+    /// slice and the local offset within the slice if it exists, or
+    /// (NO_SLICE, 0), if there is no matching key-value pair.
+    public fun max_slice<E: store>(
+        self: &BigVector<E>,
+    ): (SliceRef, u64) {
+        if (self.root_id == NO_SLICE) {
+            return (SliceRef { ix: NO_SLICE }, 0)
+        };
+
+        let (ix, _, off) = self.find_max_leaf();
+        (SliceRef { ix }, off)
     }
 
     /// Borrow a slice from this vector.
@@ -646,6 +667,44 @@ module deepbook::big_vector {
         let off = leaf.bisect_left(key);
 
         (slice_id, leaf, off)
+    }
+
+    /// Find the minimum leaf node that contains the smallest key in the BigVector.
+    /// Assumes `self` is non-empty.
+    fun find_min_leaf<E: store>(
+        self: &BigVector<E>
+    ): (u64, &Slice<E>, u64) {
+        let (mut slice_id, mut depth) = (self.root_id, self.depth);
+
+        // Traverse down to the leftmost leaf node
+        while (depth > 0) {
+            let slice: &Slice<u64> = df::borrow(&self.id, slice_id);
+            slice_id = slice.vals[0];  // Always take the leftmost child
+            depth = depth - 1;
+        };
+
+        let leaf: &Slice<E> = df::borrow(&self.id, slice_id);
+
+        (slice_id, leaf, 0)
+    }
+
+    /// Find the maximum leaf node that contains the largest key in the BigVector.
+    /// Assumes `self` is non-empty.
+    fun find_max_leaf<E: store>(
+        self: &BigVector<E>
+    ): (u64, &Slice<E>, u64) {
+        let (mut slice_id, mut depth) = (self.root_id, self.depth);
+
+        // Traverse down to the rightmost leaf node
+        while (depth > 0) {
+            let slice: &Slice<u64> = df::borrow(&self.id, slice_id);
+            slice_id = slice.vals[slice.keys.length()]; // Always take the rightmost child
+            depth = depth - 1;
+        };
+
+        let leaf: &Slice<E> = df::borrow(&self.id, slice_id);
+
+        (slice_id, leaf, leaf.keys.length() - 1)
     }
 
     /// Find the position in `slice.keys` of `key` if it exists, or
