@@ -6,13 +6,14 @@
 
 
 -  [Struct `DeepPrice`](#0x0_deep_price_DeepPrice)
--  [Function `empty`](#0x0_deep_price_empty)
+-  [Function `new`](#0x0_deep_price_new)
 -  [Function `add_price_point`](#0x0_deep_price_add_price_point)
--  [Function `deep_per_base`](#0x0_deep_price_deep_per_base)
--  [Function `deep_per_quote`](#0x0_deep_price_deep_per_quote)
+-  [Function `verified`](#0x0_deep_price_verified)
+-  [Function `calculate_fees`](#0x0_deep_price_calculate_fees)
 
 
-<pre><code></code></pre>
+<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+</code></pre>
 
 
 
@@ -67,13 +68,13 @@
 
 </details>
 
-<a name="0x0_deep_price_empty"></a>
+<a name="0x0_deep_price_new"></a>
 
-## Function `empty`
+## Function `new`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_empty">empty</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new">new</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>
 </code></pre>
 
 
@@ -82,7 +83,7 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_empty">empty</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new">new</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
     // Initialize the DEEP price points
     <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
         last_insert_timestamp: 0,
@@ -129,13 +130,13 @@ Calculate the rolling average and update deep_per_base, deep_per_quote.
 
 </details>
 
-<a name="0x0_deep_price_deep_per_base"></a>
+<a name="0x0_deep_price_verified"></a>
 
-## Function `deep_per_base`
+## Function `verified`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_base">deep_per_base</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): bool
 </code></pre>
 
 
@@ -144,8 +145,10 @@ Calculate the rolling average and update deep_per_base, deep_per_quote.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_base">deep_per_base</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>): u64 {
-    <a href="deep_price.md#0x0_deep_price">deep_price</a>.deep_per_base
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
+): bool {
+    self.last_insert_timestamp &gt; 0
 }
 </code></pre>
 
@@ -153,13 +156,13 @@ Calculate the rolling average and update deep_per_base, deep_per_quote.
 
 </details>
 
-<a name="0x0_deep_price_deep_per_quote"></a>
+<a name="0x0_deep_price_calculate_fees"></a>
 
-## Function `deep_per_quote`
+## Function `calculate_fees`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_quote">deep_per_quote</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, fee_rate: u64, base_quantity: u64, quote_quantity: u64): (u64, u64, u64)
 </code></pre>
 
 
@@ -168,8 +171,23 @@ Calculate the rolling average and update deep_per_base, deep_per_quote.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_quote">deep_per_quote</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>): u64 {
-    <a href="deep_price.md#0x0_deep_price">deep_price</a>.deep_per_quote
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
+    fee_rate: u64,
+    base_quantity: u64,
+    quote_quantity: u64,
+): (u64, u64, u64) {
+    <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_verified">verified</a>()) {
+        <b>let</b> base_fee = math::mul(fee_rate, math::mul(base_quantity, self.deep_per_base));
+        <b>let</b> quote_fee = math::mul(fee_rate, math::mul(quote_quantity, self.deep_per_quote));
+
+        <b>return</b> (0, 0, base_fee + quote_fee)
+    };
+
+    <b>let</b> base_fee = math::mul(fee_rate, base_quantity);
+    <b>let</b> quote_fee = math::mul(fee_rate, quote_quantity);
+
+    (base_fee, quote_fee, 0)
 }
 </code></pre>
 
