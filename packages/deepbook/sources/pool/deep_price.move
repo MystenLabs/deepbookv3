@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::deep_price {
+    use deepbook::math;
+
     // DEEP price points used for trading fee calculations
     public struct DeepPrice has store, drop {
         last_insert_timestamp: u64,
@@ -11,7 +13,7 @@ module deepbook::deep_price {
         deep_per_quote: u64,
     }
 
-    public(package) fun empty(): DeepPrice {
+    public(package) fun new(): DeepPrice {
         // Initialize the DEEP price points
         DeepPrice {
             last_insert_timestamp: 0,
@@ -33,11 +35,28 @@ module deepbook::deep_price {
         // TODO 
     }
 
-    public(package) fun deep_per_base(deep_price: &DeepPrice): u64 {
-        deep_price.deep_per_base
+    public(package) fun verified(
+        self: &DeepPrice,
+    ): bool {
+        self.last_insert_timestamp > 0
     }
 
-    public(package) fun deep_per_quote(deep_price: &DeepPrice): u64 {
-        deep_price.deep_per_quote
+    public(package) fun calculate_fees(
+        self: &DeepPrice,
+        fee_rate: u64,
+        base_quantity: u64,
+        quote_quantity: u64,
+    ): (u64, u64, u64) {
+        if (self.verified()) {
+            let base_fee = math::mul(fee_rate, math::mul(base_quantity, self.deep_per_base));
+            let quote_fee = math::mul(fee_rate, math::mul(quote_quantity, self.deep_per_quote));
+            
+            return (0, 0, base_fee + quote_fee)
+        };
+
+        let base_fee = math::mul(fee_rate, base_quantity);
+        let quote_fee = math::mul(fee_rate, quote_quantity);
+
+        (base_fee, quote_fee, 0)
     }
 }
