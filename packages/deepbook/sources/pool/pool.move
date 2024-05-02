@@ -599,11 +599,9 @@ module deepbook::pool {
     public(package) fun key<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
     ): PoolKey {
-        let base_type = type_name::get<BaseAsset>();
-        let quote_type = type_name::get<QuoteAsset>();
         PoolKey {
-            base: base_type,
-            quote: quote_type,
+            base: type_name::get<BaseAsset>(),
+            quote: type_name::get<QuoteAsset>(),
         }
     }
 
@@ -611,11 +609,9 @@ module deepbook::pool {
     public(package) fun rev_key<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
     ): PoolKey {
-        let base_type = type_name::get<BaseAsset>();
-        let quote_type = type_name::get<QuoteAsset>();
         PoolKey {
-            base: base_type,
-            quote: quote_type,
+            base: type_name::get<QuoteAsset>(),
+            quote: type_name::get<BaseAsset>(),
         }
     }
 
