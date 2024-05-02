@@ -25,14 +25,13 @@
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
 <b>use</b> <a href="pool_metadata.md#0x0_pool_metadata">0x0::pool_metadata</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
-<b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
+<b>use</b> <a href="dependencies/sui-framework/bag.md#0x2_bag">0x2::bag</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
 <b>use</b> <a href="dependencies/sui-framework/clock.md#0x2_clock">0x2::clock</a>;
 <b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/sui.md#0x2_sui">0x2::sui</a>;
-<b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/transfer.md#0x2_transfer">0x2::transfer</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
@@ -62,7 +61,7 @@
 
 </dd>
 <dt>
-<code>pools: <a href="dependencies/sui-framework/table.md#0x2_table_Table">table::Table</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>&gt;</code>
+<code>pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
 </dt>
 <dd>
 
@@ -162,7 +161,7 @@ Create a new State and share it. Called once during init.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_create_and_share">create_and_share</a>(ctx: &<b>mut</b> TxContext) {
     <b>let</b> <a href="state.md#0x0_state">state</a> = <a href="state.md#0x0_state_State">State</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
-        pools: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
+        pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
         deep_reference_pools: <a href="deep_reference_price.md#0x0_deep_reference_price_new">deep_reference_price::new</a>(),
         vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
     };
@@ -210,7 +209,7 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
         ctx
     );
 
-    <b>assert</b>!(!self.pools.contains(<a href="pool.md#0x0_pool">pool</a>.key()), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
+    <b>assert</b>!(!self.pools.contains(<a href="pool.md#0x0_pool">pool</a>.key()) && !self.pools.contains(<a href="pool.md#0x0_pool">pool</a>.rev_key()), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
 
     <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = <a href="pool_metadata.md#0x0_pool_metadata_new">pool_metadata::new</a>(ctx);
     self.pools.add(<a href="pool.md#0x0_pool">pool</a>.key(), <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>);
@@ -514,7 +513,7 @@ Check whether pool exists, refresh and return its metadata.
     <b>let</b> pool_key = <a href="pool.md#0x0_pool">pool</a>.key();
     <b>assert</b>!(self.pools.contains(pool_key), <a href="state.md#0x0_state_EPoolDoesNotExist">EPoolDoesNotExist</a>);
 
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = &<b>mut</b> self.pools[pool_key];
+    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>: &<b>mut</b> PoolMetadata = &<b>mut</b> self.pools[pool_key];
     <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.refresh(ctx);
     <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>
 }

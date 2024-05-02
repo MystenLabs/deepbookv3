@@ -8,15 +8,11 @@ Deepbook utility functions.
 
 -  [Function `pop_until`](#0x0_utils_pop_until)
 -  [Function `pop_n`](#0x0_utils_pop_n)
--  [Function `compare`](#0x0_utils_compare)
--  [Function `concat_ascii`](#0x0_utils_concat_ascii)
 -  [Function `encode_order_id`](#0x0_utils_encode_order_id)
 -  [Function `decode_order_id`](#0x0_utils_decode_order_id)
 
 
-<pre><code><b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
-<b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
-<b>use</b> <a href="dependencies/sui-framework/math.md#0x2_math">0x2::math</a>;
+<pre><code><b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
 </code></pre>
 
 
@@ -82,77 +78,6 @@ Aborts if <code>v</code> has fewer than <code>n</code> elements.
 
     res.reverse();
     res
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_utils_compare"></a>
-
-## Function `compare`
-
-Compare two ASCII strings, return True if first string is less than or
-equal to the second string in lexicographic order
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="utils.md#0x0_utils_compare">compare</a>(str1: &<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, str2: &<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="utils.md#0x0_utils_compare">compare</a>(str1: &String, str2: &String): bool {
-    <b>if</b> (str1 == str2) <b>return</b> <b>true</b>;
-
-    <b>let</b> min_len = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(str1.length(), str2.length());
-    <b>let</b> (bytes1, bytes2) = (str1.as_bytes(), str2.as_bytes());
-
-    // skip until bytes are different or one of the strings ends;
-    <b>let</b> <b>mut</b> i: u64 = 0;
-    <b>while</b> (i &lt; min_len && bytes1[i] == bytes2[i]) {
-        i = i + 1
-    };
-
-    <b>if</b> (i == min_len) {
-        (str1.length() &lt;= str2.length())
-    } <b>else</b> {
-        (bytes1[i] &lt;= bytes2[i])
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_utils_concat_ascii"></a>
-
-## Function `concat_ascii`
-
-Concatenate two ASCII strings and return the result.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="utils.md#0x0_utils_concat_ascii">concat_ascii</a>(str1: <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, str2: <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>): <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="utils.md#0x0_utils_concat_ascii">concat_ascii</a>(str1: String, str2: String): String {
-    // Append bytes from the first <a href="dependencies/move-stdlib/string.md#0x1_string">string</a>
-    <b>let</b> <b>mut</b> bytes1 = str1.into_bytes();
-    <b>let</b> bytes2 = str2.into_bytes();
-
-    bytes1.append(bytes2);
-    bytes1.to_ascii_string()
 }
 </code></pre>
 

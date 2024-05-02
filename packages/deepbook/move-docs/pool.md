@@ -8,6 +8,7 @@
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Struct `DEEP`](#0x0_pool_DEEP)
 -  [Resource `Pool`](#0x0_pool_Pool)
+-  [Struct `PoolKey`](#0x0_pool_PoolKey)
 -  [Constants](#@Constants_0)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `transfer_trade_balances`](#0x0_pool_transfer_trade_balances)
@@ -29,6 +30,7 @@
 -  [Function `set_next_trade_params`](#0x0_pool_set_next_trade_params)
 -  [Function `get_base_quote_types`](#0x0_pool_get_base_quote_types)
 -  [Function `key`](#0x0_pool_key)
+-  [Function `rev_key`](#0x0_pool_rev_key)
 -  [Function `share`](#0x0_pool_share)
 -  [Function `deposit_base`](#0x0_pool_deposit_base)
 -  [Function `deposit_quote`](#0x0_pool_deposit_quote)
@@ -246,6 +248,39 @@ are held in base_balances, quote_balances, and deepbook_balance.
 </dd>
 <dt>
 <code><a href="state_manager.md#0x0_state_manager">state_manager</a>: <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a></code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
+<a name="0x0_pool_PoolKey"></a>
+
+## Struct `PoolKey`
+
+
+
+<pre><code><b>struct</b> <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> <b>has</b> <b>copy</b>, drop, store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
 </dt>
 <dd>
 
@@ -724,12 +759,12 @@ Will return (amount_out, amount_in_used)
 
     <b>while</b> (amount_in_left &gt; 0) {
         <b>if</b> (is_bid) {
-            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
-            amount_out = amount_out + math::div(matched_amount, cur_price);
+            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, <a href="math.md#0x0_math_mul">math::mul</a>(cur_quantity, cur_price));
+            amount_out = amount_out + <a href="math.md#0x0_math_div">math::div</a>(matched_amount, cur_price);
             amount_in_left = amount_in_left - matched_amount;
         } <b>else</b> {
-            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
-            amount_out = amount_out + math::mul(matched_amount, cur_price);
+            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, cur_quantity);
+            amount_out = amount_out + <a href="math.md#0x0_math_mul">math::mul</a>(matched_amount, cur_price);
             amount_in_left = amount_in_left - matched_amount;
         };
 
@@ -1069,8 +1104,8 @@ Creates a new pool for trading and returns pool_key, called by state module
 
     <b>let</b> <a href="pool.md#0x0_pool">pool</a> = (<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
         id: pool_uid,
-        bids: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: what are these numbers
-        asks: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: ditto
+        bids: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: <b>update</b> base on benchmark
+        asks: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: <b>update</b> base on benchmark
         next_bid_order_id: <a href="pool.md#0x0_pool_START_BID_ORDER_ID">START_BID_ORDER_ID</a>,
         next_ask_order_id: <a href="pool.md#0x0_pool_START_ASK_ORDER_ID">START_ASK_ORDER_ID</a>,
         deep_config: <a href="deep_price.md#0x0_deep_price_new">deep_price::new</a>(),
@@ -1282,11 +1317,10 @@ Get the base and quote asset of pool, return as ascii strings
 
 ## Function `key`
 
-Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
+Get the pool key
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>
 </code></pre>
 
 
@@ -1296,13 +1330,44 @@ TODO: Why is this needed as a key? Why don't we just use the ID of the pool as a
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
-): String {
-    <b>let</b> (base, quote) = <a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>(self);
-    <b>if</b> (<a href="utils.md#0x0_utils_compare">utils::compare</a>(&base, &quote)) {
-        <a href="utils.md#0x0_utils_concat_ascii">utils::concat_ascii</a>(base, quote)
-    } <b>else</b> {
-        <a href="utils.md#0x0_utils_concat_ascii">utils::concat_ascii</a>(quote, base)
+    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+    <b>let</b> base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+        base: base_type,
+        quote: quote_type,
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_rev_key"></a>
+
+## Function `rev_key`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_rev_key">rev_key</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_rev_key">rev_key</a>&lt;BaseAsset, QuoteAsset&gt;(
+    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+    <b>let</b> base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+        base: base_type,
+        quote: quote_type,
     }
 }
 </code></pre>

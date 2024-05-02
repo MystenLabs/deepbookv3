@@ -39,7 +39,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 <dl>
 <dt>
-<code>reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>&gt;</code>
+<code>reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>&gt;</code>
 </dt>
 <dd>
 
