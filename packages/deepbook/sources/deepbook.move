@@ -13,7 +13,8 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::{Self, State},
-        pool::{Order, Pool, OrderPlaced},
+        pool::Pool,
+        order::Order,
         account::{Account, TradeProof},
     };
 
@@ -168,7 +169,7 @@ module deepbook::deepbook {
         expire_timestamp: u64, // Expiration timestamp in ms
         clock: &Clock,
         ctx: &mut TxContext,
-    ): OrderPlaced<BaseAsset, QuoteAsset> {
+    ): Order {
         pool.place_limit_order(
             account,
             proof,
@@ -193,7 +194,7 @@ module deepbook::deepbook {
         is_bid: bool,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): (u64, u64) {
+    ): Order {
         pool.place_market_order(
             account,
             proof,
