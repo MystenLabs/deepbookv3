@@ -11,6 +11,7 @@ module deepbook::state_manager {
         table::{Self, Table},
         vec_set::{Self, VecSet},
     };
+    use deepbook::order::Fill;
 
     const EUserNotFound: u64 = 1;
     const EHistoricVolumesNotFound: u64 = 2;
@@ -24,8 +25,8 @@ module deepbook::state_manager {
 
     /// Overall volumes for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {
-        total_maker_volume: u64,
-        total_staked_maker_volume: u64,
+        total_volume: u64,
+        total_staked_volume: u64,
         total_fees_collected: u64,
         users_with_rebates: u64,
     }
@@ -40,6 +41,7 @@ module deepbook::state_manager {
         unclaimed_rebates: u64,
         settled_base_amount: u64,
         settled_quote_amount: u64,
+        settled_deep_amount: u64,
     }
 
     public struct StateManager has store {
@@ -73,8 +75,8 @@ module deepbook::state_manager {
         let trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
         let next_trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
         let volumes = Volumes {
-            total_maker_volume: 0,
-            total_staked_maker_volume: 0,
+            total_volume: 0,
+            total_staked_volume: 0,
             total_fees_collected: 0,
             users_with_rebates: 0,
         };
@@ -89,8 +91,8 @@ module deepbook::state_manager {
         }
     }
 
-    /// Refresh the state manager to the current epoch.
-    public(package) fun refresh(
+    /// Update the state manager to the current epoch.
+    public(package) fun update(
         self: &mut StateManager,
         epoch: u64,
     ) {
@@ -113,25 +115,22 @@ module deepbook::state_manager {
             self.next_trade_params = self.trade_params;
         }
     }
-    
-    /// Get the total maker volume for the current epoch.
-    public(package) fun maker_fee(self: &StateManager): u64 {
-        self.trade_params.maker_fee
-    }
 
     /// Taker fee for a user. If the user has enough stake and has traded a certain amount of volume,
     /// the taker fee is halved.
-    public(package) fun taker_fee_for_user(
+    public(package) fun fees_for_user(
         self: &mut StateManager,
         user: address,
-    ): u64 {
+    ): (u64, u64) {
         let user = update_user(self, user);
         // TODO: user has to trade a certain amount of volume first
-        if (user.old_stake >= self.trade_params.stake_required) {
+        let taker_fee = if (user.old_stake >= self.trade_params.stake_required) {
             self.trade_params.taker_fee / 2
         } else {
             self.trade_params.taker_fee
-        }
+        };
+
+        (self.trade_params.maker_fee, taker_fee)
     }
 
     /// Get the total maker volume for the current epoch.
@@ -237,52 +236,45 @@ module deepbook::state_manager {
         user.open_orders.remove(&order_id);
     }
 
-    /// Increase the user's settled amount. Happens when a maker order is filled.
-    public(package) fun add_user_settled_amount(
+    /// Process a fill. Update the user and total volume and any settled amounts.
+    public(package) fun process_fill(
         self: &mut StateManager,
-        user: address,
-        amount: u64,
-        base: bool,
+        fill: &Fill,
     ) {
-        let user = update_user(self, user);
-        if (base) {
-            user.settled_base_amount = user.settled_base_amount + amount;
-        } else {
-            user.settled_quote_amount = user.settled_quote_amount + amount;
-        }
+        let (order_id, owner, expired, complete) = fill.fill_status();
+        let (base, quote, deep) = fill.settled_quantities();
+        update_user(self, owner);
+        
+        if (complete) {
+            increment_users_with_rebates(self, owner);
+            let user = &self.users[owner];
+            if (user.old_stake >= self.trade_params.stake_required) {
+                self.volumes.total_staked_volume = self.volumes.total_staked_volume + base;
+            };
+            self.volumes.total_volume = self.volumes.total_volume + base;
+        };
+
+        let user = &mut self.users[owner];
+        if (expired || complete) {
+            user.open_orders.remove(&order_id);
+        };
+
+        user.settled_base_amount = user.settled_base_amount + base;
+        user.settled_quote_amount = user.settled_quote_amount + quote;
+        user.settled_deep_amount = user.settled_deep_amount + deep;
     }
 
     public(package) fun reset_user_settled_amounts(
         self: &mut StateManager,
         user: address,
-    ): (u64, u64) {
+    ): (u64, u64, u64) {
         let user = update_user(self, user);
-        let (base_amount, quote_amount) = (user.settled_base_amount, user.settled_quote_amount);
+        let (base, quote, deep) = (user.settled_base_amount, user.settled_quote_amount, user.settled_deep_amount);
         user.settled_base_amount = 0;
         user.settled_quote_amount = 0;
+        user.settled_deep_amount = 0;
 
-        (base_amount, quote_amount)
-    }
-
-    /// Increase maker volume for the user.
-    /// Increase the total maker volume.
-    /// If the user has enough stake, increase the total staked maker volume.
-    public(package) fun increase_maker_volume(
-        self: &mut StateManager,
-        user: address,
-        volume: u64,
-    ) {
-        let user = update_user(self, user);
-        user.maker_volume = user.maker_volume + volume;
-        let user_volume = user.maker_volume;
-        
-        if (user.old_stake >= self.trade_params.stake_required) {
-            self.volumes.total_staked_maker_volume = self.volumes.total_staked_maker_volume + volume;
-            if (user_volume == volume) {
-                self.increment_users_with_rebates();
-            };
-        };
-        self.volumes.total_maker_volume = self.volumes.total_maker_volume + volume;
+        (base, quote, deep)
     }
 
     /// Add new user or refresh an existing user.
@@ -291,15 +283,8 @@ module deepbook::state_manager {
         user: address,
     ): &mut User {
         let epoch = self.epoch;
-        add_new_user_if_not_exist(self, user, epoch);
-
-        let user_copy = self.users[user];
-        if (user_copy.epoch < epoch &&
-            user_copy.maker_volume > 0 &&
-            user_copy.old_stake >= self.trade_params.stake_required
-        ) {
-            self.decrement_users_with_rebates(user_copy.epoch);
-        };
+        add_new_user(self, user, epoch);
+        self.decrement_users_with_rebates(user, epoch);
 
         let user = &mut self.users[user];
         if (user.epoch == epoch) return user;
@@ -314,7 +299,7 @@ module deepbook::state_manager {
         user
     }
 
-    fun add_new_user_if_not_exist(
+    fun add_new_user(
         self: &mut StateManager,
         user: address,
         epoch: u64,
@@ -329,6 +314,7 @@ module deepbook::state_manager {
                 unclaimed_rebates: 0,
                 settled_base_amount: 0,
                 settled_quote_amount: 0,
+                settled_deep_amount: 0,
             });
         };
     }
@@ -337,15 +323,22 @@ module deepbook::state_manager {
     /// Called when a staked user generates their first volume for this epoch.
     /// This user will be eligible for rebates, so historic records of this epoch
     /// must be maintained until the user calculates their rebates.
-    fun increment_users_with_rebates(self: &mut StateManager) {
-        self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+    fun increment_users_with_rebates(self: &mut StateManager, user: address) {
+        let user = self.users[user];
+        if (user.maker_volume == 0 && user.old_stake >= self.trade_params.stake_required) {
+            self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+        }
     }
 
     /// Decrement the number of users with rebates for the given epoch.
     /// Called when a staked user calculates their rebates for a historic epoch.
     /// If the number of users with rebates drops to 0, the historic volumes for that epoch
     /// can be removed.
-    fun decrement_users_with_rebates(self: &mut StateManager, epoch: u64) {
+    fun decrement_users_with_rebates(self: &mut StateManager, user: address, epoch: u64) {
+        let user = self.users[user];
+        if (user.epoch == epoch || user.maker_volume == 0 || user.old_stake < self.trade_params.stake_required) {
+            return
+        };
         assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[epoch];
         volumes.users_with_rebates = volumes.users_with_rebates - 1;

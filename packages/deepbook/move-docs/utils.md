@@ -11,6 +11,7 @@ Deepbook utility functions.
 -  [Function `compare`](#0x0_utils_compare)
 -  [Function `concat_ascii`](#0x0_utils_concat_ascii)
 -  [Function `encode_order_id`](#0x0_utils_encode_order_id)
+-  [Function `decode_order_id`](#0x0_utils_decode_order_id)
 
 
 <pre><code><b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
@@ -187,6 +188,38 @@ last 64 bits are order_id
     } <b>else</b> {
         (1u128 &lt;&lt; 127) + ((price <b>as</b> u128) &lt;&lt; 64) + (order_id <b>as</b> u128)
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_utils_decode_order_id"></a>
+
+## Function `decode_order_id`
+
+Decode order_id into (is_bid, price, order_id)
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(order_id: u128): (bool, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(
+    order_id: u128
+): (bool, u64, u64) {
+    <b>let</b> is_bid = (order_id &gt;&gt; 127) == 0;
+    <b>let</b> price = (order_id &gt;&gt; 64) <b>as</b> u64;
+    <b>let</b> price = price & ((1u64 &lt;&lt; 63) - 1);
+    <b>let</b> order_id = order_id <b>as</b> u64;
+
+    (is_bid, price, order_id)
 }
 </code></pre>
 

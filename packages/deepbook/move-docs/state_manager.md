@@ -17,10 +17,9 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Constants](#@Constants_0)
 -  [Function `new_trade_params`](#0x0_state_manager_new_trade_params)
 -  [Function `new`](#0x0_state_manager_new)
--  [Function `refresh`](#0x0_state_manager_refresh)
+-  [Function `update`](#0x0_state_manager_update)
 -  [Function `set_next_trade_params`](#0x0_state_manager_set_next_trade_params)
--  [Function `maker_fee`](#0x0_state_manager_maker_fee)
--  [Function `taker_fee_for_user`](#0x0_state_manager_taker_fee_for_user)
+-  [Function `fees_for_user`](#0x0_state_manager_fees_for_user)
 -  [Function `stake_required`](#0x0_state_manager_stake_required)
 -  [Function `reset_burn_balance`](#0x0_state_manager_reset_burn_balance)
 -  [Function `user_stake`](#0x0_state_manager_user_stake)
@@ -30,17 +29,17 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `user_open_orders`](#0x0_state_manager_user_open_orders)
 -  [Function `add_user_open_order`](#0x0_state_manager_add_user_open_order)
 -  [Function `remove_user_open_order`](#0x0_state_manager_remove_user_open_order)
--  [Function `add_user_settled_amount`](#0x0_state_manager_add_user_settled_amount)
+-  [Function `process_fill`](#0x0_state_manager_process_fill)
 -  [Function `reset_user_settled_amounts`](#0x0_state_manager_reset_user_settled_amounts)
--  [Function `increase_maker_volume`](#0x0_state_manager_increase_maker_volume)
 -  [Function `update_user`](#0x0_state_manager_update_user)
--  [Function `add_new_user_if_not_exist`](#0x0_state_manager_add_new_user_if_not_exist)
+-  [Function `add_new_user`](#0x0_state_manager_add_new_user)
 -  [Function `increment_users_with_rebates`](#0x0_state_manager_increment_users_with_rebates)
 -  [Function `decrement_users_with_rebates`](#0x0_state_manager_decrement_users_with_rebates)
 -  [Function `calculate_rebate_and_burn_amounts`](#0x0_state_manager_calculate_rebate_and_burn_amounts)
 
 
-<pre><code><b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
+<pre><code><b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set">0x2::vec_set</a>;
@@ -106,13 +105,13 @@ Overall volumes for the current epoch. Used to calculate rebates and burns.
 
 <dl>
 <dt>
-<code>total_maker_volume: u64</code>
+<code>total_volume: u64</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>total_staked_maker_volume: u64</code>
+<code>total_staked_volume: u64</code>
 </dt>
 <dd>
 
@@ -195,6 +194,12 @@ User data that is updated every epoch.
 </dd>
 <dt>
 <code>settled_quote_amount: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>settled_deep_amount: u64</code>
 </dt>
 <dd>
 
@@ -346,8 +351,8 @@ User data that is updated every epoch.
     <b>let</b> trade_params = <a href="state_manager.md#0x0_state_manager_new_trade_params">new_trade_params</a>(taker_fee, maker_fee, stake_required);
     <b>let</b> next_trade_params = <a href="state_manager.md#0x0_state_manager_new_trade_params">new_trade_params</a>(taker_fee, maker_fee, stake_required);
     <b>let</b> volumes = <a href="state_manager.md#0x0_state_manager_Volumes">Volumes</a> {
-        total_maker_volume: 0,
-        total_staked_maker_volume: 0,
+        total_volume: 0,
+        total_staked_volume: 0,
         total_fees_collected: 0,
         users_with_rebates: 0,
     };
@@ -367,14 +372,14 @@ User data that is updated every epoch.
 
 </details>
 
-<a name="0x0_state_manager_refresh"></a>
+<a name="0x0_state_manager_update"></a>
 
-## Function `refresh`
+## Function `update`
 
-Refresh the state manager to the current epoch.
+Update the state manager to the current epoch.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_refresh">refresh</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, epoch: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, epoch: u64)
 </code></pre>
 
 
@@ -383,7 +388,7 @@ Refresh the state manager to the current epoch.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_refresh">refresh</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <b>update</b>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     epoch: u64,
 ) {
@@ -432,40 +437,15 @@ Set the fee parameters for the next epoch. Pushed by governance.
 
 </details>
 
-<a name="0x0_state_manager_maker_fee"></a>
+<a name="0x0_state_manager_fees_for_user"></a>
 
-## Function `maker_fee`
-
-Get the total maker volume for the current epoch.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_maker_fee">maker_fee</a>(self: &<a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_maker_fee">maker_fee</a>(self: &<a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>): u64 {
-    self.trade_params.maker_fee
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_manager_taker_fee_for_user"></a>
-
-## Function `taker_fee_for_user`
+## Function `fees_for_user`
 
 Taker fee for a user. If the user has enough stake and has traded a certain amount of volume,
 the taker fee is halved.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_taker_fee_for_user">taker_fee_for_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_fees_for_user">fees_for_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): (u64, u64)
 </code></pre>
 
 
@@ -474,17 +454,19 @@ the taker fee is halved.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_taker_fee_for_user">taker_fee_for_user</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_fees_for_user">fees_for_user</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
-): u64 {
+): (u64, u64) {
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     // TODO: user <b>has</b> <b>to</b> trade a certain amount of volume first
-    <b>if</b> (user.old_stake &gt;= self.trade_params.stake_required) {
+    <b>let</b> taker_fee = <b>if</b> (user.old_stake &gt;= self.trade_params.stake_required) {
         self.trade_params.taker_fee / 2
     } <b>else</b> {
         self.trade_params.taker_fee
-    }
+    };
+
+    (self.trade_params.maker_fee, taker_fee)
 }
 </code></pre>
 
@@ -775,14 +757,14 @@ Remove an open order from the user.
 
 </details>
 
-<a name="0x0_state_manager_add_user_settled_amount"></a>
+<a name="0x0_state_manager_process_fill"></a>
 
-## Function `add_user_settled_amount`
+## Function `process_fill`
 
-Increase the user's settled amount. Happens when a maker order is filled.
+Process a fill. Update the user and total volume and any settled amounts.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_user_settled_amount">add_user_settled_amount</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, amount: u64, base: bool)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_process_fill">process_fill</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, fill: &<a href="order.md#0x0_order_Fill">order::Fill</a>)
 </code></pre>
 
 
@@ -791,18 +773,31 @@ Increase the user's settled amount. Happens when a maker order is filled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_user_settled_amount">add_user_settled_amount</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_process_fill">process_fill</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    user: <b>address</b>,
-    amount: u64,
-    base: bool,
+    fill: &Fill,
 ) {
-    <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
-    <b>if</b> (base) {
-        user.settled_base_amount = user.settled_base_amount + amount;
-    } <b>else</b> {
-        user.settled_quote_amount = user.settled_quote_amount + amount;
-    }
+    <b>let</b> (order_id, owner, expired, complete) = fill.fill_status();
+    <b>let</b> (base, quote, deep) = fill.settled_quantities();
+    <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, owner);
+
+    <b>if</b> (complete) {
+        <a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>(self, owner);
+        <b>let</b> user = &self.users[owner];
+        <b>if</b> (user.old_stake &gt;= self.trade_params.stake_required) {
+            self.volumes.total_staked_volume = self.volumes.total_staked_volume + base;
+        };
+        self.volumes.total_volume = self.volumes.total_volume + base;
+    };
+
+    <b>let</b> user = &<b>mut</b> self.users[owner];
+    <b>if</b> (expired || complete) {
+        user.open_orders.remove(&order_id);
+    };
+
+    user.settled_base_amount = user.settled_base_amount + base;
+    user.settled_quote_amount = user.settled_quote_amount + quote;
+    user.settled_deep_amount = user.settled_deep_amount + deep;
 }
 </code></pre>
 
@@ -816,7 +811,7 @@ Increase the user's settled amount. Happens when a maker order is filled.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_settled_amounts">reset_user_settled_amounts</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_settled_amounts">reset_user_settled_amounts</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): (u64, u64, u64)
 </code></pre>
 
 
@@ -828,54 +823,14 @@ Increase the user's settled amount. Happens when a maker order is filled.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_settled_amounts">reset_user_settled_amounts</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
-): (u64, u64) {
+): (u64, u64, u64) {
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
-    <b>let</b> (base_amount, quote_amount) = (user.settled_base_amount, user.settled_quote_amount);
+    <b>let</b> (base, quote, deep) = (user.settled_base_amount, user.settled_quote_amount, user.settled_deep_amount);
     user.settled_base_amount = 0;
     user.settled_quote_amount = 0;
+    user.settled_deep_amount = 0;
 
-    (base_amount, quote_amount)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_manager_increase_maker_volume"></a>
-
-## Function `increase_maker_volume`
-
-Increase maker volume for the user.
-Increase the total maker volume.
-If the user has enough stake, increase the total staked maker volume.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_maker_volume">increase_maker_volume</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, volume: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_maker_volume">increase_maker_volume</a>(
-    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    user: <b>address</b>,
-    volume: u64,
-) {
-    <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
-    user.maker_volume = user.maker_volume + volume;
-    <b>let</b> user_volume = user.maker_volume;
-
-    <b>if</b> (user.old_stake &gt;= self.trade_params.stake_required) {
-        self.volumes.total_staked_maker_volume = self.volumes.total_staked_maker_volume + volume;
-        <b>if</b> (user_volume == volume) {
-            self.<a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>();
-        };
-    };
-    self.volumes.total_maker_volume = self.volumes.total_maker_volume + volume;
+    (base, quote, deep)
 }
 </code></pre>
 
@@ -904,15 +859,8 @@ Add new user or refresh an existing user.
     user: <b>address</b>,
 ): &<b>mut</b> <a href="state_manager.md#0x0_state_manager_User">User</a> {
     <b>let</b> epoch = self.epoch;
-    <a href="state_manager.md#0x0_state_manager_add_new_user_if_not_exist">add_new_user_if_not_exist</a>(self, user, epoch);
-
-    <b>let</b> user_copy = self.users[user];
-    <b>if</b> (user_copy.epoch &lt; epoch &&
-        user_copy.maker_volume &gt; 0 &&
-        user_copy.old_stake &gt;= self.trade_params.stake_required
-    ) {
-        self.<a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(user_copy.epoch);
-    };
+    <a href="state_manager.md#0x0_state_manager_add_new_user">add_new_user</a>(self, user, epoch);
+    self.<a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(user, epoch);
 
     <b>let</b> user = &<b>mut</b> self.users[user];
     <b>if</b> (user.epoch == epoch) <b>return</b> user;
@@ -932,13 +880,13 @@ Add new user or refresh an existing user.
 
 </details>
 
-<a name="0x0_state_manager_add_new_user_if_not_exist"></a>
+<a name="0x0_state_manager_add_new_user"></a>
 
-## Function `add_new_user_if_not_exist`
+## Function `add_new_user`
 
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_add_new_user_if_not_exist">add_new_user_if_not_exist</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64)
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_add_new_user">add_new_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64)
 </code></pre>
 
 
@@ -947,7 +895,7 @@ Add new user or refresh an existing user.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_add_new_user_if_not_exist">add_new_user_if_not_exist</a>(
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_add_new_user">add_new_user</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
     epoch: u64,
@@ -962,6 +910,7 @@ Add new user or refresh an existing user.
             unclaimed_rebates: 0,
             settled_base_amount: 0,
             settled_quote_amount: 0,
+            settled_deep_amount: 0,
         });
     };
 }
@@ -981,7 +930,7 @@ This user will be eligible for rebates, so historic records of this epoch
 must be maintained until the user calculates their rebates.
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>)
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>)
 </code></pre>
 
 
@@ -990,8 +939,11 @@ must be maintained until the user calculates their rebates.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>) {
-    self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_increment_users_with_rebates">increment_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>, user: <b>address</b>) {
+    <b>let</b> user = self.users[user];
+    <b>if</b> (user.maker_volume == 0 && user.old_stake &gt;= self.trade_params.stake_required) {
+        self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+    }
 }
 </code></pre>
 
@@ -1009,7 +961,7 @@ If the number of users with rebates drops to 0, the historic volumes for that ep
 can be removed.
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, epoch: u64)
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64)
 </code></pre>
 
 
@@ -1018,7 +970,11 @@ can be removed.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>, epoch: u64) {
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>, user: <b>address</b>, epoch: u64) {
+    <b>let</b> user = self.users[user];
+    <b>if</b> (user.epoch == epoch || user.maker_volume == 0 || user.old_stake &lt; self.trade_params.stake_required) {
+        <b>return</b>
+    };
     <b>assert</b>!(self.historic_volumes.contains(epoch), <a href="state_manager.md#0x0_state_manager_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
     <b>let</b> volumes = &<b>mut</b> self.historic_volumes[epoch];
     volumes.users_with_rebates = volumes.users_with_rebates - 1;
