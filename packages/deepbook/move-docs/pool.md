@@ -324,29 +324,11 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
-<a name="0x0_pool_MAX_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
 <a name="0x0_pool_MIN_ASK_ORDER_ID"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ASK_ORDER_ID">MIN_ASK_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>: u128 = 0;
 </code></pre>
 
 
@@ -604,10 +586,10 @@ Mutates the order and the maker order as necessary.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (<a href="order.md#0x0_order">order</a>.is_bid()) {
-        <b>let</b> (ref, offset) = self.asks.slice_following(<a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &<b>mut</b> self.asks)
     } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.slice_before(<a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.bids.max_slice();
         (ref, offset, &<b>mut</b> self.bids)
     };
 
@@ -618,7 +600,7 @@ Mutates the order and the maker order as necessary.
     <b>let</b> <b>mut</b> remove_order_ids = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>let</b> <b>mut</b> remove_order_owners = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> other_order = book_side.borrow_mut_ref_offset(ref, offset);
+    <b>let</b> <b>mut</b> other_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
     <b>while</b> (<a href="order.md#0x0_order">order</a>.remaining_quantity() &gt; 0 && <a href="order.md#0x0_order">order</a>.can_match(other_order) ) {
         <b>if</b> (other_order.is_expired(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms())) {
             other_order.set_expired();
