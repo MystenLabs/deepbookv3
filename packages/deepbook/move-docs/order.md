@@ -29,6 +29,8 @@ All order matching happens in this module.
 -  [Function `total_fees`](#0x0_order_total_fees)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
+-  [Function `book_order_id`](#0x0_order_book_order_id)
+-  [Function `book_quantity`](#0x0_order_book_quantity)
 -  [Function `to_order`](#0x0_order_to_order)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
 -  [Function `crosses_price`](#0x0_order_crosses_price)
@@ -1116,6 +1118,55 @@ It is used to update the state.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
     self.expire_timestamp
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_order_id"></a>
+
+## Function `book_order_id`
+
+TODO: Better naming to avoid conflict?
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u128
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u128 {
+    self.order_id
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_quantity"></a>
+
+## Function `book_quantity`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.quantity
 }
 </code></pre>
 

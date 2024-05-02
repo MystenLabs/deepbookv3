@@ -25,8 +25,7 @@ TODO: No authorization checks are implemented;
 -  [Function `cancel_all_orders`](#0x0_deepbook_cancel_all_orders)
 -  [Function `user_open_orders`](#0x0_deepbook_user_open_orders)
 -  [Function `get_amount_out`](#0x0_deepbook_get_amount_out)
--  [Function `get_level2_bids`](#0x0_deepbook_get_level2_bids)
--  [Function `get_level2_asks`](#0x0_deepbook_get_level2_asks)
+-  [Function `get_level2`](#0x0_deepbook_get_level2)
 -  [Function `get_level2_ticks_from_mid`](#0x0_deepbook_get_level2_ticks_from_mid)
 
 
@@ -634,14 +633,14 @@ Public facing function to get amount_out given amount_in.
 
 </details>
 
-<a name="0x0_deepbook_get_level2_bids"></a>
+<a name="0x0_deepbook_get_level2"></a>
 
-## Function `get_level2_bids`
+## Function `get_level2`
 
-Public facing function to get level2 bids.
+Public facing function to get level2 bids or asks.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2">get_level2</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -650,41 +649,13 @@ Public facing function to get level2 bids.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2">get_level2</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     price_low: u64,
     price_high: u64,
+    is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>(price_low, price_high)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_deepbook_get_level2_asks"></a>
-
-## Function `get_level2_asks`
-
-Public facing function to get level2 asks.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    price_low: u64,
-    price_high: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>(price_low, price_high)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2">get_level2</a>(price_low, price_high, is_bid)
 }
 </code></pre>
 
@@ -699,7 +670,7 @@ Public facing function to get level2 asks.
 Public facing function to get level2 ticks from mid.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -711,7 +682,7 @@ Public facing function to get level2 ticks from mid.
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
     <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>(ticks)
 }
 </code></pre>

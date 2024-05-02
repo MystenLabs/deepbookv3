@@ -15,8 +15,7 @@
 -  [Function `match_against_book`](#0x0_pool_match_against_book)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
--  [Function `get_level2_bids`](#0x0_pool_get_level2_bids)
--  [Function `get_level2_asks`](#0x0_pool_get_level2_asks)
+-  [Function `get_level2`](#0x0_pool_get_level2)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
@@ -41,6 +40,7 @@
 -  [Function `inject_limit_order`](#0x0_pool_inject_limit_order)
 -  [Function `order_is_bid`](#0x0_pool_order_is_bid)
 -  [Function `get_order_id`](#0x0_pool_get_order_id)
+-  [Function `get_level2_ticks`](#0x0_pool_get_level2_ticks)
 -  [Function `correct_supply`](#0x0_pool_correct_supply)
 
 
@@ -304,11 +304,29 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
+<a name="0x0_pool_EInvalidPriceRange"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidPriceRange">EInvalidPriceRange</a>: u64 = 6;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidTickSize"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>: u64 = 3;
+</code></pre>
+
+
+
+<a name="0x0_pool_EInvalidTicks"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidTicks">EInvalidTicks</a>: u64 = 7;
 </code></pre>
 
 
@@ -322,29 +340,11 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
-<a name="0x0_pool_MAX_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
 <a name="0x0_pool_MIN_ASK_ORDER_ID"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ASK_ORDER_ID">MIN_ASK_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>: u128 = 0;
 </code></pre>
 
 
@@ -700,14 +700,17 @@ Will return (amount_out, amount_in_used)
 
 </details>
 
-<a name="0x0_pool_get_level2_bids"></a>
+<a name="0x0_pool_get_level2"></a>
 
-## Function `get_level2_bids`
+## Function `get_level2`
 
-Get the level2 bids between price_low and price_high.
+Get the level2 bids or asks between price_low and price_high.
+Returns two vectors of u64
+The previous is a list of all valid prices
+The latter is the corresponding depth list
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _price_low: u64, _price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2">get_level2</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -716,43 +719,55 @@ Get the level2 bids between price_low and price_high.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _price_low: u64,
-    _price_high: u64,
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2">get_level2</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    price_low: u64,
+    price_high: u64,
+    is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
-}
-</code></pre>
+    <b>assert</b>!(price_low &lt;= price_high, <a href="pool.md#0x0_pool_EInvalidPriceRange">EInvalidPriceRange</a>);
 
+    <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> depth_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
+    // shift price_low by 64 bits <b>to</b> the left <b>to</b> form the key
+    <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
+    <b>let</b> orderbook;
+    <b>if</b> (is_bid) {
+        orderbook = &self.bids;
+    } <b>else</b> {
+        orderbook = &self.asks;
+    };
+    // find the lowest <a href="order.md#0x0_order">order</a> that's at least price_low
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = orderbook.slice_following(key_low);
+    // Check <b>if</b> there is <a href="order.md#0x0_order">order</a> &gt;= price_low
+    <b>if</b> (ref.is_null()) {
+        <b>return</b> (price_vec, depth_vec)
+    };
 
-</details>
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
 
-<a name="0x0_pool_get_level2_asks"></a>
+    <b>while</b> (cur_price &lt;= price_high) {
+        <b>if</b> (orderbook.valid_next(ref, offset)) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = orderbook.borrow_next(ref, offset);
+            <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+            <b>if</b> (order_price != cur_price) {
+                price_vec.push_back(cur_price);
+                depth_vec.push_back(cur_quantity);
+                cur_quantity = 0;
+                cur_price = order_price;
+            };
+            cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
+        } <b>else</b> {
+            price_vec.push_back(cur_price);
+            depth_vec.push_back(cur_quantity);
+            <b>break</b>
+        }
+    };
 
-## Function `get_level2_asks`
-
-Get the level2 bids between price_low and price_high.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _price_low: u64, _price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _price_low: u64,
-    _price_high: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
+    (price_vec, depth_vec)
 }
 </code></pre>
 
@@ -765,9 +780,12 @@ Get the level2 bids between price_low and price_high.
 ## Function `get_level2_ticks_from_mid`
 
 Get the n ticks from the mid price
+Returns four vectors of u64.
+The first two are the bid prices and quantities.
+The latter two are the ask prices and quantities.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -777,11 +795,14 @@ Get the n ticks from the mid price
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _ticks: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    ticks: u64,
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
     // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
+    <b>let</b> (bid_price, bid_quantity) = self.<a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>(ticks, <b>true</b>);
+    <b>let</b> (ask_price, ask_quantity) = self.<a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>(ticks, <b>false</b>);
+
+    (bid_price, bid_quantity, ask_price, ask_quantity)
 }
 </code></pre>
 
@@ -1557,6 +1578,94 @@ Returns 0 if the order is a bid order, 1 if the order is an ask order
         self.next_ask_order_id = self.next_ask_order_id + 1;
         self.next_ask_order_id
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_get_level2_ticks"></a>
+
+## Function `get_level2_ticks`
+
+Get the n ticks from the best bid or ask
+Returns two vectors of u64.
+The first is a list of all valid prices.
+The latter is the corresponding quantity list.
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks">get_level2_ticks</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    ticks: u64,
+    is_bid: bool,
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+    // TODO: Consider making this a <b>public</b> function
+    <b>assert</b>!(ticks &gt; 0, <a href="pool.md#0x0_pool_EInvalidTicks">EInvalidTicks</a>);
+
+    <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> depth_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+
+    <b>let</b> orderbook;
+    <b>if</b> (is_bid) {
+        orderbook = &self.bids;
+    } <b>else</b> {
+        orderbook = &self.asks;
+    };
+    // find the largest <a href="order.md#0x0_order">order</a> in bid or smallest <a href="order.md#0x0_order">order</a> in ask
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) {
+        orderbook.max_slice()
+    } <b>else</b> {
+        orderbook.min_slice()
+    };
+    // Check <b>if</b> orderbook is empty
+    <b>if</b> (ref.is_null()) {
+        <b>return</b> (price_vec, depth_vec)
+    };
+
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> <b>mut</b> ticks_left = ticks;
+
+    <b>while</b> (ticks_left &gt; 0) {
+        <b>let</b> condition = <b>if</b> (is_bid) {
+            orderbook.valid_prev(ref, offset)
+        } <b>else</b> {
+            orderbook.valid_next(ref, offset)
+        };
+        <b>if</b> (condition) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
+                orderbook.borrow_prev(ref, offset)
+            } <b>else</b> {
+                orderbook.borrow_next(ref, offset)
+            };
+            <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+            <b>if</b> (order_price != cur_price) {
+                price_vec.push_back(cur_price);
+                depth_vec.push_back(cur_quantity);
+                cur_quantity = 0;
+                cur_price = order_price;
+                ticks_left = ticks_left - 1;
+            };
+            cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
+        } <b>else</b> {
+            price_vec.push_back(cur_price);
+            depth_vec.push_back(cur_quantity);
+            <b>break</b>
+        }
+    };
+
+    (price_vec, depth_vec)
 }
 </code></pre>
 
