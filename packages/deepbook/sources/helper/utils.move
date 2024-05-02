@@ -86,6 +86,7 @@ module deepbook::utils {
     ): (bool, u64, u64) {
         let is_bid = (order_id >> 127) == 0;
         let price = (order_id >> 64) as u64;
+        let price = price & ((1u64 << 63) - 1);
         let order_id = order_id as u64;
 
         (is_bid, price, order_id)
