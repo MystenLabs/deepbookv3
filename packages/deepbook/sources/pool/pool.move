@@ -584,7 +584,7 @@ module deepbook::pool {
         self.state_manager.set_next_trade_params(fees);
     }
 
-    /// Get the base and quote asset of pool, return as ascii strings
+    /// Get the base and quote asset TypeName of pool
     public(package) fun get_base_quote_types<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
     ): (TypeName, TypeName) {
