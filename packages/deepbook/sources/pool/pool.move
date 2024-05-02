@@ -300,24 +300,57 @@ module deepbook::pool {
         0
     }
 
-    /// Get the level2 bids between price_low and price_high.
-    public(package) fun get_level2_bids<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _price_low: u64,
-        _price_high: u64,
+    /// Get the level2 bids or asks between price_low and price_high.
+    /// Returns two vectors of u64
+    /// The previous is a list of all valid prices
+    /// The latter is the corresponding depth list
+    public(package) fun get_level2<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+        is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        // TODO: implement
-        (vector[], vector[])
-    }
+        let mut price_vec = vector[];
+        let mut depth_vec = vector[];
 
-    /// Get the level2 bids between price_low and price_high.
-    public(package) fun get_level2_asks<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _price_low: u64,
-        _price_high: u64,
-    ): (vector<u64>, vector<u64>) {
-        // TODO: implement
-        (vector[], vector[])
+        // shift price_low by 64 bits to the left to form the key
+        let key_low = (price_low as u128) << 64;
+        let orderbook;
+        if (is_bid) {
+            orderbook = &self.bids;
+        } else {
+            orderbook = &self.asks;
+        };
+        // find the lowest order that's at least price_low
+        let (mut ref, mut offset) = orderbook.slice_following(key_low);
+        // Check if there is order >= price_low
+        if (ref.is_null()) {
+            return (price_vec, depth_vec)
+        };
+
+        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+
+        while (cur_price <= price_high) {
+            if (orderbook.valid_next(ref, offset)) {
+                (ref, offset, order) = orderbook.borrow_next(ref, offset);
+                let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
+                if (order_price > cur_price) {
+                    price_vec.push_back(cur_price);
+                    depth_vec.push_back(cur_quantity);
+                    cur_quantity = 0;
+                    cur_price = order_price;
+                };
+                cur_quantity = cur_quantity + order.book_quantity();
+            } else {
+                price_vec.push_back(cur_price);
+                depth_vec.push_back(cur_quantity);
+                break
+            }
+        };
+
+        (price_vec, depth_vec)
     }
 
     /// Get the n ticks from the mid price
