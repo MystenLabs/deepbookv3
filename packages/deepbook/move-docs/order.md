@@ -54,8 +54,7 @@ All order matching happens in this module.
 
 ## Struct `Order`
 
-For each pool, order id is incremental and unique for each opening order.
-Orders that are submitted earlier has lower order ids.
+Order struct represents an order in the order book. order_id is unique within a pool.
 
 
 <pre><code><b>struct</b> <a href="order.md#0x0_order_Order">Order</a> <b>has</b> drop, store
@@ -1230,7 +1229,7 @@ Validates that the initial order created meets the pool requirements.
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.expire_timestamp &gt;= timestamp, <a href="order.md#0x0_order_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.order_type &gt;= <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_order_type">order_type</a> &lt; <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.order_type &gt; <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_order_type">order_type</a> &lt; <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
 }
 </code></pre>
 

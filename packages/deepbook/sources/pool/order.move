@@ -18,7 +18,7 @@ module deepbook::order {
     const FILL_OR_KILL: u8 = 2;
     // Mandates that the entire order be passive. Otherwise, cancel the order.
     const POST_ONLY: u8 = 3;
-    // Maximum restriction value
+    // Maximum restriction value.
     const MAX_RESTRICTION: u8 = 3;
 
     const LIVE: u8 = 0;
@@ -35,8 +35,7 @@ module deepbook::order {
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
 
-    /// For each pool, order id is incremental and unique for each opening order.
-    /// Orders that are submitted earlier has lower order ids.
+    /// Order struct represents an order in the order book. order_id is unique within a pool.
     public struct Order has store, drop {
         // ID of the pool
         pool_id: ID,
@@ -236,7 +235,7 @@ module deepbook::order {
         assert!(order.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order.order_type >= NO_RESTRICTION && order.order_type < MAX_RESTRICTION, EInvalidOrderType);
+        assert!(order.order_type > NO_RESTRICTION && order.order_type < MAX_RESTRICTION, EInvalidOrderType);
     }
 
     /// Matches two orders and returns the filled quantity and quote quantity.

@@ -392,13 +392,11 @@ are held in base_balances, quote_balances, and deepbook_balance.
 ## Function `place_limit_order`
 
 Place a limit order to the order book.
-1. Refresh the state.
-2. Transfer any settled funds from the pool to the account.
-3. Match the order against the order book if possible.
-4. Transfer balances for the executed quantity as well as the remaining quantity.
-5. Assert for any order restrictions.
-6. If there is remaining quantity, inject the order into the order book.
-7. Return the Order object.
+1. Transfer any settled funds from the pool to the account.
+2. Match the order against the order book if possible.
+3. Transfer balances for the executed quantity as well as the remaining quantity.
+4. Assert for any order restrictions.
+5. If there is remaining quantity, inject the order into the order book.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
@@ -615,8 +613,8 @@ Mutates the order and the maker order as necessary.
 
     <b>if</b> (ref.is_null()) <b>return</b>;
 
-    <b>let</b> <b>mut</b> net_base_quantity = 0;
-    <b>let</b> <b>mut</b> net_quote_quantity = 0;
+    <b>let</b> <b>mut</b> executed_base_quantity = 0;
+    <b>let</b> <b>mut</b> executed_quote_quantity = 0;
     <b>let</b> <b>mut</b> remove_order_ids = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>let</b> <b>mut</b> remove_order_owners = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
@@ -631,8 +629,8 @@ Mutates the order and the maker order as necessary.
 
         <b>let</b> (filled_quantity, quote_quantity) =
             <a href="order.md#0x0_order">order</a>.match_orders(other_order, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-        net_base_quantity = net_base_quantity + filled_quantity;
-        net_quote_quantity = net_quote_quantity + quote_quantity;
+        executed_base_quantity = executed_base_quantity + filled_quantity;
+        executed_quote_quantity = executed_quote_quantity + quote_quantity;
 
         self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.add_user_settled_amount(other_order.owner(), filled_quantity, other_order.is_bid());
         self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.increase_maker_volume(other_order.owner(), filled_quantity);

@@ -87,13 +87,11 @@ module deepbook::pool {
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
-    /// 1. Refresh the state.
-    /// 2. Transfer any settled funds from the pool to the account.
-    /// 3. Match the order against the order book if possible.
-    /// 4. Transfer balances for the executed quantity as well as the remaining quantity.
-    /// 5. Assert for any order restrictions.
-    /// 6. If there is remaining quantity, inject the order into the order book.
-    /// 7. Return the Order object.
+    /// 1. Transfer any settled funds from the pool to the account.
+    /// 2. Match the order against the order book if possible.
+    /// 3. Transfer balances for the executed quantity as well as the remaining quantity.
+    /// 4. Assert for any order restrictions.
+    /// 5. If there is remaining quantity, inject the order into the order book.
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -239,8 +237,8 @@ module deepbook::pool {
         
         if (ref.is_null()) return;
 
-        let mut net_base_quantity = 0;
-        let mut net_quote_quantity = 0;
+        let mut executed_base_quantity = 0;
+        let mut executed_quote_quantity = 0;
         let mut remove_order_ids = vector[];
         let mut remove_order_owners = vector[];
 
@@ -255,8 +253,8 @@ module deepbook::pool {
 
             let (filled_quantity, quote_quantity) = 
                 order.match_orders(other_order, clock.timestamp_ms());
-            net_base_quantity = net_base_quantity + filled_quantity;
-            net_quote_quantity = net_quote_quantity + quote_quantity;
+            executed_base_quantity = executed_base_quantity + filled_quantity;
+            executed_quote_quantity = executed_quote_quantity + quote_quantity;
 
             self.state_manager.add_user_settled_amount(other_order.owner(), filled_quantity, other_order.is_bid());
             self.state_manager.increase_maker_volume(other_order.owner(), filled_quantity);
