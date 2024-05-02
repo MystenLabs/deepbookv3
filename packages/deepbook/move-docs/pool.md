@@ -278,6 +278,15 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
+<a name="0x0_pool_EInvalidAmountIn"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 8;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidFee"></a>
 
 
@@ -694,6 +703,8 @@ Will return (amount_out, amount_in_used)
     amount_in: u64,
     is_bid: bool,
 ): (u64, u64) {
+    <b>assert</b>!(amount_in &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
+
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, orderbook) = <b>if</b> (is_bid) {
         <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &self.asks)

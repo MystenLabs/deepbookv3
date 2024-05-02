@@ -34,6 +34,7 @@ module deepbook::pool {
     const EInvalidMinSize: u64 = 5;
     const EInvalidPriceRange: u64 = 6;
     const EInvalidTicks: u64 = 7;
+    const EInvalidAmountIn: u64 = 8;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -279,6 +280,8 @@ module deepbook::pool {
         amount_in: u64,
         is_bid: bool,
     ): (u64, u64) {
+        assert!(amount_in > 0, EInvalidAmountIn);
+
         let (mut ref, mut offset, orderbook) = if (is_bid) {
             let (ref, offset) = self.asks.min_slice();
             (ref, offset, &self.asks)
