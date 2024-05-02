@@ -80,6 +80,17 @@ module deepbook::utils {
         }
     }
 
+    /// Decode order_id into (is_bid, price, order_id)
+    public(package) fun decode_order_id(
+        order_id: u128
+    ): (bool, u64, u64) {
+        let is_bid = (order_id >> 127) == 0;
+        let price = (order_id >> 64) as u64;
+        let order_id = order_id as u64;
+
+        (is_bid, price, order_id)
+    }
+
     #[test]
     fun test_concat() {
         use sui::test_utils;

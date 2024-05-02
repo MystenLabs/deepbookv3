@@ -17,7 +17,7 @@ module deepbook::pool {
     };
 
     use deepbook::{
-        order::{Self, Order},
+        order::{Self, OrderInfo, Order},
         deep_price::{Self, DeepPrice},
         big_vector::{Self, BigVector},
         account::{Account, TradeProof},
@@ -104,8 +104,8 @@ module deepbook::pool {
         expire_timestamp: u64,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): Order {
-        self.state_manager.refresh(ctx.epoch());
+    ): OrderInfo {
+        self.state_manager.update(ctx.epoch());
 
         self.transfer_settled_amounts(account, proof, ctx);
 
@@ -113,24 +113,23 @@ module deepbook::pool {
         let fee_is_deep = self.fee_is_deep();
         let owner = account.owner();
         let pool_id = self.id.to_inner();
-        let mut order = 
+        let mut order_info = 
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
-        self.match_against_book(&mut order, clock);
+        self.match_against_book(&mut order_info, clock);
         
-        self.transfer_trade_balances(account, proof, &mut order, ctx);
+        self.transfer_trade_balances(account, proof, &mut order_info, ctx);
 
-        order.assert_post_only();
-        order.assert_fill_or_kill();
-        if (order.is_immediate_or_cancel() || order.is_complete()) {
-            return order
+        order_info.assert_post_only();
+        order_info.assert_fill_or_kill();
+        if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
+            return order_info
         };
         
-        if (order.remaining_quantity() > 0) {
-            let order_copy = order.copy_order();
-            self.inject_limit_order(order_copy);
+        if (order_info.remaining_quantity() > 0) {
+            self.inject_limit_order(&order_info);
         };
 
-        order
+        order_info
     }
 
     /// Given an order, transfer the appropriate balances. Up until this point, any partial fills have been executed
@@ -142,18 +141,18 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
-        order: &mut Order,
+        order_info: &mut OrderInfo,
         ctx: &mut TxContext,
     ) {
         let (mut base_in, mut base_out) = (0, 0);
         let (mut quote_in, mut quote_out) = (0, 0);
         let mut deep_in = 0;
-        let (taker_fee, maker_fee) = (self.state_manager.taker_fee_for_user(account.owner()), self.state_manager.maker_fee());
+        let (taker_fee, maker_fee) = self.state_manager.fees_for_user(account.owner());
         let (executed_quantity, remaining_quantity, cumulative_quote_quantity) = 
-            (order.executed_quantity(), order.remaining_quantity(), order.cumulative_quote_quantity());
+            (order_info.executed_quantity(), order_info.remaining_quantity(), order_info.cumulative_quote_quantity());
 
         // Calculate the taker balances. These are derived from executed quantity.
-        if (order.is_bid()) {
+        if (order_info.is_bid()) {
             quote_in = quote_in + cumulative_quote_quantity;
             base_out = base_out + executed_quantity;
             if (self.fee_is_deep()) {
@@ -172,8 +171,8 @@ module deepbook::pool {
         };
 
         // Calculate the maker balances. These are derived from the remaining quantity.
-        if (order.is_bid()) {
-            quote_in = quote_in + remaining_quantity * order.price();
+        if (order_info.is_bid()) {
+            quote_in = quote_in + remaining_quantity * order_info.price();
             if (self.fee_is_deep()) {
                 deep_in = deep_in + math::mul(maker_fee, math::mul(remaining_quantity, self.deep_config.borrow().deep_per_quote()));
             } else {
@@ -192,13 +191,13 @@ module deepbook::pool {
         let total_fees = if (self.fee_is_deep()) {
             deep_in
         } else {
-            if (order.is_bid()) {
-                quote_in - order.original_quantity() * order.price()
+            if (order_info.is_bid()) {
+                quote_in - order_info.original_quantity() * order_info.price()
             } else {
-                base_in - order.original_quantity()
+                base_in - order_info.original_quantity()
             }
         };
-        order.set_total_fees(total_fees);
+        order_info.set_total_fees(total_fees);
 
         if (base_in > 0) self.deposit_base(account, proof, base_in, ctx);
         if (base_out > 0) self.withdraw_base(account, proof, base_out, ctx);
@@ -214,9 +213,10 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &mut TxContext,
     ) {
-        let (base_amount, quote_amount) = self.state_manager.reset_user_settled_amounts(account.owner());
-        self.withdraw_base(account, proof, base_amount, ctx);
-        self.withdraw_quote(account, proof, quote_amount, ctx);
+        let (base, quote, deep) = self.state_manager.reset_user_settled_amounts(account.owner());
+        self.withdraw_base(account, proof, base, ctx);
+        self.withdraw_quote(account, proof, quote, ctx);
+        self.withdraw_deep(account, proof, deep, ctx);
     }
 
     /// Matches the given order and quantity against the order book.
@@ -224,10 +224,10 @@ module deepbook::pool {
     /// Mutates the order and the maker order as necessary.
     fun match_against_book<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        order: &mut Order,
+        order_info: &mut OrderInfo,
         clock: &Clock,
     ) {
-        let (mut ref, mut offset, book_side) = if (order.is_bid()) {
+        let (mut ref, mut offset, book_side) = if (order_info.is_bid()) {
             let (ref, offset) = self.asks.slice_following(MIN_ORDER_ID);
             (ref, offset, &mut self.asks)
         } else {
@@ -237,48 +237,30 @@ module deepbook::pool {
         
         if (ref.is_null()) return;
 
-        let mut executed_base_quantity = 0;
-        let mut executed_quote_quantity = 0;
-        let mut remove_order_ids = vector[];
-        let mut remove_order_owners = vector[];
+        let mut fills = vector[];
 
-        let mut other_order = book_side.borrow_mut_ref_offset(ref, offset);
-        while (order.remaining_quantity() > 0 && order.can_match(other_order) ) {
-            if (other_order.is_expired(clock.timestamp_ms())) {
-                other_order.set_expired();
-                remove_order_ids.push_back(other_order.order_id());
-                remove_order_owners.push_back(other_order.owner());
-                continue
-            };
-
-            let (filled_quantity, quote_quantity) = 
-                order.match_orders(other_order, clock.timestamp_ms());
-            executed_base_quantity = executed_base_quantity + filled_quantity;
-            executed_quote_quantity = executed_quote_quantity + quote_quantity;
-
-            self.state_manager.add_user_settled_amount(other_order.owner(), filled_quantity, other_order.is_bid());
-            self.state_manager.increase_maker_volume(other_order.owner(), filled_quantity);
-
-            if (other_order.is_complete()) {
-                remove_order_ids.push_back(other_order.order_id());
-                remove_order_owners.push_back(other_order.owner());
-            };
+        let mut maker_order = book_side.borrow_mut_ref_offset(ref, offset);
+        while (order_info.crosses_price(maker_order) ) {
+            fills.push_back(order_info.match_maker(maker_order, clock.timestamp_ms()));
 
             // Traverse to valid next order if exists, otherwise break from loop.
-            if (order.is_bid() && book_side.valid_next(ref, offset)) {
-                (ref, offset, other_order) = book_side.borrow_mut_next(ref, offset)
-            } else if (!order.is_bid() && book_side.valid_prev(ref, offset)) {
-                (ref, offset, other_order) = book_side.borrow_mut_prev(ref, offset)
+            if (order_info.is_bid() && book_side.valid_next(ref, offset)) {
+                (ref, offset, maker_order) = book_side.borrow_mut_next(ref, offset)
+            } else if (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
+                (ref, offset, maker_order) = book_side.borrow_mut_prev(ref, offset)
             } else {
                 break
             }
         };
 
-        // Iterate over orders_to_remove and remove from the book.
+        // Iterate over fills and process them.
         let mut i = 0;
-        while (i < remove_order_ids.length()) {
-            self.state_manager.remove_user_open_order(remove_order_owners[i], remove_order_ids[i]);
-            book_side.remove(remove_order_ids[i]);
+        while (i < fills.length()) {
+            let (order_id, _, expired, complete) = fills[i].fill_status();
+            if (expired || complete) {
+                book_side.remove(order_id);
+            };
+            self.state_manager.process_fill(&fills[i]);
             i = i + 1;
         };
     }
@@ -294,7 +276,7 @@ module deepbook::pool {
         is_bid: bool,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): Order {
+    ): OrderInfo {
         self.place_limit_order(
             account,
             proof,
@@ -370,25 +352,12 @@ module deepbook::pool {
         order.set_canceled();
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 
-        if (order.is_bid()) {
-            let mut quote_quantity = math::mul(order.remaining_quantity(), order.price());
-            if (!order.fee_is_deep()) {
-                quote_quantity = quote_quantity + order.fees_to_refund();
-            };
-            self.withdraw_quote(account, proof, quote_quantity, ctx)
-        } else {
-            let mut base_quantity = order.remaining_quantity();
-            if (!order.fee_is_deep()) {
-                base_quantity = base_quantity + order.fees_to_refund();
-            };
-            self.withdraw_base(account, proof, base_quantity, ctx)
-        };
+        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts();
+        if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);
+        if (quote_quantity > 0) self.withdraw_quote(account, proof, quote_quantity, ctx);
+        if (deep_quantity > 0) self.withdraw_deep(account, proof, deep_quantity, ctx);
 
-        if (order.fee_is_deep()) {
-            self.withdraw_deep(account, proof, order.fees_to_refund(), ctx)
-        };
-
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
 
         order
     }
@@ -400,7 +369,7 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &mut TxContext
     ) {
-        self.state_manager.refresh(ctx.epoch());
+        self.state_manager.update(ctx.epoch());
         let amount = self.state_manager.reset_user_rebates(account.owner());
         let coin = self.deepbook_balance.split(amount).into_coin(ctx);
         account.deposit_with_proof<DEEP>(proof, coin);
@@ -496,7 +465,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ): (u64, u64) {
-        self.state_manager.refresh(ctx.epoch());
+        self.state_manager.update(ctx.epoch());
 
         self.state_manager.increase_user_stake(user, amount)
     }
@@ -508,7 +477,7 @@ module deepbook::pool {
         user: address,
         ctx: &TxContext
     ): (u64, u64) {
-        self.state_manager.refresh(ctx.epoch());
+        self.state_manager.update(ctx.epoch());
 
         self.state_manager.remove_user_stake(user)
     }
@@ -655,17 +624,17 @@ module deepbook::pool {
     /// Balance accounting happens before this function is called
     fun inject_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        order: Order,
+        order_info: &OrderInfo,
     ) {
-        order.emit_order_placed<BaseAsset, QuoteAsset>();
-        let (order_id, owner) = (order.order_id(), order.owner());
-        if (order.is_bid()) {
-            self.bids.insert(order_id, order);
+        let order = order_info.to_order();
+        if (order_info.is_bid()) {
+            self.bids.insert(order_info.order_id(), order);
         } else {
-            self.asks.insert(order_id, order);
+            self.asks.insert(order_info.order_id(), order);
         };
 
-        self.state_manager.add_user_open_order(owner, order_id);
+        self.state_manager.add_user_open_order(order_info.owner(), order_info.order_id());
+        order_info.emit_order_placed<BaseAsset, QuoteAsset>();
     }
 
     /// Returns 0 if the order is a bid order, 1 if the order is an ask order
