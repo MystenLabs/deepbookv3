@@ -40,19 +40,18 @@ module deepbook::deep_price {
         quote_conversion_rate: u64,
     ) {
         assert!(self.last_insert_timestamp + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
+        self.price_points_base.push_back(base_conversion_rate);
+        self.price_points_quote.push_back(quote_conversion_rate);
+        self.cumulative_base = self.cumulative_base + base_conversion_rate;
+        self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
 
-        if (self.price_points_base.length() == MAX_DATA_POINTS) {
+        if (self.price_points_base.length() == MAX_DATA_POINTS + 1) {
             let idx = self.index_to_replace;
-            self.cumulative_base = self.cumulative_base - self.price_points_base[idx] + base_conversion_rate;
-            self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx] + quote_conversion_rate;
-            self.price_points_base.insert(idx, base_conversion_rate);
-            self.price_points_quote.insert(idx, quote_conversion_rate);
+            self.cumulative_base = self.cumulative_base - self.price_points_base[idx];
+            self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx];
+            self.price_points_base.swap_remove(idx);
+            self.price_points_quote.swap_remove(idx);
             self.index_to_replace = self.index_to_replace + 1 % MAX_DATA_POINTS;
-        } else {
-            self.price_points_base.push_back(base_conversion_rate);
-            self.price_points_quote.push_back(quote_conversion_rate);
-            self.cumulative_base = self.cumulative_base + base_conversion_rate;
-            self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
         }
     }
 

@@ -162,19 +162,18 @@ Add a price point. All values are validated by this point.
     quote_conversion_rate: u64,
 ) {
     <b>assert</b>!(self.last_insert_timestamp + <a href="deep_price.md#0x0_deep_price_MIN_DURATION_BETWEEN_DATA_POINTS_MS">MIN_DURATION_BETWEEN_DATA_POINTS_MS</a> &lt; timestamp, <a href="deep_price.md#0x0_deep_price_EDataPointRecentlyAdded">EDataPointRecentlyAdded</a>);
+    self.price_points_base.push_back(base_conversion_rate);
+    self.price_points_quote.push_back(quote_conversion_rate);
+    self.cumulative_base = self.cumulative_base + base_conversion_rate;
+    self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
 
-    <b>if</b> (self.price_points_base.length() == <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>) {
+    <b>if</b> (self.price_points_base.length() == <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a> + 1) {
         <b>let</b> idx = self.index_to_replace;
-        self.cumulative_base = self.cumulative_base - self.price_points_base[idx] + base_conversion_rate;
-        self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx] + quote_conversion_rate;
-        self.price_points_base.insert(idx, base_conversion_rate);
-        self.price_points_quote.insert(idx, quote_conversion_rate);
+        self.cumulative_base = self.cumulative_base - self.price_points_base[idx];
+        self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx];
+        self.price_points_base.swap_remove(idx);
+        self.price_points_quote.swap_remove(idx);
         self.index_to_replace = self.index_to_replace + 1 % <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>;
-    } <b>else</b> {
-        self.price_points_base.push_back(base_conversion_rate);
-        self.price_points_quote.push_back(quote_conversion_rate);
-        self.cumulative_base = self.cumulative_base + base_conversion_rate;
-        self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
     }
 }
 </code></pre>
