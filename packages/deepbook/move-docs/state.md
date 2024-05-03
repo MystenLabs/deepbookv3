@@ -264,7 +264,7 @@ reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against Deep
 pool is the Pool that will have the DEEP data point added.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPQuoteAsset&gt;(self: &<a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>, DEEPQuoteAsset&gt;, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, timestamp: u64)
 </code></pre>
 
 
@@ -273,10 +273,10 @@ pool is the Pool that will have the DEEP data point added.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPQuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
     self: &<a href="state.md#0x0_state_State">State</a>,
     reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEP, DEEPQuoteAsset&gt;,
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
     timestamp: u64,
 ) {
     <b>let</b> (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools

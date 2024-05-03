@@ -130,9 +130,11 @@ Add a reference pool.
 ## Function `get_conversion_rates`
 
 Calculate the conversion rate between the DEEP token and the base and quote assets of a pool.
+Case 1: base or quote in pool is already DEEP
+Case 2: base and quote in pool is not DEEP
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPQuoteAsset&gt;(self: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, deep_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>, DEEPQuoteAsset&gt;): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, deep_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;): (u64, u64)
 </code></pre>
 
 
@@ -141,23 +143,35 @@ Calculate the conversion rate between the DEEP token and the base and quote asse
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPQuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
     self: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    deep_pool: &Pool&lt;DEEP, DEEPQuoteAsset&gt;,
+    deep_pool: &Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
 ): (u64, u64) {
-    <b>let</b> (base, quote) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
-    <b>let</b> deep_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEPQuoteAsset&gt;().into_string();
+    <b>let</b> (base_type, quote_type) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
+    <b>let</b> pool_price = <a href="pool.md#0x0_pool">pool</a>.mid_price();
+    <b>if</b> (base_type == deep_type) {
+        <b>return</b> (1, pool_price)
+    };
+    <b>if</b> (quote_type == deep_type) {
+        <b>return</b> (pool_price, 1)
+    };
+
+    <b>let</b> (deep_base_type, deep_quote_type) = deep_pool.get_base_quote_types();
     <b>assert</b>!(self.reference_pools.contains(&deep_pool.key()), <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
-    <b>assert</b>!(base == deep_quote_type || quote == deep_quote_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
+    <b>assert</b>!(base_type == deep_base_type || base_type == deep_quote_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
+    <b>assert</b>!(quote_type == deep_base_type || quote_type == deep_quote_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
 
     <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = deep_pool.mid_price();
-    <b>let</b> pool_price = <a href="pool.md#0x0_pool">pool</a>.mid_price();
-
-    <b>if</b> (base == deep_quote_type) {
-        (<a href="deep_price.md#0x0_deep_price">deep_price</a>, math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price))
+    <b>if</b> (base_type == deep_base_type) {
+        <b>return</b> (math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>), math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price))
+    } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
+        <b>return</b> (<a href="deep_price.md#0x0_deep_price">deep_price</a>, math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
+    } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
+        <b>return</b> (math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price), math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
     } <b>else</b> {
-        (math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price), <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+        <b>return</b> (math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>), <a href="deep_price.md#0x0_deep_price">deep_price</a>)
     }
 }
 </code></pre>

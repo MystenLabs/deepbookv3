@@ -42,23 +42,37 @@ module deepbook::deep_reference_price {
     }
 
     /// Calculate the conversion rate between the DEEP token and the base and quote assets of a pool.
-    public(package) fun get_conversion_rates<BaseAsset, QuoteAsset, DEEPQuoteAsset>(
+    /// Case 1: base or quote in pool is already DEEP
+    /// Case 2: base and quote in pool is not DEEP
+    public(package) fun get_conversion_rates<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         self: &DeepReferencePools,
         pool: &Pool<BaseAsset, QuoteAsset>,
-        deep_pool: &Pool<DEEP, DEEPQuoteAsset>,
+        deep_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
     ): (u64, u64) {
-        let (base, quote) = pool.get_base_quote_types();
-        let deep_quote_type = type_name::get<DEEPQuoteAsset>().into_string();
+        let (base_type, quote_type) = pool.get_base_quote_types();
+        let deep_type = type_name::get<DEEP>().into_string();
+        let pool_price = pool.mid_price();
+        if (base_type == deep_type) {
+            return (1, pool_price)
+        };
+        if (quote_type == deep_type) {
+            return (pool_price, 1)
+        };
+
+        let (deep_base_type, deep_quote_type) = deep_pool.get_base_quote_types();
         assert!(self.reference_pools.contains(&deep_pool.key()), EIneligiblePool);
-        assert!(base == deep_quote_type || quote == deep_quote_type, EIneligiblePool);
+        assert!(base_type == deep_base_type || base_type == deep_quote_type, EIneligiblePool);
+        assert!(quote_type == deep_base_type || quote_type == deep_quote_type, EIneligiblePool);
 
         let deep_price = deep_pool.mid_price();
-        let pool_price = pool.mid_price();
-
-        if (base == deep_quote_type) {
-            (deep_price, math::div(deep_price, pool_price))
+        if (base_type == deep_base_type) {
+            return (math::div(1, deep_price), math::div(deep_price, pool_price))
+        } else if (base_type == deep_quote_type) {
+            return (deep_price, math::div(pool_price, deep_price))
+        } else if (quote_type == deep_base_type) {
+            return (math::div(deep_price, pool_price), math::div(1, deep_price))
         } else {
-            (math::div(deep_price, pool_price), deep_price)
+            return (math::div(pool_price, deep_price), deep_price)
         }
     }
 }

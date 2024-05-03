@@ -13,7 +13,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::{Self, State},
-        pool::{Pool, DEEP},
+        pool::Pool,
         order::{OrderInfo, Order},
         account::{Account, TradeProof},
     };
@@ -74,10 +74,10 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to add a deep price point into a specific pool.
-    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPQuoteAsset>(
+    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         state: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>, // DEEP Price or assertion
-        pool: &mut Pool<DEEP, DEEPQuoteAsset>,
+        pool: &mut Pool<DEEPBaseAsset, DEEPQuoteAsset>,
         clock: &Clock,
     ) {
         state.add_deep_price_point(

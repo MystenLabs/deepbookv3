@@ -94,10 +94,10 @@ module deepbook::state { // Consider renaming this module
     /// Insert a DEEP data point into a pool.
     /// reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
     /// pool is the Pool that will have the DEEP data point added.
-    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPQuoteAsset>(
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         self: &State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
-        pool: &mut Pool<DEEP, DEEPQuoteAsset>,
+        pool: &mut Pool<DEEPBaseAsset, DEEPQuoteAsset>,
         timestamp: u64,
     ) {
         let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
