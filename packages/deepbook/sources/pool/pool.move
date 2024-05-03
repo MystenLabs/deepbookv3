@@ -277,7 +277,7 @@ module deepbook::pool {
     }
 
     /// Swap quote for base asset. Returns the amount out and the amount in used.
-    public(package) fun swap_quote_for_base<BaseAsset, QuoteAsset>(
+    public(package) fun base_amount_out<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         quote_amount: u64,
     ): (u64, u64) {
@@ -285,7 +285,7 @@ module deepbook::pool {
     }
 
     /// Swap base for quote asset. Returns the amount out and the amount in used.
-    public(package) fun swap_base_for_quote<BaseAsset, QuoteAsset>(
+    public(package) fun quote_amount_out<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
     ): (u64, u64) {
@@ -663,11 +663,10 @@ module deepbook::pool {
         // shift price_low by 64 bits to the left to form the key
         let key_low = (price_low as u128) << 64;
         let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
-        let book_side;
-        if (is_bid) {
-            book_side = &self.bids;
+        let book_side = if (is_bid) {
+            &self.bids
         } else {
-            book_side = &self.asks;
+            &self.asks
         };
         // find the lowest order that's at least price_low
         let (mut ref, mut offset) = if (is_bid) {

@@ -15,8 +15,8 @@
 -  [Function `transfer_settled_amounts`](#0x0_pool_transfer_settled_amounts)
 -  [Function `match_against_book`](#0x0_pool_match_against_book)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
--  [Function `swap_quote_for_base`](#0x0_pool_swap_quote_for_base)
--  [Function `swap_base_for_quote`](#0x0_pool_swap_base_for_quote)
+-  [Function `base_amount_out`](#0x0_pool_base_amount_out)
+-  [Function `quote_amount_out`](#0x0_pool_quote_amount_out)
 -  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
@@ -723,14 +723,14 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 
 </details>
 
-<a name="0x0_pool_swap_quote_for_base"></a>
+<a name="0x0_pool_base_amount_out"></a>
 
-## Function `swap_quote_for_base`
+## Function `base_amount_out`
 
 Swap quote for base asset. Returns the amount out and the amount in used.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_swap_quote_for_base">swap_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_amount: u64): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_base_amount_out">base_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_amount: u64): (u64, u64)
 </code></pre>
 
 
@@ -739,7 +739,7 @@ Swap quote for base asset. Returns the amount out and the amount in used.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_swap_quote_for_base">swap_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_base_amount_out">base_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     quote_amount: u64,
 ): (u64, u64) {
@@ -751,14 +751,14 @@ Swap quote for base asset. Returns the amount out and the amount in used.
 
 </details>
 
-<a name="0x0_pool_swap_base_for_quote"></a>
+<a name="0x0_pool_quote_amount_out"></a>
 
-## Function `swap_base_for_quote`
+## Function `quote_amount_out`
 
 Swap base for quote asset. Returns the amount out and the amount in used.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_swap_base_for_quote">swap_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_quote_amount_out">quote_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64): (u64, u64)
 </code></pre>
 
 
@@ -767,7 +767,7 @@ Swap base for quote asset. Returns the amount out and the amount in used.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_swap_base_for_quote">swap_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_quote_amount_out">quote_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     base_amount: u64,
 ): (u64, u64) {
@@ -1661,11 +1661,10 @@ Price_vec is in descending order for bids and ascending order for asks.
     // shift price_low by 64 bits <b>to</b> the left <b>to</b> form the key
     <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
     <b>let</b> key_high = ((price_high <b>as</b> u128) &lt;&lt; 64) + ((1u128 &lt;&lt; 64 - 1) <b>as</b> u128);
-    <b>let</b> book_side;
-    <b>if</b> (is_bid) {
-        book_side = &self.bids;
+    <b>let</b> book_side = <b>if</b> (is_bid) {
+        &self.bids
     } <b>else</b> {
-        book_side = &self.asks;
+        &self.asks
     };
     // find the lowest <a href="order.md#0x0_order">order</a> that's at least price_low
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) {
