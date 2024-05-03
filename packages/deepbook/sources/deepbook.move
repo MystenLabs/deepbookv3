@@ -256,13 +256,13 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to get level2 bids or asks.
-    public fun get_level2<BaseAsset, QuoteAsset>(
+    public fun get_level2_range<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         price_low: u64,
         price_high: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        pool.get_level2(price_low, price_high, is_bid)
+        pool.get_level2_range(price_low, price_high, is_bid)
     }
 
     /// Public facing function to get level2 ticks from mid.

@@ -44,6 +44,7 @@ module deepbook::pool {
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -295,69 +296,13 @@ module deepbook::pool {
     /// Returns two vectors of u64
     /// The previous is a list of all valid prices
     /// The latter is the corresponding quantity at each level
-    public(package) fun get_level2<BaseAsset, QuoteAsset>(
+    public(package) fun get_level2_range<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         price_low: u64,
         price_high: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        assert!(price_low <= price_high, EInvalidPriceRange);
-
-        let mut price_vec = vector[];
-        let mut quantity_vec = vector[];
-
-        // shift price_low by 64 bits to the left to form the key
-        let key_low = (price_low as u128) << 64;
-        let key_high = ((price_high + 1) as u128) << 64;
-        let book_side;
-        if (is_bid) {
-            book_side = &self.bids;
-        } else {
-            book_side = &self.asks;
-        };
-        // find the lowest order that's at least price_low
-        let (mut ref, mut offset) = if (is_bid) {
-            book_side.slice_before(key_high)
-        } else {
-            book_side.slice_following(key_low)
-        };
-        // Check if there is a valid starting order
-        if (ref.is_null()) {
-            return (price_vec, quantity_vec)
-        };
-
-        let mut order = &book_side.borrow_slice(ref)[offset];
-        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
-        let mut cur_quantity = order.book_quantity();
-
-        while ((is_bid && cur_price >= price_low) || (!is_bid && cur_price <= price_high)) {
-            let valid_order = if (is_bid) {
-                book_side.valid_prev(ref, offset)
-            } else {
-                book_side.valid_next(ref, offset)
-            };
-            if (valid_order) {
-                (ref, offset, order) = if (is_bid) {
-                    book_side.borrow_prev(ref, offset)
-                } else {
-                    book_side.borrow_next(ref, offset)
-                };
-                let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
-                if (order_price != cur_price) {
-                    price_vec.push_back(cur_price);
-                    quantity_vec.push_back(cur_quantity);
-                    cur_quantity = 0;
-                    cur_price = order_price;
-                };
-                cur_quantity = cur_quantity + order.book_quantity();
-            } else {
-                price_vec.push_back(cur_price);
-                quantity_vec.push_back(cur_quantity);
-                break
-            }
-        };
-
-        (price_vec, quantity_vec)
+        get_level2_range_and_ticks(self, price_low, price_high, MAX_U64, is_bid)
     }
 
     /// Get the n ticks from the mid price
@@ -368,8 +313,8 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
     ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
-        let (bid_price, bid_quantity) = self.get_level2_ticks(ticks, true);
-        let (ask_price, ask_quantity) = self.get_level2_ticks(ticks, false);
+        let (bid_price, bid_quantity) = self.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, true);
+        let (ask_price, ask_quantity) = self.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, false);
 
         (bid_price, bid_quantity, ask_price, ask_quantity)
     }
@@ -697,34 +642,40 @@ module deepbook::pool {
         }
     }
 
-    /// Get the n ticks from the best bid or ask
+    /// Get the n ticks from the best bid or ask, must be within price range
     /// Returns two vectors of u64.
     /// The first is a list of all valid prices.
     /// The latter is the corresponding quantity list.
-    fun get_level2_ticks<BaseAsset, QuoteAsset>(
+    /// Price_vec is in descending order for bids and ascending order for asks.
+    fun get_level2_range_and_ticks<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
         ticks: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        // TODO: Consider making this a public function
+        assert!(price_low <= price_high, EInvalidPriceRange);
         assert!(ticks > 0, EInvalidTicks);
 
         let mut price_vec = vector[];
         let mut quantity_vec = vector[];
 
+        // shift price_low by 64 bits to the left to form the key
+        let key_low = (price_low as u128) << 64;
+        let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
         let book_side;
         if (is_bid) {
             book_side = &self.bids;
         } else {
             book_side = &self.asks;
         };
-        // find the largest order in bid or smallest order in ask
+        // find the lowest order that's at least price_low
         let (mut ref, mut offset) = if (is_bid) {
-            book_side.max_slice()
+            book_side.slice_before(key_high)
         } else {
-            book_side.min_slice()
+            book_side.slice_following(key_low)
         };
-        // Check if book_side is empty
+        // Check if there is a valid starting order
         if (ref.is_null()) {
             return (price_vec, quantity_vec)
         };
@@ -734,7 +685,10 @@ module deepbook::pool {
         let mut cur_quantity = order.book_quantity();
         let mut ticks_left = ticks;
 
-        while (ticks_left > 0) {
+        while (
+            ticks_left > 0 &&
+            (is_bid && cur_price >= price_low) || (!is_bid && cur_price <= price_high)
+        ) {
             let valid_order = if (is_bid) {
                 book_side.valid_prev(ref, offset)
             } else {
