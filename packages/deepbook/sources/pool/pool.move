@@ -352,6 +352,7 @@ module deepbook::pool {
 
         // shift price_low by 64 bits to the left to form the key
         let key_low = (price_low as u128) << 64;
+        let key_high = ((price_high + 1) as u128) << 64;
         let book_side;
         if (is_bid) {
             book_side = &self.bids;
@@ -359,8 +360,12 @@ module deepbook::pool {
             book_side = &self.asks;
         };
         // find the lowest order that's at least price_low
-        let (mut ref, mut offset) = book_side.slice_following(key_low);
-        // Check if there is order >= price_low
+        let (mut ref, mut offset) = if (is_bid) {
+            book_side.slice_before(key_high)
+        } else {
+            book_side.slice_following(key_low)
+        };
+        // Check if there is a valid starting order
         if (ref.is_null()) {
             return (price_vec, quantity_vec)
         };
@@ -369,9 +374,18 @@ module deepbook::pool {
         let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
         let mut cur_quantity = order.book_quantity();
 
-        while (cur_price <= price_high) {
-            if (book_side.valid_next(ref, offset)) {
-                (ref, offset, order) = book_side.borrow_next(ref, offset);
+        while ((is_bid && cur_price >= price_low) || (!is_bid && cur_price <= price_high)) {
+            let valid_order = if (is_bid) {
+                book_side.valid_prev(ref, offset)
+            } else {
+                book_side.valid_next(ref, offset)
+            };
+            if (valid_order) {
+                (ref, offset, order) = if (is_bid) {
+                    book_side.borrow_prev(ref, offset)
+                } else {
+                    book_side.borrow_next(ref, offset)
+                };
                 let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
                 if (order_price != cur_price) {
                     price_vec.push_back(cur_price);

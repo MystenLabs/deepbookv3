@@ -825,6 +825,7 @@ The latter is the corresponding quantity at each level
 
     // shift price_low by 64 bits <b>to</b> the left <b>to</b> form the key
     <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
+    <b>let</b> key_high = ((price_high + 1) <b>as</b> u128) &lt;&lt; 64;
     <b>let</b> book_side;
     <b>if</b> (is_bid) {
         book_side = &self.bids;
@@ -832,8 +833,12 @@ The latter is the corresponding quantity at each level
         book_side = &self.asks;
     };
     // find the lowest <a href="order.md#0x0_order">order</a> that's at least price_low
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = book_side.slice_following(key_low);
-    // Check <b>if</b> there is <a href="order.md#0x0_order">order</a> &gt;= price_low
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) {
+        book_side.slice_before(key_high)
+    } <b>else</b> {
+        book_side.slice_following(key_low)
+    };
+    // Check <b>if</b> there is a valid starting <a href="order.md#0x0_order">order</a>
     <b>if</b> (ref.is_null()) {
         <b>return</b> (price_vec, quantity_vec)
     };
@@ -842,9 +847,18 @@ The latter is the corresponding quantity at each level
     <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
     <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
 
-    <b>while</b> (cur_price &lt;= price_high) {
-        <b>if</b> (book_side.valid_next(ref, offset)) {
-            (ref, offset, <a href="order.md#0x0_order">order</a>) = book_side.borrow_next(ref, offset);
+    <b>while</b> ((is_bid && cur_price &gt;= price_low) || (!is_bid && cur_price &lt;= price_high)) {
+        <b>let</b> valid_order = <b>if</b> (is_bid) {
+            book_side.valid_prev(ref, offset)
+        } <b>else</b> {
+            book_side.valid_next(ref, offset)
+        };
+        <b>if</b> (valid_order) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
+                book_side.borrow_prev(ref, offset)
+            } <b>else</b> {
+                book_side.borrow_next(ref, offset)
+            };
             <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
             <b>if</b> (order_price != cur_price) {
                 price_vec.push_back(cur_price);
