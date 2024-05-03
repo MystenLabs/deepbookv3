@@ -5,6 +5,7 @@
 /// TODO: No authorization checks are implemented;
 module deepbook::deepbook {
     use sui::{
+        coin::{Self, Coin},
         balance::Balance,
         sui::SUI,
         clock::Clock,
@@ -13,7 +14,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::{Self, State},
-        pool::Pool,
+        pool::{DEEP, Pool},
         order::{OrderInfo, Order},
         account::{Account, TradeProof},
     };
@@ -203,6 +204,82 @@ module deepbook::deepbook {
             clock,
             ctx,
         )
+    }
+
+    /// Public facing function to place a direct base -> quote swap order on an unverified pool.
+    public fun swap_exact_base<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        base_in: Coin<BaseAsset>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+        let (base_out, quote_out, deep_out) = pool.swap_exact_amount(
+            base_in,
+            coin::zero(ctx),
+            coin::zero(ctx),
+            clock,
+            ctx,
+        );
+        deep_out.destroy_zero();
+
+        (base_out, quote_out)
+    }
+
+    /// Public facing function to place a direct quote -> base swap order on an unverified pool.
+    public fun swap_exact_quote<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        quote_in: Coin<QuoteAsset>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+        let (base_out, quote_out, deep_out) = pool.swap_exact_amount(
+            coin::zero(ctx),
+            quote_in,
+            coin::zero(ctx),
+            clock,
+            ctx,
+        );
+        deep_out.destroy_zero();
+
+        (base_out, quote_out)
+    }
+
+    /// Public facing function to place a direct base -> quote swap order on a verified pool.
+    public fun swap_exact_base_verified<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        base_in: Coin<BaseAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let (base_out, quote_out, deep_out) = pool.swap_exact_amount(
+            base_in,
+            coin::zero(ctx),
+            deep_in,
+            clock,
+            ctx,
+        );
+
+        (base_out, quote_out, deep_out)
+    }
+
+    /// Public facing function to place a direct quote -> base swap order on a verified pool.
+    public fun swap_exact_quote_verified<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        quote_in: Coin<QuoteAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let (base_out, quote_out, deep_out) = pool.swap_exact_amount(
+            coin::zero(ctx),
+            quote_in,
+            deep_in,
+            clock,
+            ctx,
+        );
+
+        (base_out, quote_out, deep_out)
     }
 
     /// Public facing function to cancel an order.

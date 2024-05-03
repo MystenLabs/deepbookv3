@@ -21,6 +21,10 @@ TODO: No authorization checks are implemented;
 -  [Function `vote`](#0x0_deepbook_vote)
 -  [Function `place_limit_order`](#0x0_deepbook_place_limit_order)
 -  [Function `place_market_order`](#0x0_deepbook_place_market_order)
+-  [Function `swap_exact_base`](#0x0_deepbook_swap_exact_base)
+-  [Function `swap_exact_quote`](#0x0_deepbook_swap_exact_quote)
+-  [Function `swap_exact_base_verified`](#0x0_deepbook_swap_exact_base_verified)
+-  [Function `swap_exact_quote_verified`](#0x0_deepbook_swap_exact_quote_verified)
 -  [Function `cancel_order`](#0x0_deepbook_cancel_order)
 -  [Function `cancel_all_orders`](#0x0_deepbook_cancel_all_orders)
 -  [Function `user_open_orders`](#0x0_deepbook_user_open_orders)
@@ -35,6 +39,7 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
 <b>use</b> <a href="dependencies/sui-framework/clock.md#0x2_clock">0x2::clock</a>;
+<b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/package.md#0x2_package">0x2::package</a>;
 <b>use</b> <a href="dependencies/sui-framework/sui.md#0x2_sui">0x2::sui</a>;
@@ -505,6 +510,162 @@ Public facing function to place a market order.
         <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
         ctx,
     )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_swap_exact_base"></a>
+
+## Function `swap_exact_base`
+
+Public facing function to place a direct base -> quote swap order on an unverified pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_base">swap_exact_base</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_base">swap_exact_base</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    base_in: Coin&lt;BaseAsset&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;) {
+    <b>let</b> (base_out, quote_out, deep_out) = <a href="pool.md#0x0_pool">pool</a>.swap_exact_amount(
+        base_in,
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    );
+    deep_out.destroy_zero();
+
+    (base_out, quote_out)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_swap_exact_quote"></a>
+
+## Function `swap_exact_quote`
+
+Public facing function to place a direct quote -> base swap order on an unverified pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_quote">swap_exact_quote</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_quote">swap_exact_quote</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    quote_in: Coin&lt;QuoteAsset&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;) {
+    <b>let</b> (base_out, quote_out, deep_out) = <a href="pool.md#0x0_pool">pool</a>.swap_exact_amount(
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        quote_in,
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    );
+    deep_out.destroy_zero();
+
+    (base_out, quote_out)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_swap_exact_base_verified"></a>
+
+## Function `swap_exact_base_verified`
+
+Public facing function to place a direct base -> quote swap order on a verified pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_base_verified">swap_exact_base_verified</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_base_verified">swap_exact_base_verified</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    base_in: Coin&lt;BaseAsset&gt;,
+    deep_in: Coin&lt;DEEP&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, Coin&lt;DEEP&gt;) {
+    <b>let</b> (base_out, quote_out, deep_out) = <a href="pool.md#0x0_pool">pool</a>.swap_exact_amount(
+        base_in,
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        deep_in,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    );
+
+    (base_out, quote_out, deep_out)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_swap_exact_quote_verified"></a>
+
+## Function `swap_exact_quote_verified`
+
+Public facing function to place a direct quote -> base swap order on a verified pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_quote_verified">swap_exact_quote_verified</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_exact_quote_verified">swap_exact_quote_verified</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    quote_in: Coin&lt;QuoteAsset&gt;,
+    deep_in: Coin&lt;DEEP&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, Coin&lt;DEEP&gt;) {
+    <b>let</b> (base_out, quote_out, deep_out) = <a href="pool.md#0x0_pool">pool</a>.swap_exact_amount(
+        <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx),
+        quote_in,
+        deep_in,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    );
+
+    (base_out, quote_out, deep_out)
 }
 </code></pre>
 

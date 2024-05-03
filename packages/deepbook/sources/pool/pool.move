@@ -308,9 +308,9 @@ module deepbook::pool {
         base_quantity = base_quantity - base_quantity % self.lot_size;
 
         self.place_market_order(&mut temp_account, &proof, 0, base_quantity, is_bid, clock, ctx);
-        let base_out = temp_account.withdraw_with_proof<BaseAsset>(&proof, 0, true, ctx);
-        let quote_out = temp_account.withdraw_with_proof<QuoteAsset>(&proof, 0, true, ctx);
-        let deep_out = temp_account.withdraw_with_proof<DEEP>(&proof, 0, true, ctx);
+        let base_out = temp_account.withdraw_with_proof(&proof, 0, true, ctx);
+        let quote_out = temp_account.withdraw_with_proof(&proof, 0, true, ctx);
+        let deep_out = temp_account.withdraw_with_proof(&proof, 0, true, ctx);
 
         temp_account.delete();
 
@@ -455,7 +455,7 @@ module deepbook::pool {
         self.state_manager.update(ctx.epoch());
         let amount = self.state_manager.reset_user_rebates(account.owner());
         let coin = self.deepbook_balance.split(amount).into_coin(ctx);
-        account.deposit_with_proof<DEEP>(proof, coin);
+        account.deposit_with_proof(proof, coin);
     }
 
     /// Cancel all orders for an account. Withdraw settled funds back into user account.
@@ -638,7 +638,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let base = user_account.withdraw_with_proof<BaseAsset>(proof, amount, false, ctx);
+        let base = user_account.withdraw_with_proof(proof, amount, false, ctx);
         self.base_balances.join(base.into_balance());
     }
 
@@ -649,7 +649,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let quote = user_account.withdraw_with_proof<QuoteAsset>(proof, amount, false, ctx);
+        let quote = user_account.withdraw_with_proof(proof, amount, false, ctx);
         self.quote_balances.join(quote.into_balance());
     }
 
@@ -660,7 +660,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = user_account.withdraw_with_proof<DEEP>(proof, amount, false, ctx);
+        let coin = user_account.withdraw_with_proof(proof, amount, false, ctx);
         self.deepbook_balance.join(coin.into_balance());
     }
 
@@ -672,7 +672,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.base_balances.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof<BaseAsset>(proof, coin);
+        user_account.deposit_with_proof(proof, coin);
     }
 
     fun withdraw_quote<BaseAsset, QuoteAsset>(
@@ -683,7 +683,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.quote_balances.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof<QuoteAsset>(proof, coin);
+        user_account.deposit_with_proof(proof, coin);
     }
 
     fun withdraw_deep<BaseAsset, QuoteAsset>(
@@ -694,7 +694,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = self.deepbook_balance.split(amount).into_coin(ctx);
-        user_account.deposit_with_proof<DEEP>(proof, coin);
+        user_account.deposit_with_proof(proof, coin);
     }
 
     #[allow(unused_function)]

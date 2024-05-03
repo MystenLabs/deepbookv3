@@ -770,9 +770,9 @@ Swap exact amount without needing an account.
     base_quantity = base_quantity - base_quantity % self.lot_size;
 
     self.<a href="pool.md#0x0_pool_place_market_order">place_market_order</a>(&<b>mut</b> temp_account, &proof, 0, base_quantity, is_bid, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>, ctx);
-    <b>let</b> base_out = temp_account.withdraw_with_proof&lt;BaseAsset&gt;(&proof, 0, <b>true</b>, ctx);
-    <b>let</b> quote_out = temp_account.withdraw_with_proof&lt;QuoteAsset&gt;(&proof, 0, <b>true</b>, ctx);
-    <b>let</b> deep_out = temp_account.withdraw_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(&proof, 0, <b>true</b>, ctx);
+    <b>let</b> base_out = temp_account.withdraw_with_proof(&proof, 0, <b>true</b>, ctx);
+    <b>let</b> quote_out = temp_account.withdraw_with_proof(&proof, 0, <b>true</b>, ctx);
+    <b>let</b> deep_out = temp_account.withdraw_with_proof(&proof, 0, <b>true</b>, ctx);
 
     temp_account.delete();
 
@@ -1036,7 +1036,7 @@ Claim the rebates for the user
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
     <b>let</b> amount = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.reset_user_rebates(<a href="account.md#0x0_account">account</a>.owner());
     <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.deepbook_balance.split(amount).into_coin(ctx);
-    <a href="account.md#0x0_account">account</a>.deposit_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
 
@@ -1456,7 +1456,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> base = user_account.withdraw_with_proof&lt;BaseAsset&gt;(proof, amount, <b>false</b>, ctx);
+    <b>let</b> base = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
     self.base_balances.join(base.into_balance());
 }
 </code></pre>
@@ -1487,7 +1487,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> quote = user_account.withdraw_with_proof&lt;QuoteAsset&gt;(proof, amount, <b>false</b>, ctx);
+    <b>let</b> quote = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
     self.quote_balances.join(quote.into_balance());
 }
 </code></pre>
@@ -1518,7 +1518,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = user_account.withdraw_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(proof, amount, <b>false</b>, ctx);
+    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
     self.deepbook_balance.join(<a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance());
 }
 </code></pre>
@@ -1550,7 +1550,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.base_balances.split(amount).into_coin(ctx);
-    user_account.deposit_with_proof&lt;BaseAsset&gt;(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
 
@@ -1581,7 +1581,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.quote_balances.split(amount).into_coin(ctx);
-    user_account.deposit_with_proof&lt;QuoteAsset&gt;(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
 
@@ -1612,7 +1612,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.deepbook_balance.split(amount).into_coin(ctx);
-    user_account.deposit_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
 
