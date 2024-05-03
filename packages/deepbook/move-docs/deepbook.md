@@ -24,8 +24,7 @@ TODO: No authorization checks are implemented;
 -  [Function `cancel_order`](#0x0_deepbook_cancel_order)
 -  [Function `cancel_all_orders`](#0x0_deepbook_cancel_all_orders)
 -  [Function `user_open_orders`](#0x0_deepbook_user_open_orders)
--  [Function `quote_amount_out`](#0x0_deepbook_quote_amount_out)
--  [Function `base_amount_out`](#0x0_deepbook_base_amount_out)
+-  [Function `get_amount_out`](#0x0_deepbook_get_amount_out)
 -  [Function `get_level2_range`](#0x0_deepbook_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_deepbook_get_level2_ticks_from_mid)
 
@@ -605,15 +604,16 @@ Public facing function to get open orders for a user.
 
 </details>
 
-<a name="0x0_deepbook_quote_amount_out"></a>
+<a name="0x0_deepbook_get_amount_out"></a>
 
-## Function `quote_amount_out`
+## Function `get_amount_out`
 
 Public facing function swap base for quote.
-Returns (amount_out, amount_in_used).
+Returns (base_amount_out, quote_amount_out).
+Only one of base_amount_in or quote_amount_in should be non-zero.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_quote_amount_out">quote_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64): (u64, u64)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount_in: u64, quote_amount_in: u64): (u64, u64)
 </code></pre>
 
 
@@ -622,40 +622,12 @@ Returns (amount_out, amount_in_used).
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_quote_amount_out">quote_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    amount_in: u64,
+    base_amount_in: u64,
+    quote_amount_in: u64,
 ): (u64, u64) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_quote_amount_out">quote_amount_out</a>(amount_in)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_deepbook_base_amount_out"></a>
-
-## Function `base_amount_out`
-
-Public facing function swap quote for base.
-Returns (amount_out, amount_in_used).
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_base_amount_out">base_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64): (u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_base_amount_out">base_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    amount_in: u64,
-): (u64, u64) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_base_amount_out">base_amount_out</a>(amount_in)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>(base_amount_in, quote_amount_in)
 }
 </code></pre>
 
