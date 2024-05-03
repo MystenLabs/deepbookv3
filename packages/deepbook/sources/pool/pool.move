@@ -660,19 +660,15 @@ module deepbook::pool {
         let mut price_vec = vector[];
         let mut quantity_vec = vector[];
 
-        // shift price_low by 64 bits to the left to form the key
+        // convert price_low and price_high to keys for searching
         let key_low = (price_low as u128) << 64;
         let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
-        let book_side = if (is_bid) {
-            &self.bids
+        let (mut ref, mut offset, book_side) = if (is_bid) {
+            let (ref, offset) = self.bids.slice_before(key_high);
+            (ref, offset, &self.bids)
         } else {
-            &self.asks
-        };
-        // find the lowest order that's at least price_low
-        let (mut ref, mut offset) = if (is_bid) {
-            book_side.slice_before(key_high)
-        } else {
-            book_side.slice_following(key_low)
+            let (ref, offset) = self.asks.slice_following(key_low);
+            (ref, offset, &self.asks)
         };
         // Check if there is a valid starting order
         if (ref.is_null()) {

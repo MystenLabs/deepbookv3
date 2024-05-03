@@ -1658,19 +1658,15 @@ Price_vec is in descending order for bids and ascending order for asks.
     <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>let</b> <b>mut</b> quantity_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    // shift price_low by 64 bits <b>to</b> the left <b>to</b> form the key
+    // convert price_low and price_high <b>to</b> keys for searching
     <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
     <b>let</b> key_high = ((price_high <b>as</b> u128) &lt;&lt; 64) + ((1u128 &lt;&lt; 64 - 1) <b>as</b> u128);
-    <b>let</b> book_side = <b>if</b> (is_bid) {
-        &self.bids
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
+        <b>let</b> (ref, offset) = self.bids.slice_before(key_high);
+        (ref, offset, &self.bids)
     } <b>else</b> {
-        &self.asks
-    };
-    // find the lowest <a href="order.md#0x0_order">order</a> that's at least price_low
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) {
-        book_side.slice_before(key_high)
-    } <b>else</b> {
-        book_side.slice_following(key_low)
+        <b>let</b> (ref, offset) = self.asks.slice_following(key_low);
+        (ref, offset, &self.asks)
     };
     // Check <b>if</b> there is a valid starting <a href="order.md#0x0_order">order</a>
     <b>if</b> (ref.is_null()) {
