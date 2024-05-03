@@ -231,7 +231,7 @@ Public facing function to add a reference pool.
 Public facing function to add a deep price point into a specific pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
 </code></pre>
 
 
@@ -240,16 +240,15 @@ Public facing function to add a deep price point into a specific pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
     <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;, // DEEP Price or assertion
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>(
-        reference_pool, <a href="pool.md#0x0_pool">pool</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>
+        reference_pool, <a href="pool.md#0x0_pool">pool</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()
     );
-    // Determine frequency this is done
 }
 </code></pre>
 

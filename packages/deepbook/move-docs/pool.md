@@ -15,6 +15,7 @@
 -  [Function `transfer_settled_amounts`](#0x0_pool_transfer_settled_amounts)
 -  [Function `match_against_book`](#0x0_pool_match_against_book)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
+-  [Function `mid_price`](#0x0_pool_mid_price)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
 -  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
@@ -714,6 +715,32 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
         <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
         ctx,
     )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_mid_price"></a>
+
+## Function `mid_price`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(
+    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): u64 {
+    0
 }
 </code></pre>
 
