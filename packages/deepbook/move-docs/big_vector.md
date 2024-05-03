@@ -33,10 +33,10 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `borrow_mut`](#0x0_big_vector_borrow_mut)
 -  [Function `valid_next`](#0x0_big_vector_valid_next)
 -  [Function `borrow_next`](#0x0_big_vector_borrow_next)
--  [Function `borrow_mut_next`](#0x0_big_vector_borrow_mut_next)
+-  [Function `borrow_next_mut`](#0x0_big_vector_borrow_next_mut)
 -  [Function `valid_prev`](#0x0_big_vector_valid_prev)
 -  [Function `borrow_prev`](#0x0_big_vector_borrow_prev)
--  [Function `borrow_mut_prev`](#0x0_big_vector_borrow_mut_prev)
+-  [Function `borrow_prev_mut`](#0x0_big_vector_borrow_prev_mut)
 -  [Function `insert`](#0x0_big_vector_insert)
 -  [Function `insert_batch`](#0x0_big_vector_insert_batch)
 -  [Function `remove`](#0x0_big_vector_remove)
@@ -757,6 +757,7 @@ Returns the next slice reference, the offset within the slice, and the immutable
     } <b>else</b> {
         <b>let</b> next_ref = slice.next();
         <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(next_ref);
+
         (next_ref, 0, &next_slice.vals[0])
     }
 }
@@ -766,16 +767,16 @@ Returns the next slice reference, the offset within the slice, and the immutable
 
 </details>
 
-<a name="0x0_big_vector_borrow_mut_next"></a>
+<a name="0x0_big_vector_borrow_next_mut"></a>
 
-## Function `borrow_mut_next`
+## Function `borrow_next_mut`
 
 Gets the next value within slice if exists, if at maximum gets the next element of the next slice
 Assumes valid_next is true
 Returns the next slice reference, the offset within the slice, and the mutable reference to the value
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_next">borrow_mut_next</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
 </code></pre>
 
 
@@ -784,13 +785,14 @@ Returns the next slice reference, the offset within the slice, and the mutable r
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_next">borrow_mut_next</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
     <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
         (ref, offset + 1, &<b>mut</b> slice[offset + 1])
     } <b>else</b> {
         <b>let</b> next_ref = slice.next();
         <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(next_ref);
+
         (next_ref, 0, &<b>mut</b> next_slice.vals[0])
     }
 }
@@ -853,6 +855,7 @@ Returns the prev slice reference, the offset within the slice, and the immutable
         // Borrow the previous slice and get the last element
         <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
         <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
+
         (prev_ref, last_index, &prev_slice[last_index])
     }
 }
@@ -862,16 +865,16 @@ Returns the prev slice reference, the offset within the slice, and the immutable
 
 </details>
 
-<a name="0x0_big_vector_borrow_mut_prev"></a>
+<a name="0x0_big_vector_borrow_prev_mut"></a>
 
-## Function `borrow_mut_prev`
+## Function `borrow_prev_mut`
 
 Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
 Assumes valid_prev is true
 Returns the prev slice reference, the offset within the slice, and the mutable reference to the value
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_prev">borrow_mut_prev</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
 </code></pre>
 
 
@@ -880,7 +883,7 @@ Returns the prev slice reference, the offset within the slice, and the mutable r
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_prev">borrow_mut_prev</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
     <b>if</b> (offset &gt; 0) {
         (ref, offset - 1, &<b>mut</b> slice[offset - 1])
@@ -889,6 +892,7 @@ Returns the prev slice reference, the offset within the slice, and the mutable r
         // Borrow the previous slice and get the last element
         <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(prev_ref);
         <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
+
         (prev_ref, last_index, &<b>mut</b> prev_slice[last_index])
     }
 }

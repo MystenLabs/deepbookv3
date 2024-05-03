@@ -229,9 +229,9 @@ module deepbook::pool {
 
             // Traverse to valid next order if exists, otherwise break from loop.
             if (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_mut_next(ref, offset)
+                (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
             } else if (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_mut_prev(ref, offset)
+                (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
             } else {
                 break
             }
@@ -286,7 +286,7 @@ module deepbook::pool {
     ): (u64, u64) {
         assert!(amount_in > 0, EInvalidAmountIn);
 
-        let (mut ref, mut offset, orderbook) = if (is_bid) {
+        let (mut ref, mut offset, book_side) = if (is_bid) {
             let (ref, offset) = self.asks.min_slice();
             (ref, offset, &self.asks)
         } else {
@@ -299,7 +299,7 @@ module deepbook::pool {
         let mut amount_out = 0;
         let mut amount_in_left = amount_in;
 
-        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let mut order = &book_side.borrow_slice(ref)[offset];
         let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
         let mut cur_quantity = order.book_quantity();
 
@@ -315,15 +315,15 @@ module deepbook::pool {
             };
 
             let valid_order = if (is_bid) {
-                orderbook.valid_next(ref, offset)
+                book_side.valid_next(ref, offset)
             } else {
-                orderbook.valid_prev(ref, offset)
+                book_side.valid_prev(ref, offset)
             };
             if (valid_order) {
                 (ref, offset, order) = if (is_bid) {
-                    orderbook.borrow_next(ref, offset)
+                    book_side.borrow_next(ref, offset)
                 } else {
-                    orderbook.borrow_prev(ref, offset)
+                    book_side.borrow_prev(ref, offset)
                 };
                 (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
                 cur_quantity = order.book_quantity();
@@ -338,7 +338,7 @@ module deepbook::pool {
     /// Get the level2 bids or asks between price_low and price_high.
     /// Returns two vectors of u64
     /// The previous is a list of all valid prices
-    /// The latter is the corresponding depth list
+    /// The latter is the corresponding quantity at each level
     public(package) fun get_level2<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         price_low: u64,
@@ -348,46 +348,46 @@ module deepbook::pool {
         assert!(price_low <= price_high, EInvalidPriceRange);
 
         let mut price_vec = vector[];
-        let mut depth_vec = vector[];
+        let mut quantity_vec = vector[];
 
         // shift price_low by 64 bits to the left to form the key
         let key_low = (price_low as u128) << 64;
-        let orderbook;
+        let book_side;
         if (is_bid) {
-            orderbook = &self.bids;
+            book_side = &self.bids;
         } else {
-            orderbook = &self.asks;
+            book_side = &self.asks;
         };
         // find the lowest order that's at least price_low
-        let (mut ref, mut offset) = orderbook.slice_following(key_low);
+        let (mut ref, mut offset) = book_side.slice_following(key_low);
         // Check if there is order >= price_low
         if (ref.is_null()) {
-            return (price_vec, depth_vec)
+            return (price_vec, quantity_vec)
         };
 
-        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let mut order = &book_side.borrow_slice(ref)[offset];
         let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
         let mut cur_quantity = order.book_quantity();
 
         while (cur_price <= price_high) {
-            if (orderbook.valid_next(ref, offset)) {
-                (ref, offset, order) = orderbook.borrow_next(ref, offset);
+            if (book_side.valid_next(ref, offset)) {
+                (ref, offset, order) = book_side.borrow_next(ref, offset);
                 let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
                 if (order_price != cur_price) {
                     price_vec.push_back(cur_price);
-                    depth_vec.push_back(cur_quantity);
+                    quantity_vec.push_back(cur_quantity);
                     cur_quantity = 0;
                     cur_price = order_price;
                 };
                 cur_quantity = cur_quantity + order.book_quantity();
             } else {
                 price_vec.push_back(cur_price);
-                depth_vec.push_back(cur_quantity);
+                quantity_vec.push_back(cur_quantity);
                 break
             }
         };
 
-        (price_vec, depth_vec)
+        (price_vec, quantity_vec)
     }
 
     /// Get the n ticks from the mid price
@@ -743,46 +743,46 @@ module deepbook::pool {
         assert!(ticks > 0, EInvalidTicks);
 
         let mut price_vec = vector[];
-        let mut depth_vec = vector[];
+        let mut quantity_vec = vector[];
 
-        let orderbook;
+        let book_side;
         if (is_bid) {
-            orderbook = &self.bids;
+            book_side = &self.bids;
         } else {
-            orderbook = &self.asks;
+            book_side = &self.asks;
         };
         // find the largest order in bid or smallest order in ask
         let (mut ref, mut offset) = if (is_bid) {
-            orderbook.max_slice()
+            book_side.max_slice()
         } else {
-            orderbook.min_slice()
+            book_side.min_slice()
         };
-        // Check if orderbook is empty
+        // Check if book_side is empty
         if (ref.is_null()) {
-            return (price_vec, depth_vec)
+            return (price_vec, quantity_vec)
         };
 
-        let mut order = &orderbook.borrow_slice(ref)[offset];
+        let mut order = &book_side.borrow_slice(ref)[offset];
         let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
         let mut cur_quantity = order.book_quantity();
         let mut ticks_left = ticks;
 
         while (ticks_left > 0) {
             let valid_order = if (is_bid) {
-                orderbook.valid_prev(ref, offset)
+                book_side.valid_prev(ref, offset)
             } else {
-                orderbook.valid_next(ref, offset)
+                book_side.valid_next(ref, offset)
             };
             if (valid_order) {
                 (ref, offset, order) = if (is_bid) {
-                    orderbook.borrow_prev(ref, offset)
+                    book_side.borrow_prev(ref, offset)
                 } else {
-                    orderbook.borrow_next(ref, offset)
+                    book_side.borrow_next(ref, offset)
                 };
                 let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
                 if (order_price != cur_price) {
                     price_vec.push_back(cur_price);
-                    depth_vec.push_back(cur_quantity);
+                    quantity_vec.push_back(cur_quantity);
                     cur_quantity = 0;
                     cur_price = order_price;
                     ticks_left = ticks_left - 1;
@@ -790,12 +790,12 @@ module deepbook::pool {
                 cur_quantity = cur_quantity + order.book_quantity();
             } else {
                 price_vec.push_back(cur_price);
-                depth_vec.push_back(cur_quantity);
+                quantity_vec.push_back(cur_quantity);
                 break
             }
         };
 
-        (price_vec, depth_vec)
+        (price_vec, quantity_vec)
     }
 
     #[allow(unused_function)]

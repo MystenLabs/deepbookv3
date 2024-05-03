@@ -642,9 +642,9 @@ Mutates the order and the maker order as necessary.
 
         // Traverse <b>to</b> valid next <a href="order.md#0x0_order">order</a> <b>if</b> exists, otherwise <b>break</b> from <b>loop</b>.
         <b>if</b> (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_mut_next(ref, offset)
+            (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
         } <b>else</b> <b>if</b> (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_mut_prev(ref, offset)
+            (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
         } <b>else</b> {
             <b>break</b>
         }
@@ -739,7 +739,7 @@ Will return (amount_out, amount_in_used)
 ): (u64, u64) {
     <b>assert</b>!(amount_in &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
 
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, orderbook) = <b>if</b> (is_bid) {
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
         <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &self.asks)
     } <b>else</b> {
@@ -752,7 +752,7 @@ Will return (amount_out, amount_in_used)
     <b>let</b> <b>mut</b> amount_out = 0;
     <b>let</b> <b>mut</b> amount_in_left = amount_in;
 
-    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
     <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
     <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
 
@@ -768,15 +768,15 @@ Will return (amount_out, amount_in_used)
         };
 
         <b>let</b> valid_order = <b>if</b> (is_bid) {
-            orderbook.valid_next(ref, offset)
+            book_side.valid_next(ref, offset)
         } <b>else</b> {
-            orderbook.valid_prev(ref, offset)
+            book_side.valid_prev(ref, offset)
         };
         <b>if</b> (valid_order) {
             (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
-                orderbook.borrow_next(ref, offset)
+                book_side.borrow_next(ref, offset)
             } <b>else</b> {
-                orderbook.borrow_prev(ref, offset)
+                book_side.borrow_prev(ref, offset)
             };
             (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
             cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
@@ -800,7 +800,7 @@ Will return (amount_out, amount_in_used)
 Get the level2 bids or asks between price_low and price_high.
 Returns two vectors of u64
 The previous is a list of all valid prices
-The latter is the corresponding depth list
+The latter is the corresponding quantity at each level
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2">get_level2</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
@@ -821,46 +821,46 @@ The latter is the corresponding depth list
     <b>assert</b>!(price_low &lt;= price_high, <a href="pool.md#0x0_pool_EInvalidPriceRange">EInvalidPriceRange</a>);
 
     <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
-    <b>let</b> <b>mut</b> depth_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> quantity_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
     // shift price_low by 64 bits <b>to</b> the left <b>to</b> form the key
     <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
-    <b>let</b> orderbook;
+    <b>let</b> book_side;
     <b>if</b> (is_bid) {
-        orderbook = &self.bids;
+        book_side = &self.bids;
     } <b>else</b> {
-        orderbook = &self.asks;
+        book_side = &self.asks;
     };
     // find the lowest <a href="order.md#0x0_order">order</a> that's at least price_low
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = orderbook.slice_following(key_low);
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = book_side.slice_following(key_low);
     // Check <b>if</b> there is <a href="order.md#0x0_order">order</a> &gt;= price_low
     <b>if</b> (ref.is_null()) {
-        <b>return</b> (price_vec, depth_vec)
+        <b>return</b> (price_vec, quantity_vec)
     };
 
-    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
     <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
     <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
 
     <b>while</b> (cur_price &lt;= price_high) {
-        <b>if</b> (orderbook.valid_next(ref, offset)) {
-            (ref, offset, <a href="order.md#0x0_order">order</a>) = orderbook.borrow_next(ref, offset);
+        <b>if</b> (book_side.valid_next(ref, offset)) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = book_side.borrow_next(ref, offset);
             <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
             <b>if</b> (order_price != cur_price) {
                 price_vec.push_back(cur_price);
-                depth_vec.push_back(cur_quantity);
+                quantity_vec.push_back(cur_quantity);
                 cur_quantity = 0;
                 cur_price = order_price;
             };
             cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
         } <b>else</b> {
             price_vec.push_back(cur_price);
-            depth_vec.push_back(cur_quantity);
+            quantity_vec.push_back(cur_quantity);
             <b>break</b>
         }
     };
 
-    (price_vec, depth_vec)
+    (price_vec, quantity_vec)
 }
 </code></pre>
 
@@ -1731,46 +1731,46 @@ The latter is the corresponding quantity list.
     <b>assert</b>!(ticks &gt; 0, <a href="pool.md#0x0_pool_EInvalidTicks">EInvalidTicks</a>);
 
     <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
-    <b>let</b> <b>mut</b> depth_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> quantity_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> orderbook;
+    <b>let</b> book_side;
     <b>if</b> (is_bid) {
-        orderbook = &self.bids;
+        book_side = &self.bids;
     } <b>else</b> {
-        orderbook = &self.asks;
+        book_side = &self.asks;
     };
     // find the largest <a href="order.md#0x0_order">order</a> in bid or smallest <a href="order.md#0x0_order">order</a> in ask
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) {
-        orderbook.max_slice()
+        book_side.max_slice()
     } <b>else</b> {
-        orderbook.min_slice()
+        book_side.min_slice()
     };
-    // Check <b>if</b> orderbook is empty
+    // Check <b>if</b> book_side is empty
     <b>if</b> (ref.is_null()) {
-        <b>return</b> (price_vec, depth_vec)
+        <b>return</b> (price_vec, quantity_vec)
     };
 
-    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &orderbook.borrow_slice(ref)[offset];
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
     <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
     <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
     <b>let</b> <b>mut</b> ticks_left = ticks;
 
     <b>while</b> (ticks_left &gt; 0) {
         <b>let</b> valid_order = <b>if</b> (is_bid) {
-            orderbook.valid_prev(ref, offset)
+            book_side.valid_prev(ref, offset)
         } <b>else</b> {
-            orderbook.valid_next(ref, offset)
+            book_side.valid_next(ref, offset)
         };
         <b>if</b> (valid_order) {
             (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
-                orderbook.borrow_prev(ref, offset)
+                book_side.borrow_prev(ref, offset)
             } <b>else</b> {
-                orderbook.borrow_next(ref, offset)
+                book_side.borrow_next(ref, offset)
             };
             <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
             <b>if</b> (order_price != cur_price) {
                 price_vec.push_back(cur_price);
-                depth_vec.push_back(cur_quantity);
+                quantity_vec.push_back(cur_quantity);
                 cur_quantity = 0;
                 cur_price = order_price;
                 ticks_left = ticks_left - 1;
@@ -1778,12 +1778,12 @@ The latter is the corresponding quantity list.
             cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
         } <b>else</b> {
             price_vec.push_back(cur_price);
-            depth_vec.push_back(cur_quantity);
+            quantity_vec.push_back(cur_quantity);
             <b>break</b>
         }
     };
 
-    (price_vec, depth_vec)
+    (price_vec, quantity_vec)
 }
 </code></pre>
 
