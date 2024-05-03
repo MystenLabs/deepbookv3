@@ -16,7 +16,7 @@ module deepbook::deep_price {
         last_insert_timestamp: u64,
         price_points_base: vector<u64>,
         price_points_quote: vector<u64>,
-        index_to_remove: u64,
+        index_to_replace: u64,
         cumulative_base: u64,
         cumulative_quote: u64,
     }
@@ -26,7 +26,7 @@ module deepbook::deep_price {
             last_insert_timestamp: 0,
             price_points_base: vector[],
             price_points_quote: vector[],
-            index_to_remove: 0,
+            index_to_replace: 0,
             cumulative_base: 0,
             cumulative_quote: 0,
         }
@@ -42,12 +42,12 @@ module deepbook::deep_price {
         assert!(self.last_insert_timestamp + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
 
         if (self.price_points_base.length() == MAX_DATA_POINTS) {
-            let idx = self.index_to_remove;
+            let idx = self.index_to_replace;
             self.cumulative_base = self.cumulative_base - self.price_points_base[idx] + base_conversion_rate;
             self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx] + quote_conversion_rate;
             self.price_points_base.insert(idx, base_conversion_rate);
             self.price_points_quote.insert(idx, quote_conversion_rate);
-            self.index_to_remove = self.index_to_remove + 1 % MAX_DATA_POINTS;
+            self.index_to_replace = self.index_to_replace + 1 % MAX_DATA_POINTS;
         } else {
             self.price_points_base.push_back(base_conversion_rate);
             self.price_points_quote.push_back(quote_conversion_rate);

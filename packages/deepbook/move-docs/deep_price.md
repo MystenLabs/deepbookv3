@@ -54,7 +54,7 @@
 
 </dd>
 <dt>
-<code>index_to_remove: u64</code>
+<code>index_to_replace: u64</code>
 </dt>
 <dd>
 
@@ -128,7 +128,7 @@
         last_insert_timestamp: 0,
         price_points_base: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         price_points_quote: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
-        index_to_remove: 0,
+        index_to_replace: 0,
         cumulative_base: 0,
         cumulative_quote: 0,
     }
@@ -164,12 +164,12 @@ Add a price point. All values are validated by this point.
     <b>assert</b>!(self.last_insert_timestamp + <a href="deep_price.md#0x0_deep_price_MIN_DURATION_BETWEEN_DATA_POINTS_MS">MIN_DURATION_BETWEEN_DATA_POINTS_MS</a> &lt; timestamp, <a href="deep_price.md#0x0_deep_price_EDataPointRecentlyAdded">EDataPointRecentlyAdded</a>);
 
     <b>if</b> (self.price_points_base.length() == <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>) {
-        <b>let</b> idx = self.index_to_remove;
+        <b>let</b> idx = self.index_to_replace;
         self.cumulative_base = self.cumulative_base - self.price_points_base[idx] + base_conversion_rate;
         self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx] + quote_conversion_rate;
         self.price_points_base.insert(idx, base_conversion_rate);
         self.price_points_quote.insert(idx, quote_conversion_rate);
-        self.index_to_remove = self.index_to_remove + 1 % <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>;
+        self.index_to_replace = self.index_to_replace + 1 % <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>;
     } <b>else</b> {
         self.price_points_base.push_back(base_conversion_rate);
         self.price_points_quote.push_back(quote_conversion_rate);
