@@ -4,35 +4,56 @@
 module deepbook::deep_price {
     use deepbook::math;
 
-    // DEEP price points used for trading fee calculations
+    // Minimum of 15 minutes between data points
+    const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60 * 15;
+    // Maximum number of data points to maintan
+    const MAX_DATA_POINTS: u64 = 100;
+
+    const EDataPointRecentlyAdded: u64 = 1;
+
+    // DEEP price points used for trading fee calculations.
     public struct DeepPrice has store, drop {
         last_insert_timestamp: u64,
-        price_points_base: vector<u64>, // deque with a max size
+        price_points_base: vector<u64>,
         price_points_quote: vector<u64>,
-        deep_per_base: u64,
-        deep_per_quote: u64,
+        index_to_remove: u64,
+        cumulative_base: u64,
+        cumulative_quote: u64,
     }
 
     public(package) fun new(): DeepPrice {
-        // Initialize the DEEP price points
         DeepPrice {
             last_insert_timestamp: 0,
             price_points_base: vector[],
             price_points_quote: vector[],
-            deep_per_base: 0,
-            deep_per_quote: 0,
+            index_to_remove: 0,
+            cumulative_base: 0,
+            cumulative_quote: 0,
         }
     }
 
     /// Add a price point. All values are validated by this point.
-    /// Calculate the rolling average and update deep_per_base, deep_per_quote.
     public(package) fun add_price_point(
-        _deep_price: &mut DeepPrice,
-        _timestamp: u64,
-        _base_conversion_rate: u64,
-        _quote_conversion_rate: u64,
+        self: &mut DeepPrice,
+        timestamp: u64,
+        base_conversion_rate: u64,
+        quote_conversion_rate: u64,
     ) {
-        // TODO 
+        assert!(self.last_insert_timestamp + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
+
+        if (self.price_points_base.length() == MAX_DATA_POINTS) {
+            let idx = self.index_to_remove;
+            self.cumulative_base = self.cumulative_base - self.price_points_base[idx] + base_conversion_rate;
+            self.cumulative_quote = self.cumulative_quote - self.price_points_quote[idx] + quote_conversion_rate;
+            self.price_points_base.insert(idx, base_conversion_rate);
+            self.price_points_quote.insert(idx, quote_conversion_rate);
+            self.index_to_remove = self.index_to_remove + 1 % MAX_DATA_POINTS;
+        } else {
+            self.price_points_base.push_back(base_conversion_rate);
+            self.price_points_quote.push_back(quote_conversion_rate);
+            self.cumulative_base = self.cumulative_base + base_conversion_rate;
+            self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
+        }
     }
 
     public(package) fun verified(
@@ -48,8 +69,10 @@ module deepbook::deep_price {
         quote_quantity: u64,
     ): (u64, u64, u64) {
         if (self.verified()) {
-            let base_fee = math::mul(fee_rate, math::mul(base_quantity, self.deep_per_base));
-            let quote_fee = math::mul(fee_rate, math::mul(quote_quantity, self.deep_per_quote));
+            let deep_per_base = math::div(self.cumulative_base, self.price_points_base.length());
+            let deep_per_quote = math::div(self.cumulative_quote, self.price_points_quote.length());
+            let base_fee = math::mul(fee_rate, math::mul(base_quantity, deep_per_base));
+            let quote_fee = math::mul(fee_rate, math::mul(quote_quantity, deep_per_quote));
             
             return (0, 0, base_fee + quote_fee)
         };

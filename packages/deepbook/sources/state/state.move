@@ -8,7 +8,6 @@ module deepbook::state { // Consider renaming this module
         balance::{Self, Balance},
         table::{Self, Table},
         sui::SUI,
-        clock::Clock,
     };
 
     use deepbook::{
@@ -95,11 +94,11 @@ module deepbook::state { // Consider renaming this module
     /// Insert a DEEP data point into a pool.
     /// reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
     /// pool is the Pool that will have the DEEP data point added.
-    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPQuoteAsset>(
         self: &State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>,
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
-        clock: &Clock,
+        pool: &mut Pool<DEEP, DEEPQuoteAsset>,
+        timestamp: u64,
     ) {
         let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
             .get_conversion_rates(reference_pool, pool);
@@ -107,7 +106,7 @@ module deepbook::state { // Consider renaming this module
         pool.add_deep_price_point(
             base_conversion_rate,
             quote_conversion_rate,
-            clock.timestamp_ms()
+            timestamp,
         );
     }
 

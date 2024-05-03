@@ -13,7 +13,7 @@ module deepbook::deepbook {
 
     use deepbook::{
         state::{Self, State},
-        pool::Pool,
+        pool::{Pool, DEEP},
         order::{OrderInfo, Order},
         account::{Account, TradeProof},
     };
@@ -74,16 +74,15 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to add a deep price point into a specific pool.
-    public fun add_deep_price_point<BaseAsset, QuoteAsset>(
+    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPQuoteAsset>(
         state: &mut State,
         reference_pool: &Pool<BaseAsset, QuoteAsset>, // DEEP Price or assertion
-        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<DEEP, DEEPQuoteAsset>,
         clock: &Clock,
     ) {
         state.add_deep_price_point(
-            reference_pool, pool, clock
+            reference_pool, pool, clock.timestamp_ms()
         );
-        // Determine frequency this is done
     }
 
     /// Public facing function to remove a deep price point from a specific pool.
