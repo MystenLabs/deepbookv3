@@ -28,7 +28,6 @@
 <b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
-<b>use</b> <a href="dependencies/sui-framework/clock.md#0x2_clock">0x2::clock</a>;
 <b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/sui.md#0x2_sui">0x2::sui</a>;
@@ -265,7 +264,7 @@ reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against Deep
 pool is the Pool that will have the DEEP data point added.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, timestamp: u64)
 </code></pre>
 
 
@@ -274,11 +273,11 @@ pool is the Pool that will have the DEEP data point added.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
     self: &<a href="state.md#0x0_state_State">State</a>,
     reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
+    timestamp: u64,
 ) {
     <b>let</b> (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
         .get_conversion_rates(reference_pool, <a href="pool.md#0x0_pool">pool</a>);
@@ -286,7 +285,7 @@ pool is the Pool that will have the DEEP data point added.
     <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>(
         base_conversion_rate,
         quote_conversion_rate,
-        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()
+        timestamp,
     );
 }
 </code></pre>

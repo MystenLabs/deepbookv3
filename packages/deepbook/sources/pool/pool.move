@@ -269,6 +269,13 @@ module deepbook::pool {
         )
     }
 
+    // TODO
+    public(package) fun mid_price<BaseAsset, QuoteAsset>(
+        _self: &Pool<BaseAsset, QuoteAsset>
+    ): u64 {
+        0
+    }
+
     /// Given an amount in and direction, calculate amount out
     /// Will return (amount_out, amount_in_used)
     public(package) fun get_amount_out<BaseAsset, QuoteAsset>(

@@ -3,6 +3,8 @@
 
 # Module `0x0::deep_reference_price`
 
+The deep_reference_price module provides the functionality to add DEEP reference pools
+and calculate the conversion rates between the DEEP token and any other token pair.
 
 
 -  [Struct `DeepReferencePools`](#0x0_deep_reference_price_DeepReferencePools)
@@ -12,10 +14,11 @@
 -  [Function `get_conversion_rates`](#0x0_deep_reference_price_get_conversion_rates)
 
 
-<pre><code><b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
+<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
 <b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
-<b>use</b> <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map">0x2::vec_map</a>;
+<b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
 </code></pre>
 
 
@@ -39,7 +42,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 <dl>
 <dt>
-<code>reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>&gt;</code>
+<code>reference_pools: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>&gt;</code>
 </dt>
 <dd>
 
@@ -80,7 +83,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_new">new</a>(): <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a> {
     <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a> {
-        reference_pools: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
+        reference_pools: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
     }
 }
 </code></pre>
@@ -93,10 +96,10 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 ## Function `add_reference_pool`
 
-Add a reference pool. Can be performed by the DeepbookAdminCap owner.
+Add a reference pool.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="deep_reference_price.md#0x0_deep_reference_price">deep_reference_price</a>: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;DEEP, QuoteAsset&gt;(self: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEP, QuoteAsset&gt;)
 </code></pre>
 
 
@@ -105,20 +108,16 @@ Add a reference pool. Can be performed by the DeepbookAdminCap owner.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="deep_reference_price.md#0x0_deep_reference_price">deep_reference_price</a>: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;DEEP, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
+    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;DEEP, QuoteAsset&gt;,
 ) {
     <b>let</b> (base, quote) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
 
     <b>assert</b>!(base == deep_type || quote == deep_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
 
-    <b>if</b> (base == deep_type) {
-        <a href="deep_reference_price.md#0x0_deep_reference_price">deep_reference_price</a>.reference_pools.insert(quote, <a href="pool.md#0x0_pool">pool</a>.key());
-    } <b>else</b> {
-        <a href="deep_reference_price.md#0x0_deep_reference_price">deep_reference_price</a>.reference_pools.insert(base, <a href="pool.md#0x0_pool">pool</a>.key());
-    }
+    self.reference_pools.push_back(<a href="pool.md#0x0_pool">pool</a>.key());
 }
 </code></pre>
 
@@ -130,10 +129,12 @@ Add a reference pool. Can be performed by the DeepbookAdminCap owner.
 
 ## Function `get_conversion_rates`
 
-TODO: comments
+Calculate the conversion rate between the DEEP token and the base and quote assets of a pool.
+Case 1: base or quote in pool is already DEEP
+Case 2: base and quote in pool is not DEEP
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset&gt;(_deep_reference_price: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, _reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, deep_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;): (u64, u64)
 </code></pre>
 
 
@@ -142,13 +143,36 @@ TODO: comments
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _deep_reference_price: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
-    _reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    _pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
+    self: &<a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
+    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+    deep_pool: &Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
 ): (u64, u64) {
-    (0, 0)
-    // TODO
+    <b>let</b> (base_type, quote_type) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
+    <b>let</b> pool_price = <a href="pool.md#0x0_pool">pool</a>.mid_price();
+    <b>if</b> (base_type == deep_type) {
+        <b>return</b> (1, pool_price)
+    };
+    <b>if</b> (quote_type == deep_type) {
+        <b>return</b> (pool_price, 1)
+    };
+
+    <b>let</b> (deep_base_type, deep_quote_type) = deep_pool.get_base_quote_types();
+    <b>assert</b>!(self.reference_pools.contains(&deep_pool.key()), <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
+    <b>assert</b>!(base_type == deep_base_type || base_type == deep_quote_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
+    <b>assert</b>!(quote_type == deep_base_type || quote_type == deep_quote_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
+
+    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = deep_pool.mid_price();
+    <b>if</b> (base_type == deep_base_type) {
+        <b>return</b> (math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>), math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price))
+    } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
+        <b>return</b> (<a href="deep_price.md#0x0_deep_price">deep_price</a>, math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
+    } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
+        <b>return</b> (math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price), math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
+    } <b>else</b> {
+        <b>return</b> (math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>), <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+    }
 }
 </code></pre>
 
