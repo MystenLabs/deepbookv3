@@ -302,7 +302,6 @@ module deepbook::big_vector {
             (ref, offset - 1, &slice[offset - 1])
         } else {
             let prev_ref = slice.prev();
-            // Borrow the previous slice and get the last element
             let prev_slice = self.borrow_slice(prev_ref);
             let last_index = prev_slice.vals.length() - 1;
 
@@ -319,7 +318,6 @@ module deepbook::big_vector {
             (ref, offset - 1, &mut slice[offset - 1])
         } else {
             let prev_ref = slice.prev();
-            // Borrow the previous slice and get the last element
             let prev_slice = self.borrow_slice_mut(prev_ref);
             let last_index = prev_slice.vals.length() - 1;
 
