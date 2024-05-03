@@ -55,7 +55,7 @@ module deepbook::state { // Consider renaming this module
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
     ) {
-        let pool = pool::create_pool<BaseAsset, QuoteAsset>(
+        let (pool_key, rev_key) = pool::create_pool<BaseAsset, QuoteAsset>(
             DEFAULT_TAKER_FEE,
             DEFAULT_MAKER_FEE,
             tick_size,
@@ -65,11 +65,10 @@ module deepbook::state { // Consider renaming this module
             ctx
         );
 
-        assert!(!self.pools.contains(pool.key()) && !self.pools.contains(pool.rev_key()), EPoolAlreadyExists);
+        assert!(!self.pools.contains(pool_key) && !self.pools.contains(rev_key), EPoolAlreadyExists);
 
         let pool_metadata = pool_metadata::new(ctx);
-        self.pools.add(pool.key(), pool_metadata);
-        pool.share()
+        self.pools.add(pool_key, pool_metadata);
     }
 
     /// Set the as stable or volatile. This changes the fee structure of the pool.

@@ -852,7 +852,6 @@ Returns the prev slice reference, the offset within the slice, and the immutable
         (ref, offset - 1, &slice[offset - 1])
     } <b>else</b> {
         <b>let</b> prev_ref = slice.prev();
-        // Borrow the previous slice and get the last element
         <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
         <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
 
@@ -889,7 +888,6 @@ Returns the prev slice reference, the offset within the slice, and the mutable r
         (ref, offset - 1, &<b>mut</b> slice[offset - 1])
     } <b>else</b> {
         <b>let</b> prev_ref = slice.prev();
-        // Borrow the previous slice and get the last element
         <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(prev_ref);
         <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
 

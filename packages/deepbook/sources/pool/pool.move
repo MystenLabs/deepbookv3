@@ -503,7 +503,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
-    ): Pool<BaseAsset, QuoteAsset> {
+    ): (PoolKey, PoolKey) {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
@@ -542,7 +542,14 @@ module deepbook::pool {
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
 
-        pool
+        let (pool_key, rev_key) = (pool.key(), PoolKey {
+            base: type_name::get<QuoteAsset>(),
+            quote: type_name::get<BaseAsset>(),
+        });
+
+        pool.share();
+
+        (pool_key, rev_key)
     }
 
     /// Increase a user's stake
@@ -615,16 +622,6 @@ module deepbook::pool {
         PoolKey {
             base: type_name::get<BaseAsset>(),
             quote: type_name::get<QuoteAsset>(),
-        }
-    }
-
-    // Get the reverse pool key for validation
-    public(package) fun rev_key<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>
-    ): PoolKey {
-        PoolKey {
-            base: type_name::get<QuoteAsset>(),
-            quote: type_name::get<BaseAsset>(),
         }
     }
 

@@ -30,7 +30,6 @@
 -  [Function `set_next_trade_params`](#0x0_pool_set_next_trade_params)
 -  [Function `get_base_quote_types`](#0x0_pool_get_base_quote_types)
 -  [Function `key`](#0x0_pool_key)
--  [Function `rev_key`](#0x0_pool_rev_key)
 -  [Function `share`](#0x0_pool_share)
 -  [Function `deposit_base`](#0x0_pool_deposit_base)
 -  [Function `deposit_quote`](#0x0_pool_deposit_quote)
@@ -1079,7 +1078,7 @@ Get all open orders for a user.
 Creates a new pool for trading and returns pool_key, called by state module
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(taker_fee: u64, maker_fee: u64, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(taker_fee: u64, maker_fee: u64, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>)
 </code></pre>
 
 
@@ -1096,7 +1095,7 @@ Creates a new pool for trading and returns pool_key, called by state module
     min_size: u64,
     creation_fee: Balance&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
-): <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
+): (<a href="pool.md#0x0_pool_PoolKey">PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">PoolKey</a>) {
     <b>assert</b>!(creation_fee.value() == <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>, <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
@@ -1135,7 +1134,14 @@ Creates a new pool for trading and returns pool_key, called by state module
     // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee.into_coin(ctx), <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
 
-    <a href="pool.md#0x0_pool">pool</a>
+    <b>let</b> (pool_key, rev_key) = (<a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_key">key</a>(), <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
+        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
+    });
+
+    <a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_share">share</a>();
+
+    (pool_key, rev_key)
 }
 </code></pre>
 
@@ -1348,35 +1354,6 @@ Get the pool key
     <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
         base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
         quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_rev_key"></a>
-
-## Function `rev_key`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_rev_key">rev_key</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_rev_key">rev_key</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
-): <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
-    <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
-        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
-        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
     }
 }
 </code></pre>

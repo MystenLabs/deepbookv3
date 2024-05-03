@@ -199,7 +199,7 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
     creation_fee: Balance&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> <a href="pool.md#0x0_pool">pool</a> = <a href="pool.md#0x0_pool_create_pool">pool::create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <b>let</b> (pool_key, rev_key) = <a href="pool.md#0x0_pool_create_pool">pool::create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
         <a href="state.md#0x0_state_DEFAULT_TAKER_FEE">DEFAULT_TAKER_FEE</a>,
         <a href="state.md#0x0_state_DEFAULT_MAKER_FEE">DEFAULT_MAKER_FEE</a>,
         tick_size,
@@ -209,11 +209,10 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
         ctx
     );
 
-    <b>assert</b>!(!self.pools.contains(<a href="pool.md#0x0_pool">pool</a>.key()) && !self.pools.contains(<a href="pool.md#0x0_pool">pool</a>.rev_key()), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
+    <b>assert</b>!(!self.pools.contains(pool_key) && !self.pools.contains(rev_key), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
 
     <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = <a href="pool_metadata.md#0x0_pool_metadata_new">pool_metadata::new</a>(ctx);
-    self.pools.add(<a href="pool.md#0x0_pool">pool</a>.key(), <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>);
-    <a href="pool.md#0x0_pool">pool</a>.share()
+    self.pools.add(pool_key, <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>);
 }
 </code></pre>
 
