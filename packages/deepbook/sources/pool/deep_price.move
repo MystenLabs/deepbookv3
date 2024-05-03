@@ -4,8 +4,8 @@
 module deepbook::deep_price {
     use deepbook::math;
 
-    // Minimum of 15 minutes between data points
-    const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60 * 15;
+    // Minimum of 1 minutes between data points
+    const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60;
     // Price points older than 1 day will be removed
     const MAX_DATA_POINT_AGE_MS: u64 = 1000 * 60 * 60 * 24;
     // Maximum number of data points to maintan
