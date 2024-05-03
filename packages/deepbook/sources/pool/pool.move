@@ -34,6 +34,7 @@ module deepbook::pool {
     const EInvalidPriceRange: u64 = 6;
     const EInvalidTicks: u64 = 7;
     const EInvalidAmountIn: u64 = 8;
+    const EEmptyOrderbook: u64 = 9;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -276,11 +277,18 @@ module deepbook::pool {
         )
     }
 
-    // TODO
     public(package) fun mid_price<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>
+        self: &Pool<BaseAsset, QuoteAsset>
     ): u64 {
-        0
+        let (ask_ref, ask_offset) = self.asks.min_slice();
+        let (bid_ref, bid_offset) = self.bids.max_slice();
+        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
+        let ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        let (_, ask_price, _) = utils::decode_order_id(ask_order.book_order_id());
+        let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        let (_, bid_price, _) = utils::decode_order_id(bid_order.book_order_id());
+
+        math::div(ask_price + bid_price, 2)
     }
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.

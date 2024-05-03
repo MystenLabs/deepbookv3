@@ -312,6 +312,15 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
+<a name="0x0_pool_EEmptyOrderbook"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EEmptyOrderbook">EEmptyOrderbook</a>: u64 = 9;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidAmountIn"></a>
 
 
@@ -728,7 +737,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): u64
 </code></pre>
 
 
@@ -738,9 +747,17 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
 ): u64 {
-    0
+    <b>let</b> (ask_ref, ask_offset) = self.asks.min_slice();
+    <b>let</b> (bid_ref, bid_offset) = self.bids.max_slice();
+    <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="pool.md#0x0_pool_EEmptyOrderbook">EEmptyOrderbook</a>);
+    <b>let</b> ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+    <b>let</b> (_, ask_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(ask_order.book_order_id());
+    <b>let</b> bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+    <b>let</b> (_, bid_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(bid_order.book_order_id());
+
+    <a href="math.md#0x0_math_div">math::div</a>(ask_price + bid_price, 2)
 }
 </code></pre>
 
