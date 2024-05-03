@@ -751,7 +751,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 ): u64 {
     <b>let</b> (ask_ref, ask_offset) = self.asks.min_slice();
     <b>let</b> (bid_ref, bid_offset) = self.bids.max_slice();
-    <b>assert</b>!(!ask_ref.is_null() || !bid_ref.is_null(), <a href="pool.md#0x0_pool_EEmptyOrderbook">EEmptyOrderbook</a>);
+    <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="pool.md#0x0_pool_EEmptyOrderbook">EEmptyOrderbook</a>);
     <b>let</b> ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
     <b>let</b> (_, ask_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(ask_order.book_order_id());
     <b>let</b> bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];

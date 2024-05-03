@@ -282,7 +282,7 @@ module deepbook::pool {
     ): u64 {
         let (ask_ref, ask_offset) = self.asks.min_slice();
         let (bid_ref, bid_offset) = self.bids.max_slice();
-        assert!(!ask_ref.is_null() || !bid_ref.is_null(), EEmptyOrderbook);
+        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
         let ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
         let (_, ask_price, _) = utils::decode_order_id(ask_order.book_order_id());
         let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
