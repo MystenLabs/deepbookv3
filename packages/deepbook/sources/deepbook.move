@@ -237,13 +237,22 @@ module deepbook::deepbook {
         pool.user_open_orders(user)
     }
 
-    /// Public facing function to get (amount_out, amount_in_used).
-    public fun get_amount_out<BaseAsset, QuoteAsset>(
+    /// Public facing function swap base for quote.
+    /// Returns (amount_out, amount_in_used).
+    public fun swap_base_for_quote<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         amount_in: u64,
-        is_bid: bool,
     ): (u64, u64) {
-        pool.get_amount_out(amount_in, is_bid)
+        pool.swap_base_for_quote(amount_in)
+    }
+
+    /// Public facing function swap quote for base.
+    /// Returns (amount_out, amount_in_used).
+    public fun swap_quote_for_base<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        amount_in: u64,
+    ): (u64, u64) {
+        pool.swap_quote_for_base(amount_in)
     }
 
     /// Public facing function to get level2 bids or asks.

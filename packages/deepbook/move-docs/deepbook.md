@@ -24,7 +24,8 @@ TODO: No authorization checks are implemented;
 -  [Function `cancel_order`](#0x0_deepbook_cancel_order)
 -  [Function `cancel_all_orders`](#0x0_deepbook_cancel_all_orders)
 -  [Function `user_open_orders`](#0x0_deepbook_user_open_orders)
--  [Function `get_amount_out`](#0x0_deepbook_get_amount_out)
+-  [Function `swap_base_for_quote`](#0x0_deepbook_swap_base_for_quote)
+-  [Function `swap_quote_for_base`](#0x0_deepbook_swap_quote_for_base)
 -  [Function `get_level2`](#0x0_deepbook_get_level2)
 -  [Function `get_level2_ticks_from_mid`](#0x0_deepbook_get_level2_ticks_from_mid)
 
@@ -604,14 +605,15 @@ Public facing function to get open orders for a user.
 
 </details>
 
-<a name="0x0_deepbook_get_amount_out"></a>
+<a name="0x0_deepbook_swap_base_for_quote"></a>
 
-## Function `get_amount_out`
+## Function `swap_base_for_quote`
 
-Public facing function to get (amount_out, amount_in_used).
+Public facing function swap base for quote.
+Returns (amount_out, amount_in_used).
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64, is_bid: bool): (u64, u64)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_base_for_quote">swap_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64): (u64, u64)
 </code></pre>
 
 
@@ -620,12 +622,40 @@ Public facing function to get (amount_out, amount_in_used).
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_base_for_quote">swap_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     amount_in: u64,
-    is_bid: bool,
 ): (u64, u64) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>(amount_in, is_bid)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_swap_base_for_quote">swap_base_for_quote</a>(amount_in)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_swap_quote_for_base"></a>
+
+## Function `swap_quote_for_base`
+
+Public facing function swap quote for base.
+Returns (amount_out, amount_in_used).
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_quote_for_base">swap_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64): (u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_swap_quote_for_base">swap_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+    amount_in: u64,
+): (u64, u64) {
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_swap_quote_for_base">swap_quote_for_base</a>(amount_in)
 }
 </code></pre>
 

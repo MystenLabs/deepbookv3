@@ -275,64 +275,20 @@ module deepbook::pool {
         )
     }
 
-    /// Given an amount in and direction, calculate amount out
-    /// For bids, amount_in is in quote asset terms and amount_out is in base asset terms
-    /// For asks, amount_in is in base asset terms and amount_out is in quote asset terms
-    /// Will return (amount_out, amount_in_used)
-    public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
+    /// Swap quote for base asset. Returns the amount out and the amount in used.
+    public(package) fun swap_quote_for_base<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
-        amount_in: u64,
-        is_bid: bool,
+        quote_amount: u64,
     ): (u64, u64) {
-        assert!(amount_in > 0, EInvalidAmountIn);
+        self.get_amount_out(quote_amount, true)
+    }
 
-        let (mut ref, mut offset, book_side) = if (is_bid) {
-            let (ref, offset) = self.asks.min_slice();
-            (ref, offset, &self.asks)
-        } else {
-            let (ref, offset) = self.bids.max_slice();
-            (ref, offset, &self.bids)
-        };
-
-        if (ref.is_null()) return (0, 0);
-
-        let mut amount_out = 0;
-        let mut amount_in_left = amount_in;
-
-        let mut order = &book_side.borrow_slice(ref)[offset];
-        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
-        let mut cur_quantity = order.book_quantity();
-
-        while (amount_in_left > 0) {
-            if (is_bid) {
-                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
-                amount_out = amount_out + math::div(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
-            } else {
-                let matched_amount = math::min(amount_in_left, cur_quantity);
-                amount_out = amount_out + math::mul(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
-            };
-
-            let valid_order = if (is_bid) {
-                book_side.valid_next(ref, offset)
-            } else {
-                book_side.valid_prev(ref, offset)
-            };
-            if (valid_order) {
-                (ref, offset, order) = if (is_bid) {
-                    book_side.borrow_next(ref, offset)
-                } else {
-                    book_side.borrow_prev(ref, offset)
-                };
-                (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
-                cur_quantity = order.book_quantity();
-            } else {
-                break
-            };
-        };
-
-        (amount_out, amount_in - amount_in_left)
+    /// Swap base for quote asset. Returns the amount out and the amount in used.
+    public(package) fun swap_base_for_quote<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+    ): (u64, u64) {
+        self.get_amount_out(base_amount, false)
     }
 
     /// Get the level2 bids or asks between price_low and price_high.
@@ -807,6 +763,66 @@ module deepbook::pool {
         };
 
         (price_vec, quantity_vec)
+    }
+
+    /// Given an amount in and direction, calculate amount out
+    /// For bids, amount_in is in quote asset terms and amount_out is in base asset terms
+    /// For asks, amount_in is in base asset terms and amount_out is in quote asset terms
+    /// Will return (amount_out, amount_in_used)
+    fun get_amount_out<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        amount_in: u64,
+        is_bid: bool,
+    ): (u64, u64) {
+        assert!(amount_in > 0, EInvalidAmountIn);
+
+        let (mut ref, mut offset, book_side) = if (is_bid) {
+            let (ref, offset) = self.asks.min_slice();
+            (ref, offset, &self.asks)
+        } else {
+            let (ref, offset) = self.bids.max_slice();
+            (ref, offset, &self.bids)
+        };
+
+        if (ref.is_null()) return (0, 0);
+
+        let mut amount_out = 0;
+        let mut amount_in_left = amount_in;
+
+        let mut order = &book_side.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+
+        while (amount_in_left > 0) {
+            if (is_bid) {
+                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                amount_out = amount_out + math::div(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            } else {
+                let matched_amount = math::min(amount_in_left, cur_quantity);
+                amount_out = amount_out + math::mul(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            };
+
+            let valid_order = if (is_bid) {
+                book_side.valid_next(ref, offset)
+            } else {
+                book_side.valid_prev(ref, offset)
+            };
+            if (valid_order) {
+                (ref, offset, order) = if (is_bid) {
+                    book_side.borrow_next(ref, offset)
+                } else {
+                    book_side.borrow_prev(ref, offset)
+                };
+                (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
+                cur_quantity = order.book_quantity();
+            } else {
+                break
+            };
+        };
+
+        (amount_out, amount_in - amount_in_left)
     }
 
     #[allow(unused_function)]
