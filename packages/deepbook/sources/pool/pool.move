@@ -19,7 +19,7 @@ module deepbook::pool {
         order::{Self, OrderInfo, Order},
         deep_price::{Self, DeepPrice},
         big_vector::{Self, BigVector},
-        account::{Account, TradeProof},
+        account::{Self, Account, TradeProof},
         state_manager::{Self, StateManager, TradeParams},
         utils,
         math,
@@ -121,6 +121,7 @@ module deepbook::pool {
         let pool_id = self.id.to_inner();
         let mut order_info =
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
+        order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, clock.timestamp_ms());
         self.match_against_book(&mut order_info, clock);
 
         self.transfer_trade_balances(account, proof, &mut order_info, ctx);
@@ -276,6 +277,46 @@ module deepbook::pool {
         )
     }
 
+    /// Swap exact amount without needing an account.
+    public(package) fun swap_exact_amount<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base_in: Coin<BaseAsset>,
+        quote_in: Coin<QuoteAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let mut base_quantity = base_in.value();
+        let mut quote_quantity = quote_in.value();
+        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
+        assert!(base_quantity > 0 && quote_quantity > 0, EInvalidAmountIn);
+
+        let mut temp_account = account::new(ctx);
+        temp_account.deposit(base_in, ctx);
+        temp_account.deposit(quote_in, ctx);
+        temp_account.deposit(deep_in, ctx);
+        let proof = temp_account.generate_proof_as_owner(ctx);
+
+        let is_bid = quote_quantity > 0;
+        let (taker_fee, _) = self.state_manager.fees_for_user(temp_account.owner());
+        let (base_fee, quote_fee, _) = self.deep_config.calculate_fees(taker_fee, base_quantity, quote_quantity);
+        base_quantity = base_quantity - base_fee;
+        quote_quantity = quote_quantity - quote_fee;
+        if (is_bid) {
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity);
+        };
+        base_quantity = base_quantity - base_quantity % self.lot_size;
+
+        self.place_market_order(&mut temp_account, &proof, 0, base_quantity, is_bid, clock, ctx);
+        let base_out = temp_account.withdraw_with_proof<BaseAsset>(&proof, 0, true, ctx);
+        let quote_out = temp_account.withdraw_with_proof<QuoteAsset>(&proof, 0, true, ctx);
+        let deep_out = temp_account.withdraw_with_proof<DEEP>(&proof, 0, true, ctx);
+
+        temp_account.delete();
+
+        (base_out, quote_out, deep_out)
+    }
+
     // TODO
     public(package) fun mid_price<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
@@ -291,7 +332,7 @@ module deepbook::pool {
         quote_amount: u64,
     ): (u64, u64) {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
-        let is_bid = if (quote_amount > 0) true else false;
+        let is_bid = quote_amount > 0;
 
         let (mut ref, mut offset, book_side) = if (is_bid) {
             let (ref, offset) = self.asks.min_slice();
@@ -597,7 +638,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let base = user_account.withdraw_with_proof<BaseAsset>(proof, amount, ctx);
+        let base = user_account.withdraw_with_proof<BaseAsset>(proof, amount, false, ctx);
         self.base_balances.join(base.into_balance());
     }
 
@@ -608,7 +649,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let quote = user_account.withdraw_with_proof<QuoteAsset>(proof, amount, ctx);
+        let quote = user_account.withdraw_with_proof<QuoteAsset>(proof, amount, false, ctx);
         self.quote_balances.join(quote.into_balance());
     }
 
@@ -619,7 +660,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = user_account.withdraw_with_proof<DEEP>(proof, amount, ctx);
+        let coin = user_account.withdraw_with_proof<DEEP>(proof, amount, false, ctx);
         self.deepbook_balance.join(coin.into_balance());
     }
 
