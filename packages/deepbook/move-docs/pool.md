@@ -8,6 +8,7 @@
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Struct `DEEP`](#0x0_pool_DEEP)
 -  [Resource `Pool`](#0x0_pool_Pool)
+-  [Struct `PoolKey`](#0x0_pool_PoolKey)
 -  [Constants](#@Constants_0)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `transfer_trade_balances`](#0x0_pool_transfer_trade_balances)
@@ -16,8 +17,7 @@
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
 -  [Function `mid_price`](#0x0_pool_mid_price)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
--  [Function `get_level2_bids`](#0x0_pool_get_level2_bids)
--  [Function `get_level2_asks`](#0x0_pool_get_level2_asks)
+-  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
@@ -42,16 +42,17 @@
 -  [Function `inject_limit_order`](#0x0_pool_inject_limit_order)
 -  [Function `order_is_bid`](#0x0_pool_order_is_bid)
 -  [Function `get_order_id`](#0x0_pool_get_order_id)
+-  [Function `get_level2_range_and_ticks`](#0x0_pool_get_level2_range_and_ticks)
 -  [Function `correct_supply`](#0x0_pool_correct_supply)
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
-<b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
@@ -255,6 +256,39 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 </details>
 
+<a name="0x0_pool_PoolKey"></a>
+
+## Struct `PoolKey`
+
+
+
+<pre><code><b>struct</b> <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> <b>has</b> <b>copy</b>, drop, store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
 <a name="@Constants_0"></a>
 
 ## Constants
@@ -274,6 +308,15 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x0_pool_EInvalidAmountIn"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 8;
 </code></pre>
 
 
@@ -305,11 +348,29 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
+<a name="0x0_pool_EInvalidPriceRange"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidPriceRange">EInvalidPriceRange</a>: u64 = 6;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidTickSize"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>: u64 = 3;
+</code></pre>
+
+
+
+<a name="0x0_pool_EInvalidTicks"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidTicks">EInvalidTicks</a>: u64 = 7;
 </code></pre>
 
 
@@ -323,11 +384,11 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
-<a name="0x0_pool_MAX_ORDER_ID"></a>
+<a name="0x0_pool_MAX_U64"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
 </code></pre>
 
 
@@ -337,15 +398,6 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ASK_ORDER_ID">MIN_ASK_ORDER_ID</a>: u128 = 170141183460469231731687303715884105728;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_ORDER_ID"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>: u128 = 0;
 </code></pre>
 
 
@@ -582,10 +634,10 @@ Mutates the order and the maker order as necessary.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (order_info.is_bid()) {
-        <b>let</b> (ref, offset) = self.asks.slice_following(<a href="pool.md#0x0_pool_MIN_ORDER_ID">MIN_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.asks.min_slice();
         (ref, offset, &<b>mut</b> self.asks)
     } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.slice_before(<a href="pool.md#0x0_pool_MAX_ORDER_ID">MAX_ORDER_ID</a>);
+        <b>let</b> (ref, offset) = self.bids.max_slice();
         (ref, offset, &<b>mut</b> self.bids)
     };
 
@@ -593,15 +645,15 @@ Mutates the order and the maker order as necessary.
 
     <b>let</b> <b>mut</b> fills = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> maker_order = book_side.borrow_mut_ref_offset(ref, offset);
+    <b>let</b> <b>mut</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
     <b>while</b> (order_info.crosses_price(maker_order) ) {
         fills.push_back(order_info.match_maker(maker_order, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()));
 
         // Traverse <b>to</b> valid next <a href="order.md#0x0_order">order</a> <b>if</b> exists, otherwise <b>break</b> from <b>loop</b>.
         <b>if</b> (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_mut_next(ref, offset)
+            (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
         } <b>else</b> <b>if</b> (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_mut_prev(ref, offset)
+            (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
         } <b>else</b> {
             <b>break</b>
         }
@@ -700,11 +752,11 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
 
 ## Function `get_amount_out`
 
-Given an amount in and direction, calculate amount out
-Will return (amount_out, amount_in_used)
+Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
+Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _amount_in: u64, _is_bid: bool): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64): (u64, u64)
 </code></pre>
 
 
@@ -714,12 +766,64 @@ Will return (amount_out, amount_in_used)
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _amount_in: u64,
-    _is_bid: bool,
-): u64 {
-    // TODO: implement
-    0
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base_amount: u64,
+    quote_amount: u64,
+): (u64, u64) {
+    <b>assert</b>!((base_amount &gt; 0 || quote_amount &gt; 0) && !(base_amount &gt; 0 && quote_amount &gt; 0), <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
+    <b>let</b> is_bid = <b>if</b> (quote_amount &gt; 0) <b>true</b> <b>else</b> <b>false</b>;
+
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
+        <b>let</b> (ref, offset) = self.asks.min_slice();
+        (ref, offset, &self.asks)
+    } <b>else</b> {
+        <b>let</b> (ref, offset) = self.bids.max_slice();
+        (ref, offset, &self.bids)
+    };
+
+    <b>if</b> (ref.is_null()) <b>return</b> (0, 0);
+
+    <b>let</b> <b>mut</b> amount_out = 0;
+    <b>let</b> <b>mut</b> amount_in_left = <b>if</b> (is_bid) quote_amount <b>else</b> base_amount;
+
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+
+    <b>while</b> (amount_in_left &gt; 0) {
+        <b>if</b> (is_bid) {
+            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, <a href="math.md#0x0_math_mul">math::mul</a>(cur_quantity, cur_price));
+            amount_out = amount_out + <a href="math.md#0x0_math_div">math::div</a>(matched_amount, cur_price);
+            amount_in_left = amount_in_left - matched_amount;
+        } <b>else</b> {
+            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, cur_quantity);
+            amount_out = amount_out + <a href="math.md#0x0_math_mul">math::mul</a>(matched_amount, cur_price);
+            amount_in_left = amount_in_left - matched_amount;
+        };
+
+        <b>let</b> valid_order = <b>if</b> (is_bid) {
+            book_side.valid_next(ref, offset)
+        } <b>else</b> {
+            book_side.valid_prev(ref, offset)
+        };
+        <b>if</b> (valid_order) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
+                book_side.borrow_next(ref, offset)
+            } <b>else</b> {
+                book_side.borrow_prev(ref, offset)
+            };
+            (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+            cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+        } <b>else</b> {
+            <b>break</b>
+        };
+    };
+
+    <b>if</b> (is_bid) {
+        (amount_out, amount_in_left)
+    } <b>else</b> {
+        (amount_in_left, amount_out)
+    }
 }
 </code></pre>
 
@@ -727,14 +831,17 @@ Will return (amount_out, amount_in_used)
 
 </details>
 
-<a name="0x0_pool_get_level2_bids"></a>
+<a name="0x0_pool_get_level2_range"></a>
 
-## Function `get_level2_bids`
+## Function `get_level2_range`
 
-Get the level2 bids between price_low and price_high.
+Get the level2 bids or asks between price_low and price_high.
+Returns two vectors of u64
+The previous is a list of all valid prices
+The latter is the corresponding quantity at each level
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _price_low: u64, _price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_range">get_level2_range</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -743,43 +850,13 @@ Get the level2 bids between price_low and price_high.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _price_low: u64,
-    _price_high: u64,
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_range">get_level2_range</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    price_low: u64,
+    price_high: u64,
+    is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_get_level2_asks"></a>
-
-## Function `get_level2_asks`
-
-Get the level2 bids between price_low and price_high.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _price_low: u64, _price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _price_low: u64,
-    _price_high: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
+    <a href="pool.md#0x0_pool_get_level2_range_and_ticks">get_level2_range_and_ticks</a>(self, price_low, price_high, <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>, is_bid)
 }
 </code></pre>
 
@@ -792,9 +869,12 @@ Get the level2 bids between price_low and price_high.
 ## Function `get_level2_ticks_from_mid`
 
 Get the n ticks from the mid price
+Returns four vectors of u64.
+The first two are the bid prices and quantities.
+The latter two are the ask prices and quantities.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -804,11 +884,13 @@ Get the n ticks from the mid price
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _ticks: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    // TODO: implement
-    (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[], <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[])
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    ticks: u64,
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+    <b>let</b> (bid_price, bid_quantity) = self.<a href="pool.md#0x0_pool_get_level2_range_and_ticks">get_level2_range_and_ticks</a>(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>true</b>);
+    <b>let</b> (ask_price, ask_quantity) = self.<a href="pool.md#0x0_pool_get_level2_range_and_ticks">get_level2_range_and_ticks</a>(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>false</b>);
+
+    (bid_price, bid_quantity, ask_price, ask_quantity)
 }
 </code></pre>
 
@@ -979,7 +1061,7 @@ Get all open orders for a user.
 Creates a new pool for trading and returns pool_key, called by state module
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(taker_fee: u64, maker_fee: u64, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(taker_fee: u64, maker_fee: u64, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>)
 </code></pre>
 
 
@@ -996,7 +1078,7 @@ Creates a new pool for trading and returns pool_key, called by state module
     min_size: u64,
     creation_fee: Balance&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
-): <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
+): (<a href="pool.md#0x0_pool_PoolKey">PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">PoolKey</a>) {
     <b>assert</b>!(creation_fee.value() == <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>, <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
@@ -1017,8 +1099,8 @@ Creates a new pool for trading and returns pool_key, called by state module
 
     <b>let</b> <a href="pool.md#0x0_pool">pool</a> = (<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
         id: pool_uid,
-        bids: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: what are these numbers
-        asks: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: ditto
+        bids: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: <b>update</b> base on benchmark
+        asks: <a href="big_vector.md#0x0_big_vector_empty">big_vector::empty</a>(10000, 1000, ctx), // TODO: <b>update</b> base on benchmark
         next_bid_order_id: <a href="pool.md#0x0_pool_START_BID_ORDER_ID">START_BID_ORDER_ID</a>,
         next_ask_order_id: <a href="pool.md#0x0_pool_START_ASK_ORDER_ID">START_ASK_ORDER_ID</a>,
         deep_config: <a href="deep_price.md#0x0_deep_price_new">deep_price::new</a>(),
@@ -1035,7 +1117,14 @@ Creates a new pool for trading and returns pool_key, called by state module
     // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee.into_coin(ctx), <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
 
-    <a href="pool.md#0x0_pool">pool</a>
+    <b>let</b> (pool_key, rev_key) = (<a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_key">key</a>(), <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
+        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
+    });
+
+    <a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_share">share</a>();
+
+    (pool_key, rev_key)
 }
 </code></pre>
 
@@ -1200,10 +1289,10 @@ The next pool state is moved to current pool state.
 
 ## Function `get_base_quote_types`
 
-Get the base and quote asset of pool, return as ascii strings
+Get the base and quote asset TypeName of pool
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>, <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a>, <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a>)
 </code></pre>
 
 
@@ -1214,10 +1303,10 @@ Get the base and quote asset of pool, return as ascii strings
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>&lt;BaseAsset, QuoteAsset&gt;(
     _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
-): (String, String) {
+): (TypeName, TypeName) {
     (
-        <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;().into_string(),
-        <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;().into_string()
+        <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
+        <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;()
     )
 }
 </code></pre>
@@ -1230,11 +1319,10 @@ Get the base and quote asset of pool, return as ascii strings
 
 ## Function `key`
 
-Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
+Get the pool key
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>
 </code></pre>
 
 
@@ -1244,13 +1332,11 @@ TODO: Why is this needed as a key? Why don't we just use the ID of the pool as a
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
-): String {
-    <b>let</b> (base, quote) = <a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>(self);
-    <b>if</b> (<a href="utils.md#0x0_utils_compare">utils::compare</a>(&base, &quote)) {
-        <a href="utils.md#0x0_utils_concat_ascii">utils::concat_ascii</a>(base, quote)
-    } <b>else</b> {
-        <a href="utils.md#0x0_utils_concat_ascii">utils::concat_ascii</a>(quote, base)
+    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+    <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
+        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
+        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
     }
 }
 </code></pre>
@@ -1584,6 +1670,98 @@ Returns 0 if the order is a bid order, 1 if the order is an ask order
         self.next_ask_order_id = self.next_ask_order_id + 1;
         self.next_ask_order_id
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_get_level2_range_and_ticks"></a>
+
+## Function `get_level2_range_and_ticks`
+
+Get the n ticks from the best bid or ask, must be within price range
+Returns two vectors of u64.
+The first is a list of all valid prices.
+The latter is the corresponding quantity list.
+Price_vec is in descending order for bids and ascending order for asks.
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_level2_range_and_ticks">get_level2_range_and_ticks</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, ticks: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_level2_range_and_ticks">get_level2_range_and_ticks</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    price_low: u64,
+    price_high: u64,
+    ticks: u64,
+    is_bid: bool,
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+    <b>assert</b>!(price_low &lt;= price_high, <a href="pool.md#0x0_pool_EInvalidPriceRange">EInvalidPriceRange</a>);
+    <b>assert</b>!(ticks &gt; 0, <a href="pool.md#0x0_pool_EInvalidTicks">EInvalidTicks</a>);
+
+    <b>let</b> <b>mut</b> price_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+    <b>let</b> <b>mut</b> quantity_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
+
+    // convert price_low and price_high <b>to</b> keys for searching
+    <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
+    <b>let</b> key_high = ((price_high <b>as</b> u128) &lt;&lt; 64) + ((1u128 &lt;&lt; 64 - 1) <b>as</b> u128);
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
+        <b>let</b> (ref, offset) = self.bids.slice_before(key_high);
+        (ref, offset, &self.bids)
+    } <b>else</b> {
+        <b>let</b> (ref, offset) = self.asks.slice_following(key_low);
+        (ref, offset, &self.asks)
+    };
+    // Check <b>if</b> there is a valid starting <a href="order.md#0x0_order">order</a>
+    <b>if</b> (ref.is_null()) {
+        <b>return</b> (price_vec, quantity_vec)
+    };
+
+    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> <b>mut</b> ticks_left = ticks;
+
+    <b>while</b> (
+        ticks_left &gt; 0 &&
+        (is_bid && cur_price &gt;= price_low) || (!is_bid && cur_price &lt;= price_high)
+    ) {
+        <b>let</b> valid_order = <b>if</b> (is_bid) {
+            book_side.valid_prev(ref, offset)
+        } <b>else</b> {
+            book_side.valid_next(ref, offset)
+        };
+        <b>if</b> (valid_order) {
+            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
+                book_side.borrow_prev(ref, offset)
+            } <b>else</b> {
+                book_side.borrow_next(ref, offset)
+            };
+            <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+            <b>if</b> (order_price != cur_price) {
+                price_vec.push_back(cur_price);
+                quantity_vec.push_back(cur_quantity);
+                cur_quantity = 0;
+                cur_price = order_price;
+                ticks_left = ticks_left - 1;
+            };
+            cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
+        } <b>else</b> {
+            price_vec.push_back(cur_price);
+            quantity_vec.push_back(cur_quantity);
+            <b>break</b>
+        }
+    };
+
+    (price_vec, quantity_vec)
 }
 </code></pre>
 

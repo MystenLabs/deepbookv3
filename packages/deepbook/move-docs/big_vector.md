@@ -31,11 +31,12 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `depth`](#0x0_big_vector_depth)
 -  [Function `borrow`](#0x0_big_vector_borrow)
 -  [Function `borrow_mut`](#0x0_big_vector_borrow_mut)
--  [Function `borrow_mut_ref_offset`](#0x0_big_vector_borrow_mut_ref_offset)
 -  [Function `valid_next`](#0x0_big_vector_valid_next)
--  [Function `borrow_mut_next`](#0x0_big_vector_borrow_mut_next)
+-  [Function `borrow_next`](#0x0_big_vector_borrow_next)
+-  [Function `borrow_next_mut`](#0x0_big_vector_borrow_next_mut)
 -  [Function `valid_prev`](#0x0_big_vector_valid_prev)
--  [Function `borrow_mut_prev`](#0x0_big_vector_borrow_mut_prev)
+-  [Function `borrow_prev`](#0x0_big_vector_borrow_prev)
+-  [Function `borrow_prev_mut`](#0x0_big_vector_borrow_prev_mut)
 -  [Function `insert`](#0x0_big_vector_insert)
 -  [Function `insert_batch`](#0x0_big_vector_insert_batch)
 -  [Function `remove`](#0x0_big_vector_remove)
@@ -44,6 +45,8 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `slice_around`](#0x0_big_vector_slice_around)
 -  [Function `slice_following`](#0x0_big_vector_slice_following)
 -  [Function `slice_before`](#0x0_big_vector_slice_before)
+-  [Function `min_slice`](#0x0_big_vector_min_slice)
+-  [Function `max_slice`](#0x0_big_vector_max_slice)
 -  [Function `borrow_slice`](#0x0_big_vector_borrow_slice)
 -  [Function `borrow_slice_mut`](#0x0_big_vector_borrow_slice_mut)
 -  [Function `slice_is_null`](#0x0_big_vector_slice_is_null)
@@ -59,6 +62,8 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `branch`](#0x0_big_vector_branch)
 -  [Function `drop_slice`](#0x0_big_vector_drop_slice)
 -  [Function `find_leaf`](#0x0_big_vector_find_leaf)
+-  [Function `find_min_leaf`](#0x0_big_vector_find_min_leaf)
+-  [Function `find_max_leaf`](#0x0_big_vector_find_max_leaf)
 -  [Function `slice_bisect_left`](#0x0_big_vector_slice_bisect_left)
 -  [Function `slice_bisect_right`](#0x0_big_vector_slice_bisect_right)
 -  [Function `slice_insert`](#0x0_big_vector_slice_insert)
@@ -701,32 +706,6 @@ Access the element at index <code>ix</code> in <code>self</code>, mutably.
 
 </details>
 
-<a name="0x0_big_vector_borrow_mut_ref_offset"></a>
-
-## Function `borrow_mut_ref_offset`
-
-This assumes SliceRef is not null. Returns value at offset <code>offset</code> in slice <code>ref</code>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_ref_offset">borrow_mut_ref_offset</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): &<b>mut</b> E
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_ref_offset">borrow_mut_ref_offset</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): &<b>mut</b> E {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
-    &<b>mut</b> slice[offset]
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_big_vector_valid_next"></a>
 
 ## Function `valid_next`
@@ -753,15 +732,16 @@ Return whether there is a valid next value in BigVector
 
 </details>
 
-<a name="0x0_big_vector_borrow_mut_next"></a>
+<a name="0x0_big_vector_borrow_next"></a>
 
-## Function `borrow_mut_next`
+## Function `borrow_next`
 
 Gets the next value within slice if exists, if at maximum gets the next element of the next slice
 Assumes valid_next is true
+Returns the next slice reference, the offset within the slice, and the immutable reference to the value
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_next">borrow_mut_next</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next">borrow_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &E)
 </code></pre>
 
 
@@ -770,13 +750,49 @@ Assumes valid_next is true
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_next">borrow_mut_next</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next">borrow_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &E) {
+    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
+    <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
+        (ref, offset + 1, &slice[offset + 1])
+    } <b>else</b> {
+        <b>let</b> next_ref = slice.next();
+        <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(next_ref);
+
+        (next_ref, 0, &next_slice.vals[0])
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_borrow_next_mut"></a>
+
+## Function `borrow_next_mut`
+
+Gets the next value within slice if exists, if at maximum gets the next element of the next slice
+Assumes valid_next is true
+Returns the next slice reference, the offset within the slice, and the mutable reference to the value
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
     <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
         (ref, offset + 1, &<b>mut</b> slice[offset + 1])
     } <b>else</b> {
         <b>let</b> next_ref = slice.next();
         <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(next_ref);
+
         (next_ref, 0, &<b>mut</b> next_slice.vals[0])
     }
 }
@@ -812,15 +828,16 @@ Return whether there is a valid prev value in BigVector
 
 </details>
 
-<a name="0x0_big_vector_borrow_mut_prev"></a>
+<a name="0x0_big_vector_borrow_prev"></a>
 
-## Function `borrow_mut_prev`
+## Function `borrow_prev`
 
 Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
 Assumes valid_prev is true
+Returns the prev slice reference, the offset within the slice, and the immutable reference to the value
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_prev">borrow_mut_prev</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev">borrow_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &E)
 </code></pre>
 
 
@@ -829,15 +846,51 @@ Assumes valid_prev is true
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut_prev">borrow_mut_prev</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev">borrow_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &E) {
+    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
+    <b>if</b> (offset &gt; 0) {
+        (ref, offset - 1, &slice[offset - 1])
+    } <b>else</b> {
+        <b>let</b> prev_ref = slice.prev();
+        <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
+        <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
+
+        (prev_ref, last_index, &prev_slice[last_index])
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_borrow_prev_mut"></a>
+
+## Function `borrow_prev_mut`
+
+Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
+Assumes valid_prev is true
+Returns the prev slice reference, the offset within the slice, and the mutable reference to the value
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
     <b>if</b> (offset &gt; 0) {
         (ref, offset - 1, &<b>mut</b> slice[offset - 1])
     } <b>else</b> {
         <b>let</b> prev_ref = slice.prev();
-        // Borrow the previous slice and get the last element
         <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(prev_ref);
         <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
+
         (prev_ref, last_index, &<b>mut</b> prev_slice[last_index])
     }
 }
@@ -1134,6 +1187,10 @@ key-value pair.
 
 ## Function `slice_before`
 
+Find the slice that contains the key-value pair corresponding
+to the previous key in <code>self</code>. Returns the reference to the slice
+and the local offset within the slice if it exists, or (NO_SLICE, 0),
+if there is no matching key-value pair.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_before">slice_before</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
@@ -1154,24 +1211,87 @@ key-value pair.
     };
 
     <b>let</b> (ix, leaf, off) = self.<a href="big_vector.md#0x0_big_vector_find_leaf">find_leaf</a>(key);
-
-    // If the key index is 0 or the key is less than the first key in the leaf
-    <b>if</b> (off == 0 || key &lt; leaf.keys[0]) {
+    <b>if</b> (off == 0) {
         <b>let</b> prev_ref = leaf.prev();
         <b>if</b> (prev_ref.is_null()) {
-            // If there is no previous slice, <b>return</b> <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>
             (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a> }, 0)
         } <b>else</b> {
-            // Borrow the previous slice <b>to</b> get the last key's index
             <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
             (prev_ref, prev_slice.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
         }
     } <b>else</b> {
-        // Return the current slice <b>with</b> the index decremented by one <b>if</b> the key does not exactly match
-        // or <b>use</b> the found offset otherwise
-        <b>let</b> actual_offset = off - 1;
-        (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, actual_offset)
+        (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off - 1)
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_min_slice"></a>
+
+## Function `min_slice`
+
+Find the slice that contains the key-value pair corresponding
+to the minimum key in <code>self</code>. Returns the reference to the
+slice and the local offset within the slice if it exists, or
+(NO_SLICE, 0), if there is no matching key-value pair.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(
+    self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
+): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+    <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
+        <b>return</b> (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a> }, 0)
+    };
+
+    <b>let</b> (ix, _, off) = self.<a href="big_vector.md#0x0_big_vector_find_min_leaf">find_min_leaf</a>();
+    (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_max_slice"></a>
+
+## Function `max_slice`
+
+Find the slice that contains the key-value pair corresponding
+to the maximum key in <code>self</code>. Returns the reference to the
+slice and the local offset within the slice if it exists, or
+(NO_SLICE, 0), if there is no matching key-value pair.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(
+    self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
+): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+    <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
+        <b>return</b> (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a> }, 0)
+    };
+
+    <b>let</b> (ix, _, off) = self.<a href="big_vector.md#0x0_big_vector_find_max_leaf">find_max_leaf</a>();
+    (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off)
 }
 </code></pre>
 
@@ -1627,6 +1747,84 @@ Assumes <code>self</code> is non-empty.
     <b>let</b> off = leaf.bisect_left(key);
 
     (slice_id, leaf, off)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_find_min_leaf"></a>
+
+## Function `find_min_leaf`
+
+Find the minimum leaf node that contains the smallest key in the BigVector.
+Assumes <code>self</code> is non-empty.
+
+
+<pre><code><b>fun</b> <a href="big_vector.md#0x0_big_vector_find_min_leaf">find_min_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (u64, &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="big_vector.md#0x0_big_vector_find_min_leaf">find_min_leaf</a>&lt;E: store&gt;(
+    self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;
+): (u64, &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, u64) {
+    <b>let</b> (<b>mut</b> slice_id, <b>mut</b> depth) = (self.root_id, self.depth);
+
+    // Traverse down <b>to</b> the leftmost leaf node
+    <b>while</b> (depth &gt; 0) {
+        <b>let</b> slice: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;u64&gt; = df::borrow(&self.id, slice_id);
+        slice_id = slice.vals[0];  // Always take the leftmost child
+        depth = depth - 1;
+    };
+
+    <b>let</b> leaf: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt; = df::borrow(&self.id, slice_id);
+
+    (slice_id, leaf, 0)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_find_max_leaf"></a>
+
+## Function `find_max_leaf`
+
+Find the maximum leaf node that contains the largest key in the BigVector.
+Assumes <code>self</code> is non-empty.
+
+
+<pre><code><b>fun</b> <a href="big_vector.md#0x0_big_vector_find_max_leaf">find_max_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (u64, &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="big_vector.md#0x0_big_vector_find_max_leaf">find_max_leaf</a>&lt;E: store&gt;(
+    self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;
+): (u64, &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, u64) {
+    <b>let</b> (<b>mut</b> slice_id, <b>mut</b> depth) = (self.root_id, self.depth);
+
+    // Traverse down <b>to</b> the rightmost leaf node
+    <b>while</b> (depth &gt; 0) {
+        <b>let</b> slice: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;u64&gt; = df::borrow(&self.id, slice_id);
+        slice_id = slice.vals[slice.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>()]; // Always take the rightmost child
+        depth = depth - 1;
+    };
+
+    <b>let</b> leaf: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt; = df::borrow(&self.id, slice_id);
+
+    (slice_id, leaf, leaf.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
 }
 </code></pre>
 

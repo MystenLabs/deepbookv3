@@ -29,6 +29,8 @@ All order matching happens in this module.
 -  [Function `total_fees`](#0x0_order_total_fees)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
+-  [Function `book_order_id`](#0x0_order_book_order_id)
+-  [Function `book_quantity`](#0x0_order_book_quantity)
 -  [Function `to_order`](#0x0_order_to_order)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
 -  [Function `crosses_price`](#0x0_order_crosses_price)
@@ -1123,6 +1125,55 @@ It is used to update the state.
 
 </details>
 
+<a name="0x0_order_book_order_id"></a>
+
+## Function `book_order_id`
+
+TODO: Better naming to avoid conflict?
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u128
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u128 {
+    self.order_id
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_quantity"></a>
+
+## Function `book_quantity`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.quantity
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_to_order"></a>
 
 ## Function `to_order`
@@ -1517,8 +1568,8 @@ Funds for an expired order are returned to the maker as settled.
     };
 
     <b>let</b> (_, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(maker.order_id);
-    <b>let</b> filled_quantity = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(), maker.quantity);
-    <b>let</b> quote_quantity = math::mul(filled_quantity, price);
+    <b>let</b> filled_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(), maker.quantity);
+    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, price);
     maker.quantity = maker.quantity - filled_quantity;
     self.executed_quantity = self.executed_quantity + filled_quantity;
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
@@ -1528,7 +1579,7 @@ Funds for an expired order are returned to the maker as settled.
     <b>if</b> (self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
     <b>if</b> (maker.quantity == 0) maker.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
 
-    <b>let</b> maker_fees = math::div(math::mul(filled_quantity, maker.unpaid_fees), maker.quantity);
+    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, maker.unpaid_fees), maker.quantity);
     maker.unpaid_fees = maker.unpaid_fees - maker_fees;
 
     self.<a href="order.md#0x0_order_emit_order_filled">emit_order_filled</a>(timestamp);

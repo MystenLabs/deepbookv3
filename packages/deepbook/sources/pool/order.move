@@ -36,8 +36,8 @@ module deepbook::order {
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
 
     /// OrderInfo struct represents all order information.
-    /// This objects gets created at the beginning of the order lifecycle and 
-    /// gets updated until it is completed or placed in the book. 
+    /// This objects gets created at the beginning of the order lifecycle and
+    /// gets updated until it is completed or placed in the book.
     /// It is returned to the user at the end of the order lifecycle.
     public struct OrderInfo has store, drop {
         // ID of the pool
@@ -235,6 +235,15 @@ module deepbook::order {
         self.expire_timestamp
     }
 
+    /// TODO: Better naming to avoid conflict?
+    public(package) fun book_order_id(self: &Order): u128 {
+        self.order_id
+    }
+
+    public(package) fun book_quantity(self: &Order): u64 {
+        self.quantity
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
@@ -274,7 +283,7 @@ module deepbook::order {
 
         (
             self.original_quantity - self.executed_quantity > 0 &&
-            ((self.is_bid && !is_bid && self.price >= price) || 
+            ((self.is_bid && !is_bid && self.price >= price) ||
             (!self.is_bid && is_bid && self.price <= price))
         )
     }
@@ -286,7 +295,7 @@ module deepbook::order {
 
     /// Asserts that the order doesn't have any fills.
     public(package) fun assert_post_only(self: &OrderInfo) {
-        if (self.order_type == POST_ONLY) 
+        if (self.order_type == POST_ONLY)
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
     }
 

@@ -16,7 +16,6 @@ and calculate the conversion rates between the DEEP token and any other token pa
 
 <pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
-<b>use</b> <a href="dependencies/move-stdlib/ascii.md#0x1_ascii">0x1::ascii</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
 </code></pre>
@@ -42,7 +41,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 
 <dl>
 <dt>
-<code>reference_pools: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="dependencies/move-stdlib/ascii.md#0x1_ascii_String">ascii::String</a>&gt;</code>
+<code>reference_pools: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>&gt;</code>
 </dt>
 <dd>
 
@@ -113,7 +112,7 @@ Add a reference pool.
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;DEEP, QuoteAsset&gt;,
 ) {
     <b>let</b> (base, quote) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
-    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
 
     <b>assert</b>!(base == deep_type || quote == deep_type, <a href="deep_reference_price.md#0x0_deep_reference_price_EIneligiblePool">EIneligiblePool</a>);
 
@@ -149,7 +148,7 @@ Case 2: base and quote in pool is not DEEP
     deep_pool: &Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
 ): (u64, u64) {
     <b>let</b> (base_type, quote_type) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
-    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;().into_string();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
     <b>let</b> pool_price = <a href="pool.md#0x0_pool">pool</a>.mid_price();
     <b>if</b> (base_type == deep_type) {
         <b>return</b> (1, pool_price)
@@ -165,13 +164,13 @@ Case 2: base and quote in pool is not DEEP
 
     <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = deep_pool.mid_price();
     <b>if</b> (base_type == deep_base_type) {
-        <b>return</b> (math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>), math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price))
+        <b>return</b> (<a href="math.md#0x0_math_div">math::div</a>(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>), <a href="math.md#0x0_math_div">math::div</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price))
     } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
-        <b>return</b> (<a href="deep_price.md#0x0_deep_price">deep_price</a>, math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
+        <b>return</b> (<a href="deep_price.md#0x0_deep_price">deep_price</a>, <a href="math.md#0x0_math_div">math::div</a>(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
     } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
-        <b>return</b> (math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price), math::div(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
+        <b>return</b> (<a href="math.md#0x0_math_div">math::div</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price), <a href="math.md#0x0_math_div">math::div</a>(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>))
     } <b>else</b> {
-        <b>return</b> (math::div(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>), <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+        <b>return</b> (<a href="math.md#0x0_math_div">math::div</a>(pool_price, <a href="deep_price.md#0x0_deep_price">deep_price</a>), <a href="deep_price.md#0x0_deep_price">deep_price</a>)
     }
 }
 </code></pre>

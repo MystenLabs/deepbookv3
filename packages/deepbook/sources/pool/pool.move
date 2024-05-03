@@ -12,8 +12,7 @@ module deepbook::pool {
     };
 
     use std::{
-        ascii::String,
-        type_name,
+        type_name::{Self, TypeName},
     };
 
     use deepbook::{
@@ -23,6 +22,7 @@ module deepbook::pool {
         account::{Account, TradeProof},
         state_manager::{Self, StateManager, TradeParams},
         utils,
+        math,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -31,6 +31,9 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
+    const EInvalidPriceRange: u64 = 6;
+    const EInvalidTicks: u64 = 7;
+    const EInvalidAmountIn: u64 = 8;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -39,10 +42,9 @@ module deepbook::pool {
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
     const MIN_ASK_ORDER_ID: u128 = 1 << 127;
-    const MIN_ORDER_ID: u128 = 0;
-    const MAX_ORDER_ID: u128 = 1 << 128 - 1;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -83,6 +85,11 @@ module deepbook::pool {
         state_manager: StateManager,
     }
 
+    public struct PoolKey has copy, drop, store {
+        base: TypeName,
+        quote: TypeName,
+    }
+
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
 
     /// Place a limit order to the order book.
@@ -112,10 +119,10 @@ module deepbook::pool {
         let fee_is_deep = self.deep_config.verified();
         let owner = account.owner();
         let pool_id = self.id.to_inner();
-        let mut order_info = 
+        let mut order_info =
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
         self.match_against_book(&mut order_info, clock);
-        
+
         self.transfer_trade_balances(account, proof, &mut order_info, ctx);
 
         order_info.assert_post_only();
@@ -123,7 +130,7 @@ module deepbook::pool {
         if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
             return order_info
         };
-        
+
         if (order_info.remaining_quantity() > 0) {
             self.inject_limit_order(&order_info);
         };
@@ -152,7 +159,7 @@ module deepbook::pool {
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
 
         // Calculate the taker balances. These are derived from executed quantity.
-        let (base_fee, quote_fee, deep_fee) = 
+        let (base_fee, quote_fee, deep_fee) =
             self.deep_config.calculate_fees(taker_fee, executed_quantity, cumulative_quote_quantity);
         let mut total_fees = base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
@@ -165,7 +172,7 @@ module deepbook::pool {
         };
 
         // Calculate the maker balances. These are derived from the remaining quantity.
-        let (base_fee, quote_fee, deep_fee) = 
+        let (base_fee, quote_fee, deep_fee) =
             self.deep_config.calculate_fees(maker_fee, executed_quantity, remaining_quantity * order_info.price());
         total_fees = total_fees + base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
@@ -206,26 +213,26 @@ module deepbook::pool {
         clock: &Clock,
     ) {
         let (mut ref, mut offset, book_side) = if (order_info.is_bid()) {
-            let (ref, offset) = self.asks.slice_following(MIN_ORDER_ID);
+            let (ref, offset) = self.asks.min_slice();
             (ref, offset, &mut self.asks)
         } else {
-            let (ref, offset) = self.bids.slice_before(MAX_ORDER_ID);
+            let (ref, offset) = self.bids.max_slice();
             (ref, offset, &mut self.bids)
         };
-        
+
         if (ref.is_null()) return;
 
         let mut fills = vector[];
 
-        let mut maker_order = book_side.borrow_mut_ref_offset(ref, offset);
+        let mut maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
         while (order_info.crosses_price(maker_order) ) {
             fills.push_back(order_info.match_maker(maker_order, clock.timestamp_ms()));
 
             // Traverse to valid next order if exists, otherwise break from loop.
             if (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_mut_next(ref, offset)
+                (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
             } else if (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_mut_prev(ref, offset)
+                (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
             } else {
                 break
             }
@@ -276,44 +283,94 @@ module deepbook::pool {
         0
     }
 
-    /// Given an amount in and direction, calculate amount out
-    /// Will return (amount_out, amount_in_used)
+    /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
+    /// Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
     public(package) fun get_amount_out<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _amount_in: u64,
-        _is_bid: bool,
-    ): u64 {
-        // TODO: implement
-        0
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+    ): (u64, u64) {
+        assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
+        let is_bid = if (quote_amount > 0) true else false;
+
+        let (mut ref, mut offset, book_side) = if (is_bid) {
+            let (ref, offset) = self.asks.min_slice();
+            (ref, offset, &self.asks)
+        } else {
+            let (ref, offset) = self.bids.max_slice();
+            (ref, offset, &self.bids)
+        };
+
+        if (ref.is_null()) return (0, 0);
+
+        let mut amount_out = 0;
+        let mut amount_in_left = if (is_bid) quote_amount else base_amount;
+
+        let mut order = &book_side.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+
+        while (amount_in_left > 0) {
+            if (is_bid) {
+                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                amount_out = amount_out + math::div(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            } else {
+                let matched_amount = math::min(amount_in_left, cur_quantity);
+                amount_out = amount_out + math::mul(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            };
+
+            let valid_order = if (is_bid) {
+                book_side.valid_next(ref, offset)
+            } else {
+                book_side.valid_prev(ref, offset)
+            };
+            if (valid_order) {
+                (ref, offset, order) = if (is_bid) {
+                    book_side.borrow_next(ref, offset)
+                } else {
+                    book_side.borrow_prev(ref, offset)
+                };
+                (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
+                cur_quantity = order.book_quantity();
+            } else {
+                break
+            };
+        };
+
+        if (is_bid) {
+            (amount_out, amount_in_left)
+        } else {
+            (amount_in_left, amount_out)
+        }
     }
 
-    /// Get the level2 bids between price_low and price_high.
-    public(package) fun get_level2_bids<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _price_low: u64,
-        _price_high: u64,
+    /// Get the level2 bids or asks between price_low and price_high.
+    /// Returns two vectors of u64
+    /// The previous is a list of all valid prices
+    /// The latter is the corresponding quantity at each level
+    public(package) fun get_level2_range<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+        is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        // TODO: implement
-        (vector[], vector[])
-    }
-
-    /// Get the level2 bids between price_low and price_high.
-    public(package) fun get_level2_asks<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _price_low: u64,
-        _price_high: u64,
-    ): (vector<u64>, vector<u64>) {
-        // TODO: implement
-        (vector[], vector[])
+        get_level2_range_and_ticks(self, price_low, price_high, MAX_U64, is_bid)
     }
 
     /// Get the n ticks from the mid price
+    /// Returns four vectors of u64.
+    /// The first two are the bid prices and quantities.
+    /// The latter two are the ask prices and quantities.
     public(package) fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>,
-        _ticks: u64,
-    ): (vector<u64>, vector<u64>) {
-        // TODO: implement
-        (vector[], vector[])
+        self: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
+        let (bid_price, bid_quantity) = self.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, true);
+        let (ask_price, ask_quantity) = self.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, false);
+
+        (bid_price, bid_quantity, ask_price, ask_quantity)
     }
 
     /// 1. Remove the order from the order book and from the user's open orders.
@@ -401,7 +458,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
-    ): Pool<BaseAsset, QuoteAsset> {
+    ): (PoolKey, PoolKey) {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
@@ -422,8 +479,8 @@ module deepbook::pool {
 
         let pool = (Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
-            bids: big_vector::empty(10000, 1000, ctx), // TODO: what are these numbers
-            asks: big_vector::empty(10000, 1000, ctx), // TODO: ditto
+            bids: big_vector::empty(10000, 1000, ctx), // TODO: update base on benchmark
+            asks: big_vector::empty(10000, 1000, ctx), // TODO: update base on benchmark
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
             deep_config: deep_price::new(),
@@ -440,7 +497,14 @@ module deepbook::pool {
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
 
-        pool
+        let (pool_key, rev_key) = (pool.key(), PoolKey {
+            base: type_name::get<QuoteAsset>(),
+            quote: type_name::get<BaseAsset>(),
+        });
+
+        pool.share();
+
+        (pool_key, rev_key)
     }
 
     /// Increase a user's stake
@@ -496,26 +560,23 @@ module deepbook::pool {
         self.state_manager.set_next_trade_params(fees);
     }
 
-    /// Get the base and quote asset of pool, return as ascii strings
+    /// Get the base and quote asset TypeName of pool
     public(package) fun get_base_quote_types<BaseAsset, QuoteAsset>(
         _self: &Pool<BaseAsset, QuoteAsset>
-    ): (String, String) {
+    ): (TypeName, TypeName) {
         (
-            type_name::get<BaseAsset>().into_string(),
-            type_name::get<QuoteAsset>().into_string()
+            type_name::get<BaseAsset>(),
+            type_name::get<QuoteAsset>()
         )
     }
 
-    /// Get the pool key string base+quote (if base, quote in lexicographic order) otherwise return quote+base
-    /// TODO: Why is this needed as a key? Why don't we just use the ID of the pool as an ID?
+    /// Get the pool key
     public(package) fun key<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>
-    ): String {
-        let (base, quote) = get_base_quote_types(self);
-        if (utils::compare(&base, &quote)) {
-            utils::concat_ascii(base, quote)
-        } else {
-            utils::concat_ascii(quote, base)
+        _self: &Pool<BaseAsset, QuoteAsset>
+    ): PoolKey {
+        PoolKey {
+            base: type_name::get<BaseAsset>(),
+            quote: type_name::get<QuoteAsset>(),
         }
     }
 
@@ -633,6 +694,78 @@ module deepbook::pool {
             self.next_ask_order_id = self.next_ask_order_id + 1;
             self.next_ask_order_id
         }
+    }
+
+    /// Get the n ticks from the best bid or ask, must be within price range
+    /// Returns two vectors of u64.
+    /// The first is a list of all valid prices.
+    /// The latter is the corresponding quantity list.
+    /// Price_vec is in descending order for bids and ascending order for asks.
+    fun get_level2_range_and_ticks<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+        ticks: u64,
+        is_bid: bool,
+    ): (vector<u64>, vector<u64>) {
+        assert!(price_low <= price_high, EInvalidPriceRange);
+        assert!(ticks > 0, EInvalidTicks);
+
+        let mut price_vec = vector[];
+        let mut quantity_vec = vector[];
+
+        // convert price_low and price_high to keys for searching
+        let key_low = (price_low as u128) << 64;
+        let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
+        let (mut ref, mut offset, book_side) = if (is_bid) {
+            let (ref, offset) = self.bids.slice_before(key_high);
+            (ref, offset, &self.bids)
+        } else {
+            let (ref, offset) = self.asks.slice_following(key_low);
+            (ref, offset, &self.asks)
+        };
+        // Check if there is a valid starting order
+        if (ref.is_null()) {
+            return (price_vec, quantity_vec)
+        };
+
+        let mut order = &book_side.borrow_slice(ref)[offset];
+        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
+        let mut cur_quantity = order.book_quantity();
+        let mut ticks_left = ticks;
+
+        while (
+            ticks_left > 0 &&
+            (is_bid && cur_price >= price_low) || (!is_bid && cur_price <= price_high)
+        ) {
+            let valid_order = if (is_bid) {
+                book_side.valid_prev(ref, offset)
+            } else {
+                book_side.valid_next(ref, offset)
+            };
+            if (valid_order) {
+                (ref, offset, order) = if (is_bid) {
+                    book_side.borrow_prev(ref, offset)
+                } else {
+                    book_side.borrow_next(ref, offset)
+                };
+                let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
+                if (order_price != cur_price) {
+                    price_vec.push_back(cur_price);
+                    quantity_vec.push_back(cur_quantity);
+                    cur_quantity = 0;
+                    cur_price = order_price;
+                    ticks_left = ticks_left - 1;
+                };
+                cur_quantity = cur_quantity + order.book_quantity();
+            } else {
+                price_vec.push_back(cur_price);
+                quantity_vec.push_back(cur_quantity);
+                break
+            }
+        };
+
+        (price_vec, quantity_vec)
     }
 
     #[allow(unused_function)]

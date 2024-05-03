@@ -236,38 +236,32 @@ module deepbook::deepbook {
         pool.user_open_orders(user)
     }
 
-    /// Public facing function to get amount_out given amount_in.
+    /// Public facing function swap base for quote.
+    /// Returns (base_amount_out, quote_amount_out).
+    /// Only one of base_amount_in or quote_amount_in should be non-zero.
     public fun get_amount_out<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
-        amount_in: u64,
+        base_amount_in: u64,
+        quote_amount_in: u64,
+    ): (u64, u64) {
+        pool.get_amount_out(base_amount_in, quote_amount_in)
+    }
+
+    /// Public facing function to get level2 bids or asks.
+    public fun get_level2_range<BaseAsset, QuoteAsset>(
+        pool: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
         is_bid: bool,
-    ): u64 {
-        pool.get_amount_out(amount_in, is_bid)
-    }
-
-    /// Public facing function to get level2 bids.
-    public fun get_level2_bids<BaseAsset, QuoteAsset>(
-        pool: &Pool<BaseAsset, QuoteAsset>,
-        price_low: u64,
-        price_high: u64,
     ): (vector<u64>, vector<u64>) {
-        pool.get_level2_bids(price_low, price_high)
-    }
-
-    /// Public facing function to get level2 asks.
-    public fun get_level2_asks<BaseAsset, QuoteAsset>(
-        pool: &Pool<BaseAsset, QuoteAsset>,
-        price_low: u64,
-        price_high: u64,
-    ): (vector<u64>, vector<u64>) {
-        pool.get_level2_asks(price_low, price_high)
+        pool.get_level2_range(price_low, price_high, is_bid)
     }
 
     /// Public facing function to get level2 ticks from mid.
     public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
-    ): (vector<u64>, vector<u64>) {
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
         pool.get_level2_ticks_from_mid(ticks)
     }
 }

@@ -25,8 +25,7 @@ TODO: No authorization checks are implemented;
 -  [Function `cancel_all_orders`](#0x0_deepbook_cancel_all_orders)
 -  [Function `user_open_orders`](#0x0_deepbook_user_open_orders)
 -  [Function `get_amount_out`](#0x0_deepbook_get_amount_out)
--  [Function `get_level2_bids`](#0x0_deepbook_get_level2_bids)
--  [Function `get_level2_asks`](#0x0_deepbook_get_level2_asks)
+-  [Function `get_level2_range`](#0x0_deepbook_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_deepbook_get_level2_ticks_from_mid)
 
 
@@ -608,10 +607,12 @@ Public facing function to get open orders for a user.
 
 ## Function `get_amount_out`
 
-Public facing function to get amount_out given amount_in.
+Public facing function swap base for quote.
+Returns (base_amount_out, quote_amount_out).
+Only one of base_amount_in or quote_amount_in should be non-zero.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, amount_in: u64, is_bid: bool): u64
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount_in: u64, quote_amount_in: u64): (u64, u64)
 </code></pre>
 
 
@@ -622,68 +623,40 @@ Public facing function to get amount_out given amount_in.
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    amount_in: u64,
+    base_amount_in: u64,
+    quote_amount_in: u64,
+): (u64, u64) {
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>(base_amount_in, quote_amount_in)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_get_level2_range"></a>
+
+## Function `get_level2_range`
+
+Public facing function to get level2 bids or asks.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_range">get_level2_range</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_range">get_level2_range</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+    price_low: u64,
+    price_high: u64,
     is_bid: bool,
-): u64 {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_amount_out">get_amount_out</a>(amount_in, is_bid)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_deepbook_get_level2_bids"></a>
-
-## Function `get_level2_bids`
-
-Public facing function to get level2 bids.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    price_low: u64,
-    price_high: u64,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_bids">get_level2_bids</a>(price_low, price_high)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_deepbook_get_level2_asks"></a>
-
-## Function `get_level2_asks`
-
-Public facing function to get level2 asks.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    price_low: u64,
-    price_high: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_asks">get_level2_asks</a>(price_low, price_high)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_range">get_level2_range</a>(price_low, price_high, is_bid)
 }
 </code></pre>
 
@@ -698,7 +671,7 @@ Public facing function to get level2 asks.
 Public facing function to get level2 ticks from mid.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
 </code></pre>
 
 
@@ -710,7 +683,7 @@ Public facing function to get level2 ticks from mid.
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
-): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
     <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>(ticks)
 }
 </code></pre>

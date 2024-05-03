@@ -281,16 +281,16 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
     quote_quantity: u64,
 ): (u64, u64, u64) {
     <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_verified">verified</a>()) {
-        <b>let</b> deep_per_base = math::div(self.cumulative_base, self.prices.length());
-        <b>let</b> deep_per_quote = math::div(self.cumulative_quote, self.prices.length());
-        <b>let</b> base_fee = math::mul(fee_rate, math::mul(base_quantity, deep_per_base));
-        <b>let</b> quote_fee = math::mul(fee_rate, math::mul(quote_quantity, deep_per_quote));
+        <b>let</b> deep_per_base = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_base, self.prices.length());
+        <b>let</b> deep_per_quote = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_quote, self.prices.length());
+        <b>let</b> base_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, deep_per_base));
+        <b>let</b> quote_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, <a href="math.md#0x0_math_mul">math::mul</a>(quote_quantity, deep_per_quote));
 
         <b>return</b> (0, 0, base_fee + quote_fee)
     };
 
-    <b>let</b> base_fee = math::mul(fee_rate, base_quantity);
-    <b>let</b> quote_fee = math::mul(fee_rate, quote_quantity);
+    <b>let</b> base_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, base_quantity);
+    <b>let</b> quote_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, quote_quantity);
 
     (base_fee, quote_fee, 0)
 }
