@@ -4,13 +4,12 @@
 /// The deep_reference_price module provides the functionality to add DEEP reference pools
 /// and calculate the conversion rates between the DEEP token and any other token pair.
 module deepbook::deep_reference_price {
-    use std::{
-        type_name::{Self, TypeName},
+    use std::type_name::Self;
+
+    use deepbook::{
+        pool::{Pool, PoolKey, DEEP}, // TODO: DEEP token
+        math
     };
-
-    use sui::vec_map::{Self, VecMap};
-
-    use deepbook::pool::{Pool, PoolKey, DEEP}; // TODO: DEEP token
 
     const EIneligiblePool: u64 = 1;
 
@@ -18,7 +17,7 @@ module deepbook::deep_reference_price {
     /// DEEP/SUI, DEEP/USDC, DEEP/WETH
     public struct DeepReferencePools has store {
         // Base or quote -> pool_key
-        reference_pools: VecMap<TypeName, PoolKey>,
+        reference_pools: vector<PoolKey>,
     }
 
     public(package) fun new(): DeepReferencePools {
@@ -36,7 +35,7 @@ module deepbook::deep_reference_price {
         let deep_type = type_name::get<DEEP>();
 
         assert!(base == deep_type || quote == deep_type, EIneligiblePool);
-        
+
         self.reference_pools.push_back(pool.key());
     }
 
@@ -49,7 +48,7 @@ module deepbook::deep_reference_price {
         deep_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
     ): (u64, u64) {
         let (base_type, quote_type) = pool.get_base_quote_types();
-        let deep_type = type_name::get<DEEP>().into_string();
+        let deep_type = type_name::get<DEEP>();
         let pool_price = pool.mid_price();
         if (base_type == deep_type) {
             return (1, pool_price)
