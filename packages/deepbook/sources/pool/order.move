@@ -5,7 +5,11 @@
 /// All order matching happens in this module.
 module deepbook::order {
     use sui::event;
-    use deepbook::{math, utils};
+    use deepbook::{
+        math,
+        utils,
+        big_vector::SliceRef,
+    };
 
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
@@ -145,6 +149,8 @@ module deepbook::order {
         quote_quantity: u64,
         // Quantity DEEP for maker
         deep_quantity: u64,
+        slice: SliceRef,
+        offset: u64,
     }
 
     public(package) fun initial_order(
@@ -347,7 +353,6 @@ module deepbook::order {
             (0, fill.quote_quantity, fill.deep_quantity)
         }
     }
-
     
     public(package) fun apply_fill(
         maker: &mut Order,
@@ -363,12 +368,20 @@ module deepbook::order {
         maker.unpaid_fees = maker.unpaid_fees - maker_fees;
     }
 
+    public(package) fun order_location(
+        fill: &Fill,
+    ): (SliceRef, u64) {
+        (fill.slice, fill.offset)
+    }
+
     /// Matches an OrderInfo with an Order from the book. Returns a Fill.
     /// If the book order is expired, it returns a Fill with the expired flag set to true.
     /// Funds for an expired order are returned to the maker as settled.
-    public(package) fun match_maker_dry(
+    public(package) fun match_maker(
         self: &mut OrderInfo,
         maker: &Order,
+        slice: SliceRef,
+        offset: u64,
         timestamp: u64,
     ): Fill {
         if (maker.expire_timestamp < timestamp) {
@@ -381,6 +394,8 @@ module deepbook::order {
                 base_quantity,
                 quote_quantity,
                 deep_quantity,
+                slice,
+                offset,
             }
         };
 
@@ -402,6 +417,8 @@ module deepbook::order {
             base_quantity: filled_quantity,
             quote_quantity,
             deep_quantity: 0,
+            slice,
+            offset,
         }
     }
 

@@ -18,7 +18,7 @@ module deepbook::pool {
     use deepbook::{
         order::{Self, OrderInfo, Order, Fill},
         deep_price::{Self, DeepPrice},
-        big_vector::{Self, BigVector, SliceRef},
+        big_vector::{Self, BigVector},
         account::{Self, Account, TradeProof},
         state_manager::{Self, StateManager, TradeParams},
         utils,
@@ -123,7 +123,8 @@ module deepbook::pool {
         let mut order_info =
             order::initial_order(pool_id, order_id, client_order_id, order_type, price, quantity, fee_is_deep, is_bid, owner, expire_timestamp);
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, clock.timestamp_ms());
-        self.match_against_book(&mut order_info, clock);
+        let fills = self.dry_fills(&mut order_info, clock);
+        self.apply_fills(fills, is_bid);
 
         self.transfer_trade_balances(account, proof, &mut order_info, ctx);
 
@@ -209,96 +210,44 @@ module deepbook::pool {
     /// Matches the given order and quantity against the order book.
     /// If is_bid, it will match against asks, otherwise against bids.
     /// Mutates the order and the maker order as necessary.
-    fun match_against_book<BaseAsset, QuoteAsset>(
+    fun apply_fills<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        order_info: &mut OrderInfo,
-        clock: &Clock,
+        fills: vector<Fill>,
+        is_bid: bool,
     ) {
-        let (mut fill, mut slice, mut offset) = match_against_book_dry(self, order_info, clock, big_vector::no_slice(), 0);
-        while (fill.is_some()) {
-            let fill_inner = fill.borrow();
-            let maker_order = self.get_order_mut(order_info.is_bid(), slice, offset);
-            maker_order.apply_fill(fill_inner);
-            let (order_id, _, expired, complete) = fill_inner.fill_status();
+        let orderbook = if (is_bid) &mut self.asks else &mut self.bids;
+        let mut i = 0;
+        while (i < fills.length()) {
+            let fill = &fills[i];
+            let (slice, offset) = fill.order_location();
+            let maker_order = &mut orderbook.borrow_slice_mut(slice)[offset];
+            maker_order.apply_fill(fill);
+            let (order_id, _, expired, complete) = fill.fill_status();
             if (expired || complete) {
-                if (order_info.is_bid()) {
-                    self.asks.remove(order_id);
-                } else {
-                    self.bids.remove(order_id);
-                };
+                orderbook.remove(order_id);
             };
-            self.state_manager.process_fill(fill_inner);
-            (fill, slice, offset) = match_against_book_dry(self, order_info, clock, slice, offset);
+            self.state_manager.process_fill(fill);
+            i = i + 1;
         }
     }
 
-    fun match_against_book_dry2<BaseAsset, QuoteAsset>(
+    fun dry_fills<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         order_info: &mut OrderInfo,
         clock: &Clock,
-    ) {
-        let (mut fill, mut slice, mut offset) = match_against_book_dry(self, order_info, clock, big_vector::no_slice(), 0);
-        while (fill.is_some()) {
-            (fill, slice, offset) = match_against_book_dry(self, order_info, clock, slice, offset);
-        }
-    }
-
-    fun match_against_book_dry<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        order_info: &mut OrderInfo,
-        clock: &Clock,
-        slice: SliceRef,
-        offset: u64,
-    ): (Option<Fill>, SliceRef, u64) {
-        let (ref, offset) = get_next_slice_offset(self, order_info.is_bid(), false, slice, offset);
-        if (ref.is_null()) return (option::none(), ref, offset);
+    ): vector<Fill> {
+        let mut fills = vector[];
+        let is_bid = order_info.is_bid();
+        let (mut ref, mut offset) = if (is_bid) self.asks.min_slice() else self.bids.max_slice();
+        let orderbook = if (is_bid) &self.asks else &self.bids;
+        while (!ref.is_null()) {
+            let maker_order = &orderbook.borrow_slice(ref)[offset];
+            if (!order_info.crosses_price(maker_order)) break;
+            fills.push_back(order_info.match_maker(maker_order, ref, offset, clock.timestamp_ms()));
+            (ref, offset) = if (is_bid) self.asks.next_slice(ref, offset) else self.bids.prev_slice(ref, offset);
+        };
         
-        let maker_order = self.get_order_ref(order_info.is_bid(), ref, offset);
-        if (!order_info.crosses_price(maker_order)) return (option::none(), ref, offset);
-
-        let fill = order_info.match_maker_dry(maker_order, clock.timestamp_ms());
-
-        (option::some(fill), ref, offset)
-    }
-
-    fun get_next_slice_offset<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        is_bid: bool,
-        first: bool,
-        slice: SliceRef,
-        offset: u64,
-    ): (SliceRef, u64) {
-        if (is_bid) {
-            if (first) self.asks.min_slice() else self.asks.next_slice(slice, offset)
-        } else {
-            if (first) self.bids.max_slice() else self.bids.prev_slice(slice, offset)
-        }
-    }
-
-    fun get_order_mut<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        is_bid: bool,
-        ref: SliceRef,
-        offset: u64,
-    ): &mut Order {
-        if (is_bid) {
-            &mut self.asks.borrow_slice_mut(ref)[offset]
-        } else {
-            &mut self.bids.borrow_slice_mut(ref)[offset]
-        }
-    }
-
-    fun get_order_ref<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        is_bid: bool,
-        ref: SliceRef,
-        offset: u64,
-    ): &Order {
-        if (is_bid) {
-            &self.asks.borrow_slice(ref)[offset]
-        } else {
-            &self.bids.borrow_slice(ref)[offset]
-        }
+        fills
     }
 
     /// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
@@ -393,7 +342,7 @@ module deepbook::pool {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
         let mut order_info = 
             order::initial_order(self.id.to_inner(), 0, 0, order::fill_or_kill(), MAX_PRICE, base_amount, false, false, @0x0, 0);
-        self.match_against_book_dry2(&mut order_info, clock);
+        self.dry_fills(&mut order_info, clock);
         
         (order_info.original_quantity() - order_info.executed_quantity(), order_info.cumulative_quote_quantity())
     }

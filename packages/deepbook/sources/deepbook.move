@@ -320,8 +320,9 @@ module deepbook::deepbook {
         pool: &Pool<BaseAsset, QuoteAsset>,
         base_amount_in: u64,
         quote_amount_in: u64,
+        clock: &Clock,
     ): (u64, u64) {
-        pool.get_amount_out(base_amount_in, quote_amount_in)
+        pool.get_amount_out(base_amount_in, quote_amount_in, clock)
     }
 
     /// Public facing function to get level2 bids or asks.
