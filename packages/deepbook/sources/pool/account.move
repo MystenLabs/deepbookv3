@@ -60,6 +60,18 @@ module deepbook::account {
         transfer::share_object(account);
     }
 
+    public(package) fun delete(account: Account) {
+        let Account {
+            id,
+            owner: _,
+            balances,
+            allow_listed: _,
+        } = account;
+
+        id.delete();
+        balances.destroy_empty();
+    }
+
     /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
     public fun mint_trade_cap(account: &mut Account, ctx: &mut TxContext): TradeCap {
         account.validate_owner(ctx);
@@ -137,11 +149,12 @@ module deepbook::account {
     public fun withdraw<T>(
         account: &mut Account,
         amount: u64,
+        withdraw_all: bool,
         ctx: &mut TxContext,
     ): Coin<T> {
         let proof = generate_proof_as_owner(account, ctx);
 
-        account.withdraw_with_proof(&proof, amount, ctx)
+        account.withdraw_with_proof(&proof, amount, withdraw_all, ctx)
     }
 
     /// Withdraw funds from an account. Pool will call this to withdraw funds.
@@ -149,6 +162,7 @@ module deepbook::account {
         account: &mut Account,
         proof: &TradeProof,
         amount: u64,
+        withdraw_all: bool,
         ctx: &mut TxContext,
     ): Coin<T> {
         account.validate_proof(proof);
@@ -156,9 +170,14 @@ module deepbook::account {
         let key = BalanceKey<T> {};
         assert!(account.balances.contains(key), ENoBalance);
         let acc_balance: &mut Balance<T> = &mut account.balances[key];
-        assert!(acc_balance.value() >= amount, EAccountBalanceTooLow);
+        let value = acc_balance.value();
 
-        acc_balance.split(amount).into_coin(ctx)
+        if (!withdraw_all) {
+            assert!(value >= amount, EAccountBalanceTooLow);
+            acc_balance.split(amount).into_coin(ctx)
+        } else {
+            acc_balance.split(value).into_coin(ctx)
+        }
     }
 
     /// Returns the owner of the account.

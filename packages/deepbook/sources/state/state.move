@@ -129,7 +129,7 @@ module deepbook::state { // Consider renaming this module
         let (old_stake, new_stake) = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
             .add_voting_power(old_stake, new_stake);
-        let balance = account.withdraw_with_proof<DEEP>(proof, amount, ctx).into_balance();
+        let balance = account.withdraw_with_proof<DEEP>(proof, amount, false, ctx).into_balance();
         self.vault.join(balance);
     }
 
