@@ -64,6 +64,7 @@ module deepbook::order {
         executed_quantity: u64,
         // Cumulative quote quantity executed so far
         cumulative_quote_quantity: u64,
+        max_quote_quantity: u64,
         // Fees paid so far
         paid_fees: u64,
         // Total fees for the order
@@ -144,11 +145,10 @@ module deepbook::order {
         // Whether the maker order is fully filled
         complete: bool,
         // Quantity base asset terms for maker
-        base_quantity: u64,
-        // Quantity quote asset terms for maker
-        quote_quantity: u64,
-        // Quantity DEEP for maker
-        deep_quantity: u64,
+        filled_quantity: u64,
+        settled_base: u64,
+        settled_quote: u64,
+        settled_deep: u64,
         slice: SliceRef,
         offset: u64,
     }
@@ -174,6 +174,7 @@ module deepbook::order {
             original_quantity: quantity,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
+            max_quote_quantity: 0,
             paid_fees: 0,
             total_fees: 0,
             fee_is_deep,
@@ -343,15 +344,7 @@ module deepbook::order {
 
     /// Returns the settled quantities for the fill.
     public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
-        if (fill.expired) {
-            return (fill.base_quantity, fill.quote_quantity, fill.deep_quantity)
-        };
-        let (is_bid, _, _) = utils::decode_order_id(fill.order_id);
-        if (is_bid) {
-            (fill.base_quantity, 0, fill.deep_quantity)
-        } else {
-            (0, fill.quote_quantity, fill.deep_quantity)
-        }
+        (fill.settled_base, fill.settled_quote, fill.settled_deep)
     }
     
     public(package) fun apply_fill(
@@ -362,9 +355,8 @@ module deepbook::order {
             maker.status = EXPIRED;
             return
         };
-
-        maker.quantity = maker.quantity - fill.base_quantity;
-        let maker_fees = math::div(math::mul(fill.base_quantity, maker.unpaid_fees), maker.quantity);
+        maker.quantity = maker.quantity - fill.filled_quantity;
+        let maker_fees = math::div(math::mul(fill.filled_quantity, maker.unpaid_fees), maker.quantity);
         maker.unpaid_fees = maker.unpaid_fees - maker_fees;
     }
 
@@ -391,9 +383,10 @@ module deepbook::order {
                 owner: maker.owner,
                 expired: true,
                 complete: false,
-                base_quantity,
-                quote_quantity,
-                deep_quantity,
+                filled_quantity: 0,
+                settled_base: base_quantity,
+                settled_quote: quote_quantity,
+                settled_deep: deep_quantity,
                 slice,
                 offset,
             }
@@ -414,9 +407,10 @@ module deepbook::order {
             owner: maker.owner,
             expired: false,
             complete: maker.quantity == 0,
-            base_quantity: filled_quantity,
-            quote_quantity,
-            deep_quantity: 0,
+            filled_quantity,
+            settled_base: if (self.is_bid) filled_quantity else 0,
+            settled_quote: if (self.is_bid) 0 else quote_quantity,
+            settled_deep: 0,
             slice,
             offset,
         }

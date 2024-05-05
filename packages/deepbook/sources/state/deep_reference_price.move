@@ -31,7 +31,7 @@ module deepbook::deep_reference_price {
         self: &mut DeepReferencePools,
         pool: &Pool<DEEP, QuoteAsset>,
     ) {
-        let (base, quote) = pool.get_base_quote_types();
+        let (base, quote) = pool.get_asset_types();
         let deep_type = type_name::get<DEEP>();
 
         assert!(base == deep_type || quote == deep_type, EIneligiblePool);
@@ -47,7 +47,7 @@ module deepbook::deep_reference_price {
         pool: &Pool<BaseAsset, QuoteAsset>,
         deep_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
     ): (u64, u64) {
-        let (base_type, quote_type) = pool.get_base_quote_types();
+        let (base_type, quote_type) = pool.get_asset_types();
         let deep_type = type_name::get<DEEP>();
         let pool_price = pool.mid_price();
         if (base_type == deep_type) {
@@ -57,7 +57,7 @@ module deepbook::deep_reference_price {
             return (pool_price, 1)
         };
 
-        let (deep_base_type, deep_quote_type) = deep_pool.get_base_quote_types();
+        let (deep_base_type, deep_quote_type) = deep_pool.get_asset_types();
         assert!(self.reference_pools.contains(&deep_pool.key()), EIneligiblePool);
         assert!(base_type == deep_base_type || base_type == deep_quote_type, EIneligiblePool);
         assert!(quote_type == deep_base_type || quote_type == deep_quote_type, EIneligiblePool);
