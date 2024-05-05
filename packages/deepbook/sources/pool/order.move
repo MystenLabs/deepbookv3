@@ -139,12 +139,12 @@ module deepbook::order {
         expired: bool,
         // Whether the maker order is fully filled
         complete: bool,
-        // Quantity settled in base asset terms for maker
-        settled_base: u64,
-        // Quantity settled in quote asset terms for maker
-        settled_quote: u64,
-        // Quantity settled in DEEP for maker
-        settled_deep: u64,
+        // Quantity base asset terms for maker
+        base_quantity: u64,
+        // Quantity quote asset terms for maker
+        quote_quantity: u64,
+        // Quantity DEEP for maker
+        deep_quantity: u64,
     }
 
     public(package) fun initial_order(
@@ -337,45 +337,60 @@ module deepbook::order {
 
     /// Returns the settled quantities for the fill.
     public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
-        (fill.settled_base, fill.settled_quote, fill.settled_deep)
+        if (fill.expired) {
+            return (fill.base_quantity, fill.quote_quantity, fill.deep_quantity)
+        };
+        let (is_bid, _, _) = utils::decode_order_id(fill.order_id);
+        if (is_bid) {
+            (fill.base_quantity, 0, fill.deep_quantity)
+        } else {
+            (0, fill.quote_quantity, fill.deep_quantity)
+        }
+    }
+
+    
+    public(package) fun apply_fill(
+        maker: &mut Order,
+        fill: &Fill,
+    ) {
+        if (fill.expired) {
+            maker.status = EXPIRED;
+            return
+        };
+
+        maker.quantity = maker.quantity - fill.base_quantity;
+        let maker_fees = math::div(math::mul(fill.base_quantity, maker.unpaid_fees), maker.quantity);
+        maker.unpaid_fees = maker.unpaid_fees - maker_fees;
     }
 
     /// Matches an OrderInfo with an Order from the book. Returns a Fill.
     /// If the book order is expired, it returns a Fill with the expired flag set to true.
     /// Funds for an expired order are returned to the maker as settled.
-    public(package) fun match_maker(
+    public(package) fun match_maker_dry(
         self: &mut OrderInfo,
-        maker: &mut Order,
+        maker: &Order,
         timestamp: u64,
     ): Fill {
         if (maker.expire_timestamp < timestamp) {
-            maker.status = EXPIRED;
-            let (base, quote, deep) = maker.cancel_amounts();
+            let (base_quantity, quote_quantity, deep_quantity) = maker.cancel_amounts();
             return Fill {
                 order_id: maker.order_id,
                 owner: maker.owner,
                 expired: true,
                 complete: false,
-                settled_base: base,
-                settled_quote: quote,
-                settled_deep: deep,
+                base_quantity,
+                quote_quantity,
+                deep_quantity,
             }
         };
 
         let (_, price, _) = utils::decode_order_id(maker.order_id);
         let filled_quantity = math::min(self.remaining_quantity(), maker.quantity);
         let quote_quantity = math::mul(filled_quantity, price);
-        maker.quantity = maker.quantity - filled_quantity;
         self.executed_quantity = self.executed_quantity + filled_quantity;
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
-
         self.status = PARTIALLY_FILLED;
-        maker.status = PARTIALLY_FILLED;
         if (self.remaining_quantity() == 0) self.status = FILLED;
-        if (maker.quantity == 0) maker.status = FILLED;
-
-        let maker_fees = math::div(math::mul(filled_quantity, maker.unpaid_fees), maker.quantity);
-        maker.unpaid_fees = maker.unpaid_fees - maker_fees;
 
         self.emit_order_filled(timestamp);
 
@@ -384,9 +399,9 @@ module deepbook::order {
             owner: maker.owner,
             expired: false,
             complete: maker.quantity == 0,
-            settled_base: if (self.is_bid) filled_quantity else 0,
-            settled_quote: if (self.is_bid) 0 else quote_quantity,
-            settled_deep: 0,
+            base_quantity: filled_quantity,
+            quote_quantity,
+            deep_quantity: 0,
         }
     }
 
