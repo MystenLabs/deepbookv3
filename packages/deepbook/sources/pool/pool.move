@@ -67,7 +67,7 @@ module deepbook::pool {
 
     /// Pool holds everything related to the pool. next_bid_order_id increments for each bid order,
     /// next_ask_order_id decrements for each ask order. All funds for live orders and settled funds
-    /// are held in base_balances, quote_balances, and deepbook_balance.
+    /// are held in base_balance, quote_balance, and deep_balance.
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         tick_size: u64,
@@ -79,9 +79,9 @@ module deepbook::pool {
         next_ask_order_id: u64,
         deep_config: DeepPrice,
 
-        base_balances: Balance<BaseAsset>,
-        quote_balances: Balance<QuoteAsset>,
-        deepbook_balance: Balance<DEEP>,
+        base_balance: Balance<BaseAsset>,
+        quote_balance: Balance<QuoteAsset>,
+        deep_balance: Balance<DEEP>,
 
         state_manager: StateManager,
     }
@@ -214,30 +214,19 @@ module deepbook::pool {
         order_info: &mut OrderInfo,
         clock: &Clock,
     ) {
-        let (mut ref, mut offset, book_side) = if (order_info.is_bid()) {
-            let (ref, offset) = self.asks.min_slice();
-            (ref, offset, &mut self.asks)
-        } else {
-            let (ref, offset) = self.bids.max_slice();
-            (ref, offset, &mut self.bids)
-        };
-
-        if (ref.is_null()) return;
+        let is_bid = order_info.is_bid();
+        let book_side = if (is_bid) &mut self.asks else &mut self.bids;
+        let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
         let mut fills = vector[];
 
-        let mut maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-        while (order_info.crosses_price(maker_order) ) {
+        while (!ref.is_null()) {
+            let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
+            if (!order_info.crosses_price(maker_order)) break;
             fills.push_back(order_info.match_maker(maker_order, clock.timestamp_ms()));
 
             // Traverse to valid next order if exists, otherwise break from loop.
-            if (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
-            } else if (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-                (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
-            } else {
-                break
-            }
+            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };
 
         // Iterate over fills and process them.
@@ -342,25 +331,17 @@ module deepbook::pool {
     ): (u64, u64) {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
         let is_bid = quote_amount > 0;
-
-        let (mut ref, mut offset, book_side) = if (is_bid) {
-            let (ref, offset) = self.asks.min_slice();
-            (ref, offset, &self.asks)
-        } else {
-            let (ref, offset) = self.bids.max_slice();
-            (ref, offset, &self.bids)
-        };
-
-        if (ref.is_null()) return (0, 0);
-
         let mut amount_out = 0;
         let mut amount_in_left = if (is_bid) quote_amount else base_amount;
 
-        let mut order = &book_side.borrow_slice(ref)[offset];
-        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
-        let mut cur_quantity = order.book_quantity();
+        let book_side = if (is_bid) &self.asks else &self.bids;
+        let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (amount_in_left > 0) {
+        while (!ref.is_null() && amount_in_left > 0) {
+            let order = &book_side.borrow_slice(ref)[offset];
+            let (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
+            let cur_quantity = order.book_quantity();
+
             if (is_bid) {
                 let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
                 amount_out = amount_out + math::div(matched_amount, cur_price);
@@ -371,22 +352,7 @@ module deepbook::pool {
                 amount_in_left = amount_in_left - matched_amount;
             };
 
-            let valid_order = if (is_bid) {
-                book_side.valid_next(ref, offset)
-            } else {
-                book_side.valid_prev(ref, offset)
-            };
-            if (valid_order) {
-                (ref, offset, order) = if (is_bid) {
-                    book_side.borrow_next(ref, offset)
-                } else {
-                    book_side.borrow_prev(ref, offset)
-                };
-                (_, cur_price, _) = utils::decode_order_id(order.book_order_id());
-                cur_quantity = order.book_quantity();
-            } else {
-                break
-            };
+            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };
 
         if (is_bid) {
@@ -463,8 +429,7 @@ module deepbook::pool {
     ) {
         self.state_manager.update(ctx.epoch());
         let amount = self.state_manager.reset_user_rebates(account.owner());
-        let coin = self.deepbook_balance.split(amount).into_coin(ctx);
-        account.deposit_with_proof(proof, coin);
+        self.withdraw_deep(account, proof, amount, ctx);
     }
 
     /// Cancel all orders for an account. Withdraw settled funds back into user account.
@@ -537,9 +502,9 @@ module deepbook::pool {
             tick_size,
             lot_size,
             min_size,
-            base_balances: balance::zero(),
-            quote_balances: balance::zero(),
-            deepbook_balance: balance::zero(),
+            base_balance: balance::zero(),
+            quote_balance: balance::zero(),
+            deep_balance: balance::zero(),
             state_manager: state_manager::new(taker_fee, maker_fee, 0, ctx),
         });
 
@@ -648,7 +613,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let base = user_account.withdraw_with_proof(proof, amount, false, ctx);
-        self.base_balances.join(base.into_balance());
+        self.base_balance.join(base.into_balance());
     }
 
     fun deposit_quote<BaseAsset, QuoteAsset>(
@@ -659,7 +624,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let quote = user_account.withdraw_with_proof(proof, amount, false, ctx);
-        self.quote_balances.join(quote.into_balance());
+        self.quote_balance.join(quote.into_balance());
     }
 
     fun deposit_deep<BaseAsset, QuoteAsset>(
@@ -670,7 +635,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ) {
         let coin = user_account.withdraw_with_proof(proof, amount, false, ctx);
-        self.deepbook_balance.join(coin.into_balance());
+        self.deep_balance.join(coin.into_balance());
     }
 
     fun withdraw_base<BaseAsset, QuoteAsset>(
@@ -680,7 +645,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = self.base_balances.split(amount).into_coin(ctx);
+        let coin = self.base_balance.split(amount).into_coin(ctx);
         user_account.deposit_with_proof(proof, coin);
     }
 
@@ -691,7 +656,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = self.quote_balances.split(amount).into_coin(ctx);
+        let coin = self.quote_balance.split(amount).into_coin(ctx);
         user_account.deposit_with_proof(proof, coin);
     }
 
@@ -702,7 +667,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        let coin = self.deepbook_balance.split(amount).into_coin(ctx);
+        let coin = self.deep_balance.split(amount).into_coin(ctx);
         user_account.deposit_with_proof(proof, coin);
     }
 
@@ -767,53 +732,33 @@ module deepbook::pool {
         // convert price_low and price_high to keys for searching
         let key_low = (price_low as u128) << 64;
         let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
-        let (mut ref, mut offset, book_side) = if (is_bid) {
-            let (ref, offset) = self.bids.slice_before(key_high);
-            (ref, offset, &self.bids)
-        } else {
-            let (ref, offset) = self.asks.slice_following(key_low);
-            (ref, offset, &self.asks)
-        };
-        // Check if there is a valid starting order
-        if (ref.is_null()) {
-            return (price_vec, quantity_vec)
-        };
-
-        let mut order = &book_side.borrow_slice(ref)[offset];
-        let (_, mut cur_price, _) = utils::decode_order_id(order.book_order_id());
-        let mut cur_quantity = order.book_quantity();
+        let book_side = if (is_bid) &self.bids else &self.asks;
+        let (mut ref, mut offset) = if (is_bid) book_side.slice_before(key_high) else book_side.slice_following(key_low);
         let mut ticks_left = ticks;
+        let mut cur_price = 0;
+        let mut cur_quantity = 0;
 
-        while (
-            ticks_left > 0 &&
-            (is_bid && cur_price >= price_low) || (!is_bid && cur_price <= price_high)
-        ) {
-            let valid_order = if (is_bid) {
-                book_side.valid_prev(ref, offset)
-            } else {
-                book_side.valid_next(ref, offset)
-            };
-            if (valid_order) {
-                (ref, offset, order) = if (is_bid) {
-                    book_side.borrow_prev(ref, offset)
-                } else {
-                    book_side.borrow_next(ref, offset)
-                };
-                let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
-                if (order_price != cur_price) {
-                    price_vec.push_back(cur_price);
-                    quantity_vec.push_back(cur_quantity);
-                    cur_quantity = 0;
-                    cur_price = order_price;
-                    ticks_left = ticks_left - 1;
-                };
-                cur_quantity = cur_quantity + order.book_quantity();
-            } else {
+        while (!ref.is_null() && ticks_left > 0) {
+            let order = &book_side.borrow_slice(ref)[offset];
+            let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
+            if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
+            if (cur_price == 0) cur_price = order_price;
+
+            let order_quantity = order.book_quantity();
+            if (order_price != cur_price) {
                 price_vec.push_back(cur_price);
                 quantity_vec.push_back(cur_quantity);
-                break
-            }
+                cur_price = order_price;
+                cur_quantity = 0;
+            };
+
+            cur_quantity = cur_quantity + order_quantity;
+            ticks_left = ticks_left - 1;
+            (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
         };
+
+        price_vec.push_back(cur_price);
+        quantity_vec.push_back(cur_quantity);
 
         (price_vec, quantity_vec)
     }
@@ -821,7 +766,7 @@ module deepbook::pool {
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
         let amount = self.state_manager.reset_burn_balance();
-        let burnt = self.deepbook_balance.split(amount);
+        let burnt = self.deep_balance.split(amount);
         tcap.supply_mut().decrease_supply(burnt);
     }
     // Will be replaced by actual deep token package dependency
