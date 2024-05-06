@@ -18,6 +18,7 @@ module deepbook::pool_tests {
     use deepbook::account::{Self, Account};
     use sui::test_scenario::{Self, Scenario};
     use deepbook::math;
+    use deepbook::order::{Order, OrderInfo};
 
     const ENotImplemented: u64 = 0;
 
@@ -78,18 +79,19 @@ module deepbook::pool_tests {
         test_scenario::end(test);
     }
 
-    // #[test]
-    // fun place_order_ok() {
-    //     let owner: address = @0xAAAA;
-    //     let mut test = test_scenario::begin(owner);
-    //     place_order(&mut test, owner);
-    //     test_scenario::end(test);
-    // }
+    #[test]
+    fun test_place_and_cancel_order() {
+        let owner: address = @0xAAAA;
+        let mut test = test_scenario::begin(owner);
+        let placed_order_id = place_order(&mut test, owner).order_id();
+        cancel_order(&mut test, owner, placed_order_id);
+        test_scenario::end(test);
+    }
 
     fun place_order(
         test: &mut Scenario,
         owner: address,
-    ) {
+    ): OrderInfo {
         test.next_tx(owner);
         {
             setup_test(0, 0, test, owner);
@@ -110,7 +112,7 @@ module deepbook::pool_tests {
             let proof = account.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
-            pool.place_limit_order<SUI, USDC>(
+            let order_info = pool.place_limit_order<SUI, USDC>(
                 &mut account,
                 &proof,
                 1, // client_order_id
@@ -125,50 +127,37 @@ module deepbook::pool_tests {
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
-        };
+            order_info
+        }
     }
 
-    fun test_place_and_cancel_order() {
-        let owner: address = @0xAAAA;
-        let mut test = test_scenario::begin(owner);
+    fun cancel_order(
+        test: &mut Scenario,
+        owner: address,
+        order_id: u128,
+    ): Order {
         test.next_tx(owner);
         {
-            setup_test(0, 0, &mut test, owner);
-        };
-        create_acct_and_share(&mut test, owner);
-        test.next_tx(owner);
-        {
-            let mut pool = test_scenario::take_shared<Pool<SUI, USDC>>(&test);
-            let clock = test_scenario::take_shared<Clock>(&test);
-            let mut account = test_scenario::take_shared<Account>(&test);
-
-            // Deposit into account
-            deposit_into_account<SUI>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
-            deposit_into_account<USDC>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
-            deposit_into_account<DEEP>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
+            let mut pool = test_scenario::take_shared<Pool<SUI, USDC>>(test);
+            let clock = test_scenario::take_shared<Clock>(test);
+            let mut account = test_scenario::take_shared<Account>(test);
 
             // Get Proof from Account
             let proof = account.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
-            pool.place_limit_order<SUI, USDC>(
+            let cancelled_order = pool.cancel_order<SUI, USDC>(
                 &mut account,
                 &proof,
-                1, // client_order_id
-                NO_RESTRICTION, // order_type
-                20 * FLOAT_SCALING, // price, use float scaling
-                1, // quantity
-                true, // is_bid
-                MAX_U64, // no expiration
+                order_id,
                 &clock,
                 test.ctx()
             );
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
-        };
-
-        test_scenario::end(test);
+            cancelled_order
+        }
     }
 
     fun setup_test(
