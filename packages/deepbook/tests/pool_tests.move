@@ -50,27 +50,6 @@ module deepbook::pool_tests {
     //     abort ENotImplemented
     // }
 
-    fun deposit_into_account<T>(
-        account: &mut Account,
-        amount: u64,
-        ctx: &mut TxContext,
-    ) {
-        account.deposit(
-            mint_for_testing<T>(amount, ctx),
-            ctx
-        );
-    }
-
-    fun create_acct_and_share(
-        scenario: &mut Scenario,
-        owner: address,
-    ) {
-        test_scenario::next_tx(scenario, owner);
-        {
-            account::share(account::new(test_scenario::ctx(scenario)))
-        };
-    }
-
     #[test]
     fun place_order_ok() {
         let owner: address = @0xAAAA;
@@ -84,7 +63,7 @@ module deepbook::pool_tests {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
         let placed_order_id = place_order(&mut test, owner).order_id();
-        cancel_order(&mut test, owner, placed_order_id);
+        cancel_order(owner, placed_order_id, &mut test);
         test_scenario::end(test);
     }
 
@@ -94,7 +73,7 @@ module deepbook::pool_tests {
     ): OrderInfo {
         test.next_tx(owner);
         {
-            setup_test(0, 0, test, owner);
+            setup_test(owner, test);
         };
         create_acct_and_share(test, owner);
         test.next_tx(owner);
@@ -131,10 +110,11 @@ module deepbook::pool_tests {
         }
     }
 
+    /// Helper function to cancel an order
     fun cancel_order(
-        test: &mut Scenario,
         owner: address,
         order_id: u128,
+        test: &mut Scenario,
     ): Order {
         test.next_tx(owner);
         {
@@ -142,10 +122,7 @@ module deepbook::pool_tests {
             let clock = test_scenario::take_shared<Clock>(test);
             let mut account = test_scenario::take_shared<Account>(test);
 
-            // Get Proof from Account
             let proof = account.generate_proof_as_owner(test.ctx());
-
-            // Place order in pool
             let cancelled_order = pool.cancel_order<SUI, USDC>(
                 &mut account,
                 &proof,
@@ -153,7 +130,6 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
-
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
@@ -161,39 +137,37 @@ module deepbook::pool_tests {
         }
     }
 
+    /// Helper function to setup a clock and a pool with default values
     fun setup_test(
-        taker_fee: u64,
-        maker_fee: u64,
-        scenario: &mut Scenario,
         sender: address,
+        test: &mut Scenario,
     ) {
         setup_test_with_tick_min(
-            taker_fee,
-            maker_fee,
+            1000000, // 10 bps
+            500000, // 5 bps
             1,
             1,
             1,
-            scenario,
+            test,
             sender,
         );
     }
 
-    #[test_only]
-    public fun setup_test_with_tick_min(
+    fun setup_test_with_tick_min(
         taker_fee: u64,
         maker_fee: u64,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        scenario: &mut Scenario,
+        test: &mut Scenario,
         sender: address,
     ) {
-        test_scenario::next_tx(scenario, sender);
+        test.next_tx(sender);
         {
-            clock::share_for_testing(clock::create_for_testing(test_scenario::ctx(scenario)));
+            clock::create_for_testing(test.ctx()).share_for_testing();
         };
 
-        test_scenario::next_tx(scenario, sender);
+        test.next_tx(sender);
         {
             pool::create_pool<SUI, USDC>(
                 taker_fee,
@@ -202,8 +176,29 @@ module deepbook::pool_tests {
                 lot_size,
                 min_size,
                 balance::create_for_testing(POOL_CREATION_FEE),
-                test_scenario::ctx(scenario)
+                test.ctx()
             );
+        };
+    }
+
+    fun deposit_into_account<T>(
+        account: &mut Account,
+        amount: u64,
+        ctx: &mut TxContext,
+    ) {
+        account.deposit(
+            mint_for_testing<T>(amount, ctx),
+            ctx
+        );
+    }
+
+    fun create_acct_and_share(
+        scenario: &mut Scenario,
+        owner: address,
+    ) {
+        test_scenario::next_tx(scenario, owner);
+        {
+            account::share(account::new(test_scenario::ctx(scenario)))
         };
     }
 }
