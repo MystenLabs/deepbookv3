@@ -9,7 +9,7 @@ module deepbook::governance_tests {
         next_tx(&mut scenario, owner);
         let mut gov = governance::empty(ctx(&mut scenario));
         gov.increase_voting_power(300);
-        gov.reset(ctx(&mut scenario)); // quorum = 150
+        gov.reset(); // quorum = 150
         gov.create_new_proposal(alice, false, 200, 500, 10000);
 
         // Alice's votes don't push proposal 0 over quorum
@@ -72,7 +72,7 @@ module deepbook::governance_tests {
             assert!(gov.quorum() == 0, 0);
 
             // Resetting the epoch sets quorum to 150
-            gov.reset(ctx(&mut scenario));
+            gov.reset();
             assert!(gov.quorum() == 150, 0);
             assert!(gov.proposals().length() == 0, 0);
             assert!(gov.voters_size() == 0, 0);
@@ -108,11 +108,11 @@ module deepbook::governance_tests {
             assert!(gov.quorum() == 150, 0);
 
             // Reset to get rid of all proposals and voters. Quorum updated
-            gov.reset(ctx(&mut scenario));
+            gov.reset();
             assert!(gov.voting_power() == 200, 0);
             assert!(gov.quorum() == 100, 0);
             assert!(gov.proposals().length() == 0, 0);
-            assert!(gov.voters_size() == 0, 0);
+            assert!(gov.voters_size() == 2, 0);
             
             gov.delete();
         };

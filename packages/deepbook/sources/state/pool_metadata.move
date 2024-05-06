@@ -37,13 +37,13 @@ module deepbook::pool_metadata {
 
     /// Refresh the pool metadata.
     /// This is called by every State level action, but only processed once per epoch.
-    public(package) fun refresh(self: &mut PoolMetadata, ctx: &mut TxContext) {
+    public(package) fun refresh(self: &mut PoolMetadata, ctx: &TxContext) {
         let current_epoch = ctx.epoch();
         if (self.last_refresh_epoch == current_epoch) return;
 
         self.last_refresh_epoch = current_epoch;
         self.governance.increase_voting_power(self.new_voting_power);
-        self.governance.reset(ctx);
+        self.governance.reset();
     }
 
     /// Add a new proposal to the governance. Called by State.

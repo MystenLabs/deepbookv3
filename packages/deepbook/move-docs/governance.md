@@ -100,6 +100,12 @@ A user can cast/recast votes up to 3 times per epoch.
 
 <dl>
 <dt>
+<code>epoch: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;</code>
 </dt>
 <dd>
@@ -133,7 +139,7 @@ A user can cast/recast votes up to 3 times per epoch.
 ## Struct `Governance`
 
 <code><a href="governance.md#0x0_governance_Governance">Governance</a></code> struct holds all the governance related data. This will reset during
-every epoch change, except <code>voting_power</code>. Participation is
+every epoch change, clearing proposals and updating the quorum. Participation is
 limited to users with staked voting power.
 
 
@@ -147,6 +153,12 @@ limited to users with staked voting power.
 
 
 <dl>
+<dt>
+<code>epoch: u64</code>
+</dt>
+<dd>
+
+</dd>
 <dt>
 <code>voting_power: u64</code>
 </dt>
@@ -172,7 +184,7 @@ limited to users with staked voting power.
 
 </dd>
 <dt>
-<code>voters: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/table.md#0x2_table_Table">table::Table</a>&lt;<b>address</b>, <a href="governance.md#0x0_governance_Voter">governance::Voter</a>&gt;&gt;</code>
+<code>voters: <a href="dependencies/sui-framework/table.md#0x2_table_Table">table::Table</a>&lt;<b>address</b>, <a href="governance.md#0x0_governance_Voter">governance::Voter</a>&gt;</code>
 </dt>
 <dd>
 
@@ -357,11 +369,12 @@ limited to users with staked voting power.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(ctx: &<b>mut</b> TxContext): <a href="governance.md#0x0_governance_Governance">Governance</a> {
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
+        epoch: ctx.epoch(),
         voting_power: 0,
         quorum: 0,
         winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
         proposals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
-        voters: <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(<a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx)),
+        voters: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
     }
 }
 </code></pre>
@@ -377,7 +390,7 @@ limited to users with staked voting power.
 Reset the governance state. This will happen after an epoch change.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_reset">reset</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_reset">reset</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>)
 </code></pre>
 
 
@@ -386,13 +399,10 @@ Reset the governance state. This will happen after an epoch change.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_reset">reset</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>, ctx: &<b>mut</b> TxContext) {
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_reset">reset</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>) {
     self.quorum = self.voting_power / 2;
     self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
     self.proposals = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
-    <b>let</b> new_table: Table&lt;<b>address</b>, <a href="governance.md#0x0_governance_Voter">Voter</a>&gt; = <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx);
-    <b>let</b> old_table = self.voters.swap(new_table);
-    old_table.drop();
 }
 </code></pre>
 
@@ -430,7 +440,7 @@ Reset the governance state. This will happen after an epoch change.
 
 Increase the voting power available. This is called by the state during an epoch change.
 The newly staked voting power from the previous epoch is added to the governance.
-Validation should be done before calling this funciton.
+Validation is done before calling this funciton.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_increase_voting_power">increase_voting_power</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, voting_power: u64)
@@ -455,9 +465,9 @@ Validation should be done before calling this funciton.
 
 ## Function `decrease_voting_power`
 
-Decrease the voting power available.This is called by the parent when a user unstakes.
+Decrease the voting power available. This is called by the state when a user unstakes.
 Only voting power that has been added previously can be removed. This will always be >= 0.
-Validation should be done before calling this funciton.
+Validation is done before calling this funciton.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_decrease_voting_power">decrease_voting_power</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, voting_power: u64)
@@ -568,8 +578,8 @@ Vote on a proposal. Validation of user and voting power is done before calling t
 
 ## Function `remove_vote`
 
-Remove a vote from a proposal. If user doesn't exist, do nothing.
-This is called in two scenarios: a voted user changes his vote, or a user unstakes.
+Remove a vote from a proposal. If the user doesn't exist, do nothing.
+This is called in two scenarios: a voted user changes their vote, or a user unstakes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_remove_vote">remove_vote</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, user: <b>address</b>): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;
@@ -585,9 +595,9 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
     user: <b>address</b>
 ): Option&lt;<a href="governance.md#0x0_governance_Proposal">Proposal</a>&gt; {
-    <b>if</b> (!self.voters.borrow().contains(user)) <b>return</b> self.winning_proposal;
-    <b>let</b> voter = &<b>mut</b> self.voters.borrow_mut()[user];
-    <b>if</b> (voter.proposal_id.is_none()) <b>return</b> self.winning_proposal;
+    <b>if</b> (!self.voters.contains(user)) <b>return</b> self.winning_proposal;
+    <b>let</b> voter = &<b>mut</b> self.voters[user];
+    <b>if</b> (voter.proposal_id.is_none() || voter.epoch &lt; self.epoch) <b>return</b> self.winning_proposal;
 
     <b>let</b> votes = voter.voting_power.extract();
 
@@ -596,9 +606,8 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
 
     // this was over quorum before, now it is not
     // it was the winning proposal before, now it is not
-    <b>if</b> (proposal.votes + votes &gt;= self.quorum
-        && proposal.votes &lt; self.quorum) {
-        self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(); // .extract() ?
+    <b>if</b> (proposal.votes + votes &gt;= self.quorum && proposal.votes &lt; self.quorum) {
+        self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
     };
 
     self.winning_proposal
@@ -644,7 +653,7 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
 
 
 
-<pre><code><b>fun</b> <a href="governance.md#0x0_governance_new_voter">new_voter</a>(): <a href="governance.md#0x0_governance_Voter">governance::Voter</a>
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_new_voter">new_voter</a>(epoch: u64): <a href="governance.md#0x0_governance_Voter">governance::Voter</a>
 </code></pre>
 
 
@@ -653,8 +662,9 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="governance.md#0x0_governance_new_voter">new_voter</a>(): <a href="governance.md#0x0_governance_Voter">Voter</a> {
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_new_voter">new_voter</a>(epoch: u64): <a href="governance.md#0x0_governance_Voter">Voter</a> {
     <a href="governance.md#0x0_governance_Voter">Voter</a> {
+        epoch,
         proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
         voting_power: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
         proposals_created: 0,
@@ -683,8 +693,8 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
 
 
 <pre><code><b>fun</b> <a href="governance.md#0x0_governance_add_voter_if_does_not_exist">add_voter_if_does_not_exist</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>, user: <b>address</b>) {
-    <b>if</b> (!self.voters.borrow().contains(user)) {
-        self.voters.borrow_mut().add(user, <a href="governance.md#0x0_governance_new_voter">new_voter</a>());
+    <b>if</b> (!self.voters.contains(user)) {
+        self.voters.add(user, <a href="governance.md#0x0_governance_new_voter">new_voter</a>(self.epoch));
     };
 }
 </code></pre>
@@ -709,7 +719,7 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
 
 
 <pre><code><b>fun</b> <a href="governance.md#0x0_governance_increment_proposals_created">increment_proposals_created</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>, user: <b>address</b>) {
-    <b>let</b> voter = &<b>mut</b> self.voters.borrow_mut()[user];
+    <b>let</b> voter = &<b>mut</b> self.voters[user];
     <b>assert</b>!(voter.proposals_created &lt; <a href="governance.md#0x0_governance_MAX_PROPOSALS_CREATIONS_PER_USER">MAX_PROPOSALS_CREATIONS_PER_USER</a>, <a href="governance.md#0x0_governance_EUserProposalCreationLimitReached">EUserProposalCreationLimitReached</a>);
     <b>assert</b>!(self.proposals.length() &lt; <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>, <a href="governance.md#0x0_governance_EMaxProposalsReached">EMaxProposalsReached</a>);
 
@@ -742,7 +752,14 @@ This is called in two scenarios: a voted user changes his vote, or a user unstak
     proposal_id: u64,
     voting_power: u64,
 ) {
-    <b>let</b> voter = &<b>mut</b> self.voters.borrow_mut()[user];
+    <b>let</b> voter = &<b>mut</b> self.voters[user];
+    <b>if</b> (voter.epoch &lt; self.epoch) {
+        voter.epoch = self.epoch;
+        voter.proposal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+        voter.voting_power = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+        voter.proposals_created = 0;
+        voter.votes_casted = 0;
+    };
     <b>assert</b>!(voter.votes_casted &lt; <a href="governance.md#0x0_governance_MAX_VOTES_CASTED_PER_USER">MAX_VOTES_CASTED_PER_USER</a>, <a href="governance.md#0x0_governance_EUserVotesCastedLimitReached">EUserVotesCastedLimitReached</a>);
 
     voter.votes_casted = voter.votes_casted + 1;

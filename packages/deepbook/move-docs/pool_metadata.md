@@ -150,7 +150,7 @@ Refresh the pool metadata.
 This is called by every State level action, but only processed once per epoch.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -159,13 +159,13 @@ This is called by every State level action, but only processed once per epoch.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>, ctx: &<b>mut</b> TxContext) {
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>, ctx: &TxContext) {
     <b>let</b> current_epoch = ctx.epoch();
     <b>if</b> (self.last_refresh_epoch == current_epoch) <b>return</b>;
 
     self.last_refresh_epoch = current_epoch;
     self.<a href="governance.md#0x0_governance">governance</a>.increase_voting_power(self.new_voting_power);
-    self.<a href="governance.md#0x0_governance">governance</a>.reset(ctx);
+    self.<a href="governance.md#0x0_governance">governance</a>.reset();
 }
 </code></pre>
 
