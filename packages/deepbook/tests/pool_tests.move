@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#[test_only]
+#[test_only, allow(unused_const)]
 module deepbook::pool_tests {
     use sui::{
         clock::{Self, Clock},
