@@ -528,6 +528,26 @@ module deepbook::big_vector {
         (SliceRef { ix }, off)
     }
 
+    /// Given the current slice and offset, get the next slice and offset.
+    public fun next_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
+        let slice = self.borrow_slice(ref);
+        if (offset + 1 < slice.vals.length()) {
+            (ref, offset + 1)
+        } else {
+            (slice.next(), 0)
+        }
+    }
+
+    /// Given the current slice and offset, get the previous slice and offset.
+    public fun prev_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
+        let slice = self.borrow_slice(ref);
+        if (offset > 0) {
+            (ref, offset - 1)
+        } else {
+            (slice.prev(), self.borrow_slice(slice.prev()).vals.length() - 1)
+        }
+    }
+
     /// Borrow a slice from this vector.
     public fun borrow_slice<E: store>(
         self: &BigVector<E>,
