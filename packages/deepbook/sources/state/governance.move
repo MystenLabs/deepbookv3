@@ -3,6 +3,7 @@
 
 module deepbook::governance {
     use sui::vec_map::{VecMap, Self};
+    use std::debug;
 
     const MIN_TAKER_STABLE: u64 = 50; // 0.5 basis points
     const MAX_TAKER_STABLE: u64 = 100; // 1 basis point
@@ -156,7 +157,7 @@ module deepbook::governance {
         let proposal = &mut self.proposals[proposal_id];
         proposal.votes = proposal.votes + voting_power;
 
-        if (proposal.votes >= self.quorum) {
+        if (proposal.votes > self.quorum) {
             self.winning_proposal.swap_or_fill(*proposal);
         };
 
@@ -214,5 +215,41 @@ module deepbook::governance {
         voter.votes_casted = voter.votes_casted + 1;
         voter.proposal_id.swap_or_fill(proposal_id);
         voter.voting_power.swap_or_fill(voting_power);
+    }
+
+    #[test_only]
+    public(package) fun delete(self: Governance) {
+        let Governance {
+            voting_power: _,
+            quorum: _,
+            winning_proposal: _,
+            proposals: _,
+            voters: _,
+        } = self;
+    }
+
+    #[test_only]
+    public(package) fun voting_power(self: &Governance): u64 {
+        self.voting_power
+    }
+
+    #[test_only]
+    public(package) fun quorum(self: &Governance): u64 {
+        self.quorum
+    }
+
+    #[test_only]
+    public(package) fun proposals(self: &Governance): vector<Proposal> {
+        self.proposals
+    }
+
+    #[test_only]
+    public(package) fun voters_size(self: &Governance): u64 {
+        self.voters.size()
+    }
+
+    #[test_only]
+    public(package) fun proposal_votes(self: &Governance, proposal_id: u64): u64 {
+        self.proposals[proposal_id].votes
     }
 }
