@@ -358,11 +358,11 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
-<a name="0x0_pool_EInvalidOrderCancelled"></a>
+<a name="0x0_pool_EInvalidOrderCancel"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderCancelled">EInvalidOrderCancelled</a>: u64 = 10;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderCancel">EInvalidOrderCancel</a>: u64 = 10;
 </code></pre>
 
 
@@ -1025,7 +1025,7 @@ The latter two are the ask prices and quantities.
     } <b>else</b> {
         self.asks.remove(order_id)
     };
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.book_order_id() == order_id, <a href="pool.md#0x0_pool_EInvalidOrderCancelled">EInvalidOrderCancelled</a>);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.book_order_id() == order_id, <a href="pool.md#0x0_pool_EInvalidOrderCancel">EInvalidOrderCancel</a>);
 
     <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(<a href="account.md#0x0_account">account</a>.owner(), order_id);
