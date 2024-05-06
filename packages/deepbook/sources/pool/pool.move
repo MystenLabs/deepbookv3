@@ -35,6 +35,7 @@ module deepbook::pool {
     const EInvalidTicks: u64 = 7;
     const EInvalidAmountIn: u64 = 8;
     const EEmptyOrderbook: u64 = 9;
+    const EInvalidOrderCancelled: u64 = 10;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -441,6 +442,8 @@ module deepbook::pool {
         } else {
             self.asks.remove(order_id)
         };
+        assert!(order.book_order_id() == order_id, EInvalidOrderCancelled);
+
         order.set_canceled();
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 

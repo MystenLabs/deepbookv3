@@ -153,6 +153,7 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
+
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
