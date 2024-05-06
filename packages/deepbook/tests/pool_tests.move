@@ -4,21 +4,18 @@
 #[test_only]
 module deepbook::pool_tests {
     use sui::{
-        balance::{Self, Balance},
         clock::{Self, Clock},
+        test_scenario::{Self, Scenario},
+        balance::Self,
         sui::SUI,
-        coin::mint_for_testing
-    };
-    use deepbook::pool::{
-        Self,
-        Pool,
-        DEEP
-    };
-    use deepbook::account::{Self, Account};
-    use sui::test_scenario::{Self, Scenario};
-    use deepbook::order::{Order, OrderInfo};
+        coin::mint_for_testing,
 
-    const ENotImplemented: u64 = 0;
+    };
+    use deepbook::{
+        pool::{Self, Pool, DEEP},
+        account::{Self, Account},
+        order::{Order, OrderInfo},
+    };
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const FLOAT_SCALING: u64 = 1_000_000_000;
@@ -41,49 +38,49 @@ module deepbook::pool_tests {
 
     public struct USDC {}
 
-    // #[test]
-    // fun test_deepbook() {
-    //     // pass
-    // }
-
-    // #[test, expected_failure(abort_code = ::deepbook::pool_tests::ENotImplemented)]
-    // fun test_deepbook_fail() {
-    //     abort ENotImplemented
-    // }
-
     #[test]
     fun place_order_ok() {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
-        share_clock(&mut test);
         setup_test(owner, &mut test);
-        create_acct_and_share(owner, &mut test);
-        place_order(owner, &mut test);
+        let acct_id = create_acct_and_share(owner, &mut test);
+        place_order(owner, acct_id, &mut test);
         test_scenario::end(test);
     }
 
     #[test]
-    fun test_place_and_cancel_order_ok() {
+    fun place_and_cancel_order_ok() {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
-        share_clock(&mut test);
         setup_test(owner, &mut test);
-        create_acct_and_share(owner, &mut test);
-        let placed_order_id = place_order(owner, &mut test).order_id();
-        cancel_order(owner, placed_order_id, &mut test);
+        let acct_id = create_acct_and_share(owner, &mut test);
+        let placed_order_id = place_order(owner, acct_id, &mut test).order_id();
+        cancel_order(owner, acct_id, placed_order_id, &mut test);
+        test_scenario::end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun place_and_cancel_order_empty_e() {
+        let owner: address = @0xAAAA;
+        let mut test = test_scenario::begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share(owner, &mut test);
+        place_order(owner, acct_id, &mut test);
+        cancel_order(owner, acct_id, 0, &mut test);
         test_scenario::end(test);
     }
 
     /// Helper function to place an order
     fun place_order(
         owner: address,
+        acct_id: ID,
         test: &mut Scenario,
     ): OrderInfo {
         test.next_tx(owner);
         {
-            let mut pool = test_scenario::take_shared<Pool<SUI, USDC>>(test);
-            let clock = test_scenario::take_shared<Clock>(test);
-            let mut account = test_scenario::take_shared<Account>(test);
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let mut account = test.take_shared_by_id<Account>(acct_id);
 
             // Deposit into account
             deposit_into_account<SUI>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
@@ -109,6 +106,7 @@ module deepbook::pool_tests {
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
+
             order_info
         }
     }
@@ -116,14 +114,15 @@ module deepbook::pool_tests {
     /// Helper function to cancel an order
     fun cancel_order(
         owner: address,
+        acct_id: ID,
         order_id: u128,
         test: &mut Scenario,
     ): Order {
         test.next_tx(owner);
         {
-            let mut pool = test_scenario::take_shared<Pool<SUI, USDC>>(test);
-            let clock = test_scenario::take_shared<Clock>(test);
-            let mut account = test_scenario::take_shared<Account>(test);
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let mut account = test.take_shared_by_id<Account>(acct_id);
 
             let proof = account.generate_proof_as_owner(test.ctx());
             let cancelled_order = pool.cancel_order<SUI, USDC>(
@@ -136,20 +135,12 @@ module deepbook::pool_tests {
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
             test_scenario::return_shared(account);
+
             cancelled_order
         }
     }
 
-    fun share_clock(
-        test: &mut Scenario,
-    ) {
-        test.next_tx(@0xAAAA);
-        {
-            clock::create_for_testing(test.ctx()).share_for_testing();
-        };
-    }
-
-    /// Helper function to setup a clock and a pool with default values
+    /// Helper function to share a clock and a pool with default values
     fun setup_test(
         sender: address,
         test: &mut Scenario,
@@ -163,6 +154,16 @@ module deepbook::pool_tests {
             test,
             sender,
         );
+        share_clock(test);
+    }
+
+    fun share_clock(
+        test: &mut Scenario,
+    ) {
+        test.next_tx(@0xAAAA);
+        {
+            clock::create_for_testing(test.ctx()).share_for_testing();
+        };
     }
 
     fun setup_pool_with_tick_min(
@@ -202,10 +203,13 @@ module deepbook::pool_tests {
     fun create_acct_and_share(
         sender: address,
         test: &mut Scenario,
-    ) {
+    ): ID {
         test_scenario::next_tx(test, sender);
         {
-            account::new(test.ctx()).share();
-        };
+            let acct = account::new(test.ctx());
+            let id = acct.id();
+            acct.share();
+            id
+        }
     }
 }
