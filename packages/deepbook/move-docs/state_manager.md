@@ -25,6 +25,7 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `user_stake`](#0x0_state_manager_user_stake)
 -  [Function `increase_user_stake`](#0x0_state_manager_increase_user_stake)
 -  [Function `remove_user_stake`](#0x0_state_manager_remove_user_stake)
+-  [Function `set_user_voted_proposal`](#0x0_state_manager_set_user_voted_proposal)
 -  [Function `reset_user_rebates`](#0x0_state_manager_reset_user_rebates)
 -  [Function `user_open_orders`](#0x0_state_manager_user_open_orders)
 -  [Function `add_user_open_order`](#0x0_state_manager_add_user_open_order)
@@ -176,6 +177,12 @@ User data that is updated every epoch.
 </dd>
 <dt>
 <code>new_stake: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;</code>
 </dt>
 <dd>
 
@@ -572,10 +579,10 @@ the current epoch and new_stake is the amount staked in the current epoch.
 
 ## Function `increase_user_stake`
 
-Increase user stake. Return old and new stake.
+Increase user stake. Return the user's total stake.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_user_stake">increase_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, amount: u64): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_user_stake">increase_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, amount: u64): u64
 </code></pre>
 
 
@@ -588,11 +595,11 @@ Increase user stake. Return old and new stake.
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
     amount: u64,
-): (u64, u64) {
+): u64 {
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     user.new_stake = user.new_stake + amount;
 
-    (user.old_stake, user.new_stake)
+    user.old_stake + user.new_stake
 }
 </code></pre>
 
@@ -604,10 +611,10 @@ Increase user stake. Return old and new stake.
 
 ## Function `remove_user_stake`
 
-Remove user stake. Return old and new stake.
+Remove user stake. Return the user's total stake.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): u64
 </code></pre>
 
 
@@ -619,13 +626,45 @@ Remove user stake. Return old and new stake.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
-): (u64, u64) {
+): u64 {
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     <b>let</b> (old_stake, new_stake) = (user.old_stake, user.new_stake);
     user.old_stake = 0;
     user.new_stake = 0;
 
-    (old_stake, new_stake)
+    old_stake + new_stake
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_manager_set_user_voted_proposal"></a>
+
+## Function `set_user_voted_proposal`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_user_voted_proposal">set_user_voted_proposal</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_user_voted_proposal">set_user_voted_proposal</a>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    user: <b>address</b>,
+    proposal_id: Option&lt;u64&gt;,
+): Option&lt;u64&gt; {
+    <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
+    <b>let</b> cur_proposal = user.voted_proposal;
+    user.voted_proposal = proposal_id;
+
+    cur_proposal
 }
 </code></pre>
 
@@ -871,6 +910,7 @@ Add new user or refresh an existing user.
     user.new_stake = 0;
     user.unclaimed_rebates = user.unclaimed_rebates + rebates;
     self.balance_to_burn = self.balance_to_burn + burns;
+    user.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
 
     user
 }
@@ -907,6 +947,7 @@ Add new user or refresh an existing user.
             maker_volume: 0,
             old_stake: 0,
             new_stake: 0,
+            voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
             unclaimed_rebates: 0,
             settled_base_amount: 0,
             settled_quote_amount: 0,

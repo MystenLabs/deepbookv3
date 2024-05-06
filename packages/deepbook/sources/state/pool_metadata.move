@@ -1,115 +1,158 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// This module contains the metadata for a pool. It manages cumulative voting power
+/// for the pool, proposals, and governance. The metadata is refreshed every epoch.
+/// Refreshing clears old proposals and resets the quorum.
 module deepbook::pool_metadata {
-    use deepbook::governance::{Governance, Proposal, Self};
+    // === Errors ===
+    const EInvalidMakerFee: u64 = 1;
+    const EInvalidTakerFee: u64 = 2;
+    const EProposalDoesNotExist: u64 = 3;
+    const EMaxProposalsReached: u64 = 4;
 
+    // === Constants ===
+    const MIN_TAKER_STABLE: u64 = 50; // 0.5 basis points
+    const MAX_TAKER_STABLE: u64 = 100;
+    const MIN_MAKER_STABLE: u64 = 20;
+    const MAX_MAKER_STABLE: u64 = 50;
+    const MIN_TAKER_VOLATILE: u64 = 500;
+    const MAX_TAKER_VOLATILE: u64 = 1000;
+    const MIN_MAKER_VOLATILE: u64 = 200;
+    const MAX_MAKER_VOLATILE: u64 = 500;
+    const MAX_PROPOSALS: u64 = 100;
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
 
-    /// Details of a pool. This is refreshed every epoch by the first State level action against this pool.
-    public struct PoolMetadata has store {
-        // Tracks refreshes.
-        last_refresh_epoch: u64,
-        // If the pool is stable or volatile. Determines the fee structure applied.
-        is_stable: bool,
-        // Governance details.
-        governance: Governance,
-        // Voting power generated from stakes during this epoch.
-        // During a refresh, this value is added to the governance and set to 0.
-        new_voting_power: u64,
+    // === Structs ===
+    /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
+    public struct Proposal has store, drop, copy {
+        maker_fee: u64,
+        taker_fee: u64,
+        stake_required: u64,
+        votes: u64,
     }
 
-    public(package) fun new(
-        ctx: &mut TxContext,
+    /// Details of a pool. This is refreshed every epoch by the first 
+    /// `State` action against this pool.
+    public struct PoolMetadata has store {
+        /// Tracks refreshes.
+        epoch: u64,
+        /// If the pool is stable or volatile. Determines the fee structure applied.
+        is_stable: bool,
+        /// List of proposals for the current epoch.
+        proposals: vector<Proposal>,
+        /// The winning proposal for the current epoch.
+        winning_proposal: Option<Proposal>,
+        /// All voting power from the current stakes.
+        voting_power: u64,
+        /// Quorum for the current epoch.
+        quorum: u64,
+    }
+
+    // === Public-Package Functions ===
+    public(package) fun empty(
+        epoch: u64,
     ): PoolMetadata {
         PoolMetadata {
-            last_refresh_epoch: ctx.epoch(),
+            epoch,
             is_stable: false,
-            governance: governance::empty(ctx),
-            new_voting_power: 0,
+            proposals: vector[],
+            winning_proposal: option::none(),
+            voting_power: 0,
+            quorum: 0,
         }
     }
 
-    /// Set the pool as stable. Called by State, validation done in State.
+    /// Set the pool as stable. Called by `State`, validation done in `State`.
     public(package) fun set_as_stable(self: &mut PoolMetadata, stable: bool) {
         self.is_stable = stable;
     }
 
-    /// Refresh the pool metadata.
-    /// This is called by every State level action, but only processed once per epoch.
-    public(package) fun refresh(self: &mut PoolMetadata, ctx: &TxContext) {
-        let current_epoch = ctx.epoch();
-        if (self.last_refresh_epoch == current_epoch) return;
+    /// Refresh the pool metadata. This is called by every `State` 
+    /// action, but only processed once per epoch.
+    public(package) fun refresh(self: &mut PoolMetadata, epoch: u64) {
+        if (self.epoch == epoch) return;
 
-        self.last_refresh_epoch = current_epoch;
-        self.governance.increase_voting_power(self.new_voting_power);
-        self.governance.reset();
+        self.epoch = epoch;
+        self.quorum = self.voting_power / 2;
+        self.proposals = vector[];
     }
 
-    /// Add a new proposal to the governance. Called by State.
-    /// Validation of the user adding is done in State.
-    /// Validation of proposal parameters done in Goverance.
+    /// Add a new proposal to governance.
+    /// Validation of the user adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut PoolMetadata,
-        user: address,
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64
     ) {
-        self.governance.create_new_proposal(
-            user,
-            self.is_stable,
-            maker_fee,
-            taker_fee,
-            stake_required
-        );
+        assert!(self.proposals.length() < MAX_PROPOSALS, EMaxProposalsReached);
+        if (self.is_stable) {
+            assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
+            assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
+        } else {
+            assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
+            assert!(taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE, EInvalidTakerFee);
+        };
+
+        self.proposals.push_back(new_proposal(maker_fee, taker_fee, stake_required));
     }
 
-    /// Vote on a proposal. Called by State.
-    /// Validation of the user and stake is done in State.
-    /// Validation of proposal id is done in Governance.
-    /// Remove any existing vote by this user and add new vote.
+    /// Vote on a proposal. Validation of the user and stake is done in `State`.
+    /// If `prev_proposal_id` is some, the user is removing their vote from that proposal.
+    /// If `proposal_id` is some, the user is voting for that proposal.
     public(package) fun vote(
         self: &mut PoolMetadata,
-        proposal_id: u64,
-        voter: address,
+        proposal_id: Option<u64>,
+        prev_proposal_id: Option<u64>,
         stake_amount: u64,
     ): Option<Proposal> {
-        self.governance.remove_vote(voter);
         let voting_power = stake_to_voting_power(stake_amount);
-        self.governance.vote(voter, proposal_id, voting_power)
+
+        if (prev_proposal_id.is_some()) {
+            let id = *prev_proposal_id.borrow();
+            assert!(self.proposals.length() > id, EProposalDoesNotExist);
+            self.proposals[id].votes = self.proposals[id].votes - voting_power;
+
+            // This was the winning proposal, now it is not.
+            if (self.proposals[id].votes + voting_power > self.quorum &&
+                self.proposals[id].votes <= self.quorum) {
+                self.winning_proposal = option::none();
+            };
+        };
+
+        if (proposal_id.is_some()) {
+            let id = *proposal_id.borrow();
+            assert!(self.proposals.length() > id, EProposalDoesNotExist);
+            self.proposals[id].votes = self.proposals[id].votes + voting_power;
+            if (self.proposals[id].votes > self.quorum) {
+                self.winning_proposal = option::some(self.proposals[id]);
+            };
+        };
+        
+        self.winning_proposal
     }
 
-    /// Add stake to the pool. Called by State.
-    /// Total user stake is the sum of the user's historic and current stake, including amount.
-    /// This is needed to calculate the new voting power.
-    /// Validation of the user, amount, and total_user_stake is done in State.
-    public(package) fun add_voting_power(
+    /// Adjust the total voting power by adding and removing stake.
+    /// If a user's stake goes from 2000 to 3000, then `add_stake` is 3000 and `remove_stake` is 2000.
+    /// Validation of inputs done in `State`.
+    public(package) fun adjust_voting_power(
         self: &mut PoolMetadata,
-        old_stake: u64,
-        new_stake: u64,
+        add_stake: u64,
+        remove_stake: u64,
     ) {
-        let new_voting_power = calculate_new_voting_power(old_stake, new_stake);
-        self.new_voting_power = self.new_voting_power + new_voting_power;
+        self.voting_power =
+            self.voting_power +
+            stake_to_voting_power(add_stake) -
+            stake_to_voting_power(remove_stake);
     }
 
-    /// Remove stake from the pool. Called by State.
-    /// old_epoch_stake is the user's stake before the current epoch.
-    /// current_epoch_stake is the user's stake during the current epoch.
-    /// These are needed to calculate the voting power to remove in Governance and are validated in State.
-    public(package) fun remove_voting_power(
-        self: &mut PoolMetadata,
-        old_epoch_stake: u64,
-        current_epoch_stake: u64,
-    ) {
-        let (
-            old_voting_power,
-            new_voting_power
-        ) = calculate_voting_power_removed(old_epoch_stake, current_epoch_stake);
-        self.new_voting_power = self.new_voting_power - new_voting_power;
-        self.governance.decrease_voting_power(old_voting_power);
+    public(package) fun proposal_params(proposal: &Proposal): (u64, u64, u64) {
+        (proposal.maker_fee, proposal.taker_fee, proposal.stake_required)
     }
 
+    // === Private Functions ===
+    /// Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
     fun stake_to_voting_power(stake: u64): u64 {
         if (stake >= VOTING_POWER_CUTOFF) {
             stake - (stake - VOTING_POWER_CUTOFF) / 2
@@ -118,45 +161,45 @@ module deepbook::pool_metadata {
         }
     }
 
-    /// Given a user's total stake and new stake from this epoch,
-    /// calculate the new voting power to add to the governance.
-    fun calculate_new_voting_power(
-        old_stake: u64,
-        new_stake: u64,
-    ): u64 {
-        if (old_stake >= VOTING_POWER_CUTOFF) {
-            return new_stake / 2
-        };
-        let amount_till_cutoff = VOTING_POWER_CUTOFF - old_stake;
-        if (amount_till_cutoff >= new_stake) {
-            return new_stake
-        };
-
-        amount_till_cutoff + (new_stake - amount_till_cutoff) / 2
+    fun new_proposal(maker_fee: u64, taker_fee: u64, stake_required: u64): Proposal {
+        Proposal {
+            maker_fee,
+            taker_fee,
+            stake_required,
+            votes: 0,
+        }
     }
 
-    /// Given a user's total stake and new stake from this epoch,
-    /// calculate the voting power and new voting power to remove from the governance.
-    fun calculate_voting_power_removed(
-        old_stake: u64,
-        new_stake: u64,
-    ): (u64, u64) {
-        if (old_stake + new_stake <= VOTING_POWER_CUTOFF) {
-            return (old_stake, new_stake)
-        };
-        if (old_stake <= VOTING_POWER_CUTOFF) {
-            let amount_till_cutoff = VOTING_POWER_CUTOFF - old_stake;
-            return (
-                old_stake + amount_till_cutoff,
-                (new_stake - amount_till_cutoff) / 2
-            )
-        };
+    // === Test Functions ===
+    #[test_only]
+    public fun delete(self: PoolMetadata) {
+        let PoolMetadata {
+            epoch: _,
+            is_stable: _,
+            proposals: _,
+            winning_proposal: _,
+            voting_power: _,
+            quorum: _,
+        } = self;
+    }
 
-        let old_after_cutoff = old_stake - VOTING_POWER_CUTOFF;
+    #[test_only]
+    public fun voting_power(self: &PoolMetadata): u64 {
+        self.voting_power
+    }
 
-        (
-            old_stake + old_after_cutoff,
-            new_stake / 2
-        )
+    #[test_only]
+    public fun quorum(self: &PoolMetadata): u64 {
+        self.quorum
+    }
+
+    #[test_only]
+    public fun proposals(self: &PoolMetadata): vector<Proposal> {
+        self.proposals
+    }
+
+    #[test_only]
+    public fun proposal_votes(self: &PoolMetadata, id: u64): u64 {
+        self.proposals[id].votes
     }
 }
