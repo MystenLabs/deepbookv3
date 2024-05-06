@@ -9,7 +9,6 @@ module deepbook::pool_tests {
         balance::Self,
         sui::SUI,
         coin::mint_for_testing,
-
     };
     use deepbook::{
         pool::{Self, Pool, DEEP},
@@ -21,7 +20,7 @@ module deepbook::pool_tests {
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
 
-    // Cannot import constants, any better options?
+    // TODO: Cannot import constants, any better options?
     // Restrictions on limit orders.
     const NO_RESTRICTION: u8 = 0;
     // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
@@ -45,7 +44,7 @@ module deepbook::pool_tests {
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        place_order(owner, acct_id, &mut test);
+        place_order(owner, acct_id, NO_RESTRICTION, true, &mut test);
         test_scenario::end(test);
     }
 
@@ -55,7 +54,9 @@ module deepbook::pool_tests {
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let placed_order_id = place_order(owner, acct_id, &mut test).order_id();
+        let placed_order_id = place_order(owner, acct_id, NO_RESTRICTION, true, &mut test).order_id();
+        cancel_order(owner, acct_id, placed_order_id, &mut test);
+        let placed_order_id = place_order(owner, acct_id, NO_RESTRICTION, false, &mut test).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
         test_scenario::end(test);
     }
@@ -66,7 +67,7 @@ module deepbook::pool_tests {
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        place_order(owner, acct_id, &mut test);
+        place_order(owner, acct_id, NO_RESTRICTION, true, &mut test);
         cancel_order(owner, acct_id, 0, &mut test);
         test_scenario::end(test);
     }
@@ -75,6 +76,8 @@ module deepbook::pool_tests {
     fun place_order(
         owner: address,
         acct_id: ID,
+        order_type: u8,
+        is_bid: bool,
         test: &mut Scenario,
     ): OrderInfo {
         test.next_tx(owner);
@@ -91,10 +94,10 @@ module deepbook::pool_tests {
                 &mut account,
                 &proof,
                 1, // client_order_id
-                NO_RESTRICTION, // order_type
-                20 * FLOAT_SCALING, // price, use float scaling
-                1, // quantity
-                true, // is_bid
+                order_type, // order_type
+                2 * FLOAT_SCALING, // price, use float scaling
+                1 * FLOAT_SCALING, // quantity, use float scaling
+                is_bid, // is_bid
                 MAX_U64, // no expiration
                 &clock,
                 test.ctx()

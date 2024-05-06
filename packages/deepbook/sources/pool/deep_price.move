@@ -90,7 +90,7 @@ module deepbook::deep_price {
             let deep_per_quote = math::div(self.cumulative_quote, self.prices.length());
             let base_fee = math::mul(fee_rate, math::mul(base_quantity, deep_per_base));
             let quote_fee = math::mul(fee_rate, math::mul(quote_quantity, deep_per_quote));
-            
+
             return (0, 0, base_fee + quote_fee)
         };
 
