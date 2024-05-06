@@ -1305,7 +1305,7 @@ slice and the local offset within the slice if it exists, or
 
 ## Function `next_slice`
 
-Given the current slice and offset, get the next slice and offset.
+Given the current slice and offset, get the next slice and offset. Can be null.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
@@ -1335,7 +1335,7 @@ Given the current slice and offset, get the next slice and offset.
 
 ## Function `prev_slice`
 
-Given the current slice and offset, get the previous slice and offset.
+Given the current slice and offset, get the previous slice and offset. Can be null.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
