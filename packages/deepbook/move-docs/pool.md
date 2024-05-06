@@ -358,6 +358,15 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 
 
+<a name="0x0_pool_EInvalidOrderCancelled"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderCancelled">EInvalidOrderCancelled</a>: u64 = 10;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidPriceRange"></a>
 
 
@@ -551,8 +560,11 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> cumulative_quote_quantity = order_info.cumulative_quote_quantity();
 
     // Calculate the taker balances. These are derived from executed quantity.
-    <b>let</b> (base_fee, quote_fee, deep_fee) =
-        self.deep_config.calculate_fees(taker_fee, executed_quantity, cumulative_quote_quantity);
+    <b>let</b> (base_fee, quote_fee, deep_fee) = <b>if</b> (order_info.is_bid()) {
+        self.deep_config.calculate_fees(taker_fee, 0, cumulative_quote_quantity)
+    } <b>else</b> {
+        self.deep_config.calculate_fees(taker_fee, executed_quantity, 0)
+    };
     <b>let</b> <b>mut</b> total_fees = base_fee + quote_fee + deep_fee;
     deep_in = deep_in + deep_fee;
     <b>if</b> (order_info.is_bid()) {
@@ -564,12 +576,15 @@ and the remaining quantity is the only quantity left to be injected into the ord
     };
 
     // Calculate the maker balances. These are derived from the remaining quantity.
-    <b>let</b> (base_fee, quote_fee, deep_fee) =
-        self.deep_config.calculate_fees(maker_fee, executed_quantity, remaining_quantity * order_info.price());
+    <b>let</b> (base_fee, quote_fee, deep_fee) = <b>if</b> (order_info.is_bid()) {
+        self.deep_config.calculate_fees(maker_fee, 0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, order_info.price()))
+    } <b>else</b> {
+        self.deep_config.calculate_fees(maker_fee, remaining_quantity, 0)
+    };
     total_fees = total_fees + base_fee + quote_fee + deep_fee;
     deep_in = deep_in + deep_fee;
     <b>if</b> (order_info.is_bid()) {
-        quote_in = quote_in + remaining_quantity * order_info.price() + quote_fee;
+        quote_in = quote_in + <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, order_info.price()) + quote_fee;
     } <b>else</b> {
         base_in = base_in + remaining_quantity + base_fee;
     };
@@ -1010,6 +1025,8 @@ The latter two are the ask prices and quantities.
     } <b>else</b> {
         self.asks.remove(order_id)
     };
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.book_order_id() == order_id, <a href="pool.md#0x0_pool_EInvalidOrderCancelled">EInvalidOrderCancelled</a>);
+
     <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(<a href="account.md#0x0_account">account</a>.owner(), order_id);
 

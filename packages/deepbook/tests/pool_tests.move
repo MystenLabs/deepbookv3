@@ -10,6 +10,7 @@ module deepbook::pool_tests {
         sui::SUI,
         coin::mint_for_testing,
     };
+
     use deepbook::{
         pool::{Self, Pool, DEEP},
         account::{Self, Account},
@@ -19,7 +20,6 @@ module deepbook::pool_tests {
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
-
     // TODO: Cannot import constants, any better options?
     // Restrictions on limit orders.
     const NO_RESTRICTION: u8 = 0;
@@ -31,7 +31,6 @@ module deepbook::pool_tests {
     const POST_ONLY: u8 = 3;
     // Maximum restriction value.
     const MAX_RESTRICTION: u8 = 3;
-
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 

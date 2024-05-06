@@ -1239,7 +1239,7 @@ Validates that the initial order created meets the pool requirements.
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.expire_timestamp &gt;= timestamp, <a href="order.md#0x0_order_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.order_type &gt; <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_order_type">order_type</a> &lt; <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.order_type &gt;= <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_order_type">order_type</a> &lt;= <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
 }
 </code></pre>
 
@@ -1618,8 +1618,8 @@ Amounts to settle for a canceled order.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): (u64, u64, u64) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
-    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> self.quantity * price;
-    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) self.quantity <b>else</b> 0;
+    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> self.quantity;
+    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(self.quantity, price) <b>else</b> 0;
     <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
         self.unpaid_fees
     } <b>else</b> {
