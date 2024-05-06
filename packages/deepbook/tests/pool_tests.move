@@ -212,6 +212,7 @@ module deepbook::pool_tests {
             deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test.ctx());
             let id = acct.id();
             acct.share();
+
             id
         }
     }
