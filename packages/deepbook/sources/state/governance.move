@@ -183,7 +183,7 @@ module deepbook::governance {
         // it was the winning proposal before, now it is not
         if (proposal.votes + votes >= self.quorum
             && proposal.votes < self.quorum) {
-            self.winning_proposal = option::none(); // .extract() ? 
+            self.winning_proposal = option::none(); // .extract() ?
         };
 
         self.winning_proposal
