@@ -37,13 +37,14 @@ module deepbook::pool_tests {
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     public struct USDC {}
+    public struct SPAM {}
 
     #[test]
     fun place_order_ok() {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
         place_order(owner, acct_id, &mut test);
         test_scenario::end(test);
     }
@@ -53,7 +54,7 @@ module deepbook::pool_tests {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
         let placed_order_id = place_order(owner, acct_id, &mut test).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
         test_scenario::end(test);
@@ -64,7 +65,7 @@ module deepbook::pool_tests {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
         setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
         place_order(owner, acct_id, &mut test);
         cancel_order(owner, acct_id, 0, &mut test);
         test_scenario::end(test);
@@ -81,11 +82,6 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
             let clock = test.take_shared<Clock>();
             let mut account = test.take_shared_by_id<Account>(acct_id);
-
-            // Deposit into account
-            deposit_into_account<SUI>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
-            deposit_into_account<USDC>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
-            deposit_into_account<DEEP>(&mut account, 1000000 * FLOAT_SCALING, test.ctx());
 
             // Get Proof from Account
             let proof = account.generate_proof_as_owner(test.ctx());
@@ -200,13 +196,18 @@ module deepbook::pool_tests {
         );
     }
 
-    fun create_acct_and_share(
+    fun create_acct_and_share_with_funds(
         sender: address,
         test: &mut Scenario,
     ): ID {
+        let amount_to_deposit = 1000000 * FLOAT_SCALING;
         test_scenario::next_tx(test, sender);
         {
-            let acct = account::new(test.ctx());
+            let mut acct = account::new(test.ctx());
+            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test.ctx());
+            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test.ctx());
+            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test.ctx());
+            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test.ctx());
             let id = acct.id();
             acct.share();
             id
