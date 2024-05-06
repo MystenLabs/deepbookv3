@@ -76,7 +76,7 @@ module deepbook::state { // Consider renaming this module
         self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         stable: bool,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
         self.get_pool_metadata_mut(pool, ctx)
             .set_as_stable(stable);
@@ -161,7 +161,7 @@ module deepbook::state { // Consider renaming this module
         maker_fee: u64,
         taker_fee: u64,
         stake_required: u64,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
         let (stake, _) = pool.get_user_stake(user, ctx);
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
@@ -178,7 +178,7 @@ module deepbook::state { // Consider renaming this module
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         proposal_id: u64,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
         let (stake, _) = pool.get_user_stake(user, ctx);
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
@@ -190,7 +190,7 @@ module deepbook::state { // Consider renaming this module
         } else {
             let (stake_required, taker_fee, maker_fee) = winning_proposal
                 .borrow()
-                .get_proposal_params();
+                .proposal_params();
 
             let fees = state_manager::new_trade_params(taker_fee, maker_fee, stake_required);
             option::some(fees)
@@ -202,7 +202,7 @@ module deepbook::state { // Consider renaming this module
     fun get_pool_metadata_mut<BaseAsset, QuoteAsset>(
         self: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext
+        ctx: &mut TxContext
     ): &mut PoolMetadata {
         let pool_key = pool.key();
         assert!(self.pools.contains(pool_key), EPoolDoesNotExist);

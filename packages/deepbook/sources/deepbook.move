@@ -60,7 +60,7 @@ module deepbook::deepbook {
         state: &mut State,
         pool: &Pool<BaseAsset, QuoteAsset>,
         stable: bool,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ) {
         state.set_pool_as_stable(pool, stable, ctx);
     }

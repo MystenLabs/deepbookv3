@@ -176,7 +176,7 @@ Public facing function to create a pool.
 Public facing function to set a pool as stable.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, <a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, <a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -190,7 +190,7 @@ Public facing function to set a pool as stable.
     <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     stable: bool,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ) {
     <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>(<a href="pool.md#0x0_pool">pool</a>, stable, ctx);
 }

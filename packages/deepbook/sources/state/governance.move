@@ -1,29 +1,35 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Governance module that handles the creation and voting on proposals.
+/// Voting power is increased or decreased by state depending on stakes being added or removed.
+/// When an epoch advances, the governance state is reset and the quorum is updated.
 module deepbook::governance {
-    use sui::vec_map::{VecMap, Self};
-    use std::debug;
+    use sui::table::{Table, Self};
 
+    // === Errors ===
+    const EInvalidMakerFee: u64 = 1;
+    const EInvalidTakerFee: u64 = 2;
+    const EProposalDoesNotExist: u64 = 3;
+    const EUserProposalCreationLimitReached: u64 = 4;
+    const EUserVotesCastedLimitReached: u64 = 5;
+    const EMaxProposalsReached: u64 = 6;
+
+    // === Constants ===
     const MIN_TAKER_STABLE: u64 = 50; // 0.5 basis points
-    const MAX_TAKER_STABLE: u64 = 100; // 1 basis point
+    const MAX_TAKER_STABLE: u64 = 100;
     const MIN_MAKER_STABLE: u64 = 20;
     const MAX_MAKER_STABLE: u64 = 50;
     const MIN_TAKER_VOLATILE: u64 = 500;
     const MAX_TAKER_VOLATILE: u64 = 1000;
     const MIN_MAKER_VOLATILE: u64 = 200;
     const MAX_MAKER_VOLATILE: u64 = 500;
-
     const MAX_PROPOSALS_CREATIONS_PER_USER: u64 = 1;
     const MAX_VOTES_CASTED_PER_USER: u64 = 3;
+    const MAX_PROPOSALS: u64 = 100;
 
-    const EInvalidMakerFee: u64 = 1;
-    const EInvalidTakerFee: u64 = 2;
-    const EProposalDoesNotExist: u64 = 3;
-    const EUserProposalCreationLimitReached: u64 = 4;
-    const EUserVotesCastedLimitReached: u64 = 5;
-
-    /// Proposal struct that holds the parameters of a proposal and its current total votes.
+    // === Structs ===
+    /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
     public struct Proposal has store, drop, copy {
         maker_fee: u64,
         taker_fee: u64,
@@ -31,7 +37,7 @@ module deepbook::governance {
         votes: u64,
     }
 
-    /// Voter represents a single voter and the actions they have taken in the current epoch.
+    /// `Voter` represents a single voter and the actions they have taken in the current epoch.
     /// A user can create up to 1 proposal per epoch.
     /// A user can cast/recast votes up to 3 times per epoch.
     public struct Voter has store, drop {
@@ -41,10 +47,9 @@ module deepbook::governance {
         votes_casted: u64,
     }
 
-    /// Governance struct that holds all the governance related data.
-    /// This will reset during every epoch change, except voting_power which will be as needed.
-    /// Participation is limited to users with staked voting power. vector and VecMap will not overflow.
-    /// Question: Why is this the case? (How do we know this?)
+    /// `Governance` struct holds all the governance related data. This will reset during
+    /// every epoch change, except `voting_power`. Participation is
+    /// limited to users with staked voting power.
     public struct Governance has store { // Can take out of Deepbook package (for treasury management)
         // Total eligible voting power available.
         voting_power: u64,
@@ -55,69 +60,50 @@ module deepbook::governance {
         // All proposals that have been created in the current epoch.
         proposals: vector<Proposal>,
         // User -> Vote mapping. Used to retrieve the vote of a user.
-        voters: VecMap<address, Voter>,
+        voters: Option<Table<address, Voter>>,
     }
 
-    public(package) fun new(): Governance {
+    // === Public-Package Functions ===
+    public(package) fun empty(ctx: &mut TxContext): Governance {
         Governance {
             voting_power: 0,
             quorum: 0,
             winning_proposal: option::none(),
             proposals: vector[],
-            voters: vec_map::empty(),
-        }
-    }
-
-    fun new_proposal(maker_fee: u64, taker_fee: u64, stake_required: u64): Proposal {
-        Proposal {
-            maker_fee,
-            taker_fee,
-            stake_required,
-            votes: 0,
-        }
-    }
-
-    public(package) fun get_proposal_params(proposal: &Proposal): (u64, u64, u64) {
-        (proposal.maker_fee, proposal.taker_fee, proposal.stake_required)
-    }
-
-    fun new_voter(): Voter {
-        Voter {
-            proposal_id: option::none(),
-            voting_power: option::none(),
-            proposals_created: 0,
-            votes_casted: 0,
+            voters: option::some(table::new(ctx)),
         }
     }
 
     /// Reset the governance state. This will happen after an epoch change.
-    /// Epoch validation done by the parent.
-    public(package) fun reset(self: &mut Governance) {
-        self.proposals = vector[];
-        self.voters = vec_map::empty();
+    public(package) fun reset(self: &mut Governance, ctx: &mut TxContext) {
         self.quorum = self.voting_power / 2;
         self.winning_proposal = option::none();
+        self.proposals = vector[];
+        let new_table: Table<address, Voter> = table::new(ctx);
+        let old_table = self.voters.swap(new_table);
+        old_table.drop();
     }
 
-    /// Increase the voting power available.
-    /// This is called by the parent during an epoch change.
+    public(package) fun proposal_params(proposal: &Proposal): (u64, u64, u64) {
+        (proposal.maker_fee, proposal.taker_fee, proposal.stake_required)
+    }
+
+    /// Increase the voting power available. This is called by the state during an epoch change.
     /// The newly staked voting power from the previous epoch is added to the governance.
     /// Validation should be done before calling this funciton.
     public(package) fun increase_voting_power(self: &mut Governance, voting_power: u64) {
         self.voting_power = self.voting_power + voting_power;
     }
 
-    /// Decrease the voting power available.
-    /// This is called by the parent when a user unstakes.
+    /// Decrease the voting power available.This is called by the parent when a user unstakes.
     /// Only voting power that has been added previously can be removed. This will always be >= 0.
     /// Validation should be done before calling this funciton.
     public(package) fun decrease_voting_power(self: &mut Governance, voting_power: u64) {
         self.voting_power = self.voting_power - voting_power;
     }
 
-    /// Create a new proposal with the given parameters.
-    /// Perform validation depending on the type of pool.
-    /// A user can only create 1 proposal per epoch.
+    /// Create a new proposal with the given parameters. Perform validation depending 
+    /// on the type of pool. A user can create up to 1 proposal per epoch.
     public(package) fun create_new_proposal(
         self: &mut Governance,
         user: address,
@@ -141,15 +127,13 @@ module deepbook::governance {
         self.proposals.push_back(proposal);
     }
 
-    /// Vote on a proposal.
-    /// Validation of user and voting power should be done before calling this function.
+    /// Vote on a proposal. Validation of user and voting power is done before calling this function.
     public(package) fun vote(
         self: &mut Governance,
         user: address,
         proposal_id: u64,
         voting_power: u64,
     ): Option<Proposal> {
-        // we can't validate user, voting_power. they must be validated before calling this function.
         assert!(proposal_id < self.proposals.length(), EProposalDoesNotExist);
         self.add_voter_if_does_not_exist(user);
         self.update_voter(user, proposal_id, voting_power);
@@ -161,18 +145,17 @@ module deepbook::governance {
             self.winning_proposal.swap_or_fill(*proposal);
         };
 
-        self.winning_proposal // implicit copy?
+        self.winning_proposal
     }
 
-    /// Remove a vote from a proposal.
-    /// If user hasn't not exist, do nothing.
+    /// Remove a vote from a proposal. If user doesn't exist, do nothing.
     /// This is called in two scenarios: a voted user changes his vote, or a user unstakes.
     public(package) fun remove_vote(
         self: &mut Governance,
         user: address
     ): Option<Proposal> {
-        if (!self.voters.contains(&user)) return self.winning_proposal;
-        let voter = &mut self.voters[&user];
+        if (!self.voters.borrow().contains(user)) return self.winning_proposal;
+        let voter = &mut self.voters.borrow_mut()[user];
         if (voter.proposal_id.is_none()) return self.winning_proposal;
 
         let votes = voter.voting_power.extract();
@@ -190,15 +173,35 @@ module deepbook::governance {
         self.winning_proposal
     }
 
+    // === Private Functions ===
+    fun new_proposal(maker_fee: u64, taker_fee: u64, stake_required: u64): Proposal {
+        Proposal {
+            maker_fee,
+            taker_fee,
+            stake_required,
+            votes: 0,
+        }
+    }
+
+    fun new_voter(): Voter {
+        Voter {
+            proposal_id: option::none(),
+            voting_power: option::none(),
+            proposals_created: 0,
+            votes_casted: 0,
+        }
+    }
+
     fun add_voter_if_does_not_exist(self: &mut Governance, user: address) {
-        if (!self.voters.contains(&user)) {
-            self.voters.insert(user, new_voter());
+        if (!self.voters.borrow().contains(user)) {
+            self.voters.borrow_mut().add(user, new_voter());
         };
     }
 
     fun increment_proposals_created(self: &mut Governance, user: address) {
-        let voter = &mut self.voters[&user];
+        let voter = &mut self.voters.borrow_mut()[user];
         assert!(voter.proposals_created < MAX_PROPOSALS_CREATIONS_PER_USER, EUserProposalCreationLimitReached);
+        assert!(self.proposals.length() < MAX_PROPOSALS, EMaxProposalsReached);
 
         voter.proposals_created = voter.proposals_created + 1;
     }
@@ -209,7 +212,7 @@ module deepbook::governance {
         proposal_id: u64,
         voting_power: u64,
     ) {
-        let voter = &mut self.voters[&user];
+        let voter = &mut self.voters.borrow_mut()[user];
         assert!(voter.votes_casted < MAX_VOTES_CASTED_PER_USER, EUserVotesCastedLimitReached);
 
         voter.votes_casted = voter.votes_casted + 1;
@@ -217,17 +220,7 @@ module deepbook::governance {
         voter.voting_power.swap_or_fill(voting_power);
     }
 
-    #[test_only]
-    public(package) fun delete(self: Governance) {
-        let Governance {
-            voting_power: _,
-            quorum: _,
-            winning_proposal: _,
-            proposals: _,
-            voters: _,
-        } = self;
-    }
-
+    // === Test Functions ===
     #[test_only]
     public(package) fun voting_power(self: &Governance): u64 {
         self.voting_power
@@ -245,11 +238,26 @@ module deepbook::governance {
 
     #[test_only]
     public(package) fun voters_size(self: &Governance): u64 {
-        self.voters.size()
+        self.voters.borrow().length()
     }
 
     #[test_only]
     public(package) fun proposal_votes(self: &Governance, proposal_id: u64): u64 {
         self.proposals[proposal_id].votes
+    }
+
+    #[test_only]
+    public(package) fun delete(self: Governance) {
+        let Governance {
+            voting_power: _,
+            quorum: _,
+            winning_proposal: _,
+            proposals: _,
+            voters: mut voters,
+        } = self;
+
+        let table = voters.extract();
+        voters.destroy_none();
+        table.drop();
     }
 }

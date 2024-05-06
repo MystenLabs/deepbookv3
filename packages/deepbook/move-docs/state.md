@@ -227,7 +227,7 @@ Set the as stable or volatile. This changes the fee structure of the pool.
 New proposals will be asserted against the new fee structure.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -240,7 +240,7 @@ New proposals will be asserted against the new fee structure.
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     stable: bool,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ) {
     self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
         .set_as_stable(stable);
@@ -409,7 +409,7 @@ Submit a proposal to change the fee structure of a pool.
 The user submitting this proposal must have vested stake in the pool.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, maker_fee: u64, taker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, maker_fee: u64, taker_fee: u64, stake_required: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -425,7 +425,7 @@ The user submitting this proposal must have vested stake in the pool.
     maker_fee: u64,
     taker_fee: u64,
     stake_required: u64,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> (stake, _) = <a href="pool.md#0x0_pool">pool</a>.get_user_stake(user, ctx);
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
@@ -448,7 +448,7 @@ If the vote pushes proposal over quorum, PoolData is created.
 Set the Pool's next_pool_data with the created PoolData.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, proposal_id: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, proposal_id: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -462,7 +462,7 @@ Set the Pool's next_pool_data with the created PoolData.
     <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     user: <b>address</b>,
     proposal_id: u64,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> (stake, _) = <a href="pool.md#0x0_pool">pool</a>.get_user_stake(user, ctx);
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
@@ -474,7 +474,7 @@ Set the Pool's next_pool_data with the created PoolData.
     } <b>else</b> {
         <b>let</b> (stake_required, taker_fee, maker_fee) = winning_proposal
             .borrow()
-            .get_proposal_params();
+            .proposal_params();
 
         <b>let</b> fees = <a href="state_manager.md#0x0_state_manager_new_trade_params">state_manager::new_trade_params</a>(taker_fee, maker_fee, stake_required);
         <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(fees)
@@ -494,7 +494,7 @@ Set the Pool's next_pool_data with the created PoolData.
 Check whether pool exists, refresh and return its metadata.
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>
+<pre><code><b>fun</b> <a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>
 </code></pre>
 
 
@@ -506,7 +506,7 @@ Check whether pool exists, refresh and return its metadata.
 <pre><code><b>fun</b> <a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    ctx: &TxContext
+    ctx: &<b>mut</b> TxContext
 ): &<b>mut</b> PoolMetadata {
     <b>let</b> pool_key = <a href="pool.md#0x0_pool">pool</a>.key();
     <b>assert</b>!(self.pools.contains(pool_key), <a href="state.md#0x0_state_EPoolDoesNotExist">EPoolDoesNotExist</a>);

@@ -20,12 +20,12 @@ module deepbook::pool_metadata {
     }
 
     public(package) fun new(
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ): PoolMetadata {
         PoolMetadata {
             last_refresh_epoch: ctx.epoch(),
             is_stable: false,
-            governance: governance::new(),
+            governance: governance::empty(ctx),
             new_voting_power: 0,
         }
     }
@@ -37,13 +37,13 @@ module deepbook::pool_metadata {
 
     /// Refresh the pool metadata.
     /// This is called by every State level action, but only processed once per epoch.
-    public(package) fun refresh(self: &mut PoolMetadata, ctx: &TxContext) {
+    public(package) fun refresh(self: &mut PoolMetadata, ctx: &mut TxContext) {
         let current_epoch = ctx.epoch();
         if (self.last_refresh_epoch == current_epoch) return;
 
         self.last_refresh_epoch = current_epoch;
         self.governance.increase_voting_power(self.new_voting_power);
-        self.governance.reset();
+        self.governance.reset(ctx);
     }
 
     /// Add a new proposal to the governance. Called by State.
