@@ -15,19 +15,25 @@ module deepbook::pool_tests {
         Pool,
         DEEP
     };
-    use deepbook::order::{
-        NO_RESTRICTION,
-        IMMEDIATE_OR_CANCEL,
-        FILL_OR_KILL,
-        POST_ONLY,
-        MAX_RESTRICTION
-    };
     use deepbook::account::{Self, Account};
     use sui::test_scenario::{Self, Scenario};
 
     const ENotImplemented: u64 = 0;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
+    const FLOAT_SCALING: u64 = 1_000_000_000;
+    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
+
+    // Restrictions on limit orders.
+    const NO_RESTRICTION: u8 = 0;
+    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
+    const IMMEDIATE_OR_CANCEL: u8 = 1;
+    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
+    const FILL_OR_KILL: u8 = 2;
+    // Mandates that the entire order be passive. Otherwise, cancel the order.
+    const POST_ONLY: u8 = 3;
+    // Maximum restriction value.
+    const MAX_RESTRICTION: u8 = 3;
 
     public struct USDC {}
 
@@ -63,8 +69,7 @@ module deepbook::pool_tests {
     }
 
     #[test]
-    #[expected_failure(abort_code = EInvalidRestriction)]
-    fun test_place_limit_order_with_invalid_restrictions_() {
+    fun test_place_limit_order() {
         let owner: address = @0xAAAA;
         let mut test = test_scenario::begin(owner);
         test.next_tx(owner);
@@ -76,55 +81,41 @@ module deepbook::pool_tests {
         {
             let mut pool = test_scenario::take_shared<Pool<SUI, USDC>>(&test);
             let clock = test_scenario::take_shared<Clock>(&test);
-            let account = test_scenario::take_shared<Account>(&test);
+            let mut account = test_scenario::take_shared<Account>(&test);
 
             // Deposit into account
             account.deposit(
-                mint_for_testing<SUI>(1000 * 100000000, test_scenario::ctx(&mut test)),
+                mint_for_testing<SUI>(1000 * FLOAT_SCALING, test_scenario::ctx(&mut test)),
                 test.ctx()
             );
             account.deposit(
-                mint_for_testing<USDC>(1000 * 100000000, test_scenario::ctx(&mut test)),
+                mint_for_testing<USDC>(1000 * FLOAT_SCALING, test_scenario::ctx(&mut test)),
                 test.ctx()
             );
             account.deposit(
-                mint_for_testing<DEEP>(1000 * 100000000, test_scenario::ctx(&mut test)),
+                mint_for_testing<DEEP>(1000 * FLOAT_SCALING, test_scenario::ctx(&mut test)),
                 test.ctx()
             );
 
             // Get Proof from Account
             let proof = account.generate_proof_as_owner(test.ctx());
 
-            // Deposit into pool
-            account: &mut Account,
-        proof: &TradeProof,
-        client_order_id: u64,
-        order_type: u8,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        expire_timestamp: u64,
-        clock: &Clock,
-        ctx: &mut TxContext,
-
+            // Place order in pool
             pool.place_limit_order<SUI, USDC>(
-                account,
-                proof,
+                &mut account,
+                &proof,
                 1, // client_order_id
-                1, // order_type
+                NO_RESTRICTION, // order_type
                 5 * FLOAT_SCALING,
-                200 * 100000000,
-                PREVENT_SELF_MATCHING_DEFAULT,
-                true,
-                TIMESTAMP_INF,
-                5,
+                200 * FLOAT_SCALING,
+                true, // is_bid
+                MAX_U64, // no expiration
                 &clock,
-                &account_cap,
-                test_scenario::ctx(&mut test)
+                test.ctx()
             );
             test_scenario::return_shared(pool);
             test_scenario::return_shared(clock);
-            test_scenario::return_to_address<AccountCap>(alice, account_cap);
+            test_scenario::return_shared(account);
         };
 
         test_scenario::end(test);

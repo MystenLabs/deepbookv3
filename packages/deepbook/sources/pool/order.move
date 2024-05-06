@@ -274,7 +274,7 @@ module deepbook::order {
         assert!(order.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order.order_type > NO_RESTRICTION && order.order_type < MAX_RESTRICTION, EInvalidOrderType);
+        assert!(order.order_type >= NO_RESTRICTION && order.order_type <= MAX_RESTRICTION, EInvalidOrderType);
     }
 
     /// Returns true if two opposite orders are overlapping in price.
