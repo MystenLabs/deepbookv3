@@ -451,11 +451,11 @@ If <code>proposal_id</code> is some, the user is voting for that proposal.
 ## Function `adjust_voting_power`
 
 Adjust the total voting power by adding and removing stake.
-If a user's stake goes from 2000 to 3000, then <code>add_stake</code> is 3000 and <code>remove_stake</code> is 2000.
+If a user's stake goes from 2000 to 3000, then <code>stake_after</code> is 3000 and <code>stake_before</code> is 2000.
 Validation of inputs done in <code>State</code>.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_adjust_voting_power">adjust_voting_power</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, add_stake: u64, remove_stake: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_adjust_voting_power">adjust_voting_power</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, stake_before: u64, stake_after: u64)
 </code></pre>
 
 
@@ -466,13 +466,13 @@ Validation of inputs done in <code>State</code>.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_adjust_voting_power">adjust_voting_power</a>(
     self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>,
-    add_stake: u64,
-    remove_stake: u64,
+    stake_before: u64,
+    stake_after: u64,
 ) {
     self.voting_power =
-        self.voting_power +
-        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(add_stake) -
-        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(remove_stake);
+        self.voting_power -
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_before) +
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_after);
 }
 </code></pre>
 

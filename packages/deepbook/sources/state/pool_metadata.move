@@ -134,17 +134,17 @@ module deepbook::pool_metadata {
     }
 
     /// Adjust the total voting power by adding and removing stake.
-    /// If a user's stake goes from 2000 to 3000, then `add_stake` is 3000 and `remove_stake` is 2000.
+    /// If a user's stake goes from 2000 to 3000, then `stake_after` is 3000 and `stake_before` is 2000.
     /// Validation of inputs done in `State`.
     public(package) fun adjust_voting_power(
         self: &mut PoolMetadata,
-        add_stake: u64,
-        remove_stake: u64,
+        stake_before: u64,
+        stake_after: u64,
     ) {
         self.voting_power =
-            self.voting_power +
-            stake_to_voting_power(add_stake) -
-            stake_to_voting_power(remove_stake);
+            self.voting_power -
+            stake_to_voting_power(stake_before) +
+            stake_to_voting_power(stake_after);
     }
 
     public(package) fun proposal_params(proposal: &Proposal): (u64, u64, u64) {
