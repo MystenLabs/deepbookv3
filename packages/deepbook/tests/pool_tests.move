@@ -50,6 +50,8 @@ module deepbook::pool_tests {
     const MAKER_FEE: u64 = 500000;
     // const TAKER_FEE: u64 = 1000000;
 
+    const ALICE: address = @0xAAAA;
+
     public struct USDC {}
     public struct SPAM {}
 
@@ -77,7 +79,7 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     /// Trying to cancel a cancelled order should fail
     fun place_and_cancel_order_empty_e() {
-        let owner: address = @0xAAAA;
+        let owner: address = ALICE;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
@@ -110,7 +112,7 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::order::EInvalidExpireTimestamp)]
     /// Trying to place an order that's expiring should fail
     fun place_order_expire_timestamp_e() {
-        let owner: address = @0xAAAA;
+        let owner: address = ALICE;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
@@ -142,7 +144,7 @@ module deepbook::pool_tests {
         current_time: u64,
         test: &mut Scenario,
     ) {
-        test.next_tx(@0xAAAA);
+        test.next_tx(ALICE);
         {
             let mut clock = test.take_shared<Clock>();
             clock.set_for_testing(current_time);
@@ -154,7 +156,7 @@ module deepbook::pool_tests {
     fun place_order_ok(
         is_bid: bool,
     ) {
-        let owner: address = @0xAAAA;
+        let owner: address = ALICE;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
@@ -207,23 +209,18 @@ module deepbook::pool_tests {
             self_matching_prevention,
         );
 
-        test.next_tx(owner);
-        {
-            let pool = test.take_shared<Pool<SUI, USDC>>();
-            let order = borrow_orderbook(&pool, is_bid).borrow(order_info.order_id());
-            verify_book_order(
-                order,
-                order_info.order_id(),
-                client_order_id,
-                quantity,
-                unpaid_fees,
-                fee_is_deep,
-                status,
-                expire_timestamp,
-                self_matching_prevention,
-            );
-            return_shared(pool);
-        };
+        borrow_and_verify_book_order(
+            order_info.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            unpaid_fees,
+            fee_is_deep,
+            status,
+            expire_timestamp,
+            self_matching_prevention,
+            &mut test,
+        );
         end(test);
     }
 
@@ -231,7 +228,7 @@ module deepbook::pool_tests {
     fun place_and_cancel_order_ok(
         is_bid: bool,
     ) {
-        let owner: address = @0xAAAA;
+        let owner: address = ALICE;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
@@ -316,6 +313,7 @@ module deepbook::pool_tests {
         assert!(order_info.self_matching_prevention() == self_matching_prevention, 0);
     }
 
+    /// Verify an order in the book
     fun verify_book_order(
         order: &Order,
         book_order_id: u128,
@@ -337,6 +335,36 @@ module deepbook::pool_tests {
         assert!(order.book_self_matching_prevention() == self_matching_prevention, 0);
     }
 
+    /// Borrow orderbook and verify an order
+    fun borrow_and_verify_book_order(
+        book_order_id: u128,
+        is_bid: bool,
+        client_order_id: u64,
+        quantity: u64,
+        unpaid_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
+        expire_timestamp: u64,
+        self_matching_prevention: bool,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(ALICE);
+        let pool = test.take_shared<Pool<SUI, USDC>>();
+        let order = borrow_orderbook(&pool, is_bid).borrow(book_order_id);
+        verify_book_order(
+            order,
+            book_order_id,
+            client_order_id,
+            quantity,
+            unpaid_fees,
+            fee_is_deep,
+            status,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+        return_shared(pool);
+    }
+
     fun borrow_orderbook(
         pool: &Pool<SUI, USDC>,
         is_bid: bool,
@@ -349,7 +377,7 @@ module deepbook::pool_tests {
         orderbook
     }
 
-    /// Helper function to place an order
+    /// Place an order
     fun place_order(
         owner: address,
         acct_id: ID,
@@ -440,7 +468,7 @@ module deepbook::pool_tests {
     fun share_clock(
         test: &mut Scenario,
     ) {
-        test.next_tx(@0xAAAA);
+        test.next_tx(ALICE);
         {
             clock::create_for_testing(test.ctx()).share_for_testing();
         };
