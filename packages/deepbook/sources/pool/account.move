@@ -60,6 +60,17 @@ module deepbook::account {
         transfer::share_object(account);
     }
 
+    /// Returns the balance of a Coin in an account.
+    public fun balance<T>(account: &Account): u64 {
+        let key = BalanceKey<T> {};
+        if (!account.balances.contains(key)) {
+            0
+        } else {
+            let acc_balance: &Balance<T> = &account.balances[key];
+            acc_balance.value()
+        }
+    }
+
     /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
     public fun mint_trade_cap(account: &mut Account, ctx: &mut TxContext): TradeCap {
         account.validate_owner(ctx);
@@ -133,11 +144,6 @@ module deepbook::account {
     /// Returns the owner of the account.
     public fun owner(account: &Account): address {
         account.owner
-    }
-
-    /// Returns the id of the account.
-    public(package) fun id(account: &Account): ID {
-        account.id.to_inner()
     }
 
     /// Deposit funds to an account. Pool will call this to deposit funds.
