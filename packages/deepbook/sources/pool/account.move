@@ -60,18 +60,6 @@ module deepbook::account {
         transfer::share_object(account);
     }
 
-    public(package) fun delete(account: Account) {
-        let Account {
-            id,
-            owner: _,
-            balances,
-            allow_listed: _,
-        } = account;
-
-        id.delete();
-        balances.destroy_empty();
-    }
-
     /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
     public fun mint_trade_cap(account: &mut Account, ctx: &mut TxContext): TradeCap {
         account.validate_owner(ctx);
@@ -126,6 +114,32 @@ module deepbook::account {
         account.deposit_with_proof(&proof, coin);
     }
 
+    /// Withdraw funds from an account. Only owner can call this directly.
+    public fun withdraw<T>(
+        account: &mut Account,
+        amount: u64,
+        withdraw_all: bool,
+        ctx: &mut TxContext,
+    ): Coin<T> {
+        let proof = generate_proof_as_owner(account, ctx);
+
+        account.withdraw_with_proof(&proof, amount, withdraw_all, ctx)
+    }
+
+    public fun validate_proof(account: &Account, proof: &TradeProof) {
+        assert!(object::id(account) == proof.account_id, EInvalidProof);
+    }
+
+    /// Returns the owner of the account.
+    public fun owner(account: &Account): address {
+        account.owner
+    }
+
+    /// Returns the id of the account.
+    public(package) fun id(account: &Account): ID {
+        account.id.to_inner()
+    }
+
     /// Deposit funds to an account. Pool will call this to deposit funds.
     public(package) fun deposit_with_proof<T>(
         account: &mut Account,
@@ -143,18 +157,6 @@ module deepbook::account {
         } else {
             account.balances.add(key, to_deposit);
         }
-    }
-
-    /// Withdraw funds from an account. Only owner can call this directly.
-    public fun withdraw<T>(
-        account: &mut Account,
-        amount: u64,
-        withdraw_all: bool,
-        ctx: &mut TxContext,
-    ): Coin<T> {
-        let proof = generate_proof_as_owner(account, ctx);
-
-        account.withdraw_with_proof(&proof, amount, withdraw_all, ctx)
     }
 
     /// Withdraw funds from an account. Pool will call this to withdraw funds.
@@ -180,9 +182,16 @@ module deepbook::account {
         }
     }
 
-    /// Returns the owner of the account.
-    public fun owner(account: &Account): address {
-        account.owner
+    public(package) fun delete(account: Account) {
+        let Account {
+            id,
+            owner: _,
+            balances,
+            allow_listed: _,
+        } = account;
+
+        id.delete();
+        balances.destroy_empty();
     }
 
     fun validate_owner(account: &Account, ctx: &TxContext) {
@@ -191,9 +200,5 @@ module deepbook::account {
 
     fun validate_trader(account: &Account, trade_cap: &TradeCap) {
         assert!(account.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
-    }
-
-    public fun validate_proof(account: &Account, proof: &TradeProof) {
-        assert!(object::id(account) == proof.account_id, EInvalidProof);
     }
 }

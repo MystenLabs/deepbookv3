@@ -274,7 +274,7 @@ module deepbook::order {
         assert!(order.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order.order_type > NO_RESTRICTION && order.order_type < MAX_RESTRICTION, EInvalidOrderType);
+        assert!(order.order_type >= NO_RESTRICTION && order.order_type <= MAX_RESTRICTION, EInvalidOrderType);
     }
 
     /// Returns true if two opposite orders are overlapping in price.
@@ -393,8 +393,8 @@ module deepbook::order {
     /// Amounts to settle for a canceled order.
     public(package) fun cancel_amounts(self: &Order): (u64, u64, u64) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
-        let mut base_quantity = if (is_bid) 0 else self.quantity * price;
-        let mut quote_quantity = if (is_bid) self.quantity else 0;
+        let mut base_quantity = if (is_bid) 0 else self.quantity;
+        let mut quote_quantity = if (is_bid) math::mul(self.quantity, price) else 0;
         let deep_quantity = if (self.fee_is_deep) {
             self.unpaid_fees
         } else {

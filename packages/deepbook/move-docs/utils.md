@@ -142,9 +142,9 @@ Decode order_id into (is_bid, price, order_id)
     <b>let</b> is_bid = (order_id &gt;&gt; 127) == 0;
     <b>let</b> price = (order_id &gt;&gt; 64) <b>as</b> u64;
     <b>let</b> price = price & ((1u64 &lt;&lt; 63) - 1);
-    <b>let</b> order_id = order_id <b>as</b> u64;
+    <b>let</b> partial_order_id = (order_id & (1u128 &lt;&lt; 64 - 1)) <b>as</b> u64;
 
-    (is_bid, price, order_id)
+    (is_bid, price, partial_order_id)
 }
 </code></pre>
 

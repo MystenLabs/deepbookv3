@@ -60,7 +60,6 @@ scaling setting for float
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_mul">mul</a>(x: u64, y: u64): u64 {
     <b>let</b> (_, result) = <a href="math.md#0x0_math_unsafe_mul_round">unsafe_mul_round</a>(x, y);
-    <b>assert</b>!(result &gt; 0, <a href="math.md#0x0_math_EUnderflow">EUnderflow</a>);
     result
 }
 </code></pre>

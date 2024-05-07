@@ -15,7 +15,7 @@ module deepbook::state_manager {
 
     const EUserNotFound: u64 = 1;
     const EHistoricVolumesNotFound: u64 = 2;
-    
+
     /// Parameters that can be updated by governance.
     public struct TradeParams has store, copy, drop {
         taker_fee: u64,
@@ -159,7 +159,7 @@ module deepbook::state_manager {
         epoch: u64
     ): (u64, u64) {
         if (!self.users.contains(user)) return (0, 0);
-        
+
         let user = self.users[user];
         if (user.epoch == epoch) {
             (user.old_stake, user.new_stake)
@@ -257,7 +257,7 @@ module deepbook::state_manager {
         let (order_id, owner, expired, complete) = fill.fill_status();
         let (base, quote, deep) = fill.settled_quantities();
         update_user(self, owner);
-        
+
         if (complete) {
             increment_users_with_rebates(self, owner);
             let user = &self.users[owner];

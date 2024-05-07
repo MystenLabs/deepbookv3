@@ -13,7 +13,6 @@ module deepbook::math {
     // Note that this function will still round down
     public(package) fun mul(x: u64, y: u64): u64 {
         let (_, result) = unsafe_mul_round(x, y);
-        assert!(result > 0, EUnderflow);
         result
     }
 

@@ -161,8 +161,11 @@ module deepbook::pool {
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
 
         // Calculate the taker balances. These are derived from executed quantity.
-        let (base_fee, quote_fee, deep_fee) =
-            self.deep_config.calculate_fees(taker_fee, executed_quantity, cumulative_quote_quantity);
+        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
+            self.deep_config.calculate_fees(taker_fee, 0, cumulative_quote_quantity)
+        } else {
+            self.deep_config.calculate_fees(taker_fee, executed_quantity, 0)
+        };
         let mut total_fees = base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
         if (order_info.is_bid()) {
@@ -174,12 +177,15 @@ module deepbook::pool {
         };
 
         // Calculate the maker balances. These are derived from the remaining quantity.
-        let (base_fee, quote_fee, deep_fee) =
-            self.deep_config.calculate_fees(maker_fee, executed_quantity, remaining_quantity * order_info.price());
+        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
+            self.deep_config.calculate_fees(maker_fee, 0, math::mul(remaining_quantity, order_info.price()))
+        } else {
+            self.deep_config.calculate_fees(maker_fee, remaining_quantity, 0)
+        };
         total_fees = total_fees + base_fee + quote_fee + deep_fee;
         deep_in = deep_in + deep_fee;
         if (order_info.is_bid()) {
-            quote_in = quote_in + remaining_quantity * order_info.price() + quote_fee;
+            quote_in = quote_in + math::mul(remaining_quantity, order_info.price()) + quote_fee;
         } else {
             base_in = base_in + remaining_quantity + base_fee;
         };
@@ -407,6 +413,7 @@ module deepbook::pool {
         } else {
             self.asks.remove(order_id)
         };
+
         order.set_canceled();
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 
