@@ -54,6 +54,7 @@ module deepbook::pool_tests {
     public struct SPAM {}
 
     #[test]
+    /// Test to place a limit order, verify the order info and order in the book
     fun place_order_ok() {
         let owner: address = @0xAAAA;
         let mut test = begin(owner);
@@ -67,6 +68,17 @@ module deepbook::pool_tests {
         let quantity = 1 * FLOAT_SCALING;
         let is_bid = true;
         let expire_timestamp = MAX_U64;
+
+        // variables expected from OrderInfo and Order
+        let status = LIVE;
+        let self_matching_prevention = false;
+        let executed_quantity = 0;
+        let cumulative_quote_quantity = 0;
+        let paid_fees = 0;
+        let total_fees = math::mul(MAKER_FEE, price);
+        let unpaid_fees = total_fees - paid_fees;
+        let fee_is_deep = false;
+
         let order_info = &place_order(
             owner,
             acct_id,
@@ -78,16 +90,6 @@ module deepbook::pool_tests {
             expire_timestamp,
             &mut test,
         );
-
-        // variables expected from order_info
-        let status = LIVE;
-        let self_matching_prevention = false;
-        let executed_quantity = 0;
-        let cumulative_quote_quantity = 0;
-        let paid_fees = 0;
-        let total_fees = math::mul(MAKER_FEE, price);
-        let unpaid_fees = total_fees - paid_fees;
-        let fee_is_deep = false;
 
         verify_order_info(
             order_info,
@@ -121,6 +123,96 @@ module deepbook::pool_tests {
             );
             return_shared(pool);
         };
+        end(test);
+    }
+
+    #[test]
+    /// Test placing and cancelling a limit order
+    fun place_and_cancel_order_ok() {
+        let owner: address = @0xAAAA;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let is_bid = true;
+        let expire_timestamp = MAX_U64;
+
+        // variables expected from Order that's cancelled
+        let status = CANCELED;
+        let self_matching_prevention = false;
+        let paid_fees = 0;
+        let total_fees = math::mul(MAKER_FEE, price);
+        let unpaid_fees = total_fees - paid_fees;
+        let fee_is_deep = false;
+
+        let order_id = place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            &mut test,
+        ).order_id();
+
+        let cancelled_order = &cancel_order(
+            owner,
+            acct_id,
+            order_id,
+            &mut test
+        );
+
+        verify_book_order(
+            cancelled_order,
+            order_id,
+            client_order_id,
+            quantity,
+            unpaid_fees,
+            fee_is_deep,
+            status,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun place_and_cancel_order_empty_e() {
+        let owner: address = @0xAAAA;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        let placed_order_id = place_order(
+            owner,
+            acct_id,
+            1, // client_order_id
+            NO_RESTRICTION,
+            2 * FLOAT_SCALING, // price
+            1 * FLOAT_SCALING, // quantity
+            true,
+            MAX_U64, // no expiration
+            &mut test,
+        ).order_id();
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
         end(test);
     }
 
@@ -170,71 +262,6 @@ module deepbook::pool_tests {
         assert!(order.book_status() == status, 0);
         assert!(order.book_expire_timestamp() == expire_timestamp, 0);
         assert!(order.book_self_matching_prevention() == self_matching_prevention, 0);
-    }
-
-    #[test]
-    fun place_and_cancel_order_ok() {
-        let owner: address = @0xAAAA;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let placed_order_id = place_order(
-            owner,
-            acct_id,
-            1, // client_order_id
-            NO_RESTRICTION,
-            2 * FLOAT_SCALING, // price
-            1 * FLOAT_SCALING, // quantity
-            true,
-            MAX_U64, // no expiration
-            &mut test,
-        ).order_id();
-        cancel_order(owner, acct_id, placed_order_id, &mut test);
-        let placed_order_id = place_order(
-            owner,
-            acct_id,
-            1, // client_order_id
-            NO_RESTRICTION,
-            2 * FLOAT_SCALING, // price
-            1 * FLOAT_SCALING, // quantity
-            false,
-            MAX_U64, // no expiration
-            &mut test,
-        ).order_id();
-        cancel_order(owner, acct_id, placed_order_id, &mut test);
-        end(test);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun place_and_cancel_order_empty_e() {
-        let owner: address = @0xAAAA;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let placed_order_id = place_order(
-            owner,
-            acct_id,
-            1, // client_order_id
-            NO_RESTRICTION,
-            2 * FLOAT_SCALING, // price
-            1 * FLOAT_SCALING, // quantity
-            true,
-            MAX_U64, // no expiration
-            &mut test,
-        ).order_id();
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
-        end(test);
     }
 
     fun borrow_orderbook(
