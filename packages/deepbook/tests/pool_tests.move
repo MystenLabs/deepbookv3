@@ -38,8 +38,6 @@ module deepbook::pool_tests {
     const POST_ONLY: u8 = 3;
     // Maximum restriction value.
     const MAX_RESTRICTION: u8 = 3;
-    const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
@@ -48,7 +46,10 @@ module deepbook::pool_tests {
     const EXPIRED: u8 = 4;
 
     const MAKER_FEE: u64 = 500000;
-    // const TAKER_FEE: u64 = 1000000;
+    const TAKER_FEE: u64 = 1000000;
+    const TICK_SIZE: u64 = 1000;
+    const LOT_SIZE: u64 = 1000;
+    const MIN_SIZE: u64 = 10000;
 
     const ALICE: address = @0xAAAA;
 
@@ -56,25 +57,43 @@ module deepbook::pool_tests {
     public struct SPAM {}
 
     #[test]
-    fun place_order_bid_ok() {
+    fun test_place_order() {
         place_order_ok(true);
-    }
-
-    #[test]
-    fun place_order_ask_ok() {
         place_order_ok(false);
     }
 
-
     #[test]
-    fun place_and_cancel_order_bid_ok() {
+    fun test_place_and_cancel_order() {
         place_and_cancel_order_ok(true);
-    }
-
-    #[test]
-    fun place_and_cancel_order_ask_ok() {
         place_and_cancel_order_ok(false);
     }
+
+    #[test, expected_failure(abort_code = ::deepbook::order::EInvalidOrderType)]
+    /// placing an order > MAX_RESTRICTIONS should fail
+    fun place_order_max_restrictions_e() {
+        let owner: address = ALICE;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        let client_order_id = 1;
+        let order_type = MAX_RESTRICTION + 1;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            true,
+            expire_timestamp,
+            &mut test,
+        );
+        end(test);
+    }
+
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     /// Trying to cancel a cancelled order should fail
@@ -136,10 +155,10 @@ module deepbook::pool_tests {
             expire_timestamp,
             &mut test,
         );
-
         end(test);
     }
 
+    /// Set the time in the global clock
     fun set_time(
         current_time: u64,
         test: &mut Scenario,
@@ -282,7 +301,6 @@ module deepbook::pool_tests {
             expire_timestamp,
             self_matching_prevention,
         );
-
         end(test);
     }
 
@@ -453,12 +471,12 @@ module deepbook::pool_tests {
         sender: address,
         test: &mut Scenario,
     ) {
-        setup_pool_with_tick_min(
-            1000000, // 10 bps
-            500000, // 5 bps
-            1000, // tick size
-            1000, // lot size
-            10000, // min size
+        setup_pool(
+            TAKER_FEE, // 10 bps
+            MAKER_FEE, // 5 bps
+            TICK_SIZE, // tick size
+            LOT_SIZE, // lot size
+            MIN_SIZE, // min size
             test,
             sender,
         );
@@ -474,7 +492,7 @@ module deepbook::pool_tests {
         };
     }
 
-    fun setup_pool_with_tick_min(
+    fun setup_pool(
         taker_fee: u64,
         maker_fee: u64,
         tick_size: u64,
