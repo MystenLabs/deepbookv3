@@ -103,17 +103,11 @@ module deepbook::state_tests {
         create_pool<SUI, USDC>(alice, &mut test);
         let amount_to_deposit = 1000000 * FLOAT_SCALING;
         let account_id = account_tests::create_acct_and_share_with_funds(alice, amount_to_deposit, &mut test);
-        test.next_tx(alice);
-        {
-            stake_with_account<SUI, USDC>(&mut test, account_id, 500);
-        };
+        stake_with_account<SUI, USDC>(alice, account_id, 500, &mut test, );
 
         let bob = @0xB;
         let account_id = account_tests::create_acct_and_share_with_funds(bob, amount_to_deposit, &mut test);
-        test.next_tx(bob);
-        {
-            stake_with_account<SUI, USDC>(&mut test, account_id, 1500);
-        };
+        stake_with_account<SUI, USDC>(bob, account_id, 1500, &mut test);
 
         test.next_tx(bob);
         {
@@ -124,10 +118,7 @@ module deepbook::state_tests {
 
         test.next_epoch(@0xF);
 
-        test.next_tx(bob);
-        {
-            stake_with_account<SUI, USDC>(&mut test, account_id, 2500);
-        };
+        stake_with_account<SUI, USDC>(bob, account_id, 2500, &mut test);
 
         test.next_tx(bob);
         {
@@ -151,30 +142,22 @@ module deepbook::state_tests {
         create_pool<SUI, USDC>(alice, &mut test);
         let amount_to_deposit = 1000000 * FLOAT_SCALING;
         let account_id = account_tests::create_acct_and_share_with_funds(alice, amount_to_deposit, &mut test);
-        test.next_tx(alice);
-        {
-            stake_with_account<SUI, USDC>(&mut test, account_id, 500);
-        };
+        stake_with_account<SUI, USDC>(alice, account_id, 500, &mut test);
 
         test.next_epoch(@0xF);
 
-        test.next_tx(alice);
-        {
-            stake_with_account<SUI, USDC>(&mut test, account_id, 2000);
-        };
-
-        test.next_tx(alice);
-        {
-            unstake_with_account<SUI, USDC>(&mut test, account_id);
-        };
+        stake_with_account<SUI, USDC>(alice, account_id, 2000, &mut test);
+        unstake_with_account<SUI, USDC>(alice, account_id, &mut test, );
 
         end(test);
     }
 
     fun unstake_with_account<BaseAsset, QuoteAsset>(
-        test: &mut Scenario,
+        sender: address,
         account_id: ID,
+        test: &mut Scenario,
     ) {
+        test.next_tx(sender);
         let (mut state, mut pool, mut account) = take_state_pool_account<BaseAsset, QuoteAsset>(test, account_id);
         let proof = account.generate_proof_as_owner(test.ctx());
         let deep_before = account.balance<DEEP>();
@@ -196,10 +179,12 @@ module deepbook::state_tests {
     }
 
     fun stake_with_account<BaseAsset, QuoteAsset>(
-        test: &mut Scenario,
+        sender: address,
         account_id: ID,
         amount: u64,
+        test: &mut Scenario,
     ) {
+        test.next_tx(sender);
         let (mut state, mut pool, mut account) = take_state_pool_account<BaseAsset, QuoteAsset>(test, account_id);
         let proof = account.generate_proof_as_owner(test.ctx());
         let deep_before = account.balance<DEEP>();
