@@ -613,6 +613,18 @@ module deepbook::pool {
         }
     }
 
+    public(package) fun bids<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): &BigVector<Order> {
+        &self.bids
+    }
+
+    public(package) fun asks<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): &BigVector<Order> {
+        &self.asks
+    }
+
     #[allow(lint(share_owned))]
     /// Share the Pool.
     public(package) fun share<BaseAsset, QuoteAsset>(self: Pool<BaseAsset, QuoteAsset>) {

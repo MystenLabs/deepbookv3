@@ -60,9 +60,9 @@ module deepbook::order {
         executed_quantity: u64,
         // Cumulative quote quantity executed so far
         cumulative_quote_quantity: u64,
-        // Fees paid so far
+        // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
-        // Total fees for the order
+        // Total fees for the order in base/quote/DEEP terms
         total_fees: u64,
         // Whether or not pool is verified at order placement
         fee_is_deep: bool,
@@ -71,7 +71,7 @@ module deepbook::order {
         // Expiration timestamp in ms
         expire_timestamp: u64,
         // Reserved field for prevent self_matching
-        self_matching_prevention: u8
+        self_matching_prevention: bool,
     }
 
     /// Order struct represents the order in the order book. It is optimized for space.
@@ -84,7 +84,7 @@ module deepbook::order {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: u8,
+        self_matching_prevention: bool,
     }
 
     /// Emitted when a maker order is filled.
@@ -175,7 +175,7 @@ module deepbook::order {
             owner,
             status: LIVE,
             expire_timestamp,
-            self_matching_prevention: 0, // TODO
+            self_matching_prevention: false,
         }
     }
 
@@ -231,8 +231,16 @@ module deepbook::order {
         self.fee_is_deep
     }
 
+    public fun status(self: &OrderInfo): u8 {
+        self.status
+    }
+
     public fun expire_timestamp(self: &OrderInfo): u64 {
         self.expire_timestamp
+    }
+
+    public fun self_matching_prevention(self: &OrderInfo): bool {
+        self.self_matching_prevention
     }
 
     /// TODO: Better naming to avoid conflict?
@@ -240,8 +248,32 @@ module deepbook::order {
         self.order_id
     }
 
+    public(package) fun book_client_order_id(self: &Order): u64 {
+        self.client_order_id
+    }
+
     public(package) fun book_quantity(self: &Order): u64 {
         self.quantity
+    }
+
+    public(package) fun book_unpaid_fees(self: &Order): u64 {
+        self.unpaid_fees
+    }
+
+    public(package) fun book_fee_is_deep(self: &Order): bool {
+        self.fee_is_deep
+    }
+
+    public(package) fun book_status(self: &Order): u8 {
+        self.status
+    }
+
+    public(package) fun book_expire_timestamp(self: &Order): u64 {
+        self.expire_timestamp
+    }
+
+    public(package) fun book_self_matching_prevention(self: &Order): bool {
+        self.self_matching_prevention
     }
 
     /// OrderInfo is converted to an Order before being injected into the order book.

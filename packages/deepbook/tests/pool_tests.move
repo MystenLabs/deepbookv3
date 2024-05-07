@@ -20,6 +20,8 @@ module deepbook::pool_tests {
         pool::{Self, Pool, DEEP},
         account::{Self, Account},
         order::{Order, OrderInfo},
+        big_vector::BigVector,
+        math,
     };
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -39,6 +41,15 @@ module deepbook::pool_tests {
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
+    const LIVE: u8 = 0;
+    const PARTIALLY_FILLED: u8 = 1;
+    const FILLED: u8 = 2;
+    const CANCELED: u8 = 3;
+    const EXPIRED: u8 = 4;
+
+    const MAKER_FEE: u64 = 500000;
+    const TAKER_FEE: u64 = 1000000;
+
     public struct USDC {}
     public struct SPAM {}
 
@@ -48,8 +59,117 @@ module deepbook::pool_tests {
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        place_order(owner, acct_id, NO_RESTRICTION, true, &mut test);
+
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let is_bid = true;
+        let expire_timestamp = MAX_U64;
+        let order_info = &place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // variables expected from order_info
+        let status = LIVE;
+        let self_matching_prevention = false;
+        let executed_quantity = 0;
+        let cumulative_quote_quantity = 0;
+        let paid_fees = 0;
+        let total_fees = math::mul(MAKER_FEE, price);
+        let unpaid_fees = total_fees - paid_fees;
+        let fee_is_deep = false;
+
+        verify_order_info(
+            order_info,
+            client_order_id,
+            price,
+            quantity,
+            executed_quantity,
+            cumulative_quote_quantity,
+            paid_fees,
+            total_fees,
+            fee_is_deep,
+            status,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        test.next_tx(owner);
+        {
+            let pool = test.take_shared<Pool<SUI, USDC>>();
+            let order = borrow_orderbook(&pool, true).borrow(order_info.order_id());
+            verify_book_order(
+                order,
+                order_info.order_id(),
+                client_order_id,
+                quantity,
+                unpaid_fees,
+                fee_is_deep,
+                status,
+                expire_timestamp,
+                self_matching_prevention,
+            );
+            return_shared(pool);
+        };
         end(test);
+    }
+
+    fun verify_order_info(
+        order_info: &OrderInfo,
+        client_order_id: u64,
+        price: u64,
+        original_quantity: u64,
+        executed_quantity: u64,
+        cumulative_quote_quantity: u64,
+        paid_fees: u64,
+        total_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
+        expire_timestamp: u64,
+        self_matching_prevention: bool,
+    ) {
+        assert!(order_info.client_order_id() == client_order_id, 0);
+        assert!(order_info.price() == price, 0);
+        assert!(order_info.original_quantity() == original_quantity, 0);
+        assert!(order_info.executed_quantity() == executed_quantity, 0);
+        assert!(order_info.cumulative_quote_quantity() == cumulative_quote_quantity, 0);
+        assert!(order_info.paid_fees() == paid_fees, 0);
+        assert!(order_info.total_fees() == total_fees, 0);
+        assert!(order_info.fee_is_deep() == fee_is_deep, 0);
+        assert!(order_info.status() == status, 0);
+        assert!(order_info.expire_timestamp() == expire_timestamp, 0);
+        assert!(order_info.self_matching_prevention() == self_matching_prevention, 0);
+    }
+
+    fun verify_book_order(
+        order: &Order,
+        book_order_id: u128,
+        client_order_id: u64,
+        quantity: u64,
+        unpaid_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
+        expire_timestamp: u64,
+        self_matching_prevention: bool,
+    ) {
+        assert!(order.book_order_id() == book_order_id, 0);
+        assert!(order.book_client_order_id() == client_order_id, 0);
+        assert!(order.book_quantity() == quantity, 0);
+        assert!(order.book_unpaid_fees() == unpaid_fees, 0);
+        assert!(order.book_fee_is_deep() == fee_is_deep, 0);
+        assert!(order.book_status() == status, 0);
+        assert!(order.book_expire_timestamp() == expire_timestamp, 0);
+        assert!(order.book_self_matching_prevention() == self_matching_prevention, 0);
     }
 
     #[test]
@@ -61,17 +181,25 @@ module deepbook::pool_tests {
         let placed_order_id = place_order(
             owner,
             acct_id,
+            1, // client_order_id
             NO_RESTRICTION,
+            2 * FLOAT_SCALING, // price
+            1 * FLOAT_SCALING, // quantity
             true,
+            MAX_U64, // no expiration
             &mut test,
         ).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
         let placed_order_id = place_order(
             owner,
             acct_id,
+            1, // client_order_id
             NO_RESTRICTION,
+            2 * FLOAT_SCALING, // price
+            1 * FLOAT_SCALING, // quantity
             false,
-            &mut test
+            MAX_U64, // no expiration
+            &mut test,
         ).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
         end(test);
@@ -86,8 +214,12 @@ module deepbook::pool_tests {
         let placed_order_id = place_order(
             owner,
             acct_id,
+            1, // client_order_id
             NO_RESTRICTION,
+            2 * FLOAT_SCALING, // price
+            1 * FLOAT_SCALING, // quantity
             true,
+            MAX_U64, // no expiration
             &mut test,
         ).order_id();
         cancel_order(
@@ -105,12 +237,28 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    fun borrow_orderbook(
+        pool: &Pool<SUI, USDC>,
+        is_bid: bool,
+    ): &BigVector<Order>{
+        let orderbook = if (is_bid) {
+            pool.bids()
+        } else {
+            pool.asks()
+        };
+        orderbook
+    }
+
     /// Helper function to place an order
     fun place_order(
         owner: address,
         acct_id: ID,
+        client_order_id: u64,
         order_type: u8,
+        price: u64,
+        quantity: u64,
         is_bid: bool,
+        expire_timestamp: u64,
         test: &mut Scenario,
     ): OrderInfo {
         test.next_tx(owner);
@@ -126,12 +274,12 @@ module deepbook::pool_tests {
             let order_info = pool.place_limit_order<SUI, USDC>(
                 &mut account,
                 &proof,
-                1, // client_order_id
-                order_type, // order_type
-                2 * FLOAT_SCALING, // price, use float scaling
-                1 * FLOAT_SCALING, // quantity, use float scaling
-                is_bid, // is_bid
-                MAX_U64, // no expiration
+                client_order_id,
+                order_type,
+                price,
+                quantity,
+                is_bid,
+                expire_timestamp,
                 &clock,
                 test.ctx()
             );
@@ -180,9 +328,9 @@ module deepbook::pool_tests {
         setup_pool_with_tick_min(
             1000000, // 10 bps
             500000, // 5 bps
-            1,
-            1,
-            1,
+            1000, // tick size
+            1000, // lot size
+            10000, // min size
             test,
             sender,
         );
