@@ -27,9 +27,9 @@ module deepbook::deep_reference_price {
     }
 
     /// Add a reference pool.
-    public(package) fun add_reference_pool<DEEP, QuoteAsset>(
+    public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
         self: &mut DeepReferencePools,
-        pool: &Pool<DEEP, QuoteAsset>,
+        pool: &Pool<BaseAsset, QuoteAsset>,
     ) {
         let (base, quote) = pool.get_base_quote_types();
         let deep_type = type_name::get<DEEP>();

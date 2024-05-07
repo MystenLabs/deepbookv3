@@ -198,7 +198,7 @@ module deepbook::pool_tests {
         );
     }
 
-    fun create_acct_and_share_with_funds(
+    public fun create_acct_and_share_with_funds(
         sender: address,
         test: &mut Scenario,
     ): ID {

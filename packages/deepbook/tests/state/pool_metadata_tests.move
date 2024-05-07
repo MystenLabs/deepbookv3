@@ -213,6 +213,7 @@ module deepbook::pool_metadata_tests {
     fun setup(): (Scenario, address) {
         let scenario = test::begin(@0x1);
         let owner = @0xF;
+
         (scenario, owner)
     }
 }

@@ -128,7 +128,7 @@ module deepbook::state { // Consider renaming this module
         let user = account.owner();
         let total_stake = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .adjust_voting_power(total_stake, total_stake - amount);
+            .adjust_voting_power(total_stake - amount, total_stake);
         let balance = account.withdraw_with_proof<DEEP>(proof, amount, false, ctx).into_balance();
         self.vault.join(balance);
     }
@@ -227,4 +227,8 @@ module deepbook::state { // Consider renaming this module
         pool.set_next_trade_params(next_trade_params);
     }
 
+    #[test_only]
+    public fun pools(self: &State): &Bag {
+        &self.pools
+    }
 }
