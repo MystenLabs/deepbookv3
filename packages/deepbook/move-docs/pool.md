@@ -33,6 +33,8 @@
 -  [Function `set_next_trade_params`](#0x0_pool_set_next_trade_params)
 -  [Function `get_base_quote_types`](#0x0_pool_get_base_quote_types)
 -  [Function `key`](#0x0_pool_key)
+-  [Function `bids`](#0x0_pool_bids)
+-  [Function `asks`](#0x0_pool_asks)
 -  [Function `share`](#0x0_pool_share)
 -  [Function `deposit_base`](#0x0_pool_deposit_base)
 -  [Function `deposit_quote`](#0x0_pool_deposit_quote)
@@ -1421,6 +1423,58 @@ Get the pool key
         base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
         quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_bids"></a>
+
+## Function `bids`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_bids">bids</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_bids">bids</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): &BigVector&lt;Order&gt; {
+    &self.bids
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_asks"></a>
+
+## Function `asks`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_asks">asks</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_asks">asks</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): &BigVector&lt;Order&gt; {
+    &self.asks
 }
 </code></pre>
 

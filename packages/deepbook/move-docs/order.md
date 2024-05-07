@@ -28,9 +28,17 @@ All order matching happens in this module.
 -  [Function `paid_fees`](#0x0_order_paid_fees)
 -  [Function `total_fees`](#0x0_order_total_fees)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
+-  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
+-  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
 -  [Function `book_order_id`](#0x0_order_book_order_id)
+-  [Function `book_client_order_id`](#0x0_order_book_client_order_id)
 -  [Function `book_quantity`](#0x0_order_book_quantity)
+-  [Function `book_unpaid_fees`](#0x0_order_book_unpaid_fees)
+-  [Function `book_fee_is_deep`](#0x0_order_book_fee_is_deep)
+-  [Function `book_status`](#0x0_order_book_status)
+-  [Function `book_expire_timestamp`](#0x0_order_book_expire_timestamp)
+-  [Function `book_self_matching_prevention`](#0x0_order_book_self_matching_prevention)
 -  [Function `to_order`](#0x0_order_to_order)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
 -  [Function `crosses_price`](#0x0_order_crosses_price)
@@ -170,7 +178,7 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>self_matching_prevention: u8</code>
+<code>self_matching_prevention: bool</code>
 </dt>
 <dd>
 
@@ -246,7 +254,7 @@ Order struct represents the order in the order book. It is optimized for space.
 
 </dd>
 <dt>
-<code>self_matching_prevention: u8</code>
+<code>self_matching_prevention: bool</code>
 </dt>
 <dd>
 
@@ -780,7 +788,7 @@ It is used to update the state.
         owner,
         status: <a href="order.md#0x0_order_LIVE">LIVE</a>,
         expire_timestamp,
-        self_matching_prevention: 0, // TODO
+        self_matching_prevention: <b>false</b>,
     }
 }
 </code></pre>
@@ -1101,6 +1109,30 @@ It is used to update the state.
 
 </details>
 
+<a name="0x0_order_status"></a>
+
+## Function `status`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_status">status</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): u8
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_status">status</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u8 {
+    self.status
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_expire_timestamp"></a>
 
 ## Function `expire_timestamp`
@@ -1118,6 +1150,30 @@ It is used to update the state.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
     self.expire_timestamp
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_self_matching_prevention"></a>
+
+## Function `self_matching_prevention`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): bool {
+    self.self_matching_prevention
 }
 </code></pre>
 
@@ -1150,6 +1206,30 @@ TODO: Better naming to avoid conflict?
 
 </details>
 
+<a name="0x0_order_book_client_order_id"></a>
+
+## Function `book_client_order_id`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_client_order_id">book_client_order_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_client_order_id">book_client_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.client_order_id
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_book_quantity"></a>
 
 ## Function `book_quantity`
@@ -1167,6 +1247,126 @@ TODO: Better naming to avoid conflict?
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.quantity
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_unpaid_fees"></a>
+
+## Function `book_unpaid_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_unpaid_fees">book_unpaid_fees</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_unpaid_fees">book_unpaid_fees</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.unpaid_fees
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_fee_is_deep"></a>
+
+## Function `book_fee_is_deep`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_fee_is_deep">book_fee_is_deep</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_fee_is_deep">book_fee_is_deep</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+    self.fee_is_deep
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_status"></a>
+
+## Function `book_status`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_status">book_status</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u8
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_status">book_status</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u8 {
+    self.status
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_expire_timestamp"></a>
+
+## Function `book_expire_timestamp`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_expire_timestamp">book_expire_timestamp</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_expire_timestamp">book_expire_timestamp</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.expire_timestamp
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_book_self_matching_prevention"></a>
+
+## Function `book_self_matching_prevention`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_book_self_matching_prevention">book_self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_self_matching_prevention">book_self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+    self.self_matching_prevention
 }
 </code></pre>
 
