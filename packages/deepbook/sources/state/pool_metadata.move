@@ -20,14 +20,14 @@ module deepbook::pool_metadata {
     const MAX_TAKER_VOLATILE: u64 = 1000;
     const MIN_MAKER_VOLATILE: u64 = 200;
     const MAX_MAKER_VOLATILE: u64 = 500;
-    const MAX_PROPOSALS: u64 = 100;
+    const MAX_PROPOSALS: u64 = 100; // TODO: figure out how to prevent spam
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
 
     // === Structs ===
     /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
     public struct Proposal has store, drop, copy {
-        maker_fee: u64,
         taker_fee: u64,
+        maker_fee: u64,
         stake_required: u64,
         votes: u64,
     }
@@ -82,35 +82,35 @@ module deepbook::pool_metadata {
     /// Validation of the user adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut PoolMetadata,
-        maker_fee: u64,
         taker_fee: u64,
+        maker_fee: u64,
         stake_required: u64
     ) {
         assert!(self.proposals.length() < MAX_PROPOSALS, EMaxProposalsReached);
         if (self.is_stable) {
-            assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
+            assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
         } else {
-            assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
             assert!(taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE, EInvalidTakerFee);
+            assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
         };
 
-        self.proposals.push_back(new_proposal(maker_fee, taker_fee, stake_required));
+        self.proposals.push_back(new_proposal(taker_fee, maker_fee, stake_required));
     }
 
     /// Vote on a proposal. Validation of the user and stake is done in `State`.
-    /// If `prev_proposal_id` is some, the user is removing their vote from that proposal.
-    /// If `proposal_id` is some, the user is voting for that proposal.
+    /// If `from_proposal_id` is some, the user is removing their vote from that proposal.
+    /// If `to_proposal_id` is some, the user is voting for that proposal.
     public(package) fun vote(
         self: &mut PoolMetadata,
-        proposal_id: Option<u64>,
-        prev_proposal_id: Option<u64>,
+        from_proposal_id: Option<u64>,
+        to_proposal_id: Option<u64>,
         stake_amount: u64,
     ): Option<Proposal> {
         let voting_power = stake_to_voting_power(stake_amount);
 
-        if (prev_proposal_id.is_some()) {
-            let id = *prev_proposal_id.borrow();
+        if (from_proposal_id.is_some()) {
+            let id = *from_proposal_id.borrow();
             assert!(self.proposals.length() > id, EProposalDoesNotExist);
             self.proposals[id].votes = self.proposals[id].votes - voting_power;
 
@@ -121,8 +121,8 @@ module deepbook::pool_metadata {
             };
         };
 
-        if (proposal_id.is_some()) {
-            let id = *proposal_id.borrow();
+        if (to_proposal_id.is_some()) {
+            let id = *to_proposal_id.borrow();
             assert!(self.proposals.length() > id, EProposalDoesNotExist);
             self.proposals[id].votes = self.proposals[id].votes + voting_power;
             if (self.proposals[id].votes > self.quorum) {
@@ -133,8 +133,8 @@ module deepbook::pool_metadata {
         self.winning_proposal
     }
 
-    /// Adjust the total voting power by adding and removing stake.
-    /// If a user's stake goes from 2000 to 3000, then `stake_after` is 3000 and `stake_before` is 2000.
+    /// Adjust the total voting power by adding and removing stake. If a user's
+    /// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after` is 3000.
     /// Validation of inputs done in `State`.
     public(package) fun adjust_voting_power(
         self: &mut PoolMetadata,
@@ -148,7 +148,7 @@ module deepbook::pool_metadata {
     }
 
     public(package) fun proposal_params(proposal: &Proposal): (u64, u64, u64) {
-        (proposal.maker_fee, proposal.taker_fee, proposal.stake_required)
+        (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
     }
 
     // === Private Functions ===
@@ -161,10 +161,10 @@ module deepbook::pool_metadata {
         }
     }
 
-    fun new_proposal(maker_fee: u64, taker_fee: u64, stake_required: u64): Proposal {
+    fun new_proposal(taker_fee: u64, maker_fee: u64, stake_required: u64): Proposal {
         Proposal {
-            maker_fee,
             taker_fee,
+            maker_fee,
             stake_required,
             votes: 0,
         }

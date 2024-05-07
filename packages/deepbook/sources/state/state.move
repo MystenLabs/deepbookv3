@@ -217,7 +217,7 @@ module deepbook::state { // Consider renaming this module
         let next_trade_params = if (winning_proposal.is_none()) {
             option::none()
         } else {
-            let (stake_required, taker_fee, maker_fee) = winning_proposal
+            let (taker_fee, maker_fee, stake_required) = winning_proposal
                 .borrow()
                 .proposal_params();
 

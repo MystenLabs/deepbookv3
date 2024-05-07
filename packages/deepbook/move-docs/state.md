@@ -541,7 +541,7 @@ Check whether pool exists, refresh and return its metadata.
     <b>let</b> next_trade_params = <b>if</b> (winning_proposal.is_none()) {
         <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>()
     } <b>else</b> {
-        <b>let</b> (stake_required, taker_fee, maker_fee) = winning_proposal
+        <b>let</b> (taker_fee, maker_fee, stake_required) = winning_proposal
             .borrow()
             .proposal_params();
 
