@@ -210,7 +210,7 @@ module deepbook::pool_tests {
             deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test.ctx());
             deposit_into_account<USDC>(&mut acct, amount_to_deposit, test.ctx());
             deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test.ctx());
-            let id = acct.id();
+            let id = object::id(&acct);
             acct.share();
 
             id
