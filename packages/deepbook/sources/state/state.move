@@ -32,6 +32,11 @@ module deepbook::state { // Consider renaming this module
         vault: Balance<DEEP>,
     }
 
+    /// Number of DEEP tokens staked in the protocol.
+    public fun vault_value(self: &State): u64 {
+        self.vault.value()
+    }
+
     /// Create a new State and share it. Called once during init.
     public(package) fun create_and_share(ctx: &mut TxContext) {
         let state = State {

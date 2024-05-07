@@ -7,6 +7,7 @@
 
 -  [Resource `State`](#0x0_state_State)
 -  [Constants](#@Constants_0)
+-  [Function `vault_value`](#0x0_state_vault_value)
 -  [Function `create_and_share`](#0x0_state_create_and_share)
 -  [Function `create_pool`](#0x0_state_create_pool)
 -  [Function `set_pool_as_stable`](#0x0_state_set_pool_as_stable)
@@ -140,6 +141,31 @@
 </code></pre>
 
 
+
+<a name="0x0_state_vault_value"></a>
+
+## Function `vault_value`
+
+Number of DEEP tokens staked in the protocol.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="state.md#0x0_state_vault_value">vault_value</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="state.md#0x0_state_vault_value">vault_value</a>(self: &<a href="state.md#0x0_state_State">State</a>): u64 {
+    self.vault.value()
+}
+</code></pre>
+
+
+
+</details>
 
 <a name="0x0_state_create_and_share"></a>
 
