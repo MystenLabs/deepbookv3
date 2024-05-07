@@ -1,11 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#[test_only, allow(unused_const)]
+#[test_only]
 module deepbook::pool_tests {
     use sui::{
         clock::{Self, Clock},
-        test_scenario::{Self, Scenario},
+        test_scenario::{
+            Scenario,
+            begin,
+            end,
+            return_shared,
+        },
         balance::Self,
         sui::SUI,
         coin::mint_for_testing,
@@ -40,35 +45,53 @@ module deepbook::pool_tests {
     #[test]
     fun place_order_ok() {
         let owner: address = @0xAAAA;
-        let mut test = test_scenario::begin(owner);
+        let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
         place_order(owner, acct_id, NO_RESTRICTION, true, &mut test);
-        test_scenario::end(test);
+        end(test);
     }
 
     #[test]
     fun place_and_cancel_order_ok() {
         let owner: address = @0xAAAA;
-        let mut test = test_scenario::begin(owner);
+        let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let placed_order_id = place_order(owner, acct_id, NO_RESTRICTION, true, &mut test).order_id();
+        let placed_order_id = place_order(
+            owner,
+            acct_id,
+            NO_RESTRICTION,
+            true,
+            &mut test,
+        ).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
-        let placed_order_id = place_order(owner, acct_id, NO_RESTRICTION, false, &mut test).order_id();
+        let placed_order_id = place_order(
+            owner,
+            acct_id,
+            NO_RESTRICTION,
+            false,
+            &mut test
+        ).order_id();
         cancel_order(owner, acct_id, placed_order_id, &mut test);
-        test_scenario::end(test);
+        end(test);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     fun place_and_cancel_order_empty_e() {
         let owner: address = @0xAAAA;
-        let mut test = test_scenario::begin(owner);
+        let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        place_order(owner, acct_id, NO_RESTRICTION, true, &mut test);
+        place_order(
+            owner,
+            acct_id,
+            NO_RESTRICTION,
+            true,
+            &mut test,
+        );
         cancel_order(owner, acct_id, 0, &mut test);
-        test_scenario::end(test);
+        end(test);
     }
 
     /// Helper function to place an order
@@ -101,9 +124,9 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
-            test_scenario::return_shared(pool);
-            test_scenario::return_shared(clock);
-            test_scenario::return_shared(account);
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(account);
 
             order_info
         }
@@ -130,9 +153,9 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
-            test_scenario::return_shared(pool);
-            test_scenario::return_shared(clock);
-            test_scenario::return_shared(account);
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(account);
 
             cancelled_order
         }
@@ -190,11 +213,11 @@ module deepbook::pool_tests {
     fun deposit_into_account<T>(
         account: &mut Account,
         amount: u64,
-        ctx: &mut TxContext,
+        test: &mut Scenario,
     ) {
         account.deposit(
-            mint_for_testing<T>(amount, ctx),
-            ctx
+            mint_for_testing<T>(amount, test.ctx()),
+            test.ctx()
         );
     }
 
@@ -203,13 +226,13 @@ module deepbook::pool_tests {
         test: &mut Scenario,
     ): ID {
         let amount_to_deposit = 1000000 * FLOAT_SCALING;
-        test_scenario::next_tx(test, sender);
+        test.next_tx(sender);
         {
             let mut acct = account::new(test.ctx());
-            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test.ctx());
+            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test);
             let id = acct.id();
             acct.share();
 
