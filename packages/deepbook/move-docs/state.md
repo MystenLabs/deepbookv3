@@ -352,7 +352,7 @@ Total voting power is maintained in the pool metadata.
     <b>let</b> user = <a href="account.md#0x0_account">account</a>.owner();
     <b>let</b> total_stake = <a href="pool.md#0x0_pool">pool</a>.increase_user_stake(user, amount, ctx);
     self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
-        .adjust_voting_power(total_stake, total_stake - amount);
+        .adjust_voting_power(total_stake - amount, total_stake);
     <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof&lt;DEEP&gt;(proof, amount, <b>false</b>, ctx).into_balance();
     self.vault.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
 }

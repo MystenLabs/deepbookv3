@@ -17,6 +17,7 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_account_new)
 -  [Function `share`](#0x0_account_share)
+-  [Function `balance`](#0x0_account_balance)
 -  [Function `mint_trade_cap`](#0x0_account_mint_trade_cap)
 -  [Function `revoke_trade_cap`](#0x0_account_revoke_trade_cap)
 -  [Function `generate_proof_as_owner`](#0x0_account_generate_proof_as_owner)
@@ -304,6 +305,37 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 <pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_share">share</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">Account</a>) {
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="account.md#0x0_account">account</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_balance"></a>
+
+## Function `balance`
+
+Returns the balance of a Coin in an account.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
+    <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
+    <b>if</b> (!<a href="account.md#0x0_account">account</a>.balances.contains(key)) {
+        0
+    } <b>else</b> {
+        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="account.md#0x0_account">account</a>.balances[key];
+        acc_balance.value()
+    }
 }
 </code></pre>
 
