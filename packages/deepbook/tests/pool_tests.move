@@ -83,14 +83,25 @@ module deepbook::pool_tests {
         let mut test = begin(owner);
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        place_order(
+        let placed_order_id = place_order(
             owner,
             acct_id,
             NO_RESTRICTION,
             true,
             &mut test,
+        ).order_id();
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
         );
-        cancel_order(owner, acct_id, 0, &mut test);
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
         end(test);
     }
 

@@ -363,11 +363,11 @@ module deepbook::big_vector {
     /// Remove the element with key `key` from `self`, returning its
     /// value. Aborts if `key` is not found.
     public fun remove<E: store>(self: &mut BigVector<E>, key: u128): E {
-        self.length = self.length - 1;
-
         if (self.root_id == NO_SLICE) {
             abort ENotFound
         };
+
+        self.length = self.length - 1;
 
         let (root_id, depth) = (self.root_id, self.depth);
         let (val, rm_fix, _) = self.slice_remove(
