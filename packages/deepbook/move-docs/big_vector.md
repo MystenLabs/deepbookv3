@@ -47,6 +47,8 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `slice_before`](#0x0_big_vector_slice_before)
 -  [Function `min_slice`](#0x0_big_vector_min_slice)
 -  [Function `max_slice`](#0x0_big_vector_max_slice)
+-  [Function `next_slice`](#0x0_big_vector_next_slice)
+-  [Function `prev_slice`](#0x0_big_vector_prev_slice)
 -  [Function `borrow_slice`](#0x0_big_vector_borrow_slice)
 -  [Function `borrow_slice_mut`](#0x0_big_vector_borrow_slice_mut)
 -  [Function `slice_is_null`](#0x0_big_vector_slice_is_null)
@@ -1292,6 +1294,66 @@ slice and the local offset within the slice if it exists, or
 
     <b>let</b> (ix, _, off) = self.<a href="big_vector.md#0x0_big_vector_find_max_leaf">find_max_leaf</a>();
     (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix }, off)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_next_slice"></a>
+
+## Function `next_slice`
+
+Given the current slice and offset, get the next slice and offset. Can be null.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
+    <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
+        (ref, offset + 1)
+    } <b>else</b> {
+        (slice.next(), 0)
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_big_vector_prev_slice"></a>
+
+## Function `prev_slice`
+
+Given the current slice and offset, get the previous slice and offset. Can be null.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
+    <b>if</b> (offset &gt; 0) {
+        (ref, offset - 1)
+    } <b>else</b> {
+        (slice.prev(), self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(slice.prev()).vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
+    }
 }
 </code></pre>
 

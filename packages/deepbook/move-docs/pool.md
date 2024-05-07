@@ -27,6 +27,7 @@
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `increase_user_stake`](#0x0_pool_increase_user_stake)
 -  [Function `remove_user_stake`](#0x0_pool_remove_user_stake)
+-  [Function `set_user_voted_proposal`](#0x0_pool_set_user_voted_proposal)
 -  [Function `get_user_stake`](#0x0_pool_get_user_stake)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
 -  [Function `set_next_trade_params`](#0x0_pool_set_next_trade_params)
@@ -161,7 +162,7 @@ Temporary to represent DEEP token, remove after we have the open-sourced the DEE
 
 Pool holds everything related to the pool. next_bid_order_id increments for each bid order,
 next_ask_order_id decrements for each ask order. All funds for live orders and settled funds
-are held in base_balances, quote_balances, and deepbook_balance.
+are held in base_balance, quote_balance, and deep_balance.
 
 
 <pre><code><b>struct</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> key
@@ -229,19 +230,19 @@ are held in base_balances, quote_balances, and deepbook_balance.
 
 </dd>
 <dt>
-<code>base_balances: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;BaseAsset&gt;</code>
+<code>base_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;BaseAsset&gt;</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>quote_balances: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;QuoteAsset&gt;</code>
+<code>quote_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;QuoteAsset&gt;</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>deepbook_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;</code>
+<code>deep_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;</code>
 </dt>
 <dd>
 
@@ -650,30 +651,19 @@ Mutates the order and the maker order as necessary.
     order_info: &<b>mut</b> OrderInfo,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (order_info.is_bid()) {
-        <b>let</b> (ref, offset) = self.asks.min_slice();
-        (ref, offset, &<b>mut</b> self.asks)
-    } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.max_slice();
-        (ref, offset, &<b>mut</b> self.bids)
-    };
-
-    <b>if</b> (ref.is_null()) <b>return</b>;
+    <b>let</b> is_bid = order_info.is_bid();
+    <b>let</b> book_side = <b>if</b> (is_bid) &<b>mut</b> self.asks <b>else</b> &<b>mut</b> self.bids;
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
 
     <b>let</b> <b>mut</b> fills = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 
-    <b>let</b> <b>mut</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
-    <b>while</b> (order_info.crosses_price(maker_order) ) {
+    <b>while</b> (!ref.is_null()) {
+        <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
+        <b>if</b> (!order_info.crosses_price(maker_order)) <b>break</b>;
         fills.push_back(order_info.match_maker(maker_order, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()));
 
         // Traverse <b>to</b> valid next <a href="order.md#0x0_order">order</a> <b>if</b> exists, otherwise <b>break</b> from <b>loop</b>.
-        <b>if</b> (order_info.is_bid() && book_side.valid_next(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_next_mut(ref, offset)
-        } <b>else</b> <b>if</b> (!order_info.is_bid() && book_side.valid_prev(ref, offset)) {
-            (ref, offset, maker_order) = book_side.borrow_prev_mut(ref, offset)
-        } <b>else</b> {
-            <b>break</b>
-        }
+        (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
     };
 
     // Iterate over fills and process them.
@@ -857,25 +847,17 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 ): (u64, u64) {
     <b>assert</b>!((base_amount &gt; 0 || quote_amount &gt; 0) && !(base_amount &gt; 0 && quote_amount &gt; 0), <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
     <b>let</b> is_bid = quote_amount &gt; 0;
-
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
-        <b>let</b> (ref, offset) = self.asks.min_slice();
-        (ref, offset, &self.asks)
-    } <b>else</b> {
-        <b>let</b> (ref, offset) = self.bids.max_slice();
-        (ref, offset, &self.bids)
-    };
-
-    <b>if</b> (ref.is_null()) <b>return</b> (0, 0);
-
     <b>let</b> <b>mut</b> amount_out = 0;
     <b>let</b> <b>mut</b> amount_in_left = <b>if</b> (is_bid) quote_amount <b>else</b> base_amount;
 
-    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
-    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
-    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> book_side = <b>if</b> (is_bid) &self.asks <b>else</b> &self.bids;
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
 
-    <b>while</b> (amount_in_left &gt; 0) {
+    <b>while</b> (!ref.is_null() && amount_in_left &gt; 0) {
+        <b>let</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+        <b>let</b> (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+        <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+
         <b>if</b> (is_bid) {
             <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, <a href="math.md#0x0_math_mul">math::mul</a>(cur_quantity, cur_price));
             amount_out = amount_out + <a href="math.md#0x0_math_div">math::div</a>(matched_amount, cur_price);
@@ -886,22 +868,7 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
             amount_in_left = amount_in_left - matched_amount;
         };
 
-        <b>let</b> valid_order = <b>if</b> (is_bid) {
-            book_side.valid_next(ref, offset)
-        } <b>else</b> {
-            book_side.valid_prev(ref, offset)
-        };
-        <b>if</b> (valid_order) {
-            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
-                book_side.borrow_next(ref, offset)
-            } <b>else</b> {
-                book_side.borrow_prev(ref, offset)
-            };
-            (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
-            cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
-        } <b>else</b> {
-            <b>break</b>
-        };
+        (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
     };
 
     <b>if</b> (is_bid) {
@@ -1059,8 +1026,7 @@ Claim the rebates for the user
 ) {
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
     <b>let</b> amount = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.reset_user_rebates(<a href="account.md#0x0_account">account</a>.owner());
-    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.deepbook_balance.split(amount).into_coin(ctx);
-    <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, amount, ctx);
 }
 </code></pre>
 
@@ -1193,9 +1159,9 @@ Creates a new pool for trading and returns pool_key, called by state module
         tick_size,
         lot_size,
         min_size,
-        base_balances: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
-        quote_balances: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
-        deepbook_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
+        base_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
+        quote_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
+        deep_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
         <a href="state_manager.md#0x0_state_manager">state_manager</a>: <a href="state_manager.md#0x0_state_manager_new">state_manager::new</a>(taker_fee, maker_fee, 0, ctx),
     });
 
@@ -1225,7 +1191,7 @@ Creates a new pool for trading and returns pool_key, called by state module
 Increase a user's stake
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
 </code></pre>
 
 
@@ -1239,7 +1205,7 @@ Increase a user's stake
     user: <b>address</b>,
     amount: u64,
     ctx: &TxContext,
-): (u64, u64) {
+): u64 {
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
 
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>(user, amount)
@@ -1258,7 +1224,7 @@ Removes a user's stake.
 Returns the total amount staked before this epoch and the total amount staked during this epoch.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
 </code></pre>
 
 
@@ -1271,10 +1237,41 @@ Returns the total amount staked before this epoch and the total amount staked du
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     user: <b>address</b>,
     ctx: &TxContext
-): (u64, u64) {
+): u64 {
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
 
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>(user)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_set_user_voted_proposal"></a>
+
+## Function `set_user_voted_proposal`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_set_user_voted_proposal">set_user_voted_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_set_user_voted_proposal">set_user_voted_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    user: <b>address</b>,
+    proposal_id: Option&lt;u64&gt;,
+    ctx: &TxContext,
+): Option&lt;u64&gt; {
+    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
+
+    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_set_user_voted_proposal">set_user_voted_proposal</a>(user, proposal_id)
 }
 </code></pre>
 
@@ -1481,7 +1478,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> base = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
-    self.base_balances.join(base.into_balance());
+    self.base_balance.join(base.into_balance());
 }
 </code></pre>
 
@@ -1512,7 +1509,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> quote = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
-    self.quote_balances.join(quote.into_balance());
+    self.quote_balance.join(quote.into_balance());
 }
 </code></pre>
 
@@ -1543,7 +1540,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = user_account.withdraw_with_proof(proof, amount, <b>false</b>, ctx);
-    self.deepbook_balance.join(<a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance());
+    self.deep_balance.join(<a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance());
 }
 </code></pre>
 
@@ -1573,7 +1570,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.base_balances.split(amount).into_coin(ctx);
+    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.base_balance.split(amount).into_coin(ctx);
     user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
@@ -1604,7 +1601,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.quote_balances.split(amount).into_coin(ctx);
+    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.quote_balance.split(amount).into_coin(ctx);
     user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
@@ -1635,7 +1632,7 @@ User cannot manually deposit. Funds are withdrawn from user account and merged i
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.deepbook_balance.split(amount).into_coin(ctx);
+    <b>let</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a> = self.deep_balance.split(amount).into_coin(ctx);
     user_account.deposit_with_proof(proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
 }
 </code></pre>
@@ -1799,53 +1796,33 @@ Price_vec is in descending order for bids and ascending order for asks.
     // convert price_low and price_high <b>to</b> keys for searching
     <b>let</b> key_low = (price_low <b>as</b> u128) &lt;&lt; 64;
     <b>let</b> key_high = ((price_high <b>as</b> u128) &lt;&lt; 64) + ((1u128 &lt;&lt; 64 - 1) <b>as</b> u128);
-    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset, book_side) = <b>if</b> (is_bid) {
-        <b>let</b> (ref, offset) = self.bids.slice_before(key_high);
-        (ref, offset, &self.bids)
-    } <b>else</b> {
-        <b>let</b> (ref, offset) = self.asks.slice_following(key_low);
-        (ref, offset, &self.asks)
-    };
-    // Check <b>if</b> there is a valid starting <a href="order.md#0x0_order">order</a>
-    <b>if</b> (ref.is_null()) {
-        <b>return</b> (price_vec, quantity_vec)
-    };
-
-    <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
-    <b>let</b> (_, <b>mut</b> cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
-    <b>let</b> <b>mut</b> cur_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> book_side = <b>if</b> (is_bid) &self.bids <b>else</b> &self.asks;
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.slice_before(key_high) <b>else</b> book_side.slice_following(key_low);
     <b>let</b> <b>mut</b> ticks_left = ticks;
+    <b>let</b> <b>mut</b> cur_price = 0;
+    <b>let</b> <b>mut</b> cur_quantity = 0;
 
-    <b>while</b> (
-        ticks_left &gt; 0 &&
-        (is_bid && cur_price &gt;= price_low) || (!is_bid && cur_price &lt;= price_high)
-    ) {
-        <b>let</b> valid_order = <b>if</b> (is_bid) {
-            book_side.valid_prev(ref, offset)
-        } <b>else</b> {
-            book_side.valid_next(ref, offset)
-        };
-        <b>if</b> (valid_order) {
-            (ref, offset, <a href="order.md#0x0_order">order</a>) = <b>if</b> (is_bid) {
-                book_side.borrow_prev(ref, offset)
-            } <b>else</b> {
-                book_side.borrow_next(ref, offset)
-            };
-            <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
-            <b>if</b> (order_price != cur_price) {
-                price_vec.push_back(cur_price);
-                quantity_vec.push_back(cur_quantity);
-                cur_quantity = 0;
-                cur_price = order_price;
-                ticks_left = ticks_left - 1;
-            };
-            cur_quantity = cur_quantity + <a href="order.md#0x0_order">order</a>.book_quantity();
-        } <b>else</b> {
+    <b>while</b> (!ref.is_null() && ticks_left &gt; 0) {
+        <b>let</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+        <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.book_order_id());
+        <b>if</b> ((is_bid && order_price &gt;= price_low) || (!is_bid && order_price &lt;= price_high)) <b>break</b>;
+        <b>if</b> (cur_price == 0) cur_price = order_price;
+
+        <b>let</b> order_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+        <b>if</b> (order_price != cur_price) {
             price_vec.push_back(cur_price);
             quantity_vec.push_back(cur_quantity);
-            <b>break</b>
-        }
+            cur_price = order_price;
+            cur_quantity = 0;
+        };
+
+        cur_quantity = cur_quantity + order_quantity;
+        ticks_left = ticks_left - 1;
+        (ref, offset) = <b>if</b> (is_bid) book_side.prev_slice(ref, offset) <b>else</b> book_side.next_slice(ref, offset);
     };
+
+    price_vec.push_back(cur_price);
+    quantity_vec.push_back(cur_quantity);
 
     (price_vec, quantity_vec)
 }
@@ -1872,7 +1849,7 @@ Price_vec is in descending order for bids and ascending order for asks.
 
 <pre><code><b>fun</b> <a href="pool.md#0x0_pool_correct_supply">correct_supply</a>&lt;B, Q&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;B, Q&gt;, tcap: &<b>mut</b> TreasuryCap&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;) {
     <b>let</b> amount = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.reset_burn_balance();
-    <b>let</b> burnt = self.deepbook_balance.split(amount);
+    <b>let</b> burnt = self.deep_balance.split(amount);
     tcap.supply_mut().decrease_supply(burnt);
 }
 </code></pre>

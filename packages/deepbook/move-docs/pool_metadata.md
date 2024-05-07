@@ -3,34 +3,82 @@
 
 # Module `0x0::pool_metadata`
 
+This module contains the metadata for a pool. It manages cumulative voting power
+for the pool, proposals, and governance. The metadata is refreshed every epoch.
+Refreshing clears old proposals and resets the quorum.
 
 
+-  [Struct `Proposal`](#0x0_pool_metadata_Proposal)
 -  [Struct `PoolMetadata`](#0x0_pool_metadata_PoolMetadata)
 -  [Constants](#@Constants_0)
--  [Function `new`](#0x0_pool_metadata_new)
+-  [Function `empty`](#0x0_pool_metadata_empty)
 -  [Function `set_as_stable`](#0x0_pool_metadata_set_as_stable)
 -  [Function `refresh`](#0x0_pool_metadata_refresh)
 -  [Function `add_proposal`](#0x0_pool_metadata_add_proposal)
 -  [Function `vote`](#0x0_pool_metadata_vote)
--  [Function `add_voting_power`](#0x0_pool_metadata_add_voting_power)
--  [Function `remove_voting_power`](#0x0_pool_metadata_remove_voting_power)
+-  [Function `adjust_voting_power`](#0x0_pool_metadata_adjust_voting_power)
+-  [Function `proposal_params`](#0x0_pool_metadata_proposal_params)
 -  [Function `stake_to_voting_power`](#0x0_pool_metadata_stake_to_voting_power)
--  [Function `calculate_new_voting_power`](#0x0_pool_metadata_calculate_new_voting_power)
--  [Function `calculate_voting_power_removed`](#0x0_pool_metadata_calculate_voting_power_removed)
+-  [Function `new_proposal`](#0x0_pool_metadata_new_proposal)
 
 
-<pre><code><b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
-<b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
-<b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
+<pre><code><b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 </code></pre>
 
 
+
+<a name="0x0_pool_metadata_Proposal"></a>
+
+## Struct `Proposal`
+
+<code><a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a></code> struct that holds the parameters of a proposal and its current total votes.
+
+
+<pre><code><b>struct</b> <a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a> <b>has</b> <b>copy</b>, drop, store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>taker_fee: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>maker_fee: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>stake_required: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>votes: u64</code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
 
 <a name="0x0_pool_metadata_PoolMetadata"></a>
 
 ## Struct `PoolMetadata`
 
-Details of a pool. This is refreshed every epoch by the first State level action against this pool.
+Details of a pool. This is refreshed every epoch by the first
+<code>State</code> action against this pool.
 
 
 <pre><code><b>struct</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a> <b>has</b> store
@@ -44,28 +92,40 @@ Details of a pool. This is refreshed every epoch by the first State level action
 
 <dl>
 <dt>
-<code>last_refresh_epoch: u64</code>
+<code>epoch: u64</code>
 </dt>
 <dd>
-
+ Tracks refreshes.
 </dd>
 <dt>
 <code>is_stable: bool</code>
 </dt>
 <dd>
-
+ If the pool is stable or volatile. Determines the fee structure applied.
 </dd>
 <dt>
-<code><a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_Governance">governance::Governance</a></code>
+<code>proposals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>&gt;</code>
 </dt>
 <dd>
-
+ List of proposals for the current epoch.
 </dd>
 <dt>
-<code>new_voting_power: u64</code>
+<code>winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>&gt;</code>
 </dt>
 <dd>
-
+ The winning proposal for the current epoch.
+</dd>
+<dt>
+<code>voting_power: u64</code>
+</dt>
+<dd>
+ All voting power from the current stakes.
+</dd>
+<dt>
+<code>quorum: u64</code>
+</dt>
+<dd>
+ Quorum for the current epoch.
 </dd>
 </dl>
 
@@ -77,6 +137,123 @@ Details of a pool. This is refreshed every epoch by the first State level action
 ## Constants
 
 
+<a name="0x0_pool_metadata_EInvalidMakerFee"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_EInvalidMakerFee">EInvalidMakerFee</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_EInvalidTakerFee"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_EInvalidTakerFee">EInvalidTakerFee</a>: u64 = 2;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_EMaxProposalsReached"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_EMaxProposalsReached">EMaxProposalsReached</a>: u64 = 4;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_EProposalDoesNotExist"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_EProposalDoesNotExist">EProposalDoesNotExist</a>: u64 = 3;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MAX_MAKER_STABLE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>: u64 = 50;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MAX_MAKER_VOLATILE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>: u64 = 500;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MAX_PROPOSALS"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MAX_PROPOSALS">MAX_PROPOSALS</a>: u64 = 100;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MAX_TAKER_STABLE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>: u64 = 100;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MAX_TAKER_VOLATILE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>: u64 = 1000;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MIN_MAKER_STABLE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MIN_MAKER_STABLE">MIN_MAKER_STABLE</a>: u64 = 20;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MIN_MAKER_VOLATILE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MIN_MAKER_VOLATILE">MIN_MAKER_VOLATILE</a>: u64 = 200;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MIN_TAKER_STABLE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MIN_TAKER_STABLE">MIN_TAKER_STABLE</a>: u64 = 50;
+</code></pre>
+
+
+
+<a name="0x0_pool_metadata_MIN_TAKER_VOLATILE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool_metadata.md#0x0_pool_metadata_MIN_TAKER_VOLATILE">MIN_TAKER_VOLATILE</a>: u64 = 500;
+</code></pre>
+
+
+
 <a name="0x0_pool_metadata_VOTING_POWER_CUTOFF"></a>
 
 
@@ -86,13 +263,13 @@ Details of a pool. This is refreshed every epoch by the first State level action
 
 
 
-<a name="0x0_pool_metadata_new"></a>
+<a name="0x0_pool_metadata_empty"></a>
 
-## Function `new`
+## Function `empty`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_new">new</a>(ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_empty">empty</a>(epoch: u64): <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>
 </code></pre>
 
 
@@ -101,14 +278,16 @@ Details of a pool. This is refreshed every epoch by the first State level action
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_new">new</a>(
-    ctx: &TxContext,
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_empty">empty</a>(
+    epoch: u64,
 ): <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a> {
     <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a> {
-        last_refresh_epoch: ctx.epoch(),
+        epoch,
         is_stable: <b>false</b>,
-        <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_new">governance::new</a>(),
-        new_voting_power: 0,
+        proposals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
+        winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
+        voting_power: 0,
+        quorum: 0,
     }
 }
 </code></pre>
@@ -121,7 +300,7 @@ Details of a pool. This is refreshed every epoch by the first State level action
 
 ## Function `set_as_stable`
 
-Set the pool as stable. Called by State, validation done in State.
+Set the pool as stable. Called by <code>State</code>, validation done in <code>State</code>.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_set_as_stable">set_as_stable</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, stable: bool)
@@ -146,11 +325,11 @@ Set the pool as stable. Called by State, validation done in State.
 
 ## Function `refresh`
 
-Refresh the pool metadata.
-This is called by every State level action, but only processed once per epoch.
+Refresh the pool metadata. This is called by every <code>State</code>
+action, but only processed once per epoch.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, epoch: u64)
 </code></pre>
 
 
@@ -159,13 +338,12 @@ This is called by every State level action, but only processed once per epoch.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>, ctx: &TxContext) {
-    <b>let</b> current_epoch = ctx.epoch();
-    <b>if</b> (self.last_refresh_epoch == current_epoch) <b>return</b>;
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_refresh">refresh</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>, epoch: u64) {
+    <b>if</b> (self.epoch == epoch) <b>return</b>;
 
-    self.last_refresh_epoch = current_epoch;
-    self.<a href="governance.md#0x0_governance">governance</a>.increase_voting_power(self.new_voting_power);
-    self.<a href="governance.md#0x0_governance">governance</a>.reset();
+    self.epoch = epoch;
+    self.quorum = self.voting_power / 2;
+    self.proposals = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
 }
 </code></pre>
 
@@ -177,12 +355,11 @@ This is called by every State level action, but only processed once per epoch.
 
 ## Function `add_proposal`
 
-Add a new proposal to the governance. Called by State.
-Validation of the user adding is done in State.
-Validation of proposal parameters done in Goverance.
+Add a new proposal to governance.
+Validation of the user adding is done in <code>State</code>.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, user: <b>address</b>, maker_fee: u64, taker_fee: u64, stake_required: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, taker_fee: u64, maker_fee: u64, stake_required: u64)
 </code></pre>
 
 
@@ -193,18 +370,20 @@ Validation of proposal parameters done in Goverance.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_add_proposal">add_proposal</a>(
     self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>,
-    user: <b>address</b>,
-    maker_fee: u64,
     taker_fee: u64,
+    maker_fee: u64,
     stake_required: u64
 ) {
-    self.<a href="governance.md#0x0_governance">governance</a>.create_new_proposal(
-        user,
-        self.is_stable,
-        maker_fee,
-        taker_fee,
-        stake_required
-    );
+    <b>assert</b>!(self.proposals.length() &lt; <a href="pool_metadata.md#0x0_pool_metadata_MAX_PROPOSALS">MAX_PROPOSALS</a>, <a href="pool_metadata.md#0x0_pool_metadata_EMaxProposalsReached">EMaxProposalsReached</a>);
+    <b>if</b> (self.is_stable) {
+        <b>assert</b>!(taker_fee &gt;= <a href="pool_metadata.md#0x0_pool_metadata_MIN_TAKER_STABLE">MIN_TAKER_STABLE</a> && taker_fee &lt;= <a href="pool_metadata.md#0x0_pool_metadata_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>, <a href="pool_metadata.md#0x0_pool_metadata_EInvalidTakerFee">EInvalidTakerFee</a>);
+        <b>assert</b>!(maker_fee &gt;= <a href="pool_metadata.md#0x0_pool_metadata_MIN_MAKER_STABLE">MIN_MAKER_STABLE</a> && maker_fee &lt;= <a href="pool_metadata.md#0x0_pool_metadata_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>, <a href="pool_metadata.md#0x0_pool_metadata_EInvalidMakerFee">EInvalidMakerFee</a>);
+    } <b>else</b> {
+        <b>assert</b>!(taker_fee &gt;= <a href="pool_metadata.md#0x0_pool_metadata_MIN_TAKER_VOLATILE">MIN_TAKER_VOLATILE</a> && taker_fee &lt;= <a href="pool_metadata.md#0x0_pool_metadata_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="pool_metadata.md#0x0_pool_metadata_EInvalidTakerFee">EInvalidTakerFee</a>);
+        <b>assert</b>!(maker_fee &gt;= <a href="pool_metadata.md#0x0_pool_metadata_MIN_MAKER_VOLATILE">MIN_MAKER_VOLATILE</a> && maker_fee &lt;= <a href="pool_metadata.md#0x0_pool_metadata_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="pool_metadata.md#0x0_pool_metadata_EInvalidMakerFee">EInvalidMakerFee</a>);
+    };
+
+    self.proposals.push_back(<a href="pool_metadata.md#0x0_pool_metadata_new_proposal">new_proposal</a>(taker_fee, maker_fee, stake_required));
 }
 </code></pre>
 
@@ -216,13 +395,12 @@ Validation of proposal parameters done in Goverance.
 
 ## Function `vote`
 
-Vote on a proposal. Called by State.
-Validation of the user and stake is done in State.
-Validation of proposal id is done in Governance.
-Remove any existing vote by this user and add new vote.
+Vote on a proposal. Validation of the user and stake is done in <code>State</code>.
+If <code>from_proposal_id</code> is some, the user is removing their vote from that proposal.
+If <code>to_proposal_id</code> is some, the user is voting for that proposal.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_vote">vote</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, proposal_id: u64, voter: <b>address</b>, stake_amount: u64): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_vote">vote</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, from_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, to_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, stake_amount: u64): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>&gt;
 </code></pre>
 
 
@@ -233,13 +411,34 @@ Remove any existing vote by this user and add new vote.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_vote">vote</a>(
     self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>,
-    proposal_id: u64,
-    voter: <b>address</b>,
+    from_proposal_id: Option&lt;u64&gt;,
+    to_proposal_id: Option&lt;u64&gt;,
     stake_amount: u64,
-): Option&lt;Proposal&gt; {
-    self.<a href="governance.md#0x0_governance">governance</a>.remove_vote(voter);
+): Option&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a>&gt; {
     <b>let</b> voting_power = <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
-    self.<a href="governance.md#0x0_governance">governance</a>.<a href="pool_metadata.md#0x0_pool_metadata_vote">vote</a>(voter, proposal_id, voting_power)
+
+    <b>if</b> (from_proposal_id.is_some()) {
+        <b>let</b> id = *from_proposal_id.borrow();
+        <b>assert</b>!(self.proposals.length() &gt; id, <a href="pool_metadata.md#0x0_pool_metadata_EProposalDoesNotExist">EProposalDoesNotExist</a>);
+        self.proposals[id].votes = self.proposals[id].votes - voting_power;
+
+        // This was the winning proposal, now it is not.
+        <b>if</b> (self.proposals[id].votes + voting_power &gt; self.quorum &&
+            self.proposals[id].votes &lt;= self.quorum) {
+            self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+        };
+    };
+
+    <b>if</b> (to_proposal_id.is_some()) {
+        <b>let</b> id = *to_proposal_id.borrow();
+        <b>assert</b>!(self.proposals.length() &gt; id, <a href="pool_metadata.md#0x0_pool_metadata_EProposalDoesNotExist">EProposalDoesNotExist</a>);
+        self.proposals[id].votes = self.proposals[id].votes + voting_power;
+        <b>if</b> (self.proposals[id].votes &gt; self.quorum) {
+            self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(self.proposals[id]);
+        };
+    };
+
+    self.winning_proposal
 }
 </code></pre>
 
@@ -247,17 +446,16 @@ Remove any existing vote by this user and add new vote.
 
 </details>
 
-<a name="0x0_pool_metadata_add_voting_power"></a>
+<a name="0x0_pool_metadata_adjust_voting_power"></a>
 
-## Function `add_voting_power`
+## Function `adjust_voting_power`
 
-Add stake to the pool. Called by State.
-Total user stake is the sum of the user's historic and current stake, including amount.
-This is needed to calculate the new voting power.
-Validation of the user, amount, and total_user_stake is done in State.
+Adjust the total voting power by adding and removing stake. If a user's
+stake goes from 2000 to 3000, then <code>stake_before</code> is 2000 and <code>stake_after</code> is 3000.
+Validation of inputs done in <code>State</code>.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_add_voting_power">add_voting_power</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, old_stake: u64, new_stake: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_adjust_voting_power">adjust_voting_power</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, stake_before: u64, stake_after: u64)
 </code></pre>
 
 
@@ -266,13 +464,15 @@ Validation of the user, amount, and total_user_stake is done in State.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_add_voting_power">add_voting_power</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_adjust_voting_power">adjust_voting_power</a>(
     self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>,
-    old_stake: u64,
-    new_stake: u64,
+    stake_before: u64,
+    stake_after: u64,
 ) {
-    <b>let</b> new_voting_power = <a href="pool_metadata.md#0x0_pool_metadata_calculate_new_voting_power">calculate_new_voting_power</a>(old_stake, new_stake);
-    self.new_voting_power = self.new_voting_power + new_voting_power;
+    self.voting_power =
+        self.voting_power +
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_after) -
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_before);
 }
 </code></pre>
 
@@ -280,17 +480,13 @@ Validation of the user, amount, and total_user_stake is done in State.
 
 </details>
 
-<a name="0x0_pool_metadata_remove_voting_power"></a>
+<a name="0x0_pool_metadata_proposal_params"></a>
 
-## Function `remove_voting_power`
-
-Remove stake from the pool. Called by State.
-old_epoch_stake is the user's stake before the current epoch.
-current_epoch_stake is the user's stake during the current epoch.
-These are needed to calculate the voting power to remove in Governance and are validated in State.
+## Function `proposal_params`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_remove_voting_power">remove_voting_power</a>(self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>, old_epoch_stake: u64, current_epoch_stake: u64)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_proposal_params">proposal_params</a>(proposal: &<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>): (u64, u64, u64)
 </code></pre>
 
 
@@ -299,17 +495,8 @@ These are needed to calculate the voting power to remove in Governance and are v
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_remove_voting_power">remove_voting_power</a>(
-    self: &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">PoolMetadata</a>,
-    old_epoch_stake: u64,
-    current_epoch_stake: u64,
-) {
-    <b>let</b> (
-        old_voting_power,
-        new_voting_power
-    ) = <a href="pool_metadata.md#0x0_pool_metadata_calculate_voting_power_removed">calculate_voting_power_removed</a>(old_epoch_stake, current_epoch_stake);
-    self.new_voting_power = self.new_voting_power - new_voting_power;
-    self.<a href="governance.md#0x0_governance">governance</a>.decrease_voting_power(old_voting_power);
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_proposal_params">proposal_params</a>(proposal: &<a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a>): (u64, u64, u64) {
+    (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
 }
 </code></pre>
 
@@ -321,6 +508,7 @@ These are needed to calculate the voting power to remove in Governance and are v
 
 ## Function `stake_to_voting_power`
 
+Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
 
 
 <pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake: u64): u64
@@ -345,15 +533,13 @@ These are needed to calculate the voting power to remove in Governance and are v
 
 </details>
 
-<a name="0x0_pool_metadata_calculate_new_voting_power"></a>
+<a name="0x0_pool_metadata_new_proposal"></a>
 
-## Function `calculate_new_voting_power`
-
-Given a user's total stake and new stake from this epoch,
-calculate the new voting power to add to the governance.
+## Function `new_proposal`
 
 
-<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_calculate_new_voting_power">calculate_new_voting_power</a>(old_stake: u64, new_stake: u64): u64
+
+<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_new_proposal">new_proposal</a>(taker_fee: u64, maker_fee: u64, stake_required: u64): <a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>
 </code></pre>
 
 
@@ -362,64 +548,13 @@ calculate the new voting power to add to the governance.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_calculate_new_voting_power">calculate_new_voting_power</a>(
-    old_stake: u64,
-    new_stake: u64,
-): u64 {
-    <b>if</b> (old_stake &gt;= <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
-        <b>return</b> new_stake / 2
-    };
-    <b>let</b> amount_till_cutoff = <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a> - old_stake;
-    <b>if</b> (amount_till_cutoff &gt;= new_stake) {
-        <b>return</b> new_stake
-    };
-
-    amount_till_cutoff + (new_stake - amount_till_cutoff) / 2
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_metadata_calculate_voting_power_removed"></a>
-
-## Function `calculate_voting_power_removed`
-
-Given a user's total stake and new stake from this epoch,
-calculate the voting power and new voting power to remove from the governance.
-
-
-<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_calculate_voting_power_removed">calculate_voting_power_removed</a>(old_stake: u64, new_stake: u64): (u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_calculate_voting_power_removed">calculate_voting_power_removed</a>(
-    old_stake: u64,
-    new_stake: u64,
-): (u64, u64) {
-    <b>if</b> (old_stake + new_stake &lt;= <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
-        <b>return</b> (old_stake, new_stake)
-    };
-    <b>if</b> (old_stake &lt;= <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
-        <b>let</b> amount_till_cutoff = <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a> - old_stake;
-        <b>return</b> (
-            old_stake + amount_till_cutoff,
-            (new_stake - amount_till_cutoff) / 2
-        )
-    };
-
-    <b>let</b> old_after_cutoff = old_stake - <a href="pool_metadata.md#0x0_pool_metadata_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>;
-
-    (
-        old_stake + old_after_cutoff,
-        new_stake / 2
-    )
+<pre><code><b>fun</b> <a href="pool_metadata.md#0x0_pool_metadata_new_proposal">new_proposal</a>(taker_fee: u64, maker_fee: u64, stake_required: u64): <a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a> {
+    <a href="pool_metadata.md#0x0_pool_metadata_Proposal">Proposal</a> {
+        taker_fee,
+        maker_fee,
+        stake_required,
+        votes: 0,
+    }
 }
 </code></pre>
 

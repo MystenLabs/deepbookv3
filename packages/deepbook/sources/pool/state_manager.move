@@ -38,6 +38,7 @@ module deepbook::state_manager {
         maker_volume: u64,
         old_stake: u64,
         new_stake: u64,
+        voted_proposal: Option<u64>,
         unclaimed_rebates: u64,
         settled_base_amount: u64,
         settled_quote_amount: u64,
@@ -167,29 +168,41 @@ module deepbook::state_manager {
         }
     }
 
-    /// Increase user stake. Return old and new stake.
+    /// Increase user stake. Return the user's total stake.
     public(package) fun increase_user_stake(
         self: &mut StateManager,
         user: address,
         amount: u64,
-    ): (u64, u64) {
+    ): u64 {
         let user = update_user(self, user);
         user.new_stake = user.new_stake + amount;
 
-        (user.old_stake, user.new_stake)
+        user.old_stake + user.new_stake
     }
 
-    /// Remove user stake. Return old and new stake.
+    /// Remove user stake. Return the user's total stake.
     public(package) fun remove_user_stake(
         self: &mut StateManager,
         user: address,
-    ): (u64, u64) {
+    ): u64 {
         let user = update_user(self, user);
         let (old_stake, new_stake) = (user.old_stake, user.new_stake);
         user.old_stake = 0;
         user.new_stake = 0;
 
-        (old_stake, new_stake)
+        old_stake + new_stake
+    }
+
+    public(package) fun set_user_voted_proposal(
+        self: &mut StateManager,
+        user: address,
+        proposal_id: Option<u64>,
+    ): Option<u64> {
+        let user = update_user(self, user);
+        let cur_proposal = user.voted_proposal;
+        user.voted_proposal = proposal_id;
+
+        cur_proposal
     }
 
     /// Set rebates for user to 0. Return the new unclaimed rebates.
@@ -295,6 +308,7 @@ module deepbook::state_manager {
         user.new_stake = 0;
         user.unclaimed_rebates = user.unclaimed_rebates + rebates;
         self.balance_to_burn = self.balance_to_burn + burns;
+        user.voted_proposal = option::none();
 
         user
     }
@@ -311,6 +325,7 @@ module deepbook::state_manager {
                 maker_volume: 0,
                 old_stake: 0,
                 new_stake: 0,
+                voted_proposal: option::none(),
                 unclaimed_rebates: 0,
                 settled_base_amount: 0,
                 settled_quote_amount: 0,

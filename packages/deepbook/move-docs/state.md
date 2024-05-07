@@ -17,11 +17,11 @@
 -  [Function `submit_proposal`](#0x0_state_submit_proposal)
 -  [Function `vote`](#0x0_state_vote)
 -  [Function `get_pool_metadata_mut`](#0x0_state_get_pool_metadata_mut)
+-  [Function `apply_winning_proposal`](#0x0_state_apply_winning_proposal)
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="deep_reference_price.md#0x0_deep_reference_price">0x0::deep_reference_price</a>;
-<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
 <b>use</b> <a href="pool_metadata.md#0x0_pool_metadata">0x0::pool_metadata</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
@@ -210,7 +210,7 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
 
     <b>assert</b>!(!self.pools.contains(pool_key) && !self.pools.contains(rev_key), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
 
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = <a href="pool_metadata.md#0x0_pool_metadata_new">pool_metadata::new</a>(ctx);
+    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = <a href="pool_metadata.md#0x0_pool_metadata_empty">pool_metadata::empty</a>(ctx.epoch());
     self.pools.add(pool_key, <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>);
 }
 </code></pre>
@@ -350,9 +350,9 @@ Total voting power is maintained in the pool metadata.
     ctx: &<b>mut</b> TxContext,
 ) {
     <b>let</b> user = <a href="account.md#0x0_account">account</a>.owner();
-    <b>let</b> (old_stake, new_stake) = <a href="pool.md#0x0_pool">pool</a>.increase_user_stake(user, amount, ctx);
+    <b>let</b> total_stake = <a href="pool.md#0x0_pool">pool</a>.increase_user_stake(user, amount, ctx);
     self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
-        .add_voting_power(old_stake, new_stake);
+        .adjust_voting_power(total_stake, total_stake - amount);
     <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof&lt;DEEP&gt;(proof, amount, <b>false</b>, ctx).into_balance();
     self.vault.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
 }
@@ -389,10 +389,16 @@ If the user had accumulated rebates during this epoch, they will be forfeited.
     ctx: &<b>mut</b> TxContext
 ) {
     <b>let</b> user = <a href="account.md#0x0_account">account</a>.owner();
-    <b>let</b> (old_stake, new_stake) = <a href="pool.md#0x0_pool">pool</a>.remove_user_stake(user, ctx);
-    self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
-        .remove_voting_power(old_stake, new_stake);
-    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.vault.split(old_stake + new_stake).into_coin(ctx);
+    <b>let</b> total_stake = <a href="pool.md#0x0_pool">pool</a>.remove_user_stake(user, ctx);
+    <b>let</b> prev_proposal_id = <a href="pool.md#0x0_pool">pool</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), ctx);
+    <b>if</b> (prev_proposal_id.is_some()) {
+        <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
+        <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.adjust_voting_power(0, total_stake);
+        <b>let</b> winning_proposal = <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.<a href="state.md#0x0_state_vote">vote</a>(<a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), prev_proposal_id, total_stake);
+        self.<a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>(<a href="pool.md#0x0_pool">pool</a>, winning_proposal);
+    };
+
+    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.vault.split(total_stake).into_coin(ctx);
     <a href="account.md#0x0_account">account</a>.deposit_with_proof&lt;DEEP&gt;(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
 }
 </code></pre>
@@ -431,7 +437,7 @@ The user submitting this proposal must have vested stake in the pool.
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
 
     <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
-    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.add_proposal(user, maker_fee, taker_fee, stake_required);
+    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.add_proposal(maker_fee, taker_fee, stake_required);
 }
 </code></pre>
 
@@ -466,20 +472,11 @@ Set the Pool's next_pool_data with the created PoolData.
 ) {
     <b>let</b> (stake, _) = <a href="pool.md#0x0_pool">pool</a>.get_user_stake(user, ctx);
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>let</b> prev_proposal_id = <a href="pool.md#0x0_pool">pool</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), ctx);
 
     <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
-    <b>let</b> winning_proposal = <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.<a href="state.md#0x0_state_vote">vote</a>(proposal_id, user, stake);
-    <b>let</b> next_trade_params = <b>if</b> (winning_proposal.is_none()) {
-        <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>()
-    } <b>else</b> {
-        <b>let</b> (stake_required, taker_fee, maker_fee) = winning_proposal
-            .borrow()
-            .get_proposal_params();
-
-        <b>let</b> fees = <a href="state_manager.md#0x0_state_manager_new_trade_params">state_manager::new_trade_params</a>(taker_fee, maker_fee, stake_required);
-        <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(fees)
-    };
-    <a href="pool.md#0x0_pool">pool</a>.set_next_trade_params(next_trade_params);
+    <b>let</b> winning_proposal = <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.<a href="state.md#0x0_state_vote">vote</a>(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), prev_proposal_id, stake);
+    self.<a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>(<a href="pool.md#0x0_pool">pool</a>, winning_proposal);
 }
 </code></pre>
 
@@ -512,8 +509,46 @@ Check whether pool exists, refresh and return its metadata.
     <b>assert</b>!(self.pools.contains(pool_key), <a href="state.md#0x0_state_EPoolDoesNotExist">EPoolDoesNotExist</a>);
 
     <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>: &<b>mut</b> PoolMetadata = &<b>mut</b> self.pools[pool_key];
-    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.refresh(ctx);
+    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.refresh(ctx.epoch());
     <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_apply_winning_proposal"></a>
+
+## Function `apply_winning_proposal`
+
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
+    _self: &<a href="state.md#0x0_state_State">State</a>,
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    winning_proposal: Option&lt;Proposal&gt;,
+) {
+    <b>let</b> next_trade_params = <b>if</b> (winning_proposal.is_none()) {
+        <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>()
+    } <b>else</b> {
+        <b>let</b> (taker_fee, maker_fee, stake_required) = winning_proposal
+            .borrow()
+            .proposal_params();
+
+        <b>let</b> fees = <a href="state_manager.md#0x0_state_manager_new_trade_params">state_manager::new_trade_params</a>(taker_fee, maker_fee, stake_required);
+        <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(fees)
+    };
+    <a href="pool.md#0x0_pool">pool</a>.set_next_trade_params(next_trade_params);
 }
 </code></pre>
 
