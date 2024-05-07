@@ -17,6 +17,7 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_account_new)
 -  [Function `share`](#0x0_account_share)
+-  [Function `balance`](#0x0_account_balance)
 -  [Function `mint_trade_cap`](#0x0_account_mint_trade_cap)
 -  [Function `revoke_trade_cap`](#0x0_account_revoke_trade_cap)
 -  [Function `generate_proof_as_owner`](#0x0_account_generate_proof_as_owner)
@@ -25,7 +26,6 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Function `withdraw`](#0x0_account_withdraw)
 -  [Function `validate_proof`](#0x0_account_validate_proof)
 -  [Function `owner`](#0x0_account_owner)
--  [Function `id`](#0x0_account_id)
 -  [Function `deposit_with_proof`](#0x0_account_deposit_with_proof)
 -  [Function `withdraw_with_proof`](#0x0_account_withdraw_with_proof)
 -  [Function `delete`](#0x0_account_delete)
@@ -311,6 +311,37 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 </details>
 
+<a name="0x0_account_balance"></a>
+
+## Function `balance`
+
+Returns the balance of a Coin in an account.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
+    <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
+    <b>if</b> (!<a href="account.md#0x0_account">account</a>.balances.contains(key)) {
+        0
+    } <b>else</b> {
+        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="account.md#0x0_account">account</a>.balances[key];
+        acc_balance.value()
+    }
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_account_mint_trade_cap"></a>
 
 ## Function `mint_trade_cap`
@@ -539,31 +570,6 @@ Returns the owner of the account.
 
 <pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_owner">owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): <b>address</b> {
     <a href="account.md#0x0_account">account</a>.owner
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_id"></a>
-
-## Function `id`
-
-Returns the id of the account.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): ID {
-    <a href="account.md#0x0_account">account</a>.id.to_inner()
 }
 </code></pre>
 
