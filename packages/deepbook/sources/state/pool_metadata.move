@@ -142,9 +142,9 @@ module deepbook::pool_metadata {
         stake_after: u64,
     ) {
         self.voting_power =
-            self.voting_power -
-            stake_to_voting_power(stake_before) +
-            stake_to_voting_power(stake_after);
+            self.voting_power +
+            stake_to_voting_power(stake_after) -
+            stake_to_voting_power(stake_before);
     }
 
     public(package) fun proposal_params(proposal: &Proposal): (u64, u64, u64) {

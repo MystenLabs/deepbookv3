@@ -470,9 +470,9 @@ Validation of inputs done in <code>State</code>.
     stake_after: u64,
 ) {
     self.voting_power =
-        self.voting_power -
-        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_before) +
-        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_after);
+        self.voting_power +
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_after) -
+        <a href="pool_metadata.md#0x0_pool_metadata_stake_to_voting_power">stake_to_voting_power</a>(stake_before);
 }
 </code></pre>
 
