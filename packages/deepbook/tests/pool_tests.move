@@ -48,7 +48,7 @@ module deepbook::pool_tests {
     const EXPIRED: u8 = 4;
 
     const MAKER_FEE: u64 = 500000;
-    const TAKER_FEE: u64 = 1000000;
+    // const TAKER_FEE: u64 = 1000000;
 
     public struct USDC {}
     public struct SPAM {}
@@ -105,6 +105,49 @@ module deepbook::pool_tests {
             &mut test
         );
         end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order::EInvalidExpireTimestamp)]
+    /// Trying to place an order that's expiring should fail
+    fun place_order_expire_timestamp_e() {
+        let owner: address = @0xAAAA;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        set_time(100, &mut test);
+
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = 0;
+        let is_bid = true;
+
+        place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
+    fun set_time(
+        current_time: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(@0xAAAA);
+        {
+            let mut clock = test.take_shared<Clock>();
+            clock.set_for_testing(current_time);
+            return_shared(clock);
+        };
     }
 
     /// Test to place a limit order, verify the order info and order in the book
