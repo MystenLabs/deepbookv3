@@ -303,11 +303,11 @@ module deepbook::account_tests {
     public fun deposit_into_account<T>(
         account: &mut Account,
         amount: u64,
-        ctx: &mut TxContext,
+        test: &mut Scenario,
     ) {
         account.deposit(
-            mint_for_testing<T>(amount, ctx),
-            ctx
+            mint_for_testing<T>(amount, test.ctx()),
+            test.ctx()
         );
     }
 
@@ -319,10 +319,10 @@ module deepbook::account_tests {
         test.next_tx(sender);
         {
             let mut account = account::new(test.ctx());
-            deposit_into_account<SUI>(&mut account, amount, test.ctx());
-            deposit_into_account<SPAM>(&mut account, amount, test.ctx());
-            deposit_into_account<USDC>(&mut account, amount, test.ctx());
-            deposit_into_account<DEEP>(&mut account, amount, test.ctx());
+            deposit_into_account<SUI>(&mut account, amount, test);
+            deposit_into_account<SPAM>(&mut account, amount, test);
+            deposit_into_account<USDC>(&mut account, amount, test);
+            deposit_into_account<DEEP>(&mut account, amount, test);
             let id = object::id(&account);
             account.share();
 
