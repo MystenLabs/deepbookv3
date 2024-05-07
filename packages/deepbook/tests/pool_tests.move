@@ -54,8 +54,63 @@ module deepbook::pool_tests {
     public struct SPAM {}
 
     #[test]
+    fun place_order_bid_ok() {
+        place_order_ok(true);
+    }
+
+    #[test]
+    fun place_order_ask_ok() {
+        place_order_ok(false);
+    }
+
+
+    #[test]
+    fun place_and_cancel_order_bid_ok() {
+        place_and_cancel_order_ok(true);
+    }
+
+    #[test]
+    fun place_and_cancel_order_ask_ok() {
+        place_and_cancel_order_ok(false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    /// Trying to cancel a cancelled order should fail
+    fun place_and_cancel_order_empty_e() {
+        let owner: address = @0xAAAA;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        let placed_order_id = place_order(
+            owner,
+            acct_id,
+            1, // client_order_id
+            NO_RESTRICTION,
+            2 * FLOAT_SCALING, // price
+            1 * FLOAT_SCALING, // quantity
+            true,
+            MAX_U64, // no expiration
+            &mut test,
+        ).order_id();
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
+        end(test);
+    }
+
     /// Test to place a limit order, verify the order info and order in the book
-    fun place_order_ok() {
+    fun place_order_ok(
+        is_bid: bool,
+    ) {
         let owner: address = @0xAAAA;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
@@ -66,7 +121,6 @@ module deepbook::pool_tests {
         let order_type = NO_RESTRICTION;
         let price = 2 * FLOAT_SCALING;
         let quantity = 1 * FLOAT_SCALING;
-        let is_bid = true;
         let expire_timestamp = MAX_U64;
 
         // variables expected from OrderInfo and Order
@@ -75,7 +129,11 @@ module deepbook::pool_tests {
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
         let paid_fees = 0;
-        let total_fees = math::mul(MAKER_FEE, price);
+        let total_fees = if (is_bid) {
+            math::mul(MAKER_FEE, math::mul(price, quantity))
+        } else {
+            math::mul(MAKER_FEE, quantity)
+        };
         let unpaid_fees = total_fees - paid_fees;
         let fee_is_deep = false;
 
@@ -109,7 +167,7 @@ module deepbook::pool_tests {
         test.next_tx(owner);
         {
             let pool = test.take_shared<Pool<SUI, USDC>>();
-            let order = borrow_orderbook(&pool, true).borrow(order_info.order_id());
+            let order = borrow_orderbook(&pool, is_bid).borrow(order_info.order_id());
             verify_book_order(
                 order,
                 order_info.order_id(),
@@ -126,9 +184,10 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test]
     /// Test placing and cancelling a limit order
-    fun place_and_cancel_order_ok() {
+    fun place_and_cancel_order_ok(
+        is_bid: bool,
+    ) {
         let owner: address = @0xAAAA;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
@@ -139,14 +198,17 @@ module deepbook::pool_tests {
         let order_type = NO_RESTRICTION;
         let price = 2 * FLOAT_SCALING;
         let quantity = 1 * FLOAT_SCALING;
-        let is_bid = true;
         let expire_timestamp = MAX_U64;
 
         // variables expected from Order that's cancelled
         let status = CANCELED;
         let self_matching_prevention = false;
         let paid_fees = 0;
-        let total_fees = math::mul(MAKER_FEE, price);
+        let total_fees = if (is_bid) {
+            math::mul(MAKER_FEE, math::mul(price, quantity))
+        } else {
+            math::mul(MAKER_FEE, quantity)
+        };
         let unpaid_fees = total_fees - paid_fees;
         let fee_is_deep = false;
 
@@ -181,38 +243,6 @@ module deepbook::pool_tests {
             self_matching_prevention,
         );
 
-        end(test);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun place_and_cancel_order_empty_e() {
-        let owner: address = @0xAAAA;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let placed_order_id = place_order(
-            owner,
-            acct_id,
-            1, // client_order_id
-            NO_RESTRICTION,
-            2 * FLOAT_SCALING, // price
-            1 * FLOAT_SCALING, // quantity
-            true,
-            MAX_U64, // no expiration
-            &mut test,
-        ).order_id();
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
         end(test);
     }
 
