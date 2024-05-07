@@ -12,7 +12,7 @@ module deepbook::state { // Consider renaming this module
         account::{Account, TradeProof},
         pool::{Pool, DEEP, Self},
         state_manager,
-        pool_metadata::{Self, PoolMetadata},
+        pool_metadata::{Self, PoolMetadata, Proposal},
         deep_reference_price::{Self, DeepReferencePools},
     };
 
@@ -66,7 +66,7 @@ module deepbook::state { // Consider renaming this module
 
         assert!(!self.pools.contains(pool_key) && !self.pools.contains(rev_key), EPoolAlreadyExists);
 
-        let pool_metadata = pool_metadata::new(ctx);
+        let pool_metadata = pool_metadata::empty(ctx.epoch());
         self.pools.add(pool_key, pool_metadata);
     }
 
@@ -126,9 +126,9 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext,
     ) {
         let user = account.owner();
-        let (old_stake, new_stake) = pool.increase_user_stake(user, amount, ctx);
+        let total_stake = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .add_voting_power(old_stake, new_stake);
+            .adjust_voting_power(total_stake, total_stake - amount);
         let balance = account.withdraw_with_proof<DEEP>(proof, amount, false, ctx).into_balance();
         self.vault.join(balance);
     }
@@ -145,10 +145,16 @@ module deepbook::state { // Consider renaming this module
         ctx: &mut TxContext
     ) {
         let user = account.owner();
-        let (old_stake, new_stake) = pool.remove_user_stake(user, ctx);
-        self.get_pool_metadata_mut(pool, ctx)
-            .remove_voting_power(old_stake, new_stake);
-        let balance = self.vault.split(old_stake + new_stake).into_coin(ctx);
+        let total_stake = pool.remove_user_stake(user, ctx);
+        let prev_proposal_id = pool.set_user_voted_proposal(user, option::none(), ctx);
+        if (prev_proposal_id.is_some()) {
+            let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
+            pool_metadata.adjust_voting_power(0, total_stake);
+            let winning_proposal = pool_metadata.vote(option::none(), prev_proposal_id, total_stake);
+            self.apply_winning_proposal(pool, winning_proposal);
+        };
+        
+        let balance = self.vault.split(total_stake).into_coin(ctx);
         account.deposit_with_proof<DEEP>(proof, balance);
     }
 
@@ -167,7 +173,7 @@ module deepbook::state { // Consider renaming this module
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        pool_metadata.add_proposal(user, maker_fee, taker_fee, stake_required);
+        pool_metadata.add_proposal(maker_fee, taker_fee, stake_required);
     }
 
     /// Vote on a proposal using the user's full voting power.
@@ -182,20 +188,11 @@ module deepbook::state { // Consider renaming this module
     ) {
         let (stake, _) = pool.get_user_stake(user, ctx);
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let prev_proposal_id = pool.set_user_voted_proposal(user, option::some(proposal_id), ctx);
 
         let pool_metadata = self.get_pool_metadata_mut(pool, ctx);
-        let winning_proposal = pool_metadata.vote(proposal_id, user, stake);
-        let next_trade_params = if (winning_proposal.is_none()) {
-            option::none()
-        } else {
-            let (stake_required, taker_fee, maker_fee) = winning_proposal
-                .borrow()
-                .get_proposal_params();
-
-            let fees = state_manager::new_trade_params(taker_fee, maker_fee, stake_required);
-            option::some(fees)
-        };
-        pool.set_next_trade_params(next_trade_params);
+        let winning_proposal = pool_metadata.vote(option::some(proposal_id), prev_proposal_id, stake);
+        self.apply_winning_proposal(pool, winning_proposal);
     }
 
     /// Check whether pool exists, refresh and return its metadata.
@@ -208,7 +205,26 @@ module deepbook::state { // Consider renaming this module
         assert!(self.pools.contains(pool_key), EPoolDoesNotExist);
 
         let pool_metadata: &mut PoolMetadata = &mut self.pools[pool_key];
-        pool_metadata.refresh(ctx);
+        pool_metadata.refresh(ctx.epoch());
         pool_metadata
     }
+
+    fun apply_winning_proposal<BaseAsset, QuoteAsset>(
+        _self: &State,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        winning_proposal: Option<Proposal>,
+    ) {
+        let next_trade_params = if (winning_proposal.is_none()) {
+            option::none()
+        } else {
+            let (taker_fee, maker_fee, stake_required) = winning_proposal
+                .borrow()
+                .proposal_params();
+
+            let fees = state_manager::new_trade_params(taker_fee, maker_fee, stake_required);
+            option::some(fees)
+        };
+        pool.set_next_trade_params(next_trade_params);
+    }
+
 }

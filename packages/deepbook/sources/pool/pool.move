@@ -528,7 +528,7 @@ module deepbook::pool {
         user: address,
         amount: u64,
         ctx: &TxContext,
-    ): (u64, u64) {
+    ): u64 {
         self.state_manager.update(ctx.epoch());
 
         self.state_manager.increase_user_stake(user, amount)
@@ -540,10 +540,21 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
         ctx: &TxContext
-    ): (u64, u64) {
+    ): u64 {
         self.state_manager.update(ctx.epoch());
 
         self.state_manager.remove_user_stake(user)
+    }
+
+    public(package) fun set_user_voted_proposal<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        proposal_id: Option<u64>,
+        ctx: &TxContext,
+    ): Option<u64> {
+        self.state_manager.update(ctx.epoch());
+
+        self.state_manager.set_user_voted_proposal(user, proposal_id)
     }
 
     /// Get the user's (current, next) stake amounts
