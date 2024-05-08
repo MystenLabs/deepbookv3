@@ -127,7 +127,7 @@ last 64 bits are order_id
 Decode order_id into (is_bid, price, order_id)
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(order_id: u128): (bool, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(encoded_order_id: u128): (bool, u64, u64)
 </code></pre>
 
 
@@ -137,14 +137,14 @@ Decode order_id into (is_bid, price, order_id)
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(
-    order_id: u128
+    encoded_order_id: u128
 ): (bool, u64, u64) {
-    <b>let</b> is_bid = (order_id &gt;&gt; 127) == 0;
-    <b>let</b> price = (order_id &gt;&gt; 64) <b>as</b> u64;
+    <b>let</b> is_bid = (encoded_order_id &gt;&gt; 127) == 0;
+    <b>let</b> price = (encoded_order_id &gt;&gt; 64) <b>as</b> u64;
     <b>let</b> price = price & ((1u64 &lt;&lt; 63) - 1);
-    <b>let</b> partial_order_id = (order_id & (1u128 &lt;&lt; 64 - 1)) <b>as</b> u64;
+    <b>let</b> order_id = (encoded_order_id & (1u128 &lt;&lt; 64 - 1)) <b>as</b> u64;
 
-    (is_bid, price, partial_order_id)
+    (is_bid, price, order_id)
 }
 </code></pre>
 

@@ -993,11 +993,11 @@ value. Aborts if <code>key</code> is not found.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove">remove</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, key: u128): E {
-    self.length = self.length - 1;
-
     <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
         <b>abort</b> <a href="big_vector.md#0x0_big_vector_ENotFound">ENotFound</a>
     };
+
+    self.length = self.length - 1;
 
     <b>let</b> (root_id, depth) = (self.root_id, self.depth);
     <b>let</b> (val, rm_fix, _) = self.<a href="big_vector.md#0x0_big_vector_slice_remove">slice_remove</a>(
