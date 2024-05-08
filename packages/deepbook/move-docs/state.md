@@ -11,8 +11,6 @@
 -  [Function `create_and_share`](#0x0_state_create_and_share)
 -  [Function `create_pool`](#0x0_state_create_pool)
 -  [Function `set_pool_as_stable`](#0x0_state_set_pool_as_stable)
--  [Function `add_deep_price_point`](#0x0_state_add_deep_price_point)
--  [Function `add_reference_pool`](#0x0_state_add_reference_pool)
 -  [Function `stake`](#0x0_state_stake)
 -  [Function `unstake`](#0x0_state_unstake)
 -  [Function `submit_proposal`](#0x0_state_submit_proposal)
@@ -22,7 +20,6 @@
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
-<b>use</b> <a href="deep_reference_price.md#0x0_deep_reference_price">0x0::deep_reference_price</a>;
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
 <b>use</b> <a href="pool_metadata.md#0x0_pool_metadata">0x0::pool_metadata</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
@@ -62,12 +59,6 @@
 </dd>
 <dt>
 <code>pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>deep_reference_pools: <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a></code>
 </dt>
 <dd>
 
@@ -187,7 +178,6 @@ Create a new State and share it. Called once during init.
     <b>let</b> <a href="state.md#0x0_state">state</a> = <a href="state.md#0x0_state_State">State</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
         pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
-        deep_reference_pools: <a href="deep_reference_price.md#0x0_deep_reference_price_new">deep_reference_price::new</a>(),
         vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
     };
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="state.md#0x0_state">state</a>);
@@ -272,74 +262,6 @@ New proposals will be asserted against the new fee structure.
         .set_as_stable(stable);
 
     // TODO: set fees
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_add_deep_price_point"></a>
-
-## Function `add_deep_price_point`
-
-Insert a DEEP data point into a pool.
-reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
-pool is the Pool that will have the DEEP data point added.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, timestamp: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
-    self: &<a href="state.md#0x0_state_State">State</a>,
-    reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
-    timestamp: u64,
-) {
-    <b>let</b> (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
-        .get_conversion_rates(reference_pool, <a href="pool.md#0x0_pool">pool</a>);
-
-    <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state_add_deep_price_point">add_deep_price_point</a>(
-        base_conversion_rate,
-        quote_conversion_rate,
-        timestamp,
-    );
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_add_reference_pool"></a>
-
-## Function `add_reference_pool`
-
-Add a DEEP reference pool: DEEP/USDC, DEEP/SUI, etc.
-This will be used to validate DEEP data points.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-) {
-    self.deep_reference_pools.<a href="state.md#0x0_state_add_reference_pool">add_reference_pool</a>(reference_pool);
 }
 </code></pre>
 

@@ -12,7 +12,7 @@ TODO: No authorization checks are implemented;
 -  [Function `init`](#0x0_deepbook_init)
 -  [Function `create_pool`](#0x0_deepbook_create_pool)
 -  [Function `set_pool_as_stable`](#0x0_deepbook_set_pool_as_stable)
--  [Function `add_reference_pool`](#0x0_deepbook_add_reference_pool)
+-  [Function `whitelist_deep_reference_pool`](#0x0_deepbook_whitelist_deep_reference_pool)
 -  [Function `add_deep_price_point`](#0x0_deepbook_add_deep_price_point)
 -  [Function `claim_rebates`](#0x0_deepbook_claim_rebates)
 -  [Function `stake`](#0x0_deepbook_stake)
@@ -200,14 +200,14 @@ Public facing function to set a pool as stable.
 
 </details>
 
-<a name="0x0_deepbook_add_reference_pool"></a>
+<a name="0x0_deepbook_whitelist_deep_reference_pool"></a>
 
-## Function `add_reference_pool`
+## Function `whitelist_deep_reference_pool`
 
 Public facing function to add a reference pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, <a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_whitelist_deep_reference_pool">whitelist_deep_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, reference_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, whitelist: bool)
 </code></pre>
 
 
@@ -216,12 +216,12 @@ Public facing function to add a reference pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_whitelist_deep_reference_pool">whitelist_deep_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
     _cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">DeepBookAdminCap</a>,
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
-    reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+    reference_pool: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    whitelist: bool,
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(reference_pool);
+    reference_pool.whitelist_pool(whitelist);
 }
 </code></pre>
 
@@ -236,7 +236,7 @@ Public facing function to add a reference pool.
 Public facing function to add a deep price point into a specific pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
 </code></pre>
 
 
@@ -246,14 +246,11 @@ Public facing function to add a deep price point into a specific pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
-    reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;, // DEEP Price or assertion
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
+    target_pool: &<b>mut</b> Pool&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
+    reference_pool: &Pool&lt;BaseAsset, QuoteAsset&gt;,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>(
-        reference_pool, <a href="pool.md#0x0_pool">pool</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms()
-    );
+    target_pool.<a href="deepbook.md#0x0_deepbook_add_deep_price_point">add_deep_price_point</a>(reference_pool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
 </code></pre>
 

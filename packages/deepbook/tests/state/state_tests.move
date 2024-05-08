@@ -9,7 +9,6 @@ module deepbook::state_tests {
         state::{Self, State},
         pool::{Pool, DEEP},
         pool_tests::USDC,
-        deep_reference_price,
         account::Account,
         account_tests,
     };
@@ -53,45 +52,6 @@ module deepbook::state_tests {
         create_pool<DEEP, USDC>(alice, &mut test);
         create_pool<USDC, DEEP>(alice, &mut test);
 
-        abort 0
-    }
-
-    #[test]
-    fun test_add_reference_pool_ok() {
-        let mut test = begin(@0x1);
-        let alice = @0xA;
-        share_state(&mut test);
-        create_pool<DEEP, USDC>(alice, &mut test);
-
-        test.next_tx(alice);
-        {
-            let mut state = test.take_shared<State>();
-            let pool = test.take_shared<Pool<DEEP, USDC>>();
-
-            state.add_reference_pool(&pool);
-
-            test::return_shared(pool);
-            test::return_shared(state);
-        };
-
-        end(test);
-    }
-
-    #[test, expected_failure(abort_code = deep_reference_price::EIneligiblePool)]
-    fun test_add_reference_pool_ineligible_e() {
-        let mut test = begin(@0x1);
-        let alice = @0xA;
-        share_state(&mut test);
-        create_pool<SUI, USDC>(alice, &mut test);
-
-        test.next_tx(alice);
-        {
-            let mut state = test.take_shared<State>();
-            let pool = test.take_shared<Pool<SUI, USDC>>();
-
-            state.add_reference_pool(&pool);
-        };
-        
         abort 0
     }
 

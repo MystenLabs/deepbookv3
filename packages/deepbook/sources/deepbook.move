@@ -66,24 +66,21 @@ module deepbook::deepbook {
     }
 
     /// Public facing function to add a reference pool.
-    public fun add_reference_pool<BaseAsset, QuoteAsset>(
+    public fun whitelist_deep_reference_pool<BaseAsset, QuoteAsset>(
         _cap: &DeepBookAdminCap,
-        state: &mut State,
-        reference_pool: &Pool<BaseAsset, QuoteAsset>,
+        reference_pool: &mut Pool<BaseAsset, QuoteAsset>,
+        whitelist: bool,
     ) {
-        state.add_reference_pool<BaseAsset, QuoteAsset>(reference_pool);
+        reference_pool.whitelist_pool(whitelist);
     }
 
     /// Public facing function to add a deep price point into a specific pool.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
-        state: &mut State,
-        reference_pool: &Pool<BaseAsset, QuoteAsset>, // DEEP Price or assertion
-        pool: &mut Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+        target_pool: &mut Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+        reference_pool: &Pool<BaseAsset, QuoteAsset>,
         clock: &Clock,
     ) {
-        state.add_deep_price_point(
-            reference_pool, pool, clock.timestamp_ms()
-        );
+        target_pool.add_deep_price_point(reference_pool, clock.timestamp_ms());
     }
 
     /// Public facing function to remove a deep price point from a specific pool.

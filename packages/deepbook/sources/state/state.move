@@ -13,7 +13,6 @@ module deepbook::state { // Consider renaming this module
         pool::{Pool, DEEP, Self},
         state_manager,
         pool_metadata::{Self, PoolMetadata, Proposal},
-        deep_reference_price::{Self, DeepReferencePools},
     };
 
     const EPoolDoesNotExist: u64 = 1;
@@ -28,7 +27,6 @@ module deepbook::state { // Consider renaming this module
         id: UID,
         // TODO: upgrade-ability plan? do we need?
         pools: Bag,
-        deep_reference_pools: DeepReferencePools,
         vault: Balance<DEEP>,
     }
 
@@ -42,7 +40,6 @@ module deepbook::state { // Consider renaming this module
         let state = State {
             id: object::new(ctx),
             pools: bag::new(ctx),
-            deep_reference_pools: deep_reference_price::new(),
             vault: balance::zero(),
         };
         transfer::share_object(state);
@@ -87,34 +84,6 @@ module deepbook::state { // Consider renaming this module
             .set_as_stable(stable);
 
         // TODO: set fees
-    }
-
-    /// Insert a DEEP data point into a pool.
-    /// reference_pool is a DEEP pool, ie DEEP/USDC. This will be validated against DeepPriceReferencePools.
-    /// pool is the Pool that will have the DEEP data point added.
-    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
-        self: &State,
-        reference_pool: &Pool<BaseAsset, QuoteAsset>,
-        pool: &mut Pool<DEEPBaseAsset, DEEPQuoteAsset>,
-        timestamp: u64,
-    ) {
-        let (base_conversion_rate, quote_conversion_rate) = self.deep_reference_pools
-            .get_conversion_rates(reference_pool, pool);
-
-        pool.add_deep_price_point(
-            base_conversion_rate,
-            quote_conversion_rate,
-            timestamp,
-        );
-    }
-
-    /// Add a DEEP reference pool: DEEP/USDC, DEEP/SUI, etc.
-    /// This will be used to validate DEEP data points.
-    public(package) fun add_reference_pool<BaseAsset, QuoteAsset>(
-        self: &mut State,
-        reference_pool: &Pool<BaseAsset, QuoteAsset>,
-    ) {
-        self.deep_reference_pools.add_reference_pool(reference_pool);
     }
 
     /// Stake DEEP in the pool. This will increase the user's voting power next epoch
