@@ -642,10 +642,10 @@ module deepbook::pool_tests {
         test.next_tx(sender);
         {
             let mut acct = account::new(test.ctx());
-            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test.ctx());
-            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test.ctx());
+            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test);
             let id = object::id(&acct);
             acct.share();
 
