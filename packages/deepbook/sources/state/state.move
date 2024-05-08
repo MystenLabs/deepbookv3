@@ -32,6 +32,11 @@ module deepbook::state { // Consider renaming this module
         vault: Balance<DEEP>,
     }
 
+    /// Number of DEEP tokens staked in the protocol.
+    public fun vault_value(self: &State): u64 {
+        self.vault.value()
+    }
+
     /// Create a new State and share it. Called once during init.
     public(package) fun create_and_share(ctx: &mut TxContext) {
         let state = State {
@@ -128,7 +133,7 @@ module deepbook::state { // Consider renaming this module
         let user = account.owner();
         let total_stake = pool.increase_user_stake(user, amount, ctx);
         self.get_pool_metadata_mut(pool, ctx)
-            .adjust_voting_power(total_stake, total_stake - amount);
+            .adjust_voting_power(total_stake - amount, total_stake);
         let balance = account.withdraw_with_proof<DEEP>(proof, amount, false, ctx).into_balance();
         self.vault.join(balance);
     }
@@ -227,4 +232,8 @@ module deepbook::state { // Consider renaming this module
         pool.set_next_trade_params(next_trade_params);
     }
 
+    #[test_only]
+    public fun pools(self: &State): &Bag {
+        &self.pools
+    }
 }

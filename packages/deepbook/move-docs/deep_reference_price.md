@@ -98,7 +98,7 @@ DEEP/SUI, DEEP/USDC, DEEP/WETH
 Add a reference pool.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;DEEP, QuoteAsset&gt;(self: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEP, QuoteAsset&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">deep_reference_price::DeepReferencePools</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
 </code></pre>
 
 
@@ -107,9 +107,9 @@ Add a reference pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;DEEP, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_reference_price.md#0x0_deep_reference_price_add_reference_pool">add_reference_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="deep_reference_price.md#0x0_deep_reference_price_DeepReferencePools">DeepReferencePools</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;DEEP, QuoteAsset&gt;,
+    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
 ) {
     <b>let</b> (base, quote) = <a href="pool.md#0x0_pool">pool</a>.get_base_quote_types();
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
