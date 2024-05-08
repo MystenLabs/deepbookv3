@@ -773,7 +773,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
     );
 
     // Pass in quantity cancelled <b>to</b> calculate refund amounts and modify the <a href="order.md#0x0_order">order</a>
-    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.refund_and_modify(book_quantity - new_quantity);
+    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(book_quantity - new_quantity, <b>true</b>);
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 
     <b>if</b> (base_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
@@ -1046,7 +1046,11 @@ The latter two are the ask prices and quantities.
     <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_open_order(<a href="account.md#0x0_account">account</a>.owner(), order_id);
 
-    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts();
+    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(
+        cancel_quantity,
+        <b>false</b>,
+    );
     <b>if</b> (base_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
     <b>if</b> (quote_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx);
     <b>if</b> (deep_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_quantity, ctx);

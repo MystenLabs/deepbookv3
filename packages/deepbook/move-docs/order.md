@@ -56,7 +56,6 @@ All order matching happens in this module.
 -  [Function `settled_quantities`](#0x0_order_settled_quantities)
 -  [Function `match_maker`](#0x0_order_match_maker)
 -  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
--  [Function `refund_and_modify`](#0x0_order_refund_and_modify)
 -  [Function `emit_order_filled`](#0x0_order_emit_order_filled)
 -  [Function `emit_order_placed`](#0x0_order_emit_order_placed)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
@@ -1881,7 +1880,11 @@ Funds for an expired order are returned to the maker as settled.
 ): <a href="order.md#0x0_order_Fill">Fill</a> {
     <b>if</b> (maker.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp) {
         maker.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
-        <b>let</b> (base, quote, deep) = maker.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>();
+        <b>let</b> cancel_quantity = maker.<a href="order.md#0x0_order_book_quantity">book_quantity</a>();
+        <b>let</b> (base, quote, deep) = maker.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
+            cancel_quantity,
+            <b>false</b>,
+        );
         <b>return</b> <a href="order.md#0x0_order_Fill">Fill</a> {
             order_id: maker.order_id,
             owner: maker.owner,
@@ -1930,11 +1933,13 @@ Funds for an expired order are returned to the maker as settled.
 
 ## Function `cancel_amounts`
 
-Amounts to settle for a canceled order.
+Amounts to settle for a cancelled or modified order. Modifies the order in place.
 Returns the base, quote and deep quantities to settle.
+Refund quantity is the amount to refund to the order owner
+Modify_order is a flag to indicate whether the order should be modified.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): (u64, u64, u64)
 </code></pre>
 
 
@@ -1943,51 +1948,15 @@ Returns the base, quote and deep quantities to settle.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): (u64, u64, u64) {
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
-    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> self.quantity;
-    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(self.quantity, price) <b>else</b> 0;
-    <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
-        self.unpaid_fees
-    } <b>else</b> {
-        <b>if</b> (is_bid) quote_quantity = quote_quantity + self.unpaid_fees
-        <b>else</b> base_quantity = base_quantity + self.unpaid_fees;
-        0
-    };
-
-    (base_quantity, quote_quantity, deep_quantity)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_refund_and_modify"></a>
-
-## Function `refund_and_modify`
-
-Amounts to settle for a modified order. Modifies the order in place.
-Returns the base, quote and deep quantities to settle.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_refund_and_modify">refund_and_modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity_cancelled: u64): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_refund_and_modify">refund_and_modify</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
     self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
-    quantity_cancelled: u64,
+    cancel_quantity: u64,
+    modify_order: bool,
 ): (u64, u64, u64) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
-    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> quantity_cancelled;
-    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(quantity_cancelled, price) <b>else</b> 0;
-    <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, quantity_cancelled), self.quantity);
+    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
+    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) <b>else</b> 0;
+    <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, cancel_quantity), self.quantity);
     <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
         fee_refund
     } <b>else</b> {
@@ -1996,8 +1965,10 @@ Returns the base, quote and deep quantities to settle.
         0
     };
 
-    self.quantity = self.quantity - quantity_cancelled;
-    self.unpaid_fees = self.unpaid_fees - fee_refund;
+    <b>if</b> (modify_order) {
+        self.quantity = self.quantity - cancel_quantity;
+        self.unpaid_fees = self.unpaid_fees - fee_refund;
+    };
 
     (base_quantity, quote_quantity, deep_quantity)
 }

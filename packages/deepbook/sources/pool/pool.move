@@ -301,7 +301,7 @@ module deepbook::pool {
         );
 
         // Pass in quantity cancelled to calculate refund amounts and modify the order
-        let (base_quantity, quote_quantity, deep_quantity) = order.refund_and_modify(book_quantity - new_quantity);
+        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(book_quantity - new_quantity, true);
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
 
         if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);
@@ -454,7 +454,11 @@ module deepbook::pool {
         order.set_canceled();
         self.state_manager.remove_user_open_order(account.owner(), order_id);
 
-        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts();
+        let cancel_quantity = order.book_quantity();
+        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(
+            cancel_quantity,
+            false,
+        );
         if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);
         if (quote_quantity > 0) self.withdraw_quote(account, proof, quote_quantity, ctx);
         if (deep_quantity > 0) self.withdraw_deep(account, proof, deep_quantity, ctx);
