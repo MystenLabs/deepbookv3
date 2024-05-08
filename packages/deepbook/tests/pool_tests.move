@@ -266,19 +266,6 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Set the time in the global clock
-    fun set_time(
-        current_time: u64,
-        test: &mut Scenario,
-    ) {
-        test.next_tx(ALICE);
-        {
-            let mut clock = test.take_shared<Clock>();
-            clock.set_for_testing(current_time);
-            return_shared(clock);
-        };
-    }
-
     /// Test to place a limit order, verify the order info and order in the book
     fun place_order_ok(
         is_bid: bool,
@@ -503,6 +490,19 @@ module deepbook::pool_tests {
         orderbook
     }
 
+    /// Set the time in the global clock
+    fun set_time(
+        current_time: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(ALICE);
+        {
+            let mut clock = test.take_shared<Clock>();
+            clock.set_for_testing(current_time);
+            return_shared(clock);
+        };
+    }
+
     /// Place an order
     fun place_order(
         owner: address,
@@ -545,7 +545,7 @@ module deepbook::pool_tests {
         }
     }
 
-    /// Helper function to cancel an order
+    /// Cancel an order
     fun cancel_order(
         owner: address,
         acct_id: ID,
