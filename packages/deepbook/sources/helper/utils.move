@@ -48,13 +48,13 @@ module deepbook::utils {
 
     /// Decode order_id into (is_bid, price, order_id)
     public(package) fun decode_order_id(
-        order_id: u128
+        encoded_order_id: u128
     ): (bool, u64, u64) {
-        let is_bid = (order_id >> 127) == 0;
-        let price = (order_id >> 64) as u64;
+        let is_bid = (encoded_order_id >> 127) == 0;
+        let price = (encoded_order_id >> 64) as u64;
         let price = price & ((1u64 << 63) - 1);
-        let partial_order_id = (order_id & (1u128 << 64 - 1)) as u64;
+        let order_id = (encoded_order_id & (1u128 << 64 - 1)) as u64;
 
-        (is_bid, price, partial_order_id)
+        (is_bid, price, order_id)
     }
 }

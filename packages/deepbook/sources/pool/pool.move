@@ -843,17 +843,25 @@ module deepbook::pool {
         (deep_per_base, deep_per_quote)
     }
 
+    // Will be replaced by actual deep token package dependency
     #[allow(unused_function)]
     fun correct_supply<B, Q>(self: &mut Pool<B, Q>, tcap: &mut TreasuryCap<DEEP>) {
         let amount = self.state_manager.reset_burn_balance();
         let burnt = self.deep_balance.split(amount);
         tcap.supply_mut().decrease_supply(burnt);
     }
-    // Will be replaced by actual deep token package dependency
 
-    // // Other helpful functions
-    // TODO: taker order, send fees directly to treasury
-    // public(package) fun get_order()
-    // public(package) fun get_all_orders()
-    // public(package) fun get_book()
+    #[test_only]
+    public fun bids<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): &BigVector<Order> {
+        &self.bids
+    }
+
+    #[test_only]
+    public fun asks<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): &BigVector<Order> {
+        &self.asks
+    }
 }
