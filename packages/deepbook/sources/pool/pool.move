@@ -285,13 +285,11 @@ module deepbook::pool {
         self.state_manager.update(ctx.epoch());
 
         let (is_bid, _, _) = utils::decode_order_id(order_id);
-
         let order = if (is_bid) {
             self.bids.borrow_mut(order_id)
         } else {
             self.asks.borrow_mut(order_id)
         };
-
         let book_quantity = order.book_quantity();
 
         order.validate_modification(
@@ -303,7 +301,7 @@ module deepbook::pool {
         );
 
         // Pass in quantity cancelled to calculate refund amounts and modify the order
-        let (base_quantity, quote_quantity, deep_quantity) = order.refunds(book_quantity - new_quantity);
+        let (base_quantity, quote_quantity, deep_quantity) = order.refund_and_modify(book_quantity - new_quantity);
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
 
         if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);

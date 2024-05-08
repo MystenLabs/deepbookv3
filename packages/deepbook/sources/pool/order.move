@@ -469,7 +469,7 @@ module deepbook::order {
 
     /// Amounts to settle for a modified order. Modifies the order in place.
     /// Returns the base, quote and deep quantities to settle.
-    public(package) fun refunds(
+    public(package) fun refund_and_modify(
         self: &mut Order,
         quantity_cancelled: u64,
     ): (u64, u64, u64) {

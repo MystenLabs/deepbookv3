@@ -211,7 +211,7 @@ module deepbook::deepbook {
         account: &mut Account,
         proof: &TradeProof,
         order_id: u128,
-        quantity: u64,
+        new_quantity: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
@@ -219,7 +219,7 @@ module deepbook::deepbook {
             account,
             proof,
             order_id,
-            quantity,
+            new_quantity,
             clock,
             ctx,
         )

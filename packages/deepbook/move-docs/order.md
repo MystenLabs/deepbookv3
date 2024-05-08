@@ -56,7 +56,7 @@ All order matching happens in this module.
 -  [Function `settled_quantities`](#0x0_order_settled_quantities)
 -  [Function `match_maker`](#0x0_order_match_maker)
 -  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
--  [Function `refunds`](#0x0_order_refunds)
+-  [Function `refund_and_modify`](#0x0_order_refund_and_modify)
 -  [Function `emit_order_filled`](#0x0_order_emit_order_filled)
 -  [Function `emit_order_placed`](#0x0_order_emit_order_placed)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
@@ -1963,15 +1963,15 @@ Returns the base, quote and deep quantities to settle.
 
 </details>
 
-<a name="0x0_order_refunds"></a>
+<a name="0x0_order_refund_and_modify"></a>
 
-## Function `refunds`
+## Function `refund_and_modify`
 
 Amounts to settle for a modified order. Modifies the order in place.
 Returns the base, quote and deep quantities to settle.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_refunds">refunds</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity_cancelled: u64): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_refund_and_modify">refund_and_modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity_cancelled: u64): (u64, u64, u64)
 </code></pre>
 
 
@@ -1980,7 +1980,7 @@ Returns the base, quote and deep quantities to settle.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_refunds">refunds</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_refund_and_modify">refund_and_modify</a>(
     self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     quantity_cancelled: u64,
 ): (u64, u64, u64) {

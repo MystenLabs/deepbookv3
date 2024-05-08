@@ -757,13 +757,11 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
 
     <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
-
     <b>let</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (is_bid) {
         self.bids.borrow_mut(order_id)
     } <b>else</b> {
         self.asks.borrow_mut(order_id)
     };
-
     <b>let</b> book_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
 
     <a href="order.md#0x0_order">order</a>.validate_modification(
@@ -775,7 +773,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
     );
 
     // Pass in quantity cancelled <b>to</b> calculate refund amounts and modify the <a href="order.md#0x0_order">order</a>
-    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.refunds(book_quantity - new_quantity);
+    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.refund_and_modify(book_quantity - new_quantity);
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 
     <b>if</b> (base_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
