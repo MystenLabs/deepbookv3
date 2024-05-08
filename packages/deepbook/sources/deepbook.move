@@ -155,7 +155,6 @@ module deepbook::deepbook {
 
     // ORDERS
 
-    /// TODO: add other return values
     /// Public facing function to place a limit order.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -201,6 +200,26 @@ module deepbook::deepbook {
             client_order_id,
             quantity,
             is_bid,
+            clock,
+            ctx,
+        )
+    }
+
+    /// Public facing function to modify order quantity.
+    public fun modify_order<BaseAsset, QuoteAsset>(
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        order_id: u128,
+        quantity: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        pool.modify_order(
+            account,
+            proof,
+            order_id,
+            quantity,
             clock,
             ctx,
         )

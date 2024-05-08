@@ -273,6 +273,46 @@ module deepbook::pool {
         )
     }
 
+    public(package) fun modify_order<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        order_id: u128,
+        new_quantity: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        self.state_manager.update(ctx.epoch());
+
+        let (is_bid, _, _) = utils::decode_order_id(order_id);
+
+        let order = if (is_bid) {
+            self.bids.borrow_mut(order_id)
+        } else {
+            self.asks.borrow_mut(order_id)
+        };
+
+        let book_quantity = order.book_quantity();
+
+        order.validate_modification(
+            book_quantity,
+            new_quantity,
+            self.min_size,
+            self.lot_size,
+            clock.timestamp_ms(),
+        );
+
+        // Pass in quantity cancelled to calculate refund amounts and modify the order
+        let (base_quantity, quote_quantity, deep_quantity) = order.refunds(book_quantity - new_quantity);
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
+
+        if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);
+        if (quote_quantity > 0) self.withdraw_quote(account, proof, quote_quantity, ctx);
+        if (deep_quantity > 0) self.withdraw_deep(account, proof, deep_quantity, ctx);
+
+        // TODO: What should the return type here be? Can be a copy of Order, or a more simplified message
+    }
+
     /// Swap exact amount without needing an account.
     public(package) fun swap_exact_amount<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -313,7 +353,6 @@ module deepbook::pool {
         (base_out, quote_out, deep_out)
     }
 
-    // TODO
     public(package) fun mid_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>
     ): u64 {

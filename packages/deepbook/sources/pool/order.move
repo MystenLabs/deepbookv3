@@ -34,6 +34,8 @@ module deepbook::order {
     const EInvalidOrderType: u64 = 4;
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
+    const EInvalidNewQuantity: u64 = 7;
+    const EOrderExpired: u64 = 8;
 
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
@@ -112,6 +114,18 @@ module deepbook::order {
         price: u64,
         is_bid: bool,
         base_asset_quantity_canceled: u64,
+        timestamp: u64,
+    }
+
+    /// Emitted when a maker order is modified.
+    public struct OrderModified<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        pool_id: ID,
+        order_id: u128,
+        client_order_id: u64,
+        owner: address,
+        price: u64,
+        is_bid: bool,
+        new_quantity: u64,
         timestamp: u64,
     }
 
@@ -295,18 +309,32 @@ module deepbook::order {
 
     /// Validates that the initial order created meets the pool requirements.
     public(package) fun validate_inputs(
-        order: &OrderInfo,
+        order_info: &OrderInfo,
         tick_size: u64,
         min_size: u64,
         lot_size: u64,
         timestamp: u64,
     ) {
-        assert!(order.price >= MIN_PRICE && order.price <= MAX_PRICE, EOrderInvalidPrice);
-        assert!(order.price % tick_size == 0, EOrderInvalidPrice);
-        assert!(order.original_quantity >= min_size, EOrderBelowMinimumSize);
-        assert!(order.original_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(order.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order.order_type >= NO_RESTRICTION && order.order_type <= MAX_RESTRICTION, EInvalidOrderType);
+        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
+        assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
+        assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
+        assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
+        assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
+        assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
+    }
+
+    public(package) fun validate_modification(
+        order: &Order,
+        book_quantity: u64,
+        new_quantity: u64,
+        min_size: u64,
+        lot_size: u64,
+        timestamp: u64,
+    ) {
+        assert!(new_quantity > 0 && new_quantity < book_quantity, EInvalidNewQuantity);
+        assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
+        assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
+        assert!(timestamp < order.book_expire_timestamp(), EOrderExpired);
     }
 
     /// Returns true if two opposite orders are overlapping in price.
@@ -423,6 +451,7 @@ module deepbook::order {
     }
 
     /// Amounts to settle for a canceled order.
+    /// Returns the base, quote and deep quantities to settle.
     public(package) fun cancel_amounts(self: &Order): (u64, u64, u64) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
         let mut base_quantity = if (is_bid) 0 else self.quantity;
@@ -434,6 +463,30 @@ module deepbook::order {
             else base_quantity = base_quantity + self.unpaid_fees;
             0
         };
+
+        (base_quantity, quote_quantity, deep_quantity)
+    }
+
+    /// Amounts to settle for a modified order. Modifies the order in place.
+    /// Returns the base, quote and deep quantities to settle.
+    public(package) fun refunds(
+        self: &mut Order,
+        quantity_cancelled: u64,
+    ): (u64, u64, u64) {
+        let (is_bid, price, _) = utils::decode_order_id(self.order_id);
+        let mut base_quantity = if (is_bid) 0 else quantity_cancelled;
+        let mut quote_quantity = if (is_bid) math::mul(quantity_cancelled, price) else 0;
+        let fee_refund = math::div(math::mul(self.unpaid_fees, quantity_cancelled), self.quantity);
+        let deep_quantity = if (self.fee_is_deep) {
+            fee_refund
+        } else {
+            if (is_bid) quote_quantity = quote_quantity + fee_refund
+            else base_quantity = base_quantity + fee_refund;
+            0
+        };
+
+        self.quantity = self.quantity - quantity_cancelled;
+        self.unpaid_fees = self.unpaid_fees - fee_refund;
 
         (base_quantity, quote_quantity, deep_quantity)
     }
@@ -480,6 +533,20 @@ module deepbook::order {
             base_asset_quantity_canceled: self.quantity,
             timestamp,
             price,
+        });
+    }
+
+    public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(self: &Order, pool_id: ID, timestamp: u64) {
+        let (is_bid, price, _) = utils::decode_order_id(self.order_id);
+        event::emit(OrderModified<BaseAsset, QuoteAsset> {
+            pool_id,
+            order_id: self.order_id,
+            client_order_id: self.client_order_id,
+            owner: self.owner,
+            price,
+            is_bid,
+            new_quantity: self.quantity,
+            timestamp,
         });
     }
 }

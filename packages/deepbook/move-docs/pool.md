@@ -15,6 +15,7 @@
 -  [Function `transfer_settled_amounts`](#0x0_pool_transfer_settled_amounts)
 -  [Function `match_against_book`](#0x0_pool_match_against_book)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
+-  [Function `modify_order`](#0x0_pool_modify_order)
 -  [Function `swap_exact_amount`](#0x0_pool_swap_exact_amount)
 -  [Function `mid_price`](#0x0_pool_mid_price)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
@@ -722,6 +723,66 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
         <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
         ctx,
     )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_modify_order"></a>
+
+## Function `modify_order`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    proof: &TradeProof,
+    order_id: u128,
+    new_quantity: u64,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+) {
+    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
+
+    <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
+
+    <b>let</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (is_bid) {
+        self.bids.borrow_mut(order_id)
+    } <b>else</b> {
+        self.asks.borrow_mut(order_id)
+    };
+
+    <b>let</b> book_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+
+    <a href="order.md#0x0_order">order</a>.validate_modification(
+        book_quantity,
+        new_quantity,
+        self.min_size,
+        self.lot_size,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(),
+    );
+
+    // Pass in quantity cancelled <b>to</b> calculate refund amounts and modify the <a href="order.md#0x0_order">order</a>
+    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.refunds(book_quantity - new_quantity);
+    <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+
+    <b>if</b> (base_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
+    <b>if</b> (quote_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx);
+    <b>if</b> (deep_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_quantity, ctx);
+
+    // TODO: What should the <b>return</b> type here be? Can be a <b>copy</b> of Order, or a more simplified message
 }
 </code></pre>
 
