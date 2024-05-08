@@ -1935,7 +1935,7 @@ Funds for an expired order are returned to the maker as settled.
 
 Amounts to settle for a cancelled or modified order. Modifies the order in place.
 Returns the base, quote and deep quantities to settle.
-Refund quantity is the amount to refund to the order owner
+Cancel quantity used to calculate the quantity outputs.
 Modify_order is a flag to indicate whether the order should be modified.
 
 
