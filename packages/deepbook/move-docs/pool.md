@@ -646,24 +646,12 @@ Transfer any settled amounts for the user.
     ctx: &TxContext,
 ) {
     <b>let</b> (b_out, q_out, d_out, b_in, q_in, d_in) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_settle_user">settle_user</a>(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch());
-    <b>if</b> (b_out &gt; b_in) {
-        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.base_balance.split(b_out - b_in));
-    };
-    <b>if</b> (q_out &gt; q_in) {
-        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.quote_balance.split(q_out - q_in));
-    };
-    <b>if</b> (d_out &gt; d_in) {
-        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.deep_balance.split(d_out - d_in));
-    };
-    <b>if</b> (b_in &gt; b_out) {
-        self.base_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, b_in - b_out, <b>false</b>));
-    };
-    <b>if</b> (q_in &gt; q_out) {
-        self.quote_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, q_in - q_out, <b>false</b>));
-    };
-    <b>if</b> (d_in &gt; d_out) {
-        self.deep_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, d_in - d_out, <b>false</b>));
-    };
+    <b>if</b> (b_out &gt; b_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.base_balance.split(b_out - b_in));
+    <b>if</b> (q_out &gt; q_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.quote_balance.split(q_out - q_in));
+    <b>if</b> (d_out &gt; d_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.deep_balance.split(d_out - d_in));
+    <b>if</b> (b_in &gt; b_out) { self.base_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, b_in - b_out, <b>false</b>)); };
+    <b>if</b> (q_in &gt; q_out) { self.quote_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, q_in - q_out, <b>false</b>)); };
+    <b>if</b> (d_in &gt; d_out) { self.deep_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, d_in - d_out, <b>false</b>)); };
 }
 </code></pre>
 
