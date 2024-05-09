@@ -34,8 +34,6 @@ module deepbook::governance {
     public struct Governance has store {
         /// Tracks refreshes.
         epoch: u64,
-        /// If the pool is stable or volatile. Determines the fee structure applied.
-        is_stable: bool,
         /// List of proposals for the current epoch.
         proposals: vector<Proposal>,
         /// The winning proposal for the current epoch.
@@ -52,17 +50,11 @@ module deepbook::governance {
     ): Governance {
         Governance {
             epoch,
-            is_stable: false,
             proposals: vector[],
             winning_proposal: option::none(),
             voting_power: 0,
             quorum: 0,
         }
-    }
-
-    /// Set the pool as stable. Called by `State`, validation done in `State`.
-    public(package) fun set_as_stable(self: &mut Governance, stable: bool) {
-        self.is_stable = stable;
     }
 
     public(package) fun default_fees(stable: bool): (u64, u64) {
@@ -87,12 +79,13 @@ module deepbook::governance {
     /// Validation of the user adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut Governance,
+        stable: bool,
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64
     ) {
         assert!(self.proposals.length() < MAX_PROPOSALS, EMaxProposalsReached);
-        if (self.is_stable) {
+        if (stable) {
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
             assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
         } else {
@@ -106,7 +99,7 @@ module deepbook::governance {
     /// Vote on a proposal. Validation of the user and stake is done in `State`.
     /// If `from_proposal_id` is some, the user is removing their vote from that proposal.
     /// If `to_proposal_id` is some, the user is voting for that proposal.
-    public(package) fun vote(
+    public(package) fun adjust_vote(
         self: &mut Governance,
         from_proposal_id: Option<u64>,
         to_proposal_id: Option<u64>,
@@ -180,7 +173,6 @@ module deepbook::governance {
     public fun delete(self: Governance) {
         let Governance {
             epoch: _,
-            is_stable: _,
             proposals: _,
             winning_proposal: _,
             voting_power: _,
