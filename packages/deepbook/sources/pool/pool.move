@@ -35,6 +35,9 @@ module deepbook::pool {
     const EInvalidTicks: u64 = 7;
     const EInvalidAmountIn: u64 = 8;
     const EEmptyOrderbook: u64 = 9;
+    const EIneligibleWhitelist: u64 = 10;
+    const EIneligibleTargetPool: u64 = 11;
+    const EIneligibleReferencePool: u64 = 12;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -78,6 +81,7 @@ module deepbook::pool {
         next_bid_order_id: u64,
         next_ask_order_id: u64,
         deep_config: DeepPrice,
+        deep_whitelisted: bool,
 
         base_balance: Balance<BaseAsset>,
         quote_balance: Balance<QuoteAsset>,
@@ -506,6 +510,7 @@ module deepbook::pool {
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
             deep_config: deep_price::new(),
+            deep_whitelisted: false,
             tick_size,
             lot_size,
             min_size,
@@ -527,6 +532,24 @@ module deepbook::pool {
         pool.share();
 
         (pool_key, rev_key)
+    }
+
+    /// Whitelist this pool as a DEEP price source.
+    public(package) fun whitelist_pool<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        deep_whitelisted: bool,
+    ) {
+        let (base, quote) = self.get_base_quote_types();
+        let deep_type = type_name::get<DEEP>();
+        assert!(deep_whitelisted || base == deep_type || quote == deep_type, EIneligibleWhitelist);
+
+        self.deep_whitelisted = deep_whitelisted;
+    }
+
+    public(package) fun deep_whitelisted<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>
+    ): bool {
+        self.deep_whitelisted
     }
 
     /// Increase a user's stake
@@ -574,12 +597,12 @@ module deepbook::pool {
     }
 
     /// Add a new price point to the pool.
-    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        base_conversion_rate: u64,
-        quote_conversion_rate: u64,
+        reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
         timestamp: u64,
     ) {
+        let (base_conversion_rate, quote_conversion_rate) = self.get_conversion_rates(reference_pool);
         self.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
     }
 
@@ -779,6 +802,45 @@ module deepbook::pool {
         quantity_vec.push_back(cur_quantity);
 
         (price_vec, quantity_vec)
+    }
+
+    /// Calculate the conversion rate between the DEEP token and the base and quote assets of a pool.
+    /// Case 1: base or quote in pool is already DEEP
+    /// Case 2: base and quote in pool is not DEEP
+    fun get_conversion_rates<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
+        target_pool: &Pool<BaseAsset, QuoteAsset>,
+        reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+    ): (u64, u64) {
+        let (base_type, quote_type) = target_pool.get_base_quote_types();
+        let deep_type = type_name::get<DEEP>();
+        let pool_price = target_pool.mid_price();
+        if (base_type == deep_type) {
+            return (1, pool_price)
+        };
+        if (quote_type == deep_type) {
+            return (pool_price, 1)
+        };
+
+        let (deep_base_type, deep_quote_type) = reference_pool.get_base_quote_types();
+        assert!(reference_pool.deep_whitelisted(), EIneligibleReferencePool);
+        assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
+                (quote_type == deep_base_type || quote_type == deep_quote_type), EIneligibleTargetPool);
+        assert!(!(base_type == deep_base_type && quote_type == deep_quote_type), EIneligibleTargetPool);
+
+        let deep_price = reference_pool.mid_price();
+
+        let deep_per_base = if (base_type == deep_base_type) {
+            deep_price
+        } else if (base_type == deep_quote_type) {
+            math::div(1, deep_price)
+        } else if (quote_type == deep_base_type) {
+            math::mul(deep_price, pool_price)
+        } else {
+            math::div(deep_price, pool_price)
+        };
+        let deep_per_quote = math::div(deep_per_base, pool_price);
+
+        (deep_per_base, deep_per_quote)
     }
 
     // Will be replaced by actual deep token package dependency

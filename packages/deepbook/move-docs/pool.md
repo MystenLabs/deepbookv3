@@ -25,6 +25,8 @@
 -  [Function `cancel_all`](#0x0_pool_cancel_all)
 -  [Function `user_open_orders`](#0x0_pool_user_open_orders)
 -  [Function `create_pool`](#0x0_pool_create_pool)
+-  [Function `whitelist_pool`](#0x0_pool_whitelist_pool)
+-  [Function `deep_whitelisted`](#0x0_pool_deep_whitelisted)
 -  [Function `increase_user_stake`](#0x0_pool_increase_user_stake)
 -  [Function `remove_user_stake`](#0x0_pool_remove_user_stake)
 -  [Function `set_user_voted_proposal`](#0x0_pool_set_user_voted_proposal)
@@ -45,6 +47,7 @@
 -  [Function `order_is_bid`](#0x0_pool_order_is_bid)
 -  [Function `get_order_id`](#0x0_pool_get_order_id)
 -  [Function `get_level2_range_and_ticks`](#0x0_pool_get_level2_range_and_ticks)
+-  [Function `get_conversion_rates`](#0x0_pool_get_conversion_rates)
 -  [Function `correct_supply`](#0x0_pool_correct_supply)
 
 
@@ -230,6 +233,12 @@ are held in base_balance, quote_balance, and deep_balance.
 
 </dd>
 <dt>
+<code>deep_whitelisted: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>base_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;BaseAsset&gt;</code>
 </dt>
 <dd>
@@ -319,6 +328,33 @@ are held in base_balance, quote_balance, and deep_balance.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EEmptyOrderbook">EEmptyOrderbook</a>: u64 = 9;
+</code></pre>
+
+
+
+<a name="0x0_pool_EIneligibleReferencePool"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>: u64 = 12;
+</code></pre>
+
+
+
+<a name="0x0_pool_EIneligibleTargetPool"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>: u64 = 11;
+</code></pre>
+
+
+
+<a name="0x0_pool_EIneligibleWhitelist"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>: u64 = 10;
 </code></pre>
 
 
@@ -1156,6 +1192,7 @@ Creates a new pool for trading and returns pool_key, called by state module
         next_bid_order_id: <a href="pool.md#0x0_pool_START_BID_ORDER_ID">START_BID_ORDER_ID</a>,
         next_ask_order_id: <a href="pool.md#0x0_pool_START_ASK_ORDER_ID">START_ASK_ORDER_ID</a>,
         deep_config: <a href="deep_price.md#0x0_deep_price_new">deep_price::new</a>(),
+        deep_whitelisted: <b>false</b>,
         tick_size,
         lot_size,
         min_size,
@@ -1177,6 +1214,64 @@ Creates a new pool for trading and returns pool_key, called by state module
     <a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_share">share</a>();
 
     (pool_key, rev_key)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_whitelist_pool"></a>
+
+## Function `whitelist_pool`
+
+Whitelist this pool as a DEEP price source.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_whitelist_pool">whitelist_pool</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, deep_whitelisted: bool)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_whitelist_pool">whitelist_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    deep_whitelisted: bool,
+) {
+    <b>let</b> (base, quote) = self.<a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;();
+    <b>assert</b>!(deep_whitelisted || base == deep_type || quote == deep_type, <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>);
+
+    self.deep_whitelisted = deep_whitelisted;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_deep_whitelisted"></a>
+
+## Function `deep_whitelisted`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_deep_whitelisted">deep_whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_deep_whitelisted">deep_whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
+): bool {
+    self.deep_whitelisted
 }
 </code></pre>
 
@@ -1315,7 +1410,7 @@ Get the user's (current, next) stake amounts
 Add a new price point to the pool.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_conversion_rate: u64, quote_conversion_rate: u64, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, timestamp: u64)
 </code></pre>
 
 
@@ -1324,12 +1419,12 @@ Add a new price point to the pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    base_conversion_rate: u64,
-    quote_conversion_rate: u64,
+    reference_pool: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
     timestamp: u64,
 ) {
+    <b>let</b> (base_conversion_rate, quote_conversion_rate) = self.<a href="pool.md#0x0_pool_get_conversion_rates">get_conversion_rates</a>(reference_pool);
     self.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
 }
 </code></pre>
@@ -1825,6 +1920,65 @@ Price_vec is in descending order for bids and ascending order for asks.
     quantity_vec.push_back(cur_quantity);
 
     (price_vec, quantity_vec)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_get_conversion_rates"></a>
+
+## Function `get_conversion_rates`
+
+Calculate the conversion rate between the DEEP token and the base and quote assets of a pool.
+Case 1: base or quote in pool is already DEEP
+Case 2: base and quote in pool is not DEEP
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(target_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;): (u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_get_conversion_rates">get_conversion_rates</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(
+    target_pool: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    reference_pool: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;,
+): (u64, u64) {
+    <b>let</b> (base_type, quote_type) = target_pool.<a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;();
+    <b>let</b> pool_price = target_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>();
+    <b>if</b> (base_type == deep_type) {
+        <b>return</b> (1, pool_price)
+    };
+    <b>if</b> (quote_type == deep_type) {
+        <b>return</b> (pool_price, 1)
+    };
+
+    <b>let</b> (deep_base_type, deep_quote_type) = reference_pool.<a href="pool.md#0x0_pool_get_base_quote_types">get_base_quote_types</a>();
+    <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_deep_whitelisted">deep_whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
+    <b>assert</b>!((base_type == deep_base_type || base_type == deep_quote_type) ||
+            (quote_type == deep_base_type || quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+    <b>assert</b>!(!(base_type == deep_base_type && quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+
+    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>();
+
+    <b>let</b> deep_per_base = <b>if</b> (base_type == deep_base_type) {
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>
+    } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
+        <a href="math.md#0x0_math_div">math::div</a>(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+    } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
+        <a href="math.md#0x0_math_mul">math::mul</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+    } <b>else</b> {
+        <a href="math.md#0x0_math_div">math::div</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+    };
+    <b>let</b> deep_per_quote = <a href="math.md#0x0_math_div">math::div</a>(deep_per_base, pool_price);
+
+    (deep_per_base, deep_per_quote)
 }
 </code></pre>
 
