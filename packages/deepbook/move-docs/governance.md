@@ -9,11 +9,10 @@
 -  [Struct `Governance`](#0x0_governance_Governance)
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_governance_empty)
--  [Function `set_as_stable`](#0x0_governance_set_as_stable)
 -  [Function `default_fees`](#0x0_governance_default_fees)
 -  [Function `refresh`](#0x0_governance_refresh)
 -  [Function `add_proposal`](#0x0_governance_add_proposal)
--  [Function `vote`](#0x0_governance_vote)
+-  [Function `adjust_vote`](#0x0_governance_adjust_vote)
 -  [Function `adjust_voting_power`](#0x0_governance_adjust_voting_power)
 -  [Function `params`](#0x0_governance_params)
 -  [Function `stake_to_voting_power`](#0x0_governance_stake_to_voting_power)
@@ -94,12 +93,6 @@ Details of a pool. This is refreshed every epoch by the first
 </dt>
 <dd>
  Tracks refreshes.
-</dd>
-<dt>
-<code>is_stable: bool</code>
-</dt>
-<dd>
- If the pool is stable or volatile. Determines the fee structure applied.
 </dd>
 <dt>
 <code>proposals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;</code>
@@ -281,37 +274,11 @@ Details of a pool. This is refreshed every epoch by the first
 ): <a href="governance.md#0x0_governance_Governance">Governance</a> {
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
         epoch,
-        is_stable: <b>false</b>,
         proposals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
         voting_power: 0,
         quorum: 0,
     }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_governance_set_as_stable"></a>
-
-## Function `set_as_stable`
-
-Set the pool as stable. Called by <code>State</code>, validation done in <code>State</code>.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_as_stable">set_as_stable</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stable: bool)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_set_as_stable">set_as_stable</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>, stable: bool) {
-    self.is_stable = stable;
 }
 </code></pre>
 
@@ -385,7 +352,7 @@ Add a new proposal to governance.
 Validation of the user adding is done in <code>State</code>.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, taker_fee: u64, maker_fee: u64, stake_required: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stable: bool, taker_fee: u64, maker_fee: u64, stake_required: u64)
 </code></pre>
 
 
@@ -396,12 +363,13 @@ Validation of the user adding is done in <code>State</code>.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_add_proposal">add_proposal</a>(
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
+    stable: bool,
     taker_fee: u64,
     maker_fee: u64,
     stake_required: u64
 ) {
     <b>assert</b>!(self.proposals.length() &lt; <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>, <a href="governance.md#0x0_governance_EMaxProposalsReached">EMaxProposalsReached</a>);
-    <b>if</b> (self.is_stable) {
+    <b>if</b> (stable) {
         <b>assert</b>!(taker_fee &gt;= <a href="governance.md#0x0_governance_MIN_TAKER_STABLE">MIN_TAKER_STABLE</a> && taker_fee &lt;= <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>, <a href="governance.md#0x0_governance_EInvalidTakerFee">EInvalidTakerFee</a>);
         <b>assert</b>!(maker_fee &gt;= <a href="governance.md#0x0_governance_MIN_MAKER_STABLE">MIN_MAKER_STABLE</a> && maker_fee &lt;= <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>, <a href="governance.md#0x0_governance_EInvalidMakerFee">EInvalidMakerFee</a>);
     } <b>else</b> {
@@ -417,16 +385,16 @@ Validation of the user adding is done in <code>State</code>.
 
 </details>
 
-<a name="0x0_governance_vote"></a>
+<a name="0x0_governance_adjust_vote"></a>
 
-## Function `vote`
+## Function `adjust_vote`
 
 Vote on a proposal. Validation of the user and stake is done in <code>State</code>.
 If <code>from_proposal_id</code> is some, the user is removing their vote from that proposal.
 If <code>to_proposal_id</code> is some, the user is voting for that proposal.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_vote">vote</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, from_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, to_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, stake_amount: u64): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_adjust_vote">adjust_vote</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, from_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, to_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, stake_amount: u64): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;
 </code></pre>
 
 
@@ -435,7 +403,7 @@ If <code>to_proposal_id</code> is some, the user is voting for that proposal.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_vote">vote</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="governance.md#0x0_governance_adjust_vote">adjust_vote</a>(
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
     from_proposal_id: Option&lt;u64&gt;,
     to_proposal_id: Option&lt;u64&gt;,

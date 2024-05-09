@@ -17,7 +17,6 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Constants](#@Constants_0)
 -  [Function `new_trade_params`](#0x0_state_manager_new_trade_params)
 -  [Function `new`](#0x0_state_manager_new)
--  [Function `update`](#0x0_state_manager_update)
 -  [Function `set_next_trade_params`](#0x0_state_manager_set_next_trade_params)
 -  [Function `set_fees`](#0x0_state_manager_set_fees)
 -  [Function `fees_for_user`](#0x0_state_manager_fees_for_user)
@@ -32,8 +31,11 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `add_user_open_order`](#0x0_state_manager_add_user_open_order)
 -  [Function `remove_user_open_order`](#0x0_state_manager_remove_user_open_order)
 -  [Function `process_fill`](#0x0_state_manager_process_fill)
--  [Function `reset_user_settled_amounts`](#0x0_state_manager_reset_user_settled_amounts)
+-  [Function `add_settled_amounts`](#0x0_state_manager_add_settled_amounts)
+-  [Function `add_owed_amounts`](#0x0_state_manager_add_owed_amounts)
+-  [Function `settle_user`](#0x0_state_manager_settle_user)
 -  [Function `update_user`](#0x0_state_manager_update_user)
+-  [Function `update`](#0x0_state_manager_update)
 -  [Function `add_new_user`](#0x0_state_manager_add_new_user)
 -  [Function `increment_users_with_rebates`](#0x0_state_manager_increment_users_with_rebates)
 -  [Function `decrement_users_with_rebates`](#0x0_state_manager_decrement_users_with_rebates)
@@ -213,6 +215,24 @@ User data that is updated every epoch.
 <dd>
 
 </dd>
+<dt>
+<code>owed_base_amount: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>owed_quote_amount: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>owed_deep_amount: u64</code>
+</dt>
+<dd>
+
+</dd>
 </dl>
 
 
@@ -381,39 +401,6 @@ User data that is updated every epoch.
 
 </details>
 
-<a name="0x0_state_manager_update"></a>
-
-## Function `update`
-
-Update the state manager to the current epoch.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, epoch: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <b>update</b>(
-    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    epoch: u64,
-) {
-    <b>if</b> (self.epoch == epoch) <b>return</b>;
-    <b>if</b> (self.volumes.users_with_rebates &gt; 0) {
-        self.historic_volumes.add(self.epoch, self.volumes);
-    };
-    self.trade_params = self.next_trade_params;
-    self.epoch = epoch;
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_state_manager_set_next_trade_params"></a>
 
 ## Function `set_next_trade_params`
@@ -421,7 +408,7 @@ Update the state manager to the current epoch.
 Set the fee parameters for the next epoch. Pushed by governance.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, proposal: &<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;)
 </code></pre>
 
 
@@ -432,9 +419,10 @@ Set the fee parameters for the next epoch. Pushed by governance.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    proposal: &Proposal,
+    proposal: Option&lt;Proposal&gt;,
 ) {
-    <b>let</b> (taker, maker, stake) = proposal.params();
+    <b>if</b> (proposal.is_none()) <b>return</b>;
+    <b>let</b> (taker, maker, stake) = proposal.borrow().params();
     self.next_trade_params = <a href="state_manager.md#0x0_state_manager_new_trade_params">new_trade_params</a>(taker, maker, stake);
 }
 </code></pre>
@@ -680,7 +668,7 @@ Remove user stake. Return the user's total stake.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_user_voted_proposal">set_user_voted_proposal</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_user_voted_proposal">set_user_voted_proposal</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;, epoch: u64): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;
 </code></pre>
 
 
@@ -693,7 +681,9 @@ Remove user stake. Return the user's total stake.
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
     proposal_id: Option&lt;u64&gt;,
+    epoch: u64,
 ): Option&lt;u64&gt; {
+    self.<b>update</b>(epoch);
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     <b>let</b> cur_proposal = user.voted_proposal;
     user.voted_proposal = proposal_id;
@@ -713,7 +703,7 @@ Remove user stake. Return the user's total stake.
 Set rebates for user to 0. Return the new unclaimed rebates.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_rebates">reset_user_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_rebates">reset_user_rebates</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64)
 </code></pre>
 
 
@@ -725,12 +715,12 @@ Set rebates for user to 0. Return the new unclaimed rebates.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_rebates">reset_user_rebates</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
-): u64 {
+    epoch: u64,
+) {
+    self.<b>update</b>(epoch);
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
-    <b>let</b> rebates = user.unclaimed_rebates;
+    user.settled_deep_amount = user.settled_deep_amount + user.unclaimed_rebates;
     user.unclaimed_rebates = 0;
-
-    rebates
 }
 </code></pre>
 
@@ -868,6 +858,37 @@ Process a fill. Update the user and total volume and any settled amounts.
         user.open_orders.remove(&order_id);
     };
 
+    self.<a href="state_manager.md#0x0_state_manager_add_settled_amounts">add_settled_amounts</a>(owner, base, quote, deep);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_manager_add_settled_amounts"></a>
+
+## Function `add_settled_amounts`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_settled_amounts">add_settled_amounts</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, base: u64, quote: u64, deep: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_settled_amounts">add_settled_amounts</a>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    user: <b>address</b>,
+    base: u64,
+    quote: u64,
+    deep: u64,
+) {
+    <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     user.settled_base_amount = user.settled_base_amount + base;
     user.settled_quote_amount = user.settled_quote_amount + quote;
     user.settled_deep_amount = user.settled_deep_amount + deep;
@@ -878,13 +899,13 @@ Process a fill. Update the user and total volume and any settled amounts.
 
 </details>
 
-<a name="0x0_state_manager_reset_user_settled_amounts"></a>
+<a name="0x0_state_manager_add_owed_amounts"></a>
 
-## Function `reset_user_settled_amounts`
+## Function `add_owed_amounts`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_settled_amounts">reset_user_settled_amounts</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_owed_amounts">add_owed_amounts</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, base: u64, quote: u64, deep: u64)
 </code></pre>
 
 
@@ -893,17 +914,60 @@ Process a fill. Update the user and total volume and any settled amounts.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_reset_user_settled_amounts">reset_user_settled_amounts</a>(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_add_owed_amounts">add_owed_amounts</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
-): (u64, u64, u64) {
+    base: u64,
+    quote: u64,
+    deep: u64,
+) {
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
-    <b>let</b> (base, quote, deep) = (user.settled_base_amount, user.settled_quote_amount, user.settled_deep_amount);
+    user.owed_base_amount = user.owed_base_amount + base;
+    user.owed_quote_amount = user.owed_quote_amount + quote;
+    user.owed_deep_amount = user.owed_deep_amount + deep;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_manager_settle_user"></a>
+
+## Function `settle_user`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_settle_user">settle_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64): (u64, u64, u64, u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_settle_user">settle_user</a>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    user: <b>address</b>,
+    epoch: u64,
+): (u64, u64, u64, u64, u64, u64) {
+    self.<b>update</b>(epoch);
+    <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
+    <b>let</b> base_out = user.settled_base_amount;
+    <b>let</b> quote_out = user.settled_quote_amount;
+    <b>let</b> deep_out = user.settled_deep_amount;
+    <b>let</b> base_in = user.owed_base_amount;
+    <b>let</b> quote_in = user.owed_quote_amount;
+    <b>let</b> deep_in = user.owed_deep_amount;
     user.settled_base_amount = 0;
     user.settled_quote_amount = 0;
     user.settled_deep_amount = 0;
+    user.owed_base_amount = 0;
+    user.owed_quote_amount = 0;
+    user.owed_deep_amount = 0;
 
-    (base, quote, deep)
+    (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
 }
 </code></pre>
 
@@ -954,6 +1018,39 @@ Add new user or refresh an existing user.
 
 </details>
 
+<a name="0x0_state_manager_update"></a>
+
+## Function `update`
+
+Update the state manager to the current epoch.
+
+
+<pre><code><b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, epoch: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <b>update</b>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    epoch: u64,
+) {
+    <b>if</b> (self.epoch == epoch) <b>return</b>;
+    <b>if</b> (self.volumes.users_with_rebates &gt; 0) {
+        self.historic_volumes.add(self.epoch, self.volumes);
+    };
+    self.trade_params = self.next_trade_params;
+    self.epoch = epoch;
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_state_manager_add_new_user"></a>
 
 ## Function `add_new_user`
@@ -986,6 +1083,9 @@ Add new user or refresh an existing user.
             settled_base_amount: 0,
             settled_quote_amount: 0,
             settled_deep_amount: 0,
+            owed_base_amount: 0,
+            owed_quote_amount: 0,
+            owed_deep_amount: 0,
         });
     };
 }
