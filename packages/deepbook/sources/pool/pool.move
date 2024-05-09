@@ -651,6 +651,8 @@ module deepbook::pool {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
+        let from_proposal_id = self.set_user_voted_proposal(user, option::none(), ctx);
+        self.governance.vote(from_proposal_id, option::none(), stake);
         self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, user);
         self.vote(user, user, ctx);
     }
