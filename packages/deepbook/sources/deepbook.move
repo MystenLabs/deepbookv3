@@ -131,7 +131,7 @@ module deepbook::deepbook {
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &Account,
         proof: &TradeProof,
-        proposal_id: u64,
+        proposal_id: address,
         ctx: &mut TxContext,
     ) {
         account.validate_proof(proof);

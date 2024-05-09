@@ -651,16 +651,16 @@ module deepbook::pool {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
-        self.governance.add_proposal(taker_fee, maker_fee, stake_required);
+        self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, ctx.sender());
     }
 
     /// Vote on a proposal using the user's full voting power.
-    /// If the vote pushes proposal over quorum, update the Pool's 
+    /// If the vote pushes proposal over quorum, update the Pool's
     /// next_trade_params.
     public(package) fun vote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        proposal_id: u64,
+        proposal_id: address,
         ctx: &TxContext,
     ) {
         self.state_manager.update(ctx.epoch());
@@ -677,9 +677,9 @@ module deepbook::pool {
     public(package) fun set_user_voted_proposal<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        proposal_id: Option<u64>,
+        proposal_id: Option<address>,
         ctx: &TxContext,
-    ): Option<u64> {
+    ): Option<address> {
         self.state_manager.update(ctx.epoch());
 
         self.state_manager.set_user_voted_proposal(user, proposal_id)
