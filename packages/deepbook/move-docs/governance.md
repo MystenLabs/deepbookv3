@@ -18,6 +18,7 @@
 -  [Function `params`](#0x0_governance_params)
 -  [Function `stake_to_voting_power`](#0x0_governance_stake_to_voting_power)
 -  [Function `new_proposal`](#0x0_governance_new_proposal)
+-  [Function `remove_lowest_proposal`](#0x0_governance_remove_lowest_proposal)
 
 
 <pre><code><b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
@@ -401,7 +402,9 @@ action, but only processed once per epoch.
 ## Function `add_proposal`
 
 Add a new proposal to governance.
-Check if proposer already voted, if so will give error
+Check if proposer already voted, if so will give error.
+If proposer has not voted, and there are already MAX_PROPOSALS proposals,
+remove the proposal with the lowest votes if it has less votes than the voting power.
 Validation of the user adding is done in <code>State</code>.
 
 
@@ -426,23 +429,7 @@ Validation of the user adding is done in <code>State</code>.
 
     <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
     <b>if</b> (self.proposals.size() == <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>) {
-        <b>let</b> <b>mut</b> removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>&lt;<b>address</b>&gt;();
-        <b>let</b> <b>mut</b> cur_lowest_votes = <a href="governance.md#0x0_governance_MAX_U64">MAX_U64</a>;
-        <b>let</b> (keys, values) = self.proposals.into_keys_values();
-        <b>let</b> <b>mut</b> i = 0;
-
-        <b>while</b> (i &lt; self.proposals.size()) {
-            <b>let</b> proposal_votes = values[i].votes;
-            <b>if</b> (proposal_votes &lt; voting_power && proposal_votes &lt;= cur_lowest_votes) {
-                removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(keys[i]);
-                cur_lowest_votes = proposal_votes;
-            };
-            i = i + 1;
-        };
-
-        // remove proposal <b>with</b> the lowest voting power <b>if</b> it exists
-        <b>assert</b>!(removal_id.is_some(), <a href="governance.md#0x0_governance_EMaxProposalsReachedNotEnoughVotes">EMaxProposalsReachedNotEnoughVotes</a>);
-        self.proposals.remove(removal_id.borrow());
+        self.<a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(voting_power);
     };
 
     <b>if</b> (self.is_stable) {
@@ -627,6 +614,50 @@ Convert stake to voting power. If the stake is above the cutoff, then the voting
         stake_required,
         votes: 0,
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_governance_remove_lowest_proposal"></a>
+
+## Function `remove_lowest_proposal`
+
+Remove the proposal with the lowest votes if it has less votes than the voting power.
+If there are multiple proposals with the same lowest votes, the latest one is removed.
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, voting_power: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(
+    self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
+    voting_power: u64,
+) {
+    <b>let</b> <b>mut</b> removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>&lt;<b>address</b>&gt;();
+    <b>let</b> <b>mut</b> cur_lowest_votes = <a href="governance.md#0x0_governance_MAX_U64">MAX_U64</a>;
+    <b>let</b> (keys, values) = self.proposals.into_keys_values();
+    <b>let</b> <b>mut</b> i = 0;
+
+    <b>while</b> (i &lt; self.proposals.size()) {
+        <b>let</b> proposal_votes = values[i].votes;
+        <b>if</b> (proposal_votes &lt; voting_power && proposal_votes &lt;= cur_lowest_votes) {
+            removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(keys[i]);
+            cur_lowest_votes = proposal_votes;
+        };
+        i = i + 1;
+    };
+
+    <b>assert</b>!(removal_id.is_some(), <a href="governance.md#0x0_governance_EMaxProposalsReachedNotEnoughVotes">EMaxProposalsReachedNotEnoughVotes</a>);
+    self.proposals.remove(removal_id.borrow());
 }
 </code></pre>
 

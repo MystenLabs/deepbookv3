@@ -88,7 +88,9 @@ module deepbook::governance {
     }
 
     /// Add a new proposal to governance.
-    /// Check if proposer already voted, if so will give error
+    /// Check if proposer already voted, if so will give error.
+    /// If proposer has not voted, and there are already MAX_PROPOSALS proposals,
+    /// remove the proposal with the lowest votes if it has less votes than the voting power.
     /// Validation of the user adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut Governance,
@@ -102,23 +104,7 @@ module deepbook::governance {
 
         let voting_power = stake_to_voting_power(stake_amount);
         if (self.proposals.size() == MAX_PROPOSALS) {
-            let mut removal_id = option::none<address>();
-            let mut cur_lowest_votes = MAX_U64;
-            let (keys, values) = self.proposals.into_keys_values();
-            let mut i = 0;
-
-            while (i < self.proposals.size()) {
-                let proposal_votes = values[i].votes;
-                if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
-                    removal_id = option::some(keys[i]);
-                    cur_lowest_votes = proposal_votes;
-                };
-                i = i + 1;
-            };
-
-            // remove proposal with the lowest voting power if it exists
-            assert!(removal_id.is_some(), EMaxProposalsReachedNotEnoughVotes);
-            self.proposals.remove(removal_id.borrow());
+            self.remove_lowest_proposal(voting_power);
         };
 
         if (self.is_stable) {
@@ -204,6 +190,30 @@ module deepbook::governance {
             stake_required,
             votes: 0,
         }
+    }
+
+    /// Remove the proposal with the lowest votes if it has less votes than the voting power.
+    /// If there are multiple proposals with the same lowest votes, the latest one is removed.
+    fun remove_lowest_proposal(
+        self: &mut Governance,
+        voting_power: u64,
+    ) {
+        let mut removal_id = option::none<address>();
+        let mut cur_lowest_votes = MAX_U64;
+        let (keys, values) = self.proposals.into_keys_values();
+        let mut i = 0;
+
+        while (i < self.proposals.size()) {
+            let proposal_votes = values[i].votes;
+            if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
+                removal_id = option::some(keys[i]);
+                cur_lowest_votes = proposal_votes;
+            };
+            i = i + 1;
+        };
+
+        assert!(removal_id.is_some(), EMaxProposalsReachedNotEnoughVotes);
+        self.proposals.remove(removal_id.borrow());
     }
 
     // === Test Functions ===
