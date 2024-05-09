@@ -307,8 +307,6 @@ module deepbook::pool {
         if (base_quantity > 0) self.withdraw_base(account, proof, base_quantity, ctx);
         if (quote_quantity > 0) self.withdraw_quote(account, proof, quote_quantity, ctx);
         if (deep_quantity > 0) self.withdraw_deep(account, proof, deep_quantity, ctx);
-
-        // TODO: What should the return type here be? Can be a copy of Order, or a more simplified message
     }
 
     /// Swap exact amount without needing an account.

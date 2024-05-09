@@ -779,8 +779,6 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
     <b>if</b> (base_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_base">withdraw_base</a>(<a href="account.md#0x0_account">account</a>, proof, base_quantity, ctx);
     <b>if</b> (quote_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_quote">withdraw_quote</a>(<a href="account.md#0x0_account">account</a>, proof, quote_quantity, ctx);
     <b>if</b> (deep_quantity &gt; 0) self.<a href="pool.md#0x0_pool_withdraw_deep">withdraw_deep</a>(<a href="account.md#0x0_account">account</a>, proof, deep_quantity, ctx);
-
-    // TODO: What should the <b>return</b> type here be? Can be a <b>copy</b> of Order, or a more simplified message
 }
 </code></pre>
 
