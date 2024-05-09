@@ -8,7 +8,6 @@
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Struct `DEEP`](#0x0_pool_DEEP)
 -  [Resource `Pool`](#0x0_pool_Pool)
--  [Struct `PoolKey`](#0x0_pool_PoolKey)
 -  [Constants](#@Constants_0)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `transfer_trade_balances`](#0x0_pool_transfer_trade_balances)
@@ -27,15 +26,16 @@
 -  [Function `user_open_orders`](#0x0_pool_user_open_orders)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `whitelist_pool`](#0x0_pool_whitelist_pool)
+-  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `deep_whitelisted`](#0x0_pool_deep_whitelisted)
--  [Function `increase_user_stake`](#0x0_pool_increase_user_stake)
--  [Function `remove_user_stake`](#0x0_pool_remove_user_stake)
+-  [Function `stake`](#0x0_pool_stake)
+-  [Function `unstake`](#0x0_pool_unstake)
+-  [Function `submit_proposal`](#0x0_pool_submit_proposal)
+-  [Function `vote`](#0x0_pool_vote)
 -  [Function `set_user_voted_proposal`](#0x0_pool_set_user_voted_proposal)
 -  [Function `get_user_stake`](#0x0_pool_get_user_stake)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
--  [Function `set_next_trade_params`](#0x0_pool_set_next_trade_params)
 -  [Function `get_base_quote_types`](#0x0_pool_get_base_quote_types)
--  [Function `key`](#0x0_pool_key)
 -  [Function `share`](#0x0_pool_share)
 -  [Function `deposit_base`](#0x0_pool_deposit_base)
 -  [Function `deposit_quote`](#0x0_pool_deposit_quote)
@@ -55,8 +55,10 @@
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
 <b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
@@ -240,6 +242,12 @@ are held in base_balance, quote_balance, and deep_balance.
 
 </dd>
 <dt>
+<code>stable: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>base_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;BaseAsset&gt;</code>
 </dt>
 <dd>
@@ -258,40 +266,19 @@ are held in base_balance, quote_balance, and deep_balance.
 
 </dd>
 <dt>
+<code>vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code><a href="state_manager.md#0x0_state_manager">state_manager</a>: <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a></code>
 </dt>
 <dd>
 
 </dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_pool_PoolKey"></a>
-
-## Struct `PoolKey`
-
-
-
-<pre><code><b>struct</b> <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
 <dt>
-<code>base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a></code>
+<code><a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_Governance">governance::Governance</a></code>
 </dt>
 <dd>
 
@@ -423,6 +410,15 @@ are held in base_balance, quote_balance, and deep_balance.
 
 
 
+<a name="0x0_pool_ENotEnoughStake"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_ENotEnoughStake">ENotEnoughStake</a>: u64 = 13;
+</code></pre>
+
+
+
 <a name="0x0_pool_ESameBaseAndQuote"></a>
 
 
@@ -455,6 +451,15 @@ are held in base_balance, quote_balance, and deep_balance.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
+</code></pre>
+
+
+
+<a name="0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>: u64 = 100;
 </code></pre>
 
 
@@ -1207,10 +1212,10 @@ Get all open orders for a user.
 
 ## Function `create_pool`
 
-Creates a new pool for trading and returns pool_key, called by state module
+Creates a new pool
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(taker_fee: u64, maker_fee: u64, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -1220,22 +1225,24 @@ Creates a new pool for trading and returns pool_key, called by state module
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-    taker_fee: u64,
-    maker_fee: u64,
+    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
     tick_size: u64,
     lot_size: u64,
     min_size: u64,
     creation_fee: Balance&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
-): (<a href="pool.md#0x0_pool_PoolKey">PoolKey</a>, <a href="pool.md#0x0_pool_PoolKey">PoolKey</a>) {
+) {
     <b>assert</b>!(creation_fee.value() == <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>, <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
     <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
 
     <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
+    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;();
+    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;QuoteAsset, BaseAsset&gt;();
 
     <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
+    <b>let</b> (taker_fee, maker_fee) = <a href="governance.md#0x0_governance_default_fees">governance::default_fees</a>(<b>false</b>);
 
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id: pool_uid.to_inner(),
@@ -1254,27 +1261,23 @@ Creates a new pool for trading and returns pool_key, called by state module
         next_ask_order_id: <a href="pool.md#0x0_pool_START_ASK_ORDER_ID">START_ASK_ORDER_ID</a>,
         deep_config: <a href="deep_price.md#0x0_deep_price_new">deep_price::new</a>(),
         deep_whitelisted: <b>false</b>,
+        stable: <b>false</b>,
         tick_size,
         lot_size,
         min_size,
         base_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
         quote_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
         deep_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
+        vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
         <a href="state_manager.md#0x0_state_manager">state_manager</a>: <a href="state_manager.md#0x0_state_manager_new">state_manager::new</a>(taker_fee, maker_fee, 0, ctx),
+        <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx.epoch()),
     });
 
     // TODO: reconsider sending the Coin here. User pays gas;
     // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee.into_coin(ctx), <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
 
-    <b>let</b> (pool_key, rev_key) = (<a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_key">key</a>(), <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
-        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
-        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
-    });
-
     <a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_share">share</a>();
-
-    (pool_key, rev_key)
 }
 </code></pre>
 
@@ -1314,10 +1317,43 @@ Whitelist this pool as a DEEP price source.
 
 </details>
 
+<a name="0x0_pool_set_stable"></a>
+
+## Function `set_stable`
+
+Set the <code><a href="pool.md#0x0_pool_Pool">Pool</a></code> as stable or volatile. This changes the fee structure of the pool.
+New proposals will be asserted against the new fee structure.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_set_stable">set_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, epoch: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_set_stable">set_stable</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    stable: bool,
+    epoch: u64,
+) {
+    self.stable = stable;
+    <b>let</b> (taker, maker) = <a href="governance.md#0x0_governance_default_fees">governance::default_fees</a>(stable);
+    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.set_fees(taker, maker, epoch);
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_pool_deep_whitelisted"></a>
 
 ## Function `deep_whitelisted`
 
+Whether this pool is a DEEP price source.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_deep_whitelisted">deep_whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): bool
@@ -1340,14 +1376,13 @@ Whitelist this pool as a DEEP price source.
 
 </details>
 
-<a name="0x0_pool_increase_user_stake"></a>
+<a name="0x0_pool_stake"></a>
 
-## Function `increase_user_stake`
-
-Increase a user's stake
+## Function `stake`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -1356,15 +1391,17 @@ Increase a user's stake
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    user: <b>address</b>,
+    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    proof: &TradeProof,
     amount: u64,
-    ctx: &TxContext,
-): u64 {
-    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
-
-    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_increase_user_stake">increase_user_stake</a>(user, amount)
+    ctx: &<b>mut</b> TxContext,
+) {
+    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(proof, amount, <b>false</b>, ctx).into_balance();
+    self.vault.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    <b>let</b> total_stake = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.increase_user_stake(<a href="account.md#0x0_account">account</a>.owner(), amount, ctx.epoch());
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(total_stake - amount, total_stake);
 }
 </code></pre>
 
@@ -1372,15 +1409,13 @@ Increase a user's stake
 
 </details>
 
-<a name="0x0_pool_remove_user_stake"></a>
+<a name="0x0_pool_unstake"></a>
 
-## Function `remove_user_stake`
-
-Removes a user's stake.
-Returns the total amount staked before this epoch and the total amount staked during this epoch.
+## Function `unstake`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -1389,14 +1424,101 @@ Returns the total amount staked before this epoch and the total amount staked du
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    proof: &TradeProof,
+    ctx: &<b>mut</b> TxContext,
+) {
+    <b>let</b> total_stake = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.remove_user_stake(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch());
+    <b>let</b> prev_proposal_id = self.<a href="pool.md#0x0_pool_set_user_voted_proposal">set_user_voted_proposal</a>(<a href="account.md#0x0_account">account</a>.owner(), <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), ctx);
+    <b>if</b> (prev_proposal_id.is_some()) {
+        self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(total_stake, 0);
+        <b>let</b> winning_proposal = self.<a href="governance.md#0x0_governance">governance</a>.<a href="pool.md#0x0_pool_vote">vote</a>(prev_proposal_id, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), total_stake);
+        <b>if</b> (winning_proposal.is_some()) {
+            self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.set_next_trade_params(winning_proposal.borrow());
+        };
+    };
+
+    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.vault.split(total_stake).into_coin(ctx);
+    <a href="account.md#0x0_account">account</a>.deposit_with_proof&lt;<a href="pool.md#0x0_pool_DEEP">DEEP</a>&gt;(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_submit_proposal"></a>
+
+## Function `submit_proposal`
+
+Submit a proposal to change the fee structure of a pool.
+The user submitting this proposal must have vested stake in the pool.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     user: <b>address</b>,
-    ctx: &TxContext
-): u64 {
+    taker_fee: u64,
+    maker_fee: u64,
+    stake_required: u64,
+    ctx: &TxContext,
+) {
     self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
+    <b>let</b> (stake, _) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.user_stake(user, ctx.epoch());
+    <b>assert</b>!(stake &gt;= <a href="pool.md#0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="pool.md#0x0_pool_ENotEnoughStake">ENotEnoughStake</a>);
 
-    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_remove_user_stake">remove_user_stake</a>(user)
+    self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(taker_fee, maker_fee, stake_required);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_vote"></a>
+
+## Function `vote`
+
+Vote on a proposal using the user's full voting power.
+If the vote pushes proposal over quorum, update the Pool's
+next_trade_params.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, proposal_id: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    user: <b>address</b>,
+    proposal_id: u64,
+    ctx: &TxContext,
+) {
+    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<b>update</b>(ctx.epoch());
+    <b>let</b> (stake, _) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.user_stake(user, ctx.epoch());
+    <b>assert</b>!(stake &gt;= <a href="pool.md#0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="pool.md#0x0_pool_ENotEnoughStake">ENotEnoughStake</a>);
+
+    <b>let</b> from_proposal_id = self.<a href="pool.md#0x0_pool_set_user_voted_proposal">set_user_voted_proposal</a>(user, <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), ctx);
+    <b>let</b> winning_proposal = self.<a href="governance.md#0x0_governance">governance</a>.<a href="pool.md#0x0_pool_vote">vote</a>(from_proposal_id, <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), stake);
+    <b>if</b> (winning_proposal.is_some()) {
+        self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.set_next_trade_params(winning_proposal.borrow());
+    };
 }
 </code></pre>
 
@@ -1494,36 +1616,6 @@ Add a new price point to the pool.
 
 </details>
 
-<a name="0x0_pool_set_next_trade_params"></a>
-
-## Function `set_next_trade_params`
-
-Update the pool's next pool state.
-During an epoch refresh, the current pool state is moved to historical pool state.
-The next pool state is moved to current pool state.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_set_next_trade_params">set_next_trade_params</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, fees: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="state_manager.md#0x0_state_manager_TradeParams">state_manager::TradeParams</a>&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_set_next_trade_params">set_next_trade_params</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    fees: Option&lt;TradeParams&gt;,
-) {
-    self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_set_next_trade_params">set_next_trade_params</a>(fees);
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_pool_get_base_quote_types"></a>
 
 ## Function `get_base_quote_types`
@@ -1547,36 +1639,6 @@ Get the base and quote asset TypeName of pool
         <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
         <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;()
     )
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_key"></a>
-
-## Function `key`
-
-Get the pool key
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): <a href="pool.md#0x0_pool_PoolKey">pool::PoolKey</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="pool.md#0x0_pool_key">key</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;
-): <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
-    <a href="pool.md#0x0_pool_PoolKey">PoolKey</a> {
-        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
-        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
-    }
 }
 </code></pre>
 

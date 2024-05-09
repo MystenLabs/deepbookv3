@@ -37,7 +37,7 @@ TODO: No authorization checks are implemented;
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
-<b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
+<b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
 <b>use</b> <a href="dependencies/sui-framework/clock.md#0x2_clock">0x2::clock</a>;
 <b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
@@ -124,7 +124,7 @@ The one-time-witness used to claim Publisher object.
 
 <pre><code><b>fun</b> <a href="deepbook.md#0x0_deepbook_init">init</a>(otw: <a href="deepbook.md#0x0_deepbook_DEEPBOOK">DEEPBOOK</a>, ctx: &<b>mut</b> TxContext) {
     sui::package::claim_and_keep(otw, ctx);
-    <a href="state.md#0x0_state_create_and_share">state::create_and_share</a>(ctx);
+    <a href="registry.md#0x0_registry_create_and_share">registry::create_and_share</a>(ctx);
     <b>let</b> cap = <a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">DeepBookAdminCap</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
     };
@@ -143,7 +143,7 @@ The one-time-witness used to claim Publisher object.
 Public facing function to create a pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -153,16 +153,14 @@ Public facing function to create a pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
+    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
     tick_size: u64,
     lot_size: u64,
     min_size: u64,
     creation_fee: Balance&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-        tick_size, lot_size, min_size, creation_fee, ctx
-    );
+    <a href="pool.md#0x0_pool_create_pool">pool::create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>, tick_size, lot_size, min_size, creation_fee, ctx)
 }
 </code></pre>
 
@@ -177,7 +175,7 @@ Public facing function to create a pool.
 Public facing function to set a pool as stable.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, <a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(_cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">deepbook::DeepBookAdminCap</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -188,12 +186,11 @@ Public facing function to set a pool as stable.
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(
     _cap: &<a href="deepbook.md#0x0_deepbook_DeepBookAdminCap">DeepBookAdminCap</a>,
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     stable: bool,
-    ctx: &<b>mut</b> TxContext,
+    ctx: &TxContext,
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_set_pool_as_stable">set_pool_as_stable</a>(<a href="pool.md#0x0_pool">pool</a>, stable, ctx);
+    <a href="pool.md#0x0_pool">pool</a>.set_stable(stable, ctx.epoch());
 }
 </code></pre>
 
@@ -296,7 +293,7 @@ Public facing function to remove a deep price point from a specific pool.
 Public facing function to stake DEEP tokens against a specific pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -306,14 +303,13 @@ Public facing function to stake DEEP tokens against a specific pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,
     amount: u64,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_stake">stake</a>(<a href="pool.md#0x0_pool">pool</a>, <a href="account.md#0x0_account">account</a>, proof, amount, ctx)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_stake">stake</a>(<a href="account.md#0x0_account">account</a>, proof, amount, ctx)
 }
 </code></pre>
 
@@ -328,7 +324,7 @@ Public facing function to stake DEEP tokens against a specific pool.
 Public facing function to unstake DEEP tokens from a specific pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -338,13 +334,12 @@ Public facing function to unstake DEEP tokens from a specific pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,
     ctx: &<b>mut</b> TxContext
 ) {
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_unstake">unstake</a>(<a href="pool.md#0x0_pool">pool</a>, <a href="account.md#0x0_account">account</a>, proof, ctx)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_unstake">unstake</a>(<a href="account.md#0x0_account">account</a>, proof, ctx)
 }
 </code></pre>
 
@@ -359,7 +354,7 @@ Public facing function to unstake DEEP tokens from a specific pool.
 Public facing function to submit a proposal.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, maker_fee: u64, taker_fee: u64, stake_required: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, maker_fee: u64, taker_fee: u64, stake_required: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -369,7 +364,6 @@ Public facing function to submit a proposal.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &Account,
     proof: &TradeProof,
@@ -380,9 +374,7 @@ Public facing function to submit a proposal.
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_submit_proposal">submit_proposal</a>(
-        <a href="pool.md#0x0_pool">pool</a>, <a href="account.md#0x0_account">account</a>.owner(), maker_fee, taker_fee, stake_required, ctx
-    )
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_submit_proposal">submit_proposal</a>(<a href="account.md#0x0_account">account</a>.owner(), maker_fee, taker_fee, stake_required, ctx);
 }
 </code></pre>
 
@@ -397,7 +389,7 @@ Public facing function to submit a proposal.
 Public facing function to vote on a proposal.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="state.md#0x0_state">state</a>: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -407,7 +399,6 @@ Public facing function to vote on a proposal.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="state.md#0x0_state">state</a>: &<b>mut</b> State,
     <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &Account,
     proof: &TradeProof,
@@ -416,7 +407,7 @@ Public facing function to vote on a proposal.
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    <a href="state.md#0x0_state">state</a>.<a href="deepbook.md#0x0_deepbook_vote">vote</a>(<a href="pool.md#0x0_pool">pool</a>, <a href="account.md#0x0_account">account</a>.owner(), proposal_id, ctx)
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_vote">vote</a>(<a href="account.md#0x0_account">account</a>.owner(), proposal_id, ctx)
 }
 </code></pre>
 

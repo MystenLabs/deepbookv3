@@ -12,6 +12,7 @@ module deepbook::state_manager {
         vec_set::{Self, VecSet},
     };
     use deepbook::order::Fill;
+    use deepbook::governance::Proposal;
 
     const EUserNotFound: u64 = 1;
     const EHistoricVolumesNotFound: u64 = 2;
@@ -108,13 +109,21 @@ module deepbook::state_manager {
     /// Set the fee parameters for the next epoch. Pushed by governance.
     public(package) fun set_next_trade_params(
         self: &mut StateManager,
-        next_trade_params: Option<TradeParams>,
+        proposal: &Proposal,
     ) {
-        if (next_trade_params.is_some()) {
-            self.next_trade_params = *next_trade_params.borrow();
-        } else {
-            self.next_trade_params = self.trade_params;
-        }
+        let (taker, maker, stake) = proposal.params();
+        self.next_trade_params = new_trade_params(taker, maker, stake);
+    }
+
+    public(package) fun set_fees(
+        self: &mut StateManager,
+        taker_fee: u64,
+        maker_fee: u64,
+        epoch: u64,
+    ) {
+        self.update(epoch);
+        self.next_trade_params.taker_fee = taker_fee;
+        self.next_trade_params.maker_fee = maker_fee;
     }
 
     /// Taker fee for a user. If the user has enough stake and has traded a certain amount of volume,
@@ -173,7 +182,9 @@ module deepbook::state_manager {
         self: &mut StateManager,
         user: address,
         amount: u64,
+        epoch: u64,
     ): u64 {
+        self.update(epoch);
         let user = update_user(self, user);
         user.new_stake = user.new_stake + amount;
 
@@ -184,7 +195,9 @@ module deepbook::state_manager {
     public(package) fun remove_user_stake(
         self: &mut StateManager,
         user: address,
+        epoch: u64,
     ): u64 {
+        self.update(epoch);
         let user = update_user(self, user);
         let (old_stake, new_stake) = (user.old_stake, user.new_stake);
         user.old_stake = 0;
