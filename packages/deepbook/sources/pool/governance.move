@@ -102,24 +102,23 @@ module deepbook::governance {
 
         let voting_power = stake_to_voting_power(stake_amount);
         if (self.proposals.size() == MAX_PROPOSALS) {
-            let mut id = option::none<address>();
-            let mut lowest_power = MAX_U64;
-            let len = self.proposals.size();
+            let mut removal_id = option::none<address>();
+            let mut cur_lowest_votes = MAX_U64;
             let (keys, values) = self.proposals.into_keys_values();
             let mut i = 0;
 
-            while (i < len) {
+            while (i < self.proposals.size()) {
                 let proposal_votes = values[i].votes;
-                if (proposal_votes < voting_power && proposal_votes <= lowest_power) {
-                    id = option::some(keys[i]);
-                    lowest_power = proposal_votes;
+                if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
+                    removal_id = option::some(keys[i]);
+                    cur_lowest_votes = proposal_votes;
                 };
                 i = i + 1;
             };
 
             // remove proposal with the lowest voting power if it exists
-            assert!(id.is_some(), EMaxProposalsReachedNotEnoughVotes);
-            self.proposals.remove(id.borrow());
+            assert!(removal_id.is_some(), EMaxProposalsReachedNotEnoughVotes);
+            self.proposals.remove(removal_id.borrow());
         };
 
         if (self.is_stable) {
