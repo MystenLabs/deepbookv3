@@ -57,12 +57,11 @@ module deepbook::deepbook {
     /// Public facing function to set a pool as stable.
     public fun set_pool_as_stable<BaseAsset, QuoteAsset>(
         _cap: &DeepBookAdminCap,
-        state: &mut State,
-        pool: &Pool<BaseAsset, QuoteAsset>,
+        pool: &mut Pool<BaseAsset, QuoteAsset>,
         stable: bool,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ) {
-        state.set_pool_as_stable(pool, stable, ctx);
+        pool.set_stable(stable, ctx.epoch());
     }
 
     /// Public facing function to add a reference pool.
@@ -97,30 +96,27 @@ module deepbook::deepbook {
 
     /// Public facing function to stake DEEP tokens against a specific pool.
     public fun stake<BaseAsset, QuoteAsset>(
-        state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
         amount: u64,
         ctx: &mut TxContext,
     ) {
-        state.stake(pool, account, proof, amount, ctx)
+        pool.stake(account, proof, amount, ctx)
     }
 
     /// Public facing function to unstake DEEP tokens from a specific pool.
     public fun unstake<BaseAsset, QuoteAsset>(
-        state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
         ctx: &mut TxContext
     ) {
-        state.unstake(pool, account, proof, ctx)
+        pool.unstake(account, proof, ctx)
     }
 
     /// Public facing function to submit a proposal.
     public fun submit_proposal<BaseAsset, QuoteAsset>(
-        state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &Account,
         proof: &TradeProof,
@@ -131,14 +127,11 @@ module deepbook::deepbook {
     ) {
         account.validate_proof(proof);
 
-        state.submit_proposal(
-            pool, account.owner(), maker_fee, taker_fee, stake_required, ctx
-        )
+        pool.submit_proposal(account.owner(), maker_fee, taker_fee, stake_required, ctx);
     }
 
     /// Public facing function to vote on a proposal.
     public fun vote<BaseAsset, QuoteAsset>(
-        state: &mut State,
         pool: &mut Pool<BaseAsset, QuoteAsset>,
         account: &Account,
         proof: &TradeProof,
@@ -147,7 +140,7 @@ module deepbook::deepbook {
     ) {
         account.validate_proof(proof);
 
-        state.vote(pool, account.owner(), proposal_id, ctx)
+        pool.vote(account.owner(), proposal_id, ctx)
     }
 
     // ORDERS

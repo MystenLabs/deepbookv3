@@ -20,7 +20,8 @@ module deepbook::pool {
         deep_price::{Self, DeepPrice},
         big_vector::{Self, BigVector},
         account::{Self, Account, TradeProof},
-        state_manager::{Self, StateManager, TradeParams},
+        state_manager::{Self, StateManager},
+        governance::{Self, Governance},
         utils,
         math,
     };
@@ -38,6 +39,7 @@ module deepbook::pool {
     const EIneligibleWhitelist: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
     const EIneligibleReferencePool: u64 = 12;
+    const ENotEnoughStake: u64 = 13;
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Constants <<<<<<<<<<<<<<<<<<<<<<<<
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -49,6 +51,7 @@ module deepbook::pool {
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
+    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100; // TODO
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Events <<<<<<<<<<<<<<<<<<<<<<<<
     /// Emitted when a new pool is created
@@ -82,12 +85,15 @@ module deepbook::pool {
         next_ask_order_id: u64,
         deep_config: DeepPrice,
         deep_whitelisted: bool,
+        stable: bool,
 
         base_balance: Balance<BaseAsset>,
         quote_balance: Balance<QuoteAsset>,
         deep_balance: Balance<DEEP>,
+        vault: Balance<DEEP>,
 
         state_manager: StateManager,
+        governance: Governance,
     }
 
     public struct PoolKey has copy, drop, store {
@@ -550,13 +556,16 @@ module deepbook::pool {
             next_ask_order_id: START_ASK_ORDER_ID,
             deep_config: deep_price::new(),
             deep_whitelisted: false,
+            stable: false,
             tick_size,
             lot_size,
             min_size,
             base_balance: balance::zero(),
             quote_balance: balance::zero(),
             deep_balance: balance::zero(),
+            vault: balance::zero(),
             state_manager: state_manager::new(taker_fee, maker_fee, 0, ctx),
+            governance: governance::empty(ctx.epoch()),
         });
 
         // TODO: reconsider sending the Coin here. User pays gas;
@@ -585,34 +594,93 @@ module deepbook::pool {
         self.deep_whitelisted = deep_whitelisted;
     }
 
+    /// Set the `Pool` as stable or volatile. This changes the fee structure of the pool.
+    /// New proposals will be asserted against the new fee structure.
+    public(package) fun set_stable<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        stable: bool,
+        epoch: u64,
+    ) {
+        self.stable = stable;
+        let (taker, maker) = self.governance.default_fees(stable);
+        self.state_manager.set_fees(taker, maker, epoch);
+    }
+
+    /// Whether this pool is a DEEP price source.
     public(package) fun deep_whitelisted<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>
     ): bool {
         self.deep_whitelisted
     }
 
-    /// Increase a user's stake
-    public(package) fun increase_user_stake<BaseAsset, QuoteAsset>(
+    public(package) fun stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        user: address,
+        account: &mut Account,
+        proof: &TradeProof,
         amount: u64,
-        ctx: &TxContext,
-    ): u64 {
-        self.state_manager.update(ctx.epoch());
-
-        self.state_manager.increase_user_stake(user, amount)
+        ctx: &mut TxContext,
+    ) {
+        let balance = account.withdraw_with_proof<DEEP>(proof, amount, false, ctx).into_balance();
+        self.vault.join(balance);
+        let total_stake = self.state_manager.increase_user_stake(account.owner(), amount, ctx.epoch());
+        self.governance.adjust_voting_power(total_stake - amount, total_stake);
     }
 
-    /// Removes a user's stake.
-    /// Returns the total amount staked before this epoch and the total amount staked during this epoch.
-    public(package) fun remove_user_stake<BaseAsset, QuoteAsset>(
+    public(package) fun unstake<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        ctx: &mut TxContext,
+    ) {
+        let total_stake = self.state_manager.remove_user_stake(account.owner(), ctx.epoch());
+        let prev_proposal_id = self.set_user_voted_proposal(account.owner(), option::none(), ctx);
+        if (prev_proposal_id.is_some()) {
+            self.governance.adjust_voting_power(total_stake, 0);
+            let winning_proposal = self.governance.vote(prev_proposal_id, option::none(), total_stake);
+            if (winning_proposal.is_some()) {
+                self.state_manager.set_next_trade_params(winning_proposal.borrow());
+            };
+        };
+
+        let balance = self.vault.split(total_stake).into_coin(ctx);
+        account.deposit_with_proof<DEEP>(proof, balance);
+    }
+
+    /// Submit a proposal to change the fee structure of a pool.
+    /// The user submitting this proposal must have vested stake in the pool.
+    public(package) fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        ctx: &TxContext
-    ): u64 {
+        taker_fee: u64,
+        maker_fee: u64,
+        stake_required: u64,
+        ctx: &TxContext,
+    ) {
         self.state_manager.update(ctx.epoch());
+        let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
-        self.state_manager.remove_user_stake(user)
+        self.governance.add_proposal(taker_fee, maker_fee, stake_required);
+    }
+
+    /// Vote on a proposal using the user's full voting power.
+    /// If the vote pushes proposal over quorum, update the Pool's 
+    /// next_trade_params.
+    public(package) fun vote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        user: address,
+        proposal_id: u64,
+        ctx: &TxContext,
+    ) {
+        self.state_manager.update(ctx.epoch());
+        let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
+        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+
+        let from_proposal_id = self.set_user_voted_proposal(user, option::some(proposal_id), ctx);
+        let winning_proposal = self.governance.vote(from_proposal_id, option::some(proposal_id), stake);
+        if (winning_proposal.is_some()) {
+            self.state_manager.set_next_trade_params(winning_proposal.borrow());
+        };
     }
 
     public(package) fun set_user_voted_proposal<BaseAsset, QuoteAsset>(
@@ -643,16 +711,6 @@ module deepbook::pool {
     ) {
         let (base_conversion_rate, quote_conversion_rate) = self.get_conversion_rates(reference_pool);
         self.deep_config.add_price_point(base_conversion_rate, quote_conversion_rate, timestamp);
-    }
-
-    /// Update the pool's next pool state.
-    /// During an epoch refresh, the current pool state is moved to historical pool state.
-    /// The next pool state is moved to current pool state.
-    public(package) fun set_next_trade_params<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        fees: Option<TradeParams>,
-    ) {
-        self.state_manager.set_next_trade_params(fees);
     }
 
     /// Get the base and quote asset TypeName of pool
