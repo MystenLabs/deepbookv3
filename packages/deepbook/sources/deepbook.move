@@ -15,7 +15,7 @@ module deepbook::deepbook {
     use deepbook::{
         registry::{Self, Registry},
         pool::{Self, DEEP, Pool},
-        order::{OrderInfo, Order},
+        order::OrderInfo,
         account::{Account, TradeProof},
     };
 
@@ -295,7 +295,7 @@ module deepbook::deepbook {
         client_order_id: u128,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): Order {
+    ) {
         pool.cancel_order(account, proof, client_order_id, clock, ctx)
     }
 
@@ -306,7 +306,7 @@ module deepbook::deepbook {
         proof: &TradeProof,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): vector<Order> {
+    ) {
         pool.cancel_all(account, proof, clock, ctx)
     }
 

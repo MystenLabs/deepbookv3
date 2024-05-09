@@ -448,7 +448,7 @@ module deepbook::pool {
         order_id: u128,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): Order {
+    ) {
         let mut order = if (order_is_bid(order_id)) {
             self.bids.remove(order_id)
         } else {
@@ -468,8 +468,6 @@ module deepbook::pool {
         if (deep_quantity > 0) self.withdraw_deep(account, proof, deep_quantity, ctx);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
-
-        order
     }
 
     /// Claim the rebates for the user
@@ -491,8 +489,7 @@ module deepbook::pool {
         proof: &TradeProof,
         clock: &Clock,
         ctx: &mut TxContext,
-    ): vector<Order>{
-        let mut cancelled_orders = vector[];
+    ) {
         let user_open_orders = self.state_manager.user_open_orders(account.owner());
 
         let orders_vector = user_open_orders.into_keys();
@@ -500,12 +497,9 @@ module deepbook::pool {
         let mut i = 0;
         while (i < len) {
             let key = orders_vector[i];
-            let cancelled_order = cancel_order(self, account, proof, key, clock, ctx);
-            cancelled_orders.push_back(cancelled_order);
+            cancel_order(self, account, proof, key, clock, ctx);
             i = i + 1;
         };
-
-        cancelled_orders
     }
 
     /// Get all open orders for a user.
