@@ -11,6 +11,7 @@ All order matching happens in this module.
 -  [Struct `Order`](#0x0_order_Order)
 -  [Struct `OrderFilled`](#0x0_order_OrderFilled)
 -  [Struct `OrderCanceled`](#0x0_order_OrderCanceled)
+-  [Struct `OrderModified`](#0x0_order_OrderModified)
 -  [Struct `OrderPlaced`](#0x0_order_OrderPlaced)
 -  [Struct `Fill`](#0x0_order_Fill)
 -  [Constants](#@Constants_0)
@@ -41,6 +42,7 @@ All order matching happens in this module.
 -  [Function `book_self_matching_prevention`](#0x0_order_book_self_matching_prevention)
 -  [Function `to_order`](#0x0_order_to_order)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
+-  [Function `validate_modification`](#0x0_order_validate_modification)
 -  [Function `crosses_price`](#0x0_order_crosses_price)
 -  [Function `remaining_quantity`](#0x0_order_remaining_quantity)
 -  [Function `assert_post_only`](#0x0_order_assert_post_only)
@@ -57,6 +59,7 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_emit_order_filled)
 -  [Function `emit_order_placed`](#0x0_order_emit_order_placed)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
+-  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
 
 
 <pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
@@ -428,6 +431,76 @@ Emitted when a maker order is canceled.
 
 </details>
 
+<a name="0x0_order_OrderModified"></a>
+
+## Struct `OrderModified`
+
+Emitted when a maker order is modified.
+
+
+<pre><code><b>struct</b> <a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> <b>copy</b>, drop, store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>order_id: u128</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>client_order_id: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>owner: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>price: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>is_bid: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>new_quantity: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>timestamp: u64</code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
 <a name="0x0_order_OrderPlaced"></a>
 
 ## Struct `OrderPlaced`
@@ -601,6 +674,15 @@ It is used to update the state.
 
 
 
+<a name="0x0_order_EInvalidNewQuantity"></a>
+
+
+
+<pre><code><b>const</b> <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>: u64 = 7;
+</code></pre>
+
+
+
 <a name="0x0_order_EInvalidOrderType"></a>
 
 
@@ -615,6 +697,15 @@ It is used to update the state.
 
 
 <pre><code><b>const</b> <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x0_order_EOrderExpired"></a>
+
+
+
+<pre><code><b>const</b> <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>: u64 = 8;
 </code></pre>
 
 
@@ -1418,7 +1509,7 @@ information required to match orders.
 Validates that the initial order created meets the pool requirements.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_validate_inputs">validate_inputs</a>(<a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, tick_size: u64, min_size: u64, lot_size: u64, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_validate_inputs">validate_inputs</a>(order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, tick_size: u64, min_size: u64, lot_size: u64, timestamp: u64)
 </code></pre>
 
 
@@ -1428,18 +1519,52 @@ Validates that the initial order created meets the pool requirements.
 
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_validate_inputs">validate_inputs</a>(
-    <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>,
+    order_info: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>,
     tick_size: u64,
     min_size: u64,
     lot_size: u64,
     timestamp: u64,
 ) {
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.price &gt;= <a href="order.md#0x0_order_MIN_PRICE">MIN_PRICE</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_price">price</a> &lt;= <a href="order.md#0x0_order_MAX_PRICE">MAX_PRICE</a>, <a href="order.md#0x0_order_EOrderInvalidPrice">EOrderInvalidPrice</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.price % tick_size == 0, <a href="order.md#0x0_order_EOrderInvalidPrice">EOrderInvalidPrice</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.original_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.expire_timestamp &gt;= timestamp, <a href="order.md#0x0_order_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.order_type &gt;= <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_order_type">order_type</a> &lt;= <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
+    <b>assert</b>!(order_info.price &gt;= <a href="order.md#0x0_order_MIN_PRICE">MIN_PRICE</a> && order_info.<a href="order.md#0x0_order_price">price</a> &lt;= <a href="order.md#0x0_order_MAX_PRICE">MAX_PRICE</a>, <a href="order.md#0x0_order_EOrderInvalidPrice">EOrderInvalidPrice</a>);
+    <b>assert</b>!(order_info.price % tick_size == 0, <a href="order.md#0x0_order_EOrderInvalidPrice">EOrderInvalidPrice</a>);
+    <b>assert</b>!(order_info.original_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
+    <b>assert</b>!(order_info.original_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
+    <b>assert</b>!(order_info.expire_timestamp &gt;= timestamp, <a href="order.md#0x0_order_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
+    <b>assert</b>!(order_info.order_type &gt;= <a href="order.md#0x0_order_NO_RESTRICTION">NO_RESTRICTION</a> && order_info.<a href="order.md#0x0_order_order_type">order_type</a> &lt;= <a href="order.md#0x0_order_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order.md#0x0_order_EInvalidOrderType">EInvalidOrderType</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_validate_modification"></a>
+
+## Function `validate_modification`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(<a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">order::Order</a>, book_quantity: u64, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(
+    <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">Order</a>,
+    book_quantity: u64,
+    new_quantity: u64,
+    min_size: u64,
+    lot_size: u64,
+    timestamp: u64,
+) {
+    <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; book_quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+    <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
+    <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
+    <b>assert</b>!(timestamp &lt; <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_book_expire_timestamp">book_expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
 }
 </code></pre>
 
@@ -1755,7 +1880,11 @@ Funds for an expired order are returned to the maker as settled.
 ): <a href="order.md#0x0_order_Fill">Fill</a> {
     <b>if</b> (maker.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp) {
         maker.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
-        <b>let</b> (base, quote, deep) = maker.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>();
+        <b>let</b> cancel_quantity = maker.<a href="order.md#0x0_order_book_quantity">book_quantity</a>();
+        <b>let</b> (base, quote, deep) = maker.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
+            cancel_quantity,
+            <b>false</b>,
+        );
         <b>return</b> <a href="order.md#0x0_order_Fill">Fill</a> {
             order_id: maker.order_id,
             owner: maker.owner,
@@ -1804,10 +1933,13 @@ Funds for an expired order are returned to the maker as settled.
 
 ## Function `cancel_amounts`
 
-Amounts to settle for a canceled order.
+Amounts to settle for a cancelled or modified order. Modifies the order in place.
+Returns the base, quote and deep quantities to settle.
+Cancel quantity used to calculate the quantity outputs.
+Modify_order is a flag to indicate whether the order should be modified.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): (u64, u64, u64)
 </code></pre>
 
 
@@ -1816,16 +1948,26 @@ Amounts to settle for a canceled order.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): (u64, u64, u64) {
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
+    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
+    cancel_quantity: u64,
+    modify_order: bool,
+): (u64, u64, u64) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
-    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> self.quantity;
-    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(self.quantity, price) <b>else</b> 0;
+    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
+    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) <b>else</b> 0;
+    <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, cancel_quantity), self.quantity);
     <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
-        self.unpaid_fees
+        fee_refund
     } <b>else</b> {
-        <b>if</b> (is_bid) quote_quantity = quote_quantity + self.unpaid_fees
-        <b>else</b> base_quantity = base_quantity + self.unpaid_fees;
+        <b>if</b> (is_bid) quote_quantity = quote_quantity + fee_refund
+        <b>else</b> base_quantity = base_quantity + fee_refund;
         0
+    };
+
+    <b>if</b> (modify_order) {
+        self.quantity = self.quantity - cancel_quantity;
+        self.unpaid_fees = self.unpaid_fees - fee_refund;
     };
 
     (base_quantity, quote_quantity, deep_quantity)
@@ -1933,6 +2075,40 @@ Amounts to settle for a canceled order.
         base_asset_quantity_canceled: self.quantity,
         timestamp,
         price,
+    });
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_emit_order_modified"></a>
+
+## Function `emit_order_modified`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
+    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
+        pool_id,
+        order_id: self.order_id,
+        client_order_id: self.client_order_id,
+        owner: self.owner,
+        price,
+        is_bid,
+        new_quantity: self.quantity,
+        timestamp,
     });
 }
 </code></pre>

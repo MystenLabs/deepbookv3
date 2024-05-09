@@ -21,6 +21,7 @@ TODO: No authorization checks are implemented;
 -  [Function `vote`](#0x0_deepbook_vote)
 -  [Function `place_limit_order`](#0x0_deepbook_place_limit_order)
 -  [Function `place_market_order`](#0x0_deepbook_place_market_order)
+-  [Function `modify_order`](#0x0_deepbook_modify_order)
 -  [Function `swap_exact_base`](#0x0_deepbook_swap_exact_base)
 -  [Function `swap_exact_quote`](#0x0_deepbook_swap_exact_quote)
 -  [Function `swap_exact_base_verified`](#0x0_deepbook_swap_exact_base_verified)
@@ -427,7 +428,6 @@ Public facing function to vote on a proposal.
 
 ## Function `place_limit_order`
 
-TODO: add other return values
 Public facing function to place a limit order.
 
 
@@ -504,6 +504,46 @@ Public facing function to place a market order.
         client_order_id,
         quantity,
         is_bid,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deepbook_modify_order"></a>
+
+## Function `modify_order`
+
+Public facing function to modify order quantity.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="deepbook.md#0x0_deepbook_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    proof: &TradeProof,
+    order_id: u128,
+    new_quantity: u64,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+) {
+    <a href="pool.md#0x0_pool">pool</a>.<a href="deepbook.md#0x0_deepbook_modify_order">modify_order</a>(
+        <a href="account.md#0x0_account">account</a>,
+        proof,
+        order_id,
+        new_quantity,
         <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
         ctx,
     )
