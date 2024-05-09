@@ -205,13 +205,13 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        let (b_out, q_out, d_out, b_in, q_in, d_in) = self.state_manager.settle_user(account.owner(), ctx.epoch());
-        if (b_out > b_in) account.deposit_with_proof(proof, self.base_balance.split(b_out - b_in));
-        if (q_out > q_in) account.deposit_with_proof(proof, self.quote_balance.split(q_out - q_in));
-        if (d_out > d_in) account.deposit_with_proof(proof, self.deep_balance.split(d_out - d_in));
-        if (b_in > b_out) { self.base_balance.join(account.withdraw_with_proof(proof, b_in - b_out, false)); };
-        if (q_in > q_out) { self.quote_balance.join(account.withdraw_with_proof(proof, q_in - q_out, false)); };
-        if (d_in > d_out) { self.deep_balance.join(account.withdraw_with_proof(proof, d_in - d_out, false)); };
+        let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = self.state_manager.settle_user(account.owner(), ctx.epoch());
+        if (base_out > base_in) account.deposit_with_proof(proof, self.base_balance.split(base_out - base_in));
+        if (quote_out > quote_in) account.deposit_with_proof(proof, self.quote_balance.split(quote_out - quote_in));
+        if (deep_out > deep_in) account.deposit_with_proof(proof, self.deep_balance.split(deep_out - deep_in));
+        if (base_in > base_out) { self.base_balance.join(account.withdraw_with_proof(proof, base_in - base_out, false)); };
+        if (quote_in > quote_out) { self.quote_balance.join(account.withdraw_with_proof(proof, quote_in - quote_out, false)); };
+        if (deep_in > deep_out) { self.deep_balance.join(account.withdraw_with_proof(proof, deep_in - deep_out, false)); };
     }
 
     /// Matches the given order and quantity against the order book.
