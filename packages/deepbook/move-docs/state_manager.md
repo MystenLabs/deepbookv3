@@ -19,6 +19,7 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `new`](#0x0_state_manager_new)
 -  [Function `update`](#0x0_state_manager_update)
 -  [Function `set_next_trade_params`](#0x0_state_manager_set_next_trade_params)
+-  [Function `set_fees`](#0x0_state_manager_set_fees)
 -  [Function `fees_for_user`](#0x0_state_manager_fees_for_user)
 -  [Function `stake_required`](#0x0_state_manager_stake_required)
 -  [Function `reset_burn_balance`](#0x0_state_manager_reset_burn_balance)
@@ -39,7 +40,8 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `calculate_rebate_and_burn_amounts`](#0x0_state_manager_calculate_rebate_and_burn_amounts)
 
 
-<pre><code><b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<pre><code><b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
+<b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
@@ -419,7 +421,7 @@ Update the state manager to the current epoch.
 Set the fee parameters for the next epoch. Pushed by governance.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, next_trade_params: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="state_manager.md#0x0_state_manager_TradeParams">state_manager::TradeParams</a>&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, proposal: &<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>)
 </code></pre>
 
 
@@ -430,13 +432,41 @@ Set the fee parameters for the next epoch. Pushed by governance.
 
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_next_trade_params">set_next_trade_params</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    next_trade_params: Option&lt;<a href="state_manager.md#0x0_state_manager_TradeParams">TradeParams</a>&gt;,
+    proposal: &Proposal,
 ) {
-    <b>if</b> (next_trade_params.is_some()) {
-        self.next_trade_params = *next_trade_params.borrow();
-    } <b>else</b> {
-        self.next_trade_params = self.trade_params;
-    }
+    <b>let</b> (taker, maker, stake) = proposal.params();
+    self.next_trade_params = <a href="state_manager.md#0x0_state_manager_new_trade_params">new_trade_params</a>(taker, maker, stake);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_manager_set_fees"></a>
+
+## Function `set_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_fees">set_fees</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, taker_fee: u64, maker_fee: u64, epoch: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_set_fees">set_fees</a>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    taker_fee: u64,
+    maker_fee: u64,
+    epoch: u64,
+) {
+    self.<b>update</b>(epoch);
+    self.next_trade_params.taker_fee = taker_fee;
+    self.next_trade_params.maker_fee = maker_fee;
 }
 </code></pre>
 
@@ -582,7 +612,7 @@ the current epoch and new_stake is the amount staked in the current epoch.
 Increase user stake. Return the user's total stake.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_user_stake">increase_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, amount: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_increase_user_stake">increase_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, amount: u64, epoch: u64): u64
 </code></pre>
 
 
@@ -595,7 +625,9 @@ Increase user stake. Return the user's total stake.
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
     amount: u64,
+    epoch: u64,
 ): u64 {
+    self.<b>update</b>(epoch);
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     user.new_stake = user.new_stake + amount;
 
@@ -614,7 +646,7 @@ Increase user stake. Return the user's total stake.
 Remove user stake. Return the user's total stake.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>, epoch: u64): u64
 </code></pre>
 
 
@@ -626,7 +658,9 @@ Remove user stake. Return the user's total stake.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_remove_user_stake">remove_user_stake</a>(
     self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
     user: <b>address</b>,
+    epoch: u64,
 ): u64 {
+    self.<b>update</b>(epoch);
     <b>let</b> user = <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self, user);
     <b>let</b> (old_stake, new_stake) = (user.old_stake, user.new_stake);
     user.old_stake = 0;

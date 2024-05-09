@@ -24,6 +24,7 @@ module deepbook::pool {
         governance::{Self, Governance},
         utils,
         math,
+        registry::Registry,
     };
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Error Codes <<<<<<<<<<<<<<<<<<<<<<<<
@@ -94,11 +95,6 @@ module deepbook::pool {
 
         state_manager: StateManager,
         governance: Governance,
-    }
-
-    public struct PoolKey has copy, drop, store {
-        base: TypeName,
-        quote: TypeName,
     }
 
     // <<<<<<<<<<<<<<<<<<<<<<<< Package Functions <<<<<<<<<<<<<<<<<<<<<<<<
@@ -520,24 +516,26 @@ module deepbook::pool {
         self.state_manager.user_open_orders(user)
     }
 
-    /// Creates a new pool for trading and returns pool_key, called by state module
+    /// Creates a new pool
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
-        taker_fee: u64,
-        maker_fee: u64,
+        registry: &mut Registry,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext,
-    ): (PoolKey, PoolKey) {
+    ) {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
 
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
+        registry.register_pool<BaseAsset, QuoteAsset>();
+        registry.register_pool<QuoteAsset, BaseAsset>();
 
         let pool_uid = object::new(ctx);
+        let (taker_fee, maker_fee) = governance::default_fees(false);
 
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id: pool_uid.to_inner(),
@@ -572,14 +570,7 @@ module deepbook::pool {
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
 
-        let (pool_key, rev_key) = (pool.key(), PoolKey {
-            base: type_name::get<QuoteAsset>(),
-            quote: type_name::get<BaseAsset>(),
-        });
-
         pool.share();
-
-        (pool_key, rev_key)
     }
 
     /// Whitelist this pool as a DEEP price source.
@@ -602,7 +593,7 @@ module deepbook::pool {
         epoch: u64,
     ) {
         self.stable = stable;
-        let (taker, maker) = self.governance.default_fees(stable);
+        let (taker, maker) = governance::default_fees(stable);
         self.state_manager.set_fees(taker, maker, epoch);
     }
 
@@ -721,16 +712,6 @@ module deepbook::pool {
             type_name::get<BaseAsset>(),
             type_name::get<QuoteAsset>()
         )
-    }
-
-    /// Get the pool key
-    public(package) fun key<BaseAsset, QuoteAsset>(
-        _self: &Pool<BaseAsset, QuoteAsset>
-    ): PoolKey {
-        PoolKey {
-            base: type_name::get<BaseAsset>(),
-            quote: type_name::get<QuoteAsset>(),
-        }
     }
 
     #[allow(lint(share_owned))]

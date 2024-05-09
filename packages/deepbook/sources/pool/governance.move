@@ -9,14 +9,14 @@ module deepbook::governance {
     const EMaxProposalsReached: u64 = 4;
 
     // === Constants ===
-    const MIN_TAKER_STABLE: u64 = 50; // 0.5 basis points
-    const MAX_TAKER_STABLE: u64 = 100;
-    const MIN_MAKER_STABLE: u64 = 20;
-    const MAX_MAKER_STABLE: u64 = 50;
-    const MIN_TAKER_VOLATILE: u64 = 500;
-    const MAX_TAKER_VOLATILE: u64 = 1000;
-    const MIN_MAKER_VOLATILE: u64 = 200;
-    const MAX_MAKER_VOLATILE: u64 = 500;
+    const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
+    const MAX_TAKER_STABLE: u64 = 100000;
+    const MIN_MAKER_STABLE: u64 = 20000;
+    const MAX_MAKER_STABLE: u64 = 50000;
+    const MIN_TAKER_VOLATILE: u64 = 500000;
+    const MAX_TAKER_VOLATILE: u64 = 1000000;
+    const MIN_MAKER_VOLATILE: u64 = 200000;
+    const MAX_MAKER_VOLATILE: u64 = 500000;
     const MAX_PROPOSALS: u64 = 100; // TODO: figure out how to prevent spam
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
 
@@ -65,11 +65,11 @@ module deepbook::governance {
         self.is_stable = stable;
     }
 
-    public(package) fun default_fees(_self: &Governance, stable: bool): (u64, u64) {
+    public(package) fun default_fees(stable: bool): (u64, u64) {
         if (stable) {
-            (MIN_TAKER_STABLE, MIN_MAKER_STABLE)
+            (MAX_TAKER_STABLE, MAX_MAKER_STABLE)
         } else {
-            (MIN_TAKER_VOLATILE, MIN_MAKER_VOLATILE)
+            (MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE)
         }
     }
 

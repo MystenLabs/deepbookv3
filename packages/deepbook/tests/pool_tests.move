@@ -14,6 +14,7 @@ module deepbook::pool_tests {
         balance::Self,
         sui::SUI,
         coin::mint_for_testing,
+        test_utils,
     };
 
     use deepbook::{
@@ -22,6 +23,7 @@ module deepbook::pool_tests {
         order::{Order, OrderInfo},
         big_vector::BigVector,
         math,
+        registry,
     };
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
@@ -61,14 +63,22 @@ module deepbook::pool_tests {
     public struct SPAM {}
 
     #[test]
-    fun test_place_order() {
-        place_order_ok(true);
+    fun test_place_order_bid() {
         place_order_ok(false);
     }
 
     #[test]
-    fun test_place_and_cancel_order() {
+    fun test_place_order_ask() {
+        place_order_ok(false);
+    }
+
+    #[test]
+    fun test_place_and_cancel_order_bid() {
         place_and_cancel_order_ok(true);
+    }
+
+    #[test]
+    fun test_place_and_cancel_order_ask() {
         place_and_cancel_order_ok(false);
     }
 
@@ -579,9 +589,7 @@ module deepbook::pool_tests {
         sender: address,
         test: &mut Scenario,
     ) {
-        setup_pool<SUI, USDC>(
-            TAKER_FEE, // 10 bps
-            MAKER_FEE, // 5 bps
+        setup_pool_with_default_fees<SUI, USDC>(
             TICK_SIZE, // tick size
             LOT_SIZE, // lot size
             MIN_SIZE, // min size
@@ -600,9 +608,7 @@ module deepbook::pool_tests {
         };
     }
 
-    fun setup_pool<BaseAsset, QuoteAsset>(
-        taker_fee: u64,
-        maker_fee: u64,
+    fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
@@ -610,10 +616,10 @@ module deepbook::pool_tests {
         sender: address,
     ) {
         test.next_tx(sender);
+        let mut registry = registry::test_registry(test.ctx());
         {
             pool::create_pool<BaseAsset, QuoteAsset>(
-                taker_fee,
-                maker_fee,
+                &mut registry,
                 tick_size,
                 lot_size,
                 min_size,
@@ -621,6 +627,7 @@ module deepbook::pool_tests {
                 test.ctx()
             );
         };
+        test_utils::destroy(registry);
     }
 
     fun deposit_into_account<T>(

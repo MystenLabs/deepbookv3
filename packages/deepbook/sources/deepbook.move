@@ -13,13 +13,11 @@ module deepbook::deepbook {
     };
 
     use deepbook::{
-        state::{Self, State},
-        pool::{DEEP, Pool},
+        registry::{Self, Registry},
+        pool::{Self, DEEP, Pool},
         order::{OrderInfo, Order},
         account::{Account, TradeProof},
     };
-
-    // INIT
 
     /// DeepBookAdminCap is used to call admin functions.
     public struct DeepBookAdminCap has key, store {
@@ -31,7 +29,7 @@ module deepbook::deepbook {
 
     fun init(otw: DEEPBOOK, ctx: &mut TxContext) {
         sui::package::claim_and_keep(otw, ctx);
-        state::create_and_share(ctx);
+        registry::create_and_share(ctx);
         let cap = DeepBookAdminCap {
             id: object::new(ctx),
         };
@@ -42,16 +40,14 @@ module deepbook::deepbook {
 
     /// Public facing function to create a pool.
     public fun create_pool<BaseAsset, QuoteAsset>(
-        state: &mut State,
+        registry: &mut Registry,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
         creation_fee: Balance<SUI>,
         ctx: &mut TxContext
     ) {
-        state.create_pool<BaseAsset, QuoteAsset>(
-            tick_size, lot_size, min_size, creation_fee, ctx
-        );
+        pool::create_pool<BaseAsset, QuoteAsset>(registry, tick_size, lot_size, min_size, creation_fee, ctx)
     }
 
     /// Public facing function to set a pool as stable.
