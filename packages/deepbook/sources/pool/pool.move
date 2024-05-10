@@ -321,7 +321,7 @@ module deepbook::pool {
         // Pass in quantity cancelled to calculate refund amounts and modify the order
         let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(book_quantity - new_quantity, true);
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
-        
+
         self.state_manager.add_settled_amounts(account.owner(), base_quantity, quote_quantity, deep_quantity);
         self.settle_user(account, proof, ctx);
     }
@@ -652,6 +652,8 @@ module deepbook::pool {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
+        let from_proposal_id = self.state_manager.set_user_voted_proposal(user, option::none(), ctx.epoch());
+        self.governance.adjust_vote(from_proposal_id, option::none(), stake);
         self.governance.add_proposal(self.stable, taker_fee, maker_fee, stake_required, stake, user);
         self.vote(user, user, ctx);
     }

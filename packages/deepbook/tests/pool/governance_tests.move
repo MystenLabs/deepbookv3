@@ -1,10 +1,15 @@
 #[test_only]
 module deepbook::governance_tests {
-    use sui::test_scenario::{Self as test, Scenario, next_tx, end};
+    use sui::{
+        address,
+        test_scenario::{Self as test, Scenario, next_tx, end},
+    };
     use deepbook::governance;
 
     const ALICE: address = @0xA;
     const BOB: address = @0xB;
+    const CHARLIE: address = @0xC;
+    const MAX_PROPOSALS: u256 = 100;
 
     #[test]
     fun new_proposal() {
@@ -90,6 +95,61 @@ module deepbook::governance_tests {
         end(scenario);
     }
 
+    #[test, expected_failure(abort_code = governance::EProposalDoesNotExist)]
+    /// Test two proposals that were added by two different people A and B
+    /// A with less voting power than B (A had 100000, B had 200000, C had 150000)
+    /// C votes on A's proposal and pushes it over quorum
+    /// C then makes a new proposal. The proposal that's removed should be A
+    /// Check to make sure A's removed by voting on proposal A, which will error (EProposalDoesNotExist)
+    fun remove_proposal() {
+        let (mut scenario, owner) = setup();
+        next_tx(&mut scenario, owner);
+        let mut gov = governance::empty(0);
+        gov.adjust_voting_power(0, 450000);
+        gov.refresh(1); // quorum = 225000
+        let dummy_proposals = MAX_PROPOSALS - 2;
+
+        let mut i: u256 = 0;
+        while (i < dummy_proposals) {
+            let address = address::from_u256(i + (1 << 10));
+            gov.add_proposal(false, 500000, 200000, 10000, 1000, address);
+            // Bigger vote than Alice to make sure proposal doesn't get removed
+            gov.adjust_vote(option::none(), option::some(address), 110000);
+            i = i + 1;
+        };
+
+        // Alice proposes and votes with 100000 stake, not enough to push proposal ALICE over quorum
+        gov.add_proposal(false, 500000, 200000, 10000, 100000, ALICE);
+        let winning_proposal = gov.adjust_vote(option::none(), option::some(ALICE), 100000);
+        assert!(winning_proposal.is_none(), 0);
+        // Bob proposes and votes with 200000 stake, not enough to push proposal Bob over quorum
+        gov.add_proposal(false, 600000, 300000, 20000, 200000, BOB);
+        let winning_proposal = gov.adjust_vote(option::none(), option::some(BOB), 200000);
+        assert!(winning_proposal.is_none(), 0);
+
+        // Charlie votes with 150000 stake, enough to push proposal ALICE over quorum
+        let winning_proposal = gov.adjust_vote(option::none(), option::some(ALICE), 150000);
+        // assert winning proposal is ALICE
+        let (taker_fee, maker_fee, stake_required) = winning_proposal.borrow().params();
+        assert!(maker_fee == 200000, 0);
+        assert!(taker_fee == 500000, 0);
+        assert!(stake_required == 10000, 0);
+
+        assert!(gov.proposals().size() == (100 as u64), 0);
+
+        // Charlie makes a new proposal, proposal ALICE should be removed, not BOB
+        gov.adjust_vote(option::some(ALICE), option::none(), 150000);
+        gov.add_proposal(false, 700000, 400000, 30000, 150000, CHARLIE);
+        let winning_proposal = gov.adjust_vote(option::none(), option::some(CHARLIE), 150000);
+        assert!(winning_proposal.is_none(), 0);
+
+        // Voting on proposal ALICE should error
+        gov.adjust_vote(option::none(), option::some(ALICE), 100);
+
+        gov.delete();
+        end(scenario);
+    }
+
     #[test]
     fun voting_power() {
         let (mut scenario, owner) = setup();
@@ -151,7 +211,7 @@ module deepbook::governance_tests {
             // Whale removes his 3000 stake, reducing voting power by 2000
             gov.adjust_voting_power(3000, 0);
             assert!(gov.voting_power() == 500, 0);
-            
+
             gov.delete();
         };
 

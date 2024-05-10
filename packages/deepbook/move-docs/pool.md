@@ -1472,6 +1472,8 @@ The user submitting this proposal must have vested stake in the pool.
     <b>let</b> (stake, _) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.user_stake(user, ctx.epoch());
     <b>assert</b>!(stake &gt;= <a href="pool.md#0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="pool.md#0x0_pool_ENotEnoughStake">ENotEnoughStake</a>);
 
+    <b>let</b> from_proposal_id = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), ctx.epoch());
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(from_proposal_id, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), stake);
     self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(self.stable, taker_fee, maker_fee, stake_required, stake, user);
     self.<a href="pool.md#0x0_pool_vote">vote</a>(user, user, ctx);
 }
