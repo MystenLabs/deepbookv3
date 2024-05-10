@@ -269,6 +269,14 @@ module deepbook::v3order {
         self.self_matching_prevention
     }
 
+    public fun fills(self: &OrderInfo): vector<Fill> {
+        self.fills
+    }
+
+    public(package) fun last_fill(self: &OrderInfo): &Fill {
+        &self.fills[self.fills.length() - 1]
+    }
+
     public(package) fun set_order_id(self: &mut OrderInfo, order_id: u128) {
         self.order_id = order_id;
     }
@@ -304,6 +312,10 @@ module deepbook::v3order {
 
     public(package) fun book_self_matching_prevention(self: &Order): bool {
         self.self_matching_prevention
+    }
+
+    public(package) fun set_book_quantity(self: &mut Order, quantity: u64) {
+        self.quantity = quantity;
     }
 
     /// OrderInfo is converted to an Order before being injected into the order book.
@@ -552,8 +564,8 @@ module deepbook::v3order {
     public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(self: &Order, pool_id: ID, timestamp: u64) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
         event::emit(OrderModified<BaseAsset, QuoteAsset> {
-            pool_id,
             order_id: self.order_id,
+            pool_id,
             client_order_id: self.client_order_id,
             owner: self.owner,
             price,
