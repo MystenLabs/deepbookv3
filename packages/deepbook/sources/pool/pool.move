@@ -206,12 +206,30 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = self.state_manager.settle_user(account.owner(), ctx.epoch());
-        if (base_out > base_in) account.deposit_with_proof(proof, self.base_balance.split(base_out - base_in));
-        if (quote_out > quote_in) account.deposit_with_proof(proof, self.quote_balance.split(quote_out - quote_in));
-        if (deep_out > deep_in) account.deposit_with_proof(proof, self.deep_balance.split(deep_out - deep_in));
-        if (base_in > base_out) { self.base_balance.join(account.withdraw_with_proof(proof, base_in - base_out, false)); };
-        if (quote_in > quote_out) { self.quote_balance.join(account.withdraw_with_proof(proof, quote_in - quote_out, false)); };
-        if (deep_in > deep_out) { self.deep_balance.join(account.withdraw_with_proof(proof, deep_in - deep_out, false)); };
+        if (base_out > base_in) {
+            let balance = self.base_balance.split(base_out - base_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (quote_out > quote_in) {
+            let balance = self.quote_balance.split(quote_out - quote_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (deep_out > deep_in) {
+            let balance = self.deep_balance.split(deep_out - deep_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (base_in > base_out) {
+            let balance = account.withdraw_with_proof(proof, base_in - base_out, false);
+            self.base_balance.join(balance);
+        };
+        if (quote_in > quote_out) {
+            let balance = account.withdraw_with_proof(proof, quote_in - quote_out, false);
+            self.quote_balance.join(balance);
+        };
+        if (deep_in > deep_out) {
+            let balance = account.withdraw_with_proof(proof, deep_in - deep_out, false);
+            self.deep_balance.join(balance);
+        };
     }
 
     /// Matches the given order and quantity against the order book.
@@ -634,8 +652,6 @@ module deepbook::pool {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
-        let from_proposal_id = self.state_manager.set_user_voted_proposal(user, option::none(), ctx.epoch());
-        self.governance.adjust_vote(from_proposal_id, option::none(), stake);
         self.governance.add_proposal(self.stable, taker_fee, maker_fee, stake_required, stake, user);
         self.vote(user, user, ctx);
     }

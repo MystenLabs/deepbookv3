@@ -34,8 +34,8 @@ It is guaranteed that the user's will not be refreshed before the state is refre
 -  [Function `add_settled_amounts`](#0x0_state_manager_add_settled_amounts)
 -  [Function `add_owed_amounts`](#0x0_state_manager_add_owed_amounts)
 -  [Function `settle_user`](#0x0_state_manager_settle_user)
--  [Function `update_user`](#0x0_state_manager_update_user)
 -  [Function `update`](#0x0_state_manager_update)
+-  [Function `update_user`](#0x0_state_manager_update_user)
 -  [Function `add_new_user`](#0x0_state_manager_add_new_user)
 -  [Function `increment_users_with_rebates`](#0x0_state_manager_increment_users_with_rebates)
 -  [Function `decrement_users_with_rebates`](#0x0_state_manager_decrement_users_with_rebates)
@@ -975,49 +975,6 @@ Process a fill. Update the user and total volume and any settled amounts.
 
 </details>
 
-<a name="0x0_state_manager_update_user"></a>
-
-## Function `update_user`
-
-Add new user or refresh an existing user.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): &<b>mut</b> <a href="state_manager.md#0x0_state_manager_User">state_manager::User</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(
-    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
-    user: <b>address</b>,
-): &<b>mut</b> <a href="state_manager.md#0x0_state_manager_User">User</a> {
-    <b>let</b> epoch = self.epoch;
-    <a href="state_manager.md#0x0_state_manager_add_new_user">add_new_user</a>(self, user, epoch);
-    self.<a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(user, epoch);
-
-    <b>let</b> user = &<b>mut</b> self.users[user];
-    <b>if</b> (user.epoch == epoch) <b>return</b> user;
-    <b>let</b> (rebates, burns) = <a href="state_manager.md#0x0_state_manager_calculate_rebate_and_burn_amounts">calculate_rebate_and_burn_amounts</a>(user);
-    user.epoch = epoch;
-    user.maker_volume = 0;
-    user.old_stake = user.old_stake + user.new_stake;
-    user.new_stake = 0;
-    user.unclaimed_rebates = user.unclaimed_rebates + rebates;
-    self.balance_to_burn = self.balance_to_burn + burns;
-    user.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
-
-    user
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_state_manager_update"></a>
 
 ## Function `update`
@@ -1044,6 +1001,49 @@ Update the state manager to the current epoch.
     };
     self.trade_params = self.next_trade_params;
     self.epoch = epoch;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_manager_update_user"></a>
+
+## Function `update_user`
+
+Add new user or refresh an existing user.
+
+
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">state_manager::StateManager</a>, user: <b>address</b>): &<b>mut</b> <a href="state_manager.md#0x0_state_manager_User">state_manager::User</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="state_manager.md#0x0_state_manager_update_user">update_user</a>(
+    self: &<b>mut</b> <a href="state_manager.md#0x0_state_manager_StateManager">StateManager</a>,
+    user: <b>address</b>,
+): &<b>mut</b> <a href="state_manager.md#0x0_state_manager_User">User</a> {
+    <b>let</b> epoch = self.epoch;
+    <a href="state_manager.md#0x0_state_manager_add_new_user">add_new_user</a>(self, user, epoch);
+    self.<a href="state_manager.md#0x0_state_manager_decrement_users_with_rebates">decrement_users_with_rebates</a>(user, epoch);
+
+    <b>let</b> user = &<b>mut</b> self.users[user];
+    <b>if</b> (user.epoch == epoch) <b>return</b> user;
+    <b>let</b> (rebates, burns) = <a href="state_manager.md#0x0_state_manager_calculate_rebate_and_burn_amounts">calculate_rebate_and_burn_amounts</a>(user);
+    user.epoch = epoch;
+    user.maker_volume = 0;
+    user.old_stake = user.old_stake + user.new_stake;
+    user.new_stake = 0;
+    user.unclaimed_rebates = user.unclaimed_rebates + rebates;
+    self.balance_to_burn = self.balance_to_burn + burns;
+    user.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+
+    user
 }
 </code></pre>
 

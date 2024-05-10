@@ -330,8 +330,21 @@ module deepbook::state_manager {
         (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     }
 
+    /// Update the state manager to the current epoch.
+    fun update(
+        self: &mut StateManager,
+        epoch: u64,
+    ) {
+        if (self.epoch == epoch) return;
+        if (self.volumes.users_with_rebates > 0) {
+            self.historic_volumes.add(self.epoch, self.volumes);
+        };
+        self.trade_params = self.next_trade_params;
+        self.epoch = epoch;
+    }
+
     /// Add new user or refresh an existing user.
-    public(package) fun update_user(
+    fun update_user(
         self: &mut StateManager,
         user: address,
     ): &mut User {
@@ -351,19 +364,6 @@ module deepbook::state_manager {
         user.voted_proposal = option::none();
 
         user
-    }
-
-    /// Update the state manager to the current epoch.
-    fun update(
-        self: &mut StateManager,
-        epoch: u64,
-    ) {
-        if (self.epoch == epoch) return;
-        if (self.volumes.users_with_rebates > 0) {
-            self.historic_volumes.add(self.epoch, self.volumes);
-        };
-        self.trade_params = self.next_trade_params;
-        self.epoch = epoch;
     }
 
     fun add_new_user(

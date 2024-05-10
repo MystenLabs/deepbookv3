@@ -646,12 +646,30 @@ Transfer any settled amounts for the user.
     ctx: &TxContext,
 ) {
     <b>let</b> (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.<a href="pool.md#0x0_pool_settle_user">settle_user</a>(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch());
-    <b>if</b> (base_out &gt; base_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.base_balance.split(base_out - base_in));
-    <b>if</b> (quote_out &gt; quote_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.quote_balance.split(quote_out - quote_in));
-    <b>if</b> (deep_out &gt; deep_in) <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, self.deep_balance.split(deep_out - deep_in));
-    <b>if</b> (base_in &gt; base_out) { self.base_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, base_in - base_out, <b>false</b>)); };
-    <b>if</b> (quote_in &gt; quote_out) { self.quote_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, quote_in - quote_out, <b>false</b>)); };
-    <b>if</b> (deep_in &gt; deep_out) { self.deep_balance.join(<a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, deep_in - deep_out, <b>false</b>)); };
+    <b>if</b> (base_out &gt; base_in) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.base_balance.split(base_out - base_in);
+        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
+    <b>if</b> (quote_out &gt; quote_in) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.quote_balance.split(quote_out - quote_in);
+        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
+    <b>if</b> (deep_out &gt; deep_in) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.deep_balance.split(deep_out - deep_in);
+        <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
+    <b>if</b> (base_in &gt; base_out) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, base_in - base_out, <b>false</b>);
+        self.base_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
+    <b>if</b> (quote_in &gt; quote_out) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, quote_in - quote_out, <b>false</b>);
+        self.quote_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
+    <b>if</b> (deep_in &gt; deep_out) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, deep_in - deep_out, <b>false</b>);
+        self.deep_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    };
 }
 </code></pre>
 
@@ -1454,8 +1472,6 @@ The user submitting this proposal must have vested stake in the pool.
     <b>let</b> (stake, _) = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.user_stake(user, ctx.epoch());
     <b>assert</b>!(stake &gt;= <a href="pool.md#0x0_pool_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="pool.md#0x0_pool_ENotEnoughStake">ENotEnoughStake</a>);
 
-    <b>let</b> from_proposal_id = self.<a href="state_manager.md#0x0_state_manager">state_manager</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), ctx.epoch());
-    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(from_proposal_id, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), stake);
     self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(self.stable, taker_fee, maker_fee, stake_required, stake, user);
     self.<a href="pool.md#0x0_pool_vote">vote</a>(user, user, ctx);
 }
