@@ -44,6 +44,9 @@ module deepbook::state_manager {
         settled_base_amount: u64,
         settled_quote_amount: u64,
         settled_deep_amount: u64,
+        owed_base_amount: u64,
+        owed_quote_amount: u64,
+        owed_deep_amount: u64,
     }
 
     public struct StateManager has store {
@@ -93,25 +96,13 @@ module deepbook::state_manager {
         }
     }
 
-    /// Update the state manager to the current epoch.
-    public(package) fun update(
-        self: &mut StateManager,
-        epoch: u64,
-    ) {
-        if (self.epoch == epoch) return;
-        if (self.volumes.users_with_rebates > 0) {
-            self.historic_volumes.add(self.epoch, self.volumes);
-        };
-        self.trade_params = self.next_trade_params;
-        self.epoch = epoch;
-    }
-
     /// Set the fee parameters for the next epoch. Pushed by governance.
     public(package) fun set_next_trade_params(
         self: &mut StateManager,
-        proposal: &Proposal,
+        proposal: Option<Proposal>,
     ) {
-        let (taker, maker, stake) = proposal.params();
+        if (proposal.is_none()) return;
+        let (taker, maker, stake) = proposal.borrow().params();
         self.next_trade_params = new_trade_params(taker, maker, stake);
     }
 
@@ -210,7 +201,9 @@ module deepbook::state_manager {
         self: &mut StateManager,
         user: address,
         proposal_id: Option<address>,
+        epoch: u64,
     ): Option<address> {
+        self.update(epoch);
         let user = update_user(self, user);
         let cur_proposal = user.voted_proposal;
         user.voted_proposal = proposal_id;
@@ -222,12 +215,12 @@ module deepbook::state_manager {
     public(package) fun reset_user_rebates(
         self: &mut StateManager,
         user: address,
-    ): u64 {
+        epoch: u64,
+    ) {
+        self.update(epoch);
         let user = update_user(self, user);
-        let rebates = user.unclaimed_rebates;
+        user.settled_deep_amount = user.settled_deep_amount + user.unclaimed_rebates;
         user.unclaimed_rebates = 0;
-
-        rebates
     }
 
     /// All of the user's open orders.
@@ -284,27 +277,74 @@ module deepbook::state_manager {
         if (expired || complete) {
             user.open_orders.remove(&order_id);
         };
+        
+        self.add_settled_amounts(owner, base, quote, deep);
+    }
 
+    public(package) fun add_settled_amounts(
+        self: &mut StateManager,
+        user: address,
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
+        let user = update_user(self, user);
         user.settled_base_amount = user.settled_base_amount + base;
         user.settled_quote_amount = user.settled_quote_amount + quote;
         user.settled_deep_amount = user.settled_deep_amount + deep;
     }
 
-    public(package) fun reset_user_settled_amounts(
+    public(package) fun add_owed_amounts(
         self: &mut StateManager,
         user: address,
-    ): (u64, u64, u64) {
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
         let user = update_user(self, user);
-        let (base, quote, deep) = (user.settled_base_amount, user.settled_quote_amount, user.settled_deep_amount);
+        user.owed_base_amount = user.owed_base_amount + base;
+        user.owed_quote_amount = user.owed_quote_amount + quote;
+        user.owed_deep_amount = user.owed_deep_amount + deep;
+    }
+
+    public(package) fun settle_user(
+        self: &mut StateManager,
+        user: address,
+        epoch: u64,
+    ): (u64, u64, u64, u64, u64, u64) {
+        self.update(epoch);
+        let user = update_user(self, user);
+        let base_out = user.settled_base_amount;
+        let quote_out = user.settled_quote_amount;
+        let deep_out = user.settled_deep_amount;
+        let base_in = user.owed_base_amount;
+        let quote_in = user.owed_quote_amount;
+        let deep_in = user.owed_deep_amount;
         user.settled_base_amount = 0;
         user.settled_quote_amount = 0;
         user.settled_deep_amount = 0;
+        user.owed_base_amount = 0;
+        user.owed_quote_amount = 0;
+        user.owed_deep_amount = 0;
 
-        (base, quote, deep)
+        (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
+    }
+
+    /// Update the state manager to the current epoch.
+    fun update(
+        self: &mut StateManager,
+        epoch: u64,
+    ) {
+        if (self.epoch == epoch) return;
+        if (self.volumes.users_with_rebates > 0) {
+            self.historic_volumes.add(self.epoch, self.volumes);
+        };
+        self.trade_params = self.next_trade_params;
+        self.epoch = epoch;
     }
 
     /// Add new user or refresh an existing user.
-    public(package) fun update_user(
+    fun update_user(
         self: &mut StateManager,
         user: address,
     ): &mut User {
@@ -343,6 +383,9 @@ module deepbook::state_manager {
                 settled_base_amount: 0,
                 settled_quote_amount: 0,
                 settled_deep_amount: 0,
+                owed_base_amount: 0,
+                owed_quote_amount: 0,
+                owed_deep_amount: 0,
             });
         };
     }
