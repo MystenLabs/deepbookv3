@@ -39,7 +39,7 @@ module deepbook::state_manager {
         maker_volume: u64,
         old_stake: u64,
         new_stake: u64,
-        voted_proposal: Option<u64>,
+        voted_proposal: Option<address>,
         unclaimed_rebates: u64,
         settled_base_amount: u64,
         settled_quote_amount: u64,
@@ -209,8 +209,8 @@ module deepbook::state_manager {
     public(package) fun set_user_voted_proposal(
         self: &mut StateManager,
         user: address,
-        proposal_id: Option<u64>,
-    ): Option<u64> {
+        proposal_id: Option<address>,
+    ): Option<address> {
         let user = update_user(self, user);
         let cur_proposal = user.voted_proposal;
         user.voted_proposal = proposal_id;
