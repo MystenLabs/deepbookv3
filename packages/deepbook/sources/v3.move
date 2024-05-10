@@ -48,7 +48,7 @@ module deepbook::v3 {
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         book: Book,
-        user: UserManager,
+        user_manager: UserManager,
         vault: Vault<BaseAsset, QuoteAsset>,
     }
 
@@ -93,7 +93,7 @@ module deepbook::v3 {
         let pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
             book: v3book::empty(tick_size, lot_size, min_size, ctx),
-            user: v3user_manager::empty(taker_fee, maker_fee, 0, ctx),
+            user_manager: v3user_manager::empty(taker_fee, maker_fee, 0, ctx),
             vault: v3vault::empty(),
         };
 
@@ -120,8 +120,8 @@ module deepbook::v3 {
         let mut order_info =
             v3order::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp);
         self.book.create_order(&mut order_info, clock.timestamp_ms());
-        self.user.process_create(&order_info, ctx);
-        self.vault.settle_order(&mut order_info, &mut self.user, account, proof);
+        self.user_manager.process_create(&mut order_info, ctx);
+        self.vault.settle_user(&mut self.user_manager, account, proof);
     }
 
     /// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
@@ -179,8 +179,7 @@ module deepbook::v3 {
         let proof = temp_account.generate_proof_as_owner(ctx);
 
         let is_bid = quote_quantity > 0;
-        let (taker_fee, _) = self.user.fees_for_user(temp_account.owner());
-        let (base_fee, quote_fee, _) = self.vault.calculate_fees(taker_fee, base_quantity, quote_quantity);
+        let (base_fee, quote_fee, _) = self.user_manager.calculate_fees(temp_account.owner(), base_quantity, quote_quantity);
         base_quantity = base_quantity - base_fee;
         quote_quantity = quote_quantity - quote_fee;
         if (is_bid) {
@@ -208,8 +207,8 @@ module deepbook::v3 {
         ctx: &TxContext,
     ) {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
-        self.user.process_modify(account.owner(), base, quote, deep, ctx);
-        self.vault.settle_user(&mut self.user, account, proof);
+        self.user_manager.process_modify(account.owner(), base, quote, deep, ctx);
+        self.vault.settle_user(&mut self.user_manager, account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
     }
@@ -223,8 +222,8 @@ module deepbook::v3 {
         ctx: &TxContext,
     ) {
         let mut order = self.book.cancel_order(order_id);
-        self.user.process_cancel(&mut order, order_id, account.owner(), ctx);
-        self.vault.settle_user(&mut self.user, account, proof);
+        self.user_manager.process_cancel(&mut order, order_id, account.owner(), ctx);
+        self.vault.settle_user(&mut self.user_manager, account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
     }
@@ -236,8 +235,8 @@ module deepbook::v3 {
         amount: u64,
         ctx: &TxContext,
     ) {
-        self.user.process_stake(account.owner(), amount, ctx);
-        self.vault.settle_user(&mut self.user, account, proof);
+        self.user_manager.process_stake(account.owner(), amount, ctx);
+        self.vault.settle_user(&mut self.user_manager, account, proof);
     }
 
     public fun unstake<BaseAsset, QuoteAsset>(
@@ -248,8 +247,8 @@ module deepbook::v3 {
     ) {
         account.validate_proof(proof);
 
-        self.user.process_unstake(account.owner(), ctx);
-        self.vault.settle_user(&mut self.user, account, proof);
+        self.user_manager.process_unstake(account.owner(), ctx);
+        self.vault.settle_user(&mut self.user_manager, account, proof);
     }
 
     public fun submit_proposal<BaseAsset, QuoteAsset>(
@@ -263,7 +262,7 @@ module deepbook::v3 {
     ) {
         account.validate_proof(proof);
 
-        self.user.process_proposal(account.owner(), taker_fee, maker_fee, stake_required, ctx);
+        self.user_manager.process_proposal(account.owner(), taker_fee, maker_fee, stake_required, ctx);
     }
 
     public fun vote<BaseAsset, QuoteAsset>(
@@ -275,7 +274,7 @@ module deepbook::v3 {
     ) {
         account.validate_proof(proof);
 
-        self.user.process_vote(account.owner(), proposal_id, ctx);
+        self.user_manager.process_vote(account.owner(), proposal_id, ctx);
     }
 
 }

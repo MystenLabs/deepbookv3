@@ -1,12 +1,7 @@
 module deepbook::v3state {
-    use sui::{
-        table::{Self, Table},
+    use sui::table::{Self, Table};
 
-    };
-
-    use deepbook::{
-        v3governance::Proposal,
-    };
+    use deepbook::v3governance::Proposal;
 
     const EHistoricVolumesNotFound: u64 = 1;
 
@@ -16,7 +11,6 @@ module deepbook::v3state {
         maker_fee: u64,
         stake_required: u64,
     }
-
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {

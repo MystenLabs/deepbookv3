@@ -5,9 +5,11 @@ module deepbook::v3user_manager {
     };
 
     use deepbook::{
+        math,
         v3state::{Self, State},
         v3order::{OrderInfo, Order},
         v3governance::{Self, Governance},
+        v3deep_price::{Self, DeepPrice},
     };
 
     const ENotEnoughStake: u64 = 2;
@@ -32,9 +34,10 @@ module deepbook::v3user_manager {
     }
 
     public struct UserManager has store {
+        users: Table<address, User>,
         state: State,
         governance: Governance,
-        users: Table<address, User>,
+        deep_price: DeepPrice,
     }
 
     public(package) fun empty(taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &mut TxContext): UserManager {
@@ -42,12 +45,13 @@ module deepbook::v3user_manager {
             state: v3state::empty(taker_fee, maker_fee, stake_required, ctx),
             governance: v3governance::empty(ctx.epoch()),
             users: table::new(ctx),
+            deep_price: v3deep_price::empty(),
         }
     }
 
     public(package) fun process_create(
         self: &mut UserManager,
-        order_info: &OrderInfo,
+        order_info: &mut OrderInfo,
         ctx: &TxContext,
     ) {
         self.state.update(ctx);
@@ -71,8 +75,9 @@ module deepbook::v3user_manager {
             i = i + 1;
         };
 
-        let user = self.update_user(order_info.owner(), ctx.epoch());
-        user.open_orders.insert(order_info.order_id());
+        self.update_user(order_info.owner(), ctx.epoch());
+        self.calculate_trade_balances(order_info.owner(), order_info);
+        self.users[order_info.owner()].open_orders.insert(order_info.order_id());
     }
 
     public(package) fun process_cancel(
@@ -185,32 +190,6 @@ module deepbook::v3user_manager {
         self.state.set_next_trade_params(winning_proposal);
     }
 
-    public(package) fun add_settled_amounts(
-        self: &mut UserManager,
-        user: address,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        let user = &mut self.users[user];
-        user.settled_base_amount = user.settled_base_amount + base;
-        user.settled_quote_amount = user.settled_quote_amount + quote;
-        user.settled_deep_amount = user.settled_deep_amount + deep;
-    }
-
-    public(package) fun add_owed_amounts(
-        self: &mut UserManager,
-        user: address,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        let user = &mut self.users[user];
-        user.owed_base_amount = user.owed_base_amount + base;
-        user.owed_quote_amount = user.owed_quote_amount + quote;
-        user.owed_deep_amount = user.owed_deep_amount + deep;
-    }
-
     public(package) fun settle_user(
         self: &mut UserManager,
         user: address,
@@ -232,24 +211,14 @@ module deepbook::v3user_manager {
         (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     }
 
-    public(package) fun fees_for_user(
+    public(package) fun calculate_fees(
         self: &UserManager,
         user: address,
-    ): (u64, u64)  {
-        // TODO: user has to trade a certain amount of volume first
-        let stake = if (self.users.contains(user)) {
-            self.users[user].old_stake
-        } else {
-            0
-        };
-        let (taker_fee, maker_fee, stake_required) = self.state.trade_params();
-        let taker_fee = if (stake >= stake_required) {
-            taker_fee / 2
-        } else {
-            taker_fee
-        };
-
-        (taker_fee, maker_fee)
+        base_quantity: u64,
+        quote_quantity: u64
+    ): (u64, u64, u64) {
+        let (taker_fee, _) = self.fees_for_user(user);
+        self.deep_price.calculate_fees(taker_fee, base_quantity, quote_quantity)
     }
 
     fun update_user(
@@ -294,5 +263,83 @@ module deepbook::v3user_manager {
                 owed_deep_amount: 0,
             });
         };
+    }
+
+    /// Given an order, transfer the appropriate balances. Up until this point, any partial fills have been executed
+    /// and the remaining quantity is the only quantity left to be injected into the order book.
+    /// 1. Transfer the taker balances while applying taker fees.
+    /// 2. Transfer the maker balances while applying maker fees.
+    /// 3. Update the total fees for the order.
+    fun calculate_trade_balances(
+        self: &mut UserManager,
+        user: address,
+        order_info: &mut OrderInfo,
+    ) {
+        let (mut base_in, mut base_out) = (0, 0);
+        let (mut quote_in, mut quote_out) = (0, 0);
+        let mut deep_in = 0;
+        let (taker_fee, maker_fee) = self.fees_for_user(user);
+        let executed_quantity = order_info.executed_quantity();
+        let remaining_quantity = order_info.remaining_quantity();
+        let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
+
+        // Calculate the taker balances. These are derived from executed quantity.
+        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
+            self.deep_price.calculate_fees(taker_fee, 0, cumulative_quote_quantity)
+        } else {
+            self.deep_price.calculate_fees(taker_fee, executed_quantity, 0)
+        };
+        let mut total_fees = base_fee + quote_fee + deep_fee;
+        deep_in = deep_in + deep_fee;
+        if (order_info.is_bid()) {
+            quote_in = quote_in + cumulative_quote_quantity + quote_fee;
+            base_out = base_out + executed_quantity;
+        } else {
+            base_in = base_in + executed_quantity + base_fee;
+            quote_out = quote_out + cumulative_quote_quantity;
+        };
+
+        // Calculate the maker balances. These are derived from the remaining quantity.
+        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
+            self.deep_price.calculate_fees(maker_fee, 0, math::mul(remaining_quantity, order_info.price()))
+        } else {
+            self.deep_price.calculate_fees(maker_fee, remaining_quantity, 0)
+        };
+        total_fees = total_fees + base_fee + quote_fee + deep_fee;
+        deep_in = deep_in + deep_fee;
+        if (order_info.is_bid()) {
+            quote_in = quote_in + math::mul(remaining_quantity, order_info.price()) + quote_fee;
+        } else {
+            base_in = base_in + remaining_quantity + base_fee;
+        };
+
+        order_info.set_total_fees(total_fees);
+
+        let user = &mut self.users[user];
+        user.owed_base_amount = user.owed_base_amount + base_in;
+        user.owed_quote_amount = user.owed_quote_amount + quote_in;
+        user.owed_deep_amount = user.owed_deep_amount + deep_in;
+        user.settled_base_amount = user.settled_base_amount + base_out;
+        user.settled_quote_amount = user.settled_quote_amount + quote_out;
+    }
+
+    fun fees_for_user(
+        self: &UserManager,
+        user: address,
+    ): (u64, u64)  {
+        // TODO: user has to trade a certain amount of volume first
+        let stake = if (self.users.contains(user)) {
+            self.users[user].old_stake
+        } else {
+            0
+        };
+        let (taker_fee, maker_fee, stake_required) = self.state.trade_params();
+        let taker_fee = if (stake >= stake_required) {
+            taker_fee / 2
+        } else {
+            taker_fee
+        };
+
+        (taker_fee, maker_fee)
     }
 }

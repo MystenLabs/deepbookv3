@@ -60,23 +60,18 @@ module deepbook::v3order {
         original_quantity: u64,
         // Expiration timestamp in ms
         expire_timestamp: u64,
-
-
         // Quantity executed so far
         executed_quantity: u64,
         // Cumulative quote quantity executed so far
         cumulative_quote_quantity: u64,
+        // Any partial fills
         fills: vector<Fill>,
-
-        maker_fee: u64,
-        taker_fee: u64,
+        // Whether the fee is in DEEP terms
         fee_is_deep: bool,
-
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
         // Total fees for the order in base/quote/DEEP terms
         total_fees: u64,
-
         // Status of the order
         status: u8,
         // Reserved field for prevent self_matching
@@ -188,18 +183,12 @@ module deepbook::v3order {
             is_bid,
             original_quantity: quantity,
             expire_timestamp,
-
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
             fills: vector[],
-
-            maker_fee: 0,
-            taker_fee: 0,
             fee_is_deep: false,
-
             paid_fees: 0,
             total_fees: 0,
-
             status: LIVE,
             self_matching_prevention: false,
         }
