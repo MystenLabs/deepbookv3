@@ -122,7 +122,7 @@ module deepbook::account {
     ) {
         let proof = generate_proof_as_owner(account, ctx);
 
-        account.deposit_with_proof(&proof, coin);
+        account.deposit_with_proof(&proof, coin.into_balance());
     }
 
     /// Withdraw funds from an account. Only owner can call this directly.
@@ -134,7 +134,7 @@ module deepbook::account {
     ): Coin<T> {
         let proof = generate_proof_as_owner(account, ctx);
 
-        account.withdraw_with_proof(&proof, amount, withdraw_all, ctx)
+        account.withdraw_with_proof(&proof, amount, withdraw_all).into_coin(ctx)
     }
 
     public fun validate_proof(account: &Account, proof: &TradeProof) {
@@ -150,12 +150,11 @@ module deepbook::account {
     public(package) fun deposit_with_proof<T>(
         account: &mut Account,
         proof: &TradeProof,
-        coin: Coin<T>,
+        to_deposit: Balance<T>,
     ) {
         account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
-        let to_deposit = coin.into_balance();
 
         if (account.balances.contains(key)) {
             let balance: &mut Balance<T> = &mut account.balances[key];
@@ -171,8 +170,7 @@ module deepbook::account {
         proof: &TradeProof,
         amount: u64,
         withdraw_all: bool,
-        ctx: &mut TxContext,
-    ): Coin<T> {
+    ): Balance<T> {
         account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
@@ -182,9 +180,9 @@ module deepbook::account {
 
         if (!withdraw_all) {
             assert!(value >= amount, EAccountBalanceTooLow);
-            acc_balance.split(amount).into_coin(ctx)
+            acc_balance.split(amount)
         } else {
-            acc_balance.split(value).into_coin(ctx)
+            acc_balance.split(value)
         }
     }
 

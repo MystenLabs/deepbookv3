@@ -488,7 +488,7 @@ Deposit funds to an account. Only owner can call this directly.
 ) {
     <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
 
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>(&proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>);
+    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>(&proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance());
 }
 </code></pre>
 
@@ -520,7 +520,7 @@ Withdraw funds from an account. Only owner can call this directly.
 ): Coin&lt;T&gt; {
     <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
 
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, amount, withdraw_all, ctx)
+    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, amount, withdraw_all).into_coin(ctx)
 }
 </code></pre>
 
@@ -584,7 +584,7 @@ Returns the owner of the account.
 Deposit funds to an account. Pool will call this to deposit funds.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, to_deposit: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;)
 </code></pre>
 
 
@@ -596,12 +596,11 @@ Deposit funds to an account. Pool will call this to deposit funds.
 <pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
     proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
-    <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>: Coin&lt;T&gt;,
+    to_deposit: Balance&lt;T&gt;,
 ) {
     <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
 
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>let</b> to_deposit = <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance();
 
     <b>if</b> (<a href="account.md#0x0_account">account</a>.balances.contains(key)) {
         <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.balances[key];
@@ -623,7 +622,7 @@ Deposit funds to an account. Pool will call this to deposit funds.
 Withdraw funds from an account. Pool will call this to withdraw funds.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, withdraw_all: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, withdraw_all: bool): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
 </code></pre>
 
 
@@ -637,8 +636,7 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
     proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
     amount: u64,
     withdraw_all: bool,
-    ctx: &<b>mut</b> TxContext,
-): Coin&lt;T&gt; {
+): Balance&lt;T&gt; {
     <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
 
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
@@ -648,9 +646,9 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
     <b>if</b> (!withdraw_all) {
         <b>assert</b>!(value &gt;= amount, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
-        acc_balance.split(amount).into_coin(ctx)
+        acc_balance.split(amount)
     } <b>else</b> {
-        acc_balance.split(value).into_coin(ctx)
+        acc_balance.split(value)
     }
 }
 </code></pre>

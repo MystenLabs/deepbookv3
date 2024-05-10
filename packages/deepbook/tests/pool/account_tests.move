@@ -51,7 +51,7 @@ module deepbook::account_tests {
             let mut account = account::new(test.ctx());
             let proof = account.generate_proof_as_owner(test.ctx());
             account.deposit_with_proof(&proof,
-                mint_for_testing<SUI>(100, test.ctx())
+                mint_for_testing<SUI>(100, test.ctx()).into_balance()
             );
             let balance = account.balance<SUI>();
             assert!(balance == 100, 0);
@@ -76,7 +76,7 @@ module deepbook::account_tests {
             let proof = account.generate_proof_as_trader(&cap);
 
             account.deposit_with_proof(&proof,
-                mint_for_testing<SUI>(100, test.ctx())
+                mint_for_testing<SUI>(100, test.ctx()).into_balance()
             );
             let balance = account.balance<SUI>();
             assert!(balance == 100, 0);
@@ -92,7 +92,7 @@ module deepbook::account_tests {
             let proof = account.generate_proof_as_trader(&cap);
 
             account.deposit_with_proof(&proof,
-                mint_for_testing<DEEP>(100000, test.ctx())
+                mint_for_testing<DEEP>(100000, test.ctx()).into_balance()
             );
             let balance = account.balance<DEEP>();
             assert!(balance == 100000, 0);
@@ -170,7 +170,7 @@ module deepbook::account_tests {
             let proof = account.generate_proof_as_trader(&cap);
 
             account.deposit_with_proof(&proof,
-                mint_for_testing<SUI>(100, test.ctx())
+                mint_for_testing<SUI>(100, test.ctx()).into_balance()
             );
             let balance = account.balance<SUI>();
             assert!(balance == 100, 0);
@@ -187,7 +187,7 @@ module deepbook::account_tests {
             let proof = account.generate_proof_as_trader(&cap);
 
             account.deposit_with_proof(&proof,
-                mint_for_testing<DEEP>(100000, test.ctx())
+                mint_for_testing<DEEP>(100000, test.ctx()).into_balance()
             );
         };
 
