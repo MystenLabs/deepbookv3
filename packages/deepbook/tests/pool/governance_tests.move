@@ -65,6 +65,18 @@ module deepbook::governance_tests {
         end(scenario);
     }
 
+    #[test]
+    fun change_vote_from_deleted() {
+        let (mut scenario, owner) = setup();
+        next_tx(&mut scenario, owner);
+        let mut metadata = governance::empty(0);
+        metadata.add_proposal(600000, 300000, 20000, 1000, ALICE);
+
+        metadata.vote(option::some(owner), option::some(ALICE), 100);
+        metadata.delete();
+        end(scenario);
+    }
+
     #[test, expected_failure(abort_code = governance::EAlreadyProposed)]
     fun repeat_proposer_e() {
         let (mut scenario, owner) = setup();
