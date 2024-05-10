@@ -441,7 +441,7 @@ module deepbook::pool {
         order_id: u128,
         clock: &Clock,
         ctx: &TxContext,
-    ): Order {
+    ) {
         let mut order = if (order_is_bid(order_id)) {
             self.bids.remove(order_id)
         } else {
@@ -461,8 +461,6 @@ module deepbook::pool {
         self.settle_user(account, proof, ctx);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
-
-        order
     }
 
     /// Claim the rebates for the user
@@ -483,8 +481,7 @@ module deepbook::pool {
         proof: &TradeProof,
         clock: &Clock,
         ctx: &TxContext,
-    ): vector<Order>{
-        let mut cancelled_orders = vector[];
+    ) {
         let user_open_orders = self.state_manager.user_open_orders(account.owner());
 
         let orders_vector = user_open_orders.into_keys();
@@ -492,12 +489,9 @@ module deepbook::pool {
         let mut i = 0;
         while (i < len) {
             let key = orders_vector[i];
-            let cancelled_order = cancel_order(self, account, proof, key, clock, ctx);
-            cancelled_orders.push_back(cancelled_order);
+            cancel_order(self, account, proof, key, clock, ctx);
             i = i + 1;
         };
-
-        cancelled_orders
     }
 
     /// Get all open orders for a user.
@@ -640,16 +634,19 @@ module deepbook::pool {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
-        self.governance.add_proposal(self.stable, taker_fee, maker_fee, stake_required);
+        let from_proposal_id = self.state_manager.set_user_voted_proposal(user, option::none(), ctx.epoch());
+        self.governance.adjust_vote(from_proposal_id, option::none(), stake);
+        self.governance.add_proposal(self.stable, taker_fee, maker_fee, stake_required, stake, user);
+        self.vote(user, user, ctx);
     }
 
     /// Vote on a proposal using the user's full voting power.
-    /// If the vote pushes proposal over quorum, update the Pool's 
+    /// If the vote pushes proposal over quorum, update the Pool's
     /// next_trade_params.
     public(package) fun vote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         user: address,
-        proposal_id: u64,
+        proposal_id: address,
         ctx: &TxContext,
     ) {
         let (stake, _) = self.state_manager.user_stake(user, ctx.epoch());

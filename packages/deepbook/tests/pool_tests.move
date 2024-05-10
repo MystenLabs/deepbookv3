@@ -364,18 +364,6 @@ module deepbook::pool_tests {
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
 
-        // variables expected from Order that's cancelled
-        let status = CANCELED;
-        let self_matching_prevention = false;
-        let paid_fees = 0;
-        let total_fees = if (is_bid) {
-            math::mul(MAKER_FEE, math::mul(price, quantity))
-        } else {
-            math::mul(MAKER_FEE, quantity)
-        };
-        let unpaid_fees = total_fees - paid_fees;
-        let fee_is_deep = false;
-
         let order_id = place_order(
             owner,
             acct_id,
@@ -388,23 +376,11 @@ module deepbook::pool_tests {
             &mut test,
         ).order_id();
 
-        let cancelled_order = &cancel_order(
+        cancel_order(
             owner,
             acct_id,
             order_id,
             &mut test
-        );
-
-        verify_book_order(
-            cancelled_order,
-            order_id,
-            client_order_id,
-            quantity,
-            unpaid_fees,
-            fee_is_deep,
-            status,
-            expire_timestamp,
-            self_matching_prevention,
         );
         end(test);
     }
@@ -561,7 +537,7 @@ module deepbook::pool_tests {
         acct_id: ID,
         order_id: u128,
         test: &mut Scenario,
-    ): Order {
+    ) {
         test.next_tx(owner);
         {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
@@ -569,7 +545,7 @@ module deepbook::pool_tests {
             let mut account = test.take_shared_by_id<Account>(acct_id);
 
             let proof = account.generate_proof_as_owner(test.ctx());
-            let cancelled_order = pool.cancel_order<SUI, USDC>(
+            pool.cancel_order<SUI, USDC>(
                 &mut account,
                 &proof,
                 order_id,
@@ -579,8 +555,6 @@ module deepbook::pool_tests {
             return_shared(pool);
             return_shared(clock);
             return_shared(account);
-
-            cancelled_order
         }
     }
 
