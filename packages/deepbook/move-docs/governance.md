@@ -478,13 +478,14 @@ Returns the winning proposal if it exists.
 
     <b>if</b> (from_proposal_id.is_some()) {
         <b>let</b> id = from_proposal_id.borrow();
-        <b>assert</b>!(self.proposals.contains(id), <a href="governance.md#0x0_governance_EProposalDoesNotExist">EProposalDoesNotExist</a>);
-        self.proposals[id].votes = self.proposals[id].votes - voting_power;
+        <b>if</b> (self.proposals.contains(id)) {
+            self.proposals[id].votes = self.proposals[id].votes - voting_power;
 
-        // This was the winning proposal, now it is not.
-        <b>if</b> (self.proposals[id].votes + voting_power &gt; self.quorum &&
-            self.proposals[id].votes &lt;= self.quorum) {
-            self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+            // This was the winning proposal, now it is not.
+            <b>if</b> (self.proposals[id].votes + voting_power &gt; self.quorum &&
+                self.proposals[id].votes &lt;= self.quorum) {
+                self.winning_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+            };
         };
     };
 

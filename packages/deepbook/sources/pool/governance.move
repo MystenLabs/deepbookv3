@@ -133,13 +133,14 @@ module deepbook::governance {
 
         if (from_proposal_id.is_some()) {
             let id = from_proposal_id.borrow();
-            assert!(self.proposals.contains(id), EProposalDoesNotExist);
-            self.proposals[id].votes = self.proposals[id].votes - voting_power;
+            if (self.proposals.contains(id)) {
+                self.proposals[id].votes = self.proposals[id].votes - voting_power;
 
-            // This was the winning proposal, now it is not.
-            if (self.proposals[id].votes + voting_power > self.quorum &&
-                self.proposals[id].votes <= self.quorum) {
-                self.winning_proposal = option::none();
+                // This was the winning proposal, now it is not.
+                if (self.proposals[id].votes + voting_power > self.quorum &&
+                    self.proposals[id].votes <= self.quorum) {
+                    self.winning_proposal = option::none();
+                };
             };
         };
 
