@@ -389,7 +389,6 @@ module deepbook::order_info {
         let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), maker.quantity());
         maker.set_unpaid_fees(unpaid_fees - maker_fees);
 
-        // TODO:
         self.emit_order_filled(
             maker,
             price,
@@ -409,6 +408,20 @@ module deepbook::order_info {
         });
 
         true
+    }
+
+    public(package) fun emit_order_placed(self: &OrderInfo) {
+        event::emit(OrderPlaced {
+            pool_id: self.pool_id,
+            order_id: self.order_id,
+            client_order_id: self.client_order_id,
+            is_bid: self.is_bid,
+            owner: self.owner,
+            trader: self.trader,
+            placed_quantity: self.remaining_quantity(),
+            price: self.price,
+            expire_timestamp: self.expire_timestamp,
+        });
     }
 
     fun emit_order_filled(
@@ -432,20 +445,6 @@ module deepbook::order_info {
             taker_address: self.owner,
             taker_is_bid: self.is_bid,
             timestamp,
-        });
-    }
-
-    public(package) fun emit_order_placed(self: &OrderInfo) {
-        event::emit(OrderPlaced {
-            pool_id: self.pool_id,
-            order_id: self.order_id,
-            client_order_id: self.client_order_id,
-            is_bid: self.is_bid,
-            owner: self.owner,
-            trader: self.trader,
-            placed_quantity: self.remaining_quantity(),
-            price: self.price,
-            expire_timestamp: self.expire_timestamp,
         });
     }
 }

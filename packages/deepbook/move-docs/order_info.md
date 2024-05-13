@@ -45,8 +45,8 @@ All order matching happens in this module.
 -  [Function `settled_quantities`](#0x0_order_info_settled_quantities)
 -  [Function `crosses_price`](#0x0_order_info_crosses_price)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
--  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
+-  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
 <pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
@@ -1579,7 +1579,6 @@ Funds for an expired order are returned to the maker as settled.
     <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), maker.quantity());
     maker.set_unpaid_fees(unpaid_fees - maker_fees);
 
-    // TODO:
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
         price,
@@ -1599,6 +1598,40 @@ Funds for an expired order are returned to the maker as settled.
     });
 
     <b>true</b>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_emit_order_placed"></a>
+
+## Function `emit_order_placed`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order_info.md#0x0_order_info_OrderPlaced">OrderPlaced</a> {
+        pool_id: self.pool_id,
+        order_id: self.order_id,
+        client_order_id: self.client_order_id,
+        is_bid: self.is_bid,
+        owner: self.owner,
+        trader: self.trader,
+        placed_quantity: self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
+        price: self.price,
+        expire_timestamp: self.expire_timestamp,
+    });
 }
 </code></pre>
 
@@ -1642,40 +1675,6 @@ Funds for an expired order are returned to the maker as settled.
         taker_address: self.owner,
         taker_is_bid: self.is_bid,
         timestamp,
-    });
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_emit_order_placed"></a>
-
-## Function `emit_order_placed`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order_info.md#0x0_order_info_OrderPlaced">OrderPlaced</a> {
-        pool_id: self.pool_id,
-        order_id: self.order_id,
-        client_order_id: self.client_order_id,
-        is_bid: self.is_bid,
-        owner: self.owner,
-        trader: self.trader,
-        placed_quantity: self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
-        price: self.price,
-        expire_timestamp: self.expire_timestamp,
     });
 }
 </code></pre>

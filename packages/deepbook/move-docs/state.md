@@ -253,7 +253,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, order_id: u128, account_owner: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, order_id: u128, owner: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -266,14 +266,14 @@
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
     order_id: u128,
-    account_owner: <b>address</b>,
+    owner: <b>address</b>,
     ctx: &TxContext,
 ) {
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
     <a href="order.md#0x0_order">order</a>.set_canceled();
-    self.<a href="state.md#0x0_state_update_user">update_user</a>(account_owner, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
 
-    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[account_owner];
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
     <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
     <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(
         cancel_quantity,
