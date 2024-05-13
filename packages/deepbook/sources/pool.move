@@ -17,7 +17,7 @@ module deepbook::pool {
 
     use deepbook::{
         account::{Self, Account, TradeProof},
-        order,
+        order_info,
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, DEEP},
@@ -125,7 +125,7 @@ module deepbook::pool {
     ) {
         let (taker_fee, maker_fee, stake_required) = self.state.governance().trade_params();
         let mut order_info =
-            order::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
+            order_info::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()), taker_fee, maker_fee, stake_required);
@@ -150,7 +150,7 @@ module deepbook::pool {
             account,
             proof,
             client_order_id,
-            order::fill_or_kill(),
+            order_info::fill_or_kill(),
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,

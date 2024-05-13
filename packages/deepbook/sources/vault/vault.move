@@ -8,7 +8,7 @@ module deepbook::vault {
         account::{Account, TradeProof},
         deep_price::{Self, DeepPrice},
         user::User,
-        order::OrderInfo,
+        order_info::OrderInfo,
     };
 
     const EIneligibleTargetPool: u64 = 1;
