@@ -167,7 +167,5 @@ module deepbook::v3book {
         } else {
             self.asks.insert(order_info.order_id(), order);
         };
-
-        order_info.emit_order_placed();
     }
 }

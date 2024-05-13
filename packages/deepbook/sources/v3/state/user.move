@@ -1,0 +1,169 @@
+module deepbook::v3user {
+    use sui::{
+        vec_set::{Self, VecSet},
+    };
+
+    /// User data that is updated every epoch.
+    public struct User has store, copy, drop {
+        epoch: u64,
+        open_orders: VecSet<u128>,
+        maker_volume: u64,
+        active_stake: u64,
+        inactive_stake: u64,
+        voted_proposal: Option<address>,
+        unclaimed_rebates: u64,
+        settled_base_amount: u64,
+        settled_quote_amount: u64,
+        settled_deep_amount: u64,
+        owed_base_amount: u64,
+        owed_quote_amount: u64,
+        owed_deep_amount: u64,
+    }
+
+    public(package) fun empty(
+        epoch: u64,
+    ): User {
+        User {
+            epoch,
+            open_orders: vec_set::empty(),
+            maker_volume: 0,
+            active_stake: 0,
+            inactive_stake: 0,
+            voted_proposal: option::none(),
+            unclaimed_rebates: 0,
+            settled_base_amount: 0,
+            settled_quote_amount: 0,
+            settled_deep_amount: 0,
+            owed_base_amount: 0,
+            owed_quote_amount: 0,
+            owed_deep_amount: 0,
+        }
+    }
+
+    public(package) fun active_stake(
+        self: &User,
+    ): u64 {
+        self.active_stake
+    }
+
+    public(package) fun maker_volume(
+        self: &User,
+    ): u64 {
+        self.maker_volume
+    }
+
+    public(package) fun set_voted_proposal(
+        self: &mut User,
+        proposal: Option<address>
+    ): Option<address> {
+        let prev_proposal = self.voted_proposal;
+        self.voted_proposal = proposal;
+
+        prev_proposal
+    }
+
+    public(package) fun settle(
+        self: &mut User,
+    ): (u64, u64, u64, u64, u64, u64) {
+        let base_out = self.settled_base_amount;
+        let quote_out = self.settled_quote_amount;
+        let deep_out = self.settled_deep_amount;
+        let base_in = self.owed_base_amount;
+        let quote_in = self.owed_quote_amount;
+        let deep_in = self.owed_deep_amount;
+        self.settled_base_amount = 0;
+        self.settled_quote_amount = 0;
+        self.settled_deep_amount = 0;
+        self.owed_base_amount = 0;
+        self.owed_quote_amount = 0;
+        self.owed_deep_amount = 0;
+
+        (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
+    }
+
+    public(package) fun update(
+        self: &mut User,
+        epoch: u64,
+    ): (u64, u64, u64) {
+        if (self.epoch == epoch) return (0, 0, 0);
+
+        let prev_epoch = self.epoch;
+        let maker_volume = self.maker_volume;
+        let active_stake = self.active_stake;
+
+        self.epoch = epoch;
+        self.maker_volume = 0;
+        self.active_stake = self.active_stake + self.inactive_stake;
+        self.inactive_stake = 0;
+        self.voted_proposal = option::none();
+
+        (prev_epoch, maker_volume, active_stake)
+    }
+
+    public(package) fun add_rebates(
+        self: &mut User,
+        rebates: u64,
+    ) {
+        self.unclaimed_rebates = self.unclaimed_rebates + rebates;
+    }
+
+    public(package) fun add_settled_amounts(
+        self: &mut User,
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
+        self.settled_base_amount = self.settled_base_amount + base;
+        self.settled_quote_amount = self.settled_quote_amount + quote;
+        self.settled_deep_amount = self.settled_deep_amount + deep;
+    }
+
+    public(package) fun add_owed_amounts(
+        self: &mut User,
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
+        self.owed_base_amount = self.owed_base_amount + base;
+        self.owed_quote_amount = self.owed_quote_amount + quote;
+        self.owed_deep_amount = self.owed_deep_amount + deep;
+    }
+
+    public(package) fun add_order(
+        self: &mut User,
+        order_id: u128,
+    ) {
+        self.open_orders.insert(order_id);
+    }
+
+    public(package) fun remove_order(
+        self: &mut User,
+        order_id: u128,
+    ) {
+        self.open_orders.remove(&order_id)
+    }
+
+    public(package) fun add_stake(
+        self: &mut User,
+        stake: u64,
+    ): (u64, u64) {
+        let stake_before = self.active_stake + self.inactive_stake;
+        self.inactive_stake = self.inactive_stake + stake;
+        self.owed_deep_amount = self.owed_deep_amount + stake;
+
+        (stake_before, stake_before + self.inactive_stake)
+    }
+
+    public(package) fun remove_stake(
+        self: &mut User,
+    ): (u64, Option<address>) {
+        let stake_before = self.active_stake + self.inactive_stake;
+        let voted_proposal = self.voted_proposal;
+        self.active_stake = 0;
+        self.inactive_stake = 0;
+        self.voted_proposal = option::none();
+        self.settled_deep_amount = self.settled_deep_amount + stake_before;
+
+        (stake_before, voted_proposal)
+    }
+}

@@ -1,16 +1,7 @@
-module deepbook::v3state {
+module deepbook::v3history {
     use sui::table::{Self, Table};
 
-    use deepbook::v3governance::Proposal;
-
     const EHistoricVolumesNotFound: u64 = 1;
-
-    /// Parameters that can be updated by governance.
-    public struct TradeParams has store, copy, drop {
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
-    }
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {
@@ -21,41 +12,16 @@ module deepbook::v3state {
         users_with_rebates: u64,
     }
 
-    public struct State has store {
+    public struct History has store {
         epoch: u64,
-        trade_params: TradeParams,
-        next_trade_params: TradeParams,
         volumes: Volumes,
         historic_volumes: Table<u64, Volumes>,
         balance_to_burn: u64,
     }
 
-    public(package) fun new_trade_params(
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
-    ): TradeParams {
-        TradeParams {
-            taker_fee,
-            maker_fee,
-            stake_required,
-        }
-    }
-
-    public(package) fun trade_params(
-        self: &State,
-    ): (u64, u64, u64) {
-        (self.trade_params.taker_fee, self.trade_params.maker_fee, self.trade_params.stake_required)
-    }
-
     public(package) fun empty(
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
         ctx: &mut TxContext,
-    ): State {
-        let trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
-        let next_trade_params = new_trade_params(taker_fee, maker_fee, stake_required);
+    ): History {
         let volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
@@ -63,10 +29,8 @@ module deepbook::v3state {
             stake_required: 0,
             users_with_rebates: 0,
         };
-        State {
+        History {
             epoch: ctx.epoch(),
-            trade_params,
-            next_trade_params,
             volumes,
             historic_volumes: table::new(ctx),
             balance_to_burn: 0,
@@ -74,7 +38,7 @@ module deepbook::v3state {
     }
 
     public(package) fun update(
-        self: &mut State,
+        self: &mut History,
         ctx: &TxContext,
     ) {
         let epoch = ctx.epoch();
@@ -82,14 +46,13 @@ module deepbook::v3state {
         if (self.volumes.users_with_rebates > 0) {
             self.historic_volumes.add(self.epoch, self.volumes);
         };
-        self.trade_params = self.next_trade_params;
         self.epoch = epoch;
     }
 
     /// Given the epoch's volume data and the user's volume data,
     /// calculate the rebate and burn amounts.
     public(package) fun calculate_rebate_amount(
-        self: &mut State,
+        self: &mut History,
         epoch: u64,
         _maker_volume: u64,
         user_stake: u64,
@@ -109,7 +72,7 @@ module deepbook::v3state {
     }
 
     public(package) fun add_volume(
-        self: &mut State,
+        self: &mut History,
         maker_volume: u64,
         user_stake: u64,
         first_volume_by_user: bool,
@@ -121,15 +84,5 @@ module deepbook::v3state {
                 self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
             }
         };
-    }
-
-    /// Set the fee parameters for the next epoch. Pushed by governance.
-    public(package) fun set_next_trade_params(
-        self: &mut State,
-        proposal: Option<Proposal>,
-    ) {
-        if (proposal.is_none()) return;
-        let (taker, maker, stake) = proposal.borrow().params();
-        self.next_trade_params = new_trade_params(taker, maker, stake);
     }
 }

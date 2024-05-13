@@ -70,8 +70,8 @@ module deepbook::v3order {
         fee_is_deep: bool,
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
-        // Total fees for the order in base/quote/DEEP terms
-        total_fees: u64,
+        // Maker fee when injecting order
+        maker_fee: u64,
         // Status of the order
         status: u8,
         // Reserved field for prevent self_matching
@@ -172,6 +172,7 @@ module deepbook::v3order {
         quantity: u64,
         is_bid: bool,
         expire_timestamp: u64,
+        maker_fee: u64,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -188,7 +189,7 @@ module deepbook::v3order {
             fills: vector[],
             fee_is_deep: false,
             paid_fees: 0,
-            total_fees: 0,
+            maker_fee,
             status: LIVE,
             self_matching_prevention: false,
         }
@@ -238,8 +239,8 @@ module deepbook::v3order {
         self.paid_fees
     }
 
-    public fun total_fees(self: &OrderInfo): u64 {
-        self.total_fees
+    public fun maker_fee(self: &OrderInfo): u64 {
+        self.maker_fee
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
@@ -311,12 +312,13 @@ module deepbook::v3order {
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(self: &OrderInfo): Order {
+        let unpaid_fees = self.remaining_quantity() * self.maker_fee;
         Order {
             order_id: self.order_id,
             client_order_id: self.client_order_id,
             owner: self.owner,
             quantity: self.original_quantity,
-            unpaid_fees: self.total_fees - self.paid_fees,
+            unpaid_fees,
             fee_is_deep: self.fee_is_deep,
             status: self.status,
             expire_timestamp: self.expire_timestamp,
@@ -390,11 +392,6 @@ module deepbook::v3order {
     /// Returns the fill or kill constant.
     public(package) fun fill_or_kill(): u8 {
         FILL_OR_KILL
-    }
-
-    /// Sets the total fees for the order.
-    public(package) fun set_total_fees(self: &mut OrderInfo, total_fees: u64) {
-        self.total_fees = total_fees;
     }
 
     /// Update the order status to canceled.
