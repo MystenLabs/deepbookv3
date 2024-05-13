@@ -83,7 +83,7 @@ module deepbook::order_info {
         maker_client_order_id: u64,
         taker_client_order_id: u64,
         price: u64,
-        is_bid: bool,
+        taker_is_bid: bool,
         base_quantity: u64,
         quote_quantity: u64,
         maker_address: address,
@@ -385,7 +385,14 @@ module deepbook::order_info {
         let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), maker.quantity());
         maker.set_unpaid_fees(unpaid_fees - maker_fees);
 
-        self.emit_order_filled(timestamp);
+        // TODO:
+        self.emit_order_filled(
+            maker,
+            price,
+            filled_quantity,
+            quote_quantity,
+            timestamp
+        );
 
         self.fills.push_back(Fill {
             order_id: maker.order_id(),
@@ -400,19 +407,26 @@ module deepbook::order_info {
         true
     }
 
-    fun emit_order_filled(self: &OrderInfo, timestamp: u64) {
+    fun emit_order_filled(
+        self: &OrderInfo,
+        maker: &Order,
+        price: u64,
+        filled_quantity: u64,
+        quote_quantity: u64,
+        timestamp: u64
+    ) {
         event::emit(OrderFilled {
             pool_id: self.pool_id,
-            maker_order_id: self.order_id,
+            maker_order_id: maker.order_id(),
             taker_order_id: self.order_id,
-            maker_client_order_id: self.client_order_id,
+            maker_client_order_id: maker.client_order_id(),
             taker_client_order_id: self.client_order_id,
-            base_quantity: self.original_quantity,
-            quote_quantity: self.original_quantity * self.price,
-            price: self.price,
-            maker_address: self.owner,
+            base_quantity: filled_quantity,
+            quote_quantity: quote_quantity,
+            price,
+            maker_address: maker.owner(),
             taker_address: self.owner,
-            is_bid: self.is_bid,
+            taker_is_bid: self.is_bid,
             timestamp,
         });
     }

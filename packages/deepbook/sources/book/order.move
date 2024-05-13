@@ -124,20 +124,6 @@ module deepbook::order {
         self.unpaid_fees = unpaid_fees;
     }
 
-    public(package) fun validate_modification(
-        order: &Order,
-        quantity: u64,
-        new_quantity: u64,
-        min_size: u64,
-        lot_size: u64,
-        timestamp: u64,
-    ) {
-        assert!(new_quantity > 0 && new_quantity < quantity, EInvalidNewQuantity);
-        assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
-        assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(timestamp < order.expire_timestamp(), EOrderExpired);
-    }
-
     public(package) fun set_live(self: &mut Order) {
         self.status = LIVE;
     }
@@ -158,6 +144,20 @@ module deepbook::order {
     /// Update the order status to expired.
     public(package) fun set_expired(self: &mut Order) {
         self.status = EXPIRED;
+    }
+
+    public(package) fun validate_modification(
+        order: &Order,
+        quantity: u64,
+        new_quantity: u64,
+        min_size: u64,
+        lot_size: u64,
+        timestamp: u64,
+    ) {
+        assert!(new_quantity > 0 && new_quantity < quantity, EInvalidNewQuantity);
+        assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
+        assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
+        assert!(timestamp < order.expire_timestamp(), EOrderExpired);
     }
 
     /// Amounts to settle for a cancelled or modified order. Modifies the order in place.

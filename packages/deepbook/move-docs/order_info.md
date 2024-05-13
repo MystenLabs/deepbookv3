@@ -239,7 +239,7 @@ Emitted when a maker order is filled.
 
 </dd>
 <dt>
-<code>is_bid: bool</code>
+<code>taker_is_bid: bool</code>
 </dt>
 <dd>
 
@@ -1571,7 +1571,14 @@ Funds for an expired order are returned to the maker as settled.
     <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), maker.quantity());
     maker.set_unpaid_fees(unpaid_fees - maker_fees);
 
-    self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(timestamp);
+    // TODO:
+    self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
+        maker,
+        price,
+        filled_quantity,
+        quote_quantity,
+        timestamp
+    );
 
     self.fills.push_back(<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
         order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
@@ -1597,7 +1604,7 @@ Funds for an expired order are returned to the maker as settled.
 
 
 
-<pre><code><b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
+<pre><code><b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, maker: &<a href="order.md#0x0_order_Order">order::Order</a>, price: u64, filled_quantity: u64, quote_quantity: u64, timestamp: u64)
 </code></pre>
 
 
@@ -1606,19 +1613,26 @@ Funds for an expired order are returned to the maker as settled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, timestamp: u64) {
+<pre><code><b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
+    self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
+    maker: &Order,
+    price: u64,
+    filled_quantity: u64,
+    quote_quantity: u64,
+    timestamp: u64
+) {
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order_info.md#0x0_order_info_OrderFilled">OrderFilled</a> {
         pool_id: self.pool_id,
-        maker_order_id: self.order_id,
+        maker_order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
         taker_order_id: self.order_id,
-        maker_client_order_id: self.client_order_id,
+        maker_client_order_id: maker.<a href="order_info.md#0x0_order_info_client_order_id">client_order_id</a>(),
         taker_client_order_id: self.client_order_id,
-        base_quantity: self.original_quantity,
-        quote_quantity: self.original_quantity * self.price,
-        price: self.price,
-        maker_address: self.owner,
+        base_quantity: filled_quantity,
+        quote_quantity: quote_quantity,
+        price,
+        maker_address: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
         taker_address: self.owner,
-        is_bid: self.is_bid,
+        taker_is_bid: self.is_bid,
         timestamp,
     });
 }
