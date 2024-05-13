@@ -7,7 +7,6 @@ module deepbook::order_info {
     use sui::event;
     use deepbook::{
         math,
-        utils,
         trade_params::TradeParams,
         order::{Self, Order}
     };
@@ -338,12 +337,12 @@ module deepbook::order_info {
 
     /// Returns true if two opposite orders are overlapping in price.
     public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
-        let (is_bid, price, _) = utils::decode_order_id(order.order_id());
+        let maker_price = order.price();
 
         (
             self.original_quantity - self.executed_quantity > 0 &&
-            ((self.is_bid && !is_bid && self.price >= price) ||
-            (!self.is_bid && is_bid && self.price <= price))
+            ((self.is_bid && self.price >= maker_price) ||
+            (!self.is_bid && self.price <= maker_price))
         )
     }
 
@@ -377,7 +376,7 @@ module deepbook::order_info {
             return true
         };
 
-        let (_, price, _) = utils::decode_order_id(maker.order_id());
+        let price = maker.price();
         let filled_quantity = math::min(self.remaining_quantity(), maker_quantity);
         let quote_quantity = math::mul(filled_quantity, price);
         maker.set_quantity(maker_quantity - filled_quantity);
@@ -389,9 +388,7 @@ module deepbook::order_info {
         if (self.remaining_quantity() == 0) self.status = FILLED;
         if (maker.quantity() == 0) maker.set_filled();
 
-        let unpaid_fees = maker.unpaid_fees();
-        let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), maker.quantity());
-        maker.set_unpaid_fees(unpaid_fees - maker_fees);
+        maker.set_unpaid_fees(filled_quantity);
 
         self.emit_order_filled(
             maker,

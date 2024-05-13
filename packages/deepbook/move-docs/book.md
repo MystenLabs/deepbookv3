@@ -248,7 +248,7 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
     <b>while</b> (!ref.is_null() && amount_in_left &gt; 0) {
         <b>let</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
-        <b>let</b> (_, cur_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.order_id());
+        <b>let</b> cur_price = <a href="order.md#0x0_order">order</a>.price();
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
         <b>if</b> (is_bid) {
@@ -392,9 +392,9 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
     <b>let</b> (bid_ref, bid_offset) = self.bids.max_slice();
     <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="book.md#0x0_book_EEmptyOrderbook">EEmptyOrderbook</a>);
     <b>let</b> ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
-    <b>let</b> (_, ask_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(ask_order.order_id());
+    <b>let</b> ask_price = ask_order.price();
     <b>let</b> bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
-    <b>let</b> (_, bid_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(bid_order.order_id());
+    <b>let</b> bid_price = bid_order.price();
 
     <a href="math.md#0x0_math_div">math::div</a>(ask_price + bid_price, 2)
 }

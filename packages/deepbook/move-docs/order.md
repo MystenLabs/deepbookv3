@@ -14,6 +14,8 @@ All order matching happens in this module.
 -  [Function `new`](#0x0_order_new)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
+-  [Function `price`](#0x0_order_price)
+-  [Function `is_bid`](#0x0_order_is_bid)
 -  [Function `owner`](#0x0_order_owner)
 -  [Function `quantity`](#0x0_order_quantity)
 -  [Function `unpaid_fees`](#0x0_order_unpaid_fees)
@@ -22,7 +24,6 @@ All order matching happens in this module.
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
 -  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
 -  [Function `set_quantity`](#0x0_order_set_quantity)
--  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
 -  [Function `set_live`](#0x0_order_set_live)
 -  [Function `set_partially_filled`](#0x0_order_set_partially_filled)
 -  [Function `set_filled`](#0x0_order_set_filled)
@@ -30,6 +31,7 @@ All order matching happens in this module.
 -  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `validate_modification`](#0x0_order_validate_modification)
 -  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
+-  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
 -  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
 
@@ -449,6 +451,58 @@ initialize the order struct.
 
 </details>
 
+<a name="0x0_order_price"></a>
+
+## Function `price`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_price">price</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_price">price</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    <b>let</b> (_, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+
+    price
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_is_bid"></a>
+
+## Function `is_bid`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_is_bid">is_bid</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_is_bid">is_bid</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+    <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+
+    is_bid
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_owner"></a>
 
 ## Function `owner`
@@ -641,30 +695,6 @@ initialize the order struct.
 
 </details>
 
-<a name="0x0_order_set_unpaid_fees"></a>
-
-## Function `set_unpaid_fees`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, unpaid_fees: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, unpaid_fees: u64) {
-    self.unpaid_fees = unpaid_fees;
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_order_set_live"></a>
 
 ## Function `set_live`
@@ -845,7 +875,8 @@ Modify_order is a flag to indicate whether the order should be modified.
     cancel_quantity: u64,
     modify_order: bool,
 ): (u64, u64, u64) {
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
     <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
     <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) <b>else</b> 0;
     <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, cancel_quantity), self.quantity);
@@ -863,6 +894,32 @@ Modify_order is a flag to indicate whether the order should be modified.
     };
 
     (base_quantity, quote_quantity, deep_quantity)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_unpaid_fees"></a>
+
+## Function `set_unpaid_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, filled_quantity: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, filled_quantity: u64) {
+    <b>let</b> unpaid_fees = self.unpaid_fees;
+    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), self.quantity);
+    self.unpaid_fees = unpaid_fees - maker_fees;
 }
 </code></pre>
 
@@ -891,7 +948,8 @@ Modify_order is a flag to indicate whether the order should be modified.
     trader: <b>address</b>,
     timestamp: u64
 ) {
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         order_id: self.order_id,
@@ -931,7 +989,8 @@ Modify_order is a flag to indicate whether the order should be modified.
     trader: <b>address</b>,
     timestamp: u64
 ) {
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
         order_id: self.order_id,
         pool_id,

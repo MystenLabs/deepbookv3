@@ -52,7 +52,6 @@ All order matching happens in this module.
 <pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
-<b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
@@ -1505,12 +1504,12 @@ Returns true if two opposite orders are overlapping in price.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &Order): bool {
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.<a href="order_info.md#0x0_order_info_order_id">order_id</a>());
+    <b>let</b> maker_price = <a href="order.md#0x0_order">order</a>.<a href="order_info.md#0x0_order_info_price">price</a>();
 
     (
         self.original_quantity - self.executed_quantity &gt; 0 &&
-        ((self.is_bid && !is_bid && self.price &gt;= price) ||
-        (!self.is_bid && is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= price))
+        ((self.is_bid && self.price &gt;= maker_price) ||
+        (!self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price))
     )
 }
 </code></pre>
@@ -1564,7 +1563,7 @@ Funds for an expired order are returned to the maker as settled.
         <b>return</b> <b>true</b>
     };
 
-    <b>let</b> (_, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>());
+    <b>let</b> price = maker.<a href="order_info.md#0x0_order_info_price">price</a>();
     <b>let</b> filled_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), maker_quantity);
     <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, price);
     maker.set_quantity(maker_quantity - filled_quantity);
@@ -1576,9 +1575,7 @@ Funds for an expired order are returned to the maker as settled.
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
     <b>if</b> (maker.quantity() == 0) maker.set_filled();
 
-    <b>let</b> unpaid_fees = maker.unpaid_fees();
-    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), maker.quantity());
-    maker.set_unpaid_fees(unpaid_fees - maker_fees);
+    maker.set_unpaid_fees(filled_quantity);
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,

@@ -90,6 +90,18 @@ module deepbook::order {
         self.client_order_id
     }
 
+    public(package) fun price(self: &Order): u64 {
+        let (_, price, _) = utils::decode_order_id(self.order_id);
+
+        price
+    }
+
+    public(package) fun is_bid(self: &Order): bool {
+        let (is_bid, _, _) = utils::decode_order_id(self.order_id);
+
+        is_bid
+    }
+
     public(package) fun owner(self: &Order): address {
         self.owner
     }
@@ -120,10 +132,6 @@ module deepbook::order {
 
     public(package) fun set_quantity(self: &mut Order, quantity: u64) {
         self.quantity = quantity;
-    }
-
-    public(package) fun set_unpaid_fees(self: &mut Order, unpaid_fees: u64) {
-        self.unpaid_fees = unpaid_fees;
     }
 
     public(package) fun set_live(self: &mut Order) {
@@ -171,7 +179,8 @@ module deepbook::order {
         cancel_quantity: u64,
         modify_order: bool,
     ): (u64, u64, u64) {
-        let (is_bid, price, _) = utils::decode_order_id(self.order_id);
+        let is_bid = self.is_bid();
+        let price = self.price();
         let mut base_quantity = if (is_bid) 0 else cancel_quantity;
         let mut quote_quantity = if (is_bid) math::mul(cancel_quantity, price) else 0;
         let fee_refund = math::div(math::mul(self.unpaid_fees, cancel_quantity), self.quantity);
@@ -191,13 +200,20 @@ module deepbook::order {
         (base_quantity, quote_quantity, deep_quantity)
     }
 
+    public(package) fun set_unpaid_fees(self: &mut Order, filled_quantity: u64) {
+        let unpaid_fees = self.unpaid_fees;
+        let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), self.quantity);
+        self.unpaid_fees = unpaid_fees - maker_fees;
+    }
+
     public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
         self: &Order,
         pool_id: ID,
         trader: address,
         timestamp: u64
     ) {
-        let (is_bid, price, _) = utils::decode_order_id(self.order_id);
+        let is_bid = self.is_bid();
+        let price = self.price();
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id,
             order_id: self.order_id,
@@ -217,7 +233,8 @@ module deepbook::order {
         trader: address,
         timestamp: u64
     ) {
-        let (is_bid, price, _) = utils::decode_order_id(self.order_id);
+        let is_bid = self.is_bid();
+        let price = self.price();
         event::emit(OrderModified<BaseAsset, QuoteAsset> {
             order_id: self.order_id,
             pool_id,
