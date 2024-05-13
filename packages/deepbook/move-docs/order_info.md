@@ -1508,8 +1508,8 @@ Returns true if two opposite orders are overlapping in price.
 
     (
         self.original_quantity - self.executed_quantity &gt; 0 &&
-        ((self.is_bid && self.price &gt;= maker_price) ||
-        (!self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price))
+        self.is_bid && self.price &gt;= maker_price ||
+        !self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price
     )
 }
 </code></pre>
@@ -1571,9 +1571,8 @@ Funds for an expired order are returned to the maker as settled.
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
 
     self.status = <a href="order_info.md#0x0_order_info_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
-    maker.set_partially_filled();
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
-    <b>if</b> (maker.quantity() == 0) maker.set_filled();
+    maker.set_fill_status();
 
     maker.set_unpaid_fees(filled_quantity);
 

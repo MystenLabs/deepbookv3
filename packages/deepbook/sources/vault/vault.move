@@ -82,7 +82,9 @@ module deepbook::vault {
         let total_volume = user.taker_volume() + user.maker_volume();
         let volume_in_deep = math::mul(total_volume, base_conversion_rate);
         let trade_params = order_info.trade_params();
-        let (taker_fee, maker_fee, stake_required) = (trade_params.taker_fee(), trade_params.maker_fee(), trade_params.stake_required());
+        let taker_fee = trade_params.taker_fee();
+        let maker_fee = trade_params.maker_fee();
+        let stake_required = trade_params.stake_required();
         let taker_fee = if (user.active_stake() >= stake_required && volume_in_deep >= stake_required) {
             math::div(taker_fee, 2)
         } else {

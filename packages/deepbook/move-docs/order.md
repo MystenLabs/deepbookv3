@@ -25,8 +25,7 @@ All order matching happens in this module.
 -  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
 -  [Function `set_quantity`](#0x0_order_set_quantity)
 -  [Function `set_live`](#0x0_order_set_live)
--  [Function `set_partially_filled`](#0x0_order_set_partially_filled)
--  [Function `set_filled`](#0x0_order_set_filled)
+-  [Function `set_fill_status`](#0x0_order_set_fill_status)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
 -  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `validate_modification`](#0x0_order_validate_modification)
@@ -719,13 +718,13 @@ initialize the order struct.
 
 </details>
 
-<a name="0x0_order_set_partially_filled"></a>
+<a name="0x0_order_set_fill_status"></a>
 
-## Function `set_partially_filled`
+## Function `set_fill_status`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_partially_filled">set_partially_filled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
 </code></pre>
 
 
@@ -734,32 +733,12 @@ initialize the order struct.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_partially_filled">set_partially_filled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_filled"></a>
-
-## Function `set_filled`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_filled">set_filled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_filled">set_filled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+    <b>if</b> (self.quantity == 0) {
+        self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
+    } <b>else</b> {
+        self.status = <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
+    }
 }
 </code></pre>
 

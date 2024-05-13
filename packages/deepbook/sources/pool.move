@@ -126,19 +126,18 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let trade_params = self.state.governance().trade_params();
-        let mut order_info =
-            order_info::new(
-                self.id.to_inner(),
-                client_order_id,
-                account.owner(),
-                ctx.sender(),
-                order_type,
-                price,
-                quantity,
-                is_bid,
-                expire_timestamp,
-                trade_params,
-            );
+        let mut order_info = order_info::new(
+            self.id.to_inner(),
+            client_order_id,
+            account.owner(),
+            ctx.sender(),
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            trade_params,
+        );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()));

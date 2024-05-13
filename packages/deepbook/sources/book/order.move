@@ -138,12 +138,12 @@ module deepbook::order {
         self.status = LIVE;
     }
 
-    public(package) fun set_partially_filled(self: &mut Order) {
-        self.status = PARTIALLY_FILLED;
-    }
-
-    public(package) fun set_filled(self: &mut Order) {
-        self.status = FILLED;
+    public(package) fun set_fill_status(self: &mut Order) {
+        if (self.quantity == 0) {
+            self.status = FILLED;
+        } else {
+            self.status = PARTIALLY_FILLED;
+        }
     }
 
     /// Update the order status to canceled.

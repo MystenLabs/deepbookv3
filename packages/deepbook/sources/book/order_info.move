@@ -341,8 +341,8 @@ module deepbook::order_info {
 
         (
             self.original_quantity - self.executed_quantity > 0 &&
-            ((self.is_bid && self.price >= maker_price) ||
-            (!self.is_bid && self.price <= maker_price))
+            self.is_bid && self.price >= maker_price ||
+            !self.is_bid && self.price <= maker_price
         )
     }
 
@@ -384,9 +384,8 @@ module deepbook::order_info {
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
 
         self.status = PARTIALLY_FILLED;
-        maker.set_partially_filled();
         if (self.remaining_quantity() == 0) self.status = FILLED;
-        if (maker.quantity() == 0) maker.set_filled();
+        maker.set_fill_status();
 
         maker.set_unpaid_fees(filled_quantity);
 
