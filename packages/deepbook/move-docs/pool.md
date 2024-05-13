@@ -439,7 +439,7 @@ DeepBookAdminCap is used to call admin functions.
 ) {
     <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> =
-        <a href="order_info.md#0x0_order_info_initial_order">order_info::initial_order</a>(
+        <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
             self.id.to_inner(),
             client_order_id,
             <a href="account.md#0x0_account">account</a>.owner(),

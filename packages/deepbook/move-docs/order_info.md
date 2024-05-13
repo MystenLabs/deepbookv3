@@ -14,7 +14,7 @@ All order matching happens in this module.
 -  [Struct `OrderPlaced`](#0x0_order_info_OrderPlaced)
 -  [Struct `Fill`](#0x0_order_info_Fill)
 -  [Constants](#@Constants_0)
--  [Function `initial_order`](#0x0_order_info_initial_order)
+-  [Function `new`](#0x0_order_info_new)
 -  [Function `pool_id`](#0x0_order_info_pool_id)
 -  [Function `order_id`](#0x0_order_info_order_id)
 -  [Function `client_order_id`](#0x0_order_info_client_order_id)
@@ -725,13 +725,13 @@ It is used to update the state.
 
 
 
-<a name="0x0_order_info_initial_order"></a>
+<a name="0x0_order_info_new"></a>
 
-## Function `initial_order`
+## Function `new`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -740,7 +740,7 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_initial_order">initial_order</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(
     pool_id: ID,
     client_order_id: u64,
     owner: <b>address</b>,
@@ -1257,7 +1257,7 @@ information required to match orders.
     self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>
 ): Order {
     <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee());
-    <a href="order.md#0x0_order_init_order">order::init_order</a>(
+    <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.client_order_id,
         self.owner,

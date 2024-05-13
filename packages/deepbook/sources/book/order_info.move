@@ -153,7 +153,7 @@ module deepbook::order_info {
         settled_deep: u64,
     }
 
-    public(package) fun initial_order(
+    public(package) fun new(
         pool_id: ID,
         client_order_id: u64,
         owner: address,
@@ -270,7 +270,7 @@ module deepbook::order_info {
         self: &OrderInfo
     ): Order {
         let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
-        order::init_order(
+        order::new(
             self.order_id,
             self.client_order_id,
             self.owner,

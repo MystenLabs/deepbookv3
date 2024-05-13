@@ -58,7 +58,7 @@ module deepbook::order {
     }
 
     /// initialize the order struct.
-    public(package) fun init_order(
+    public(package) fun new(
         order_id: u128,
         client_order_id: u64,
         owner: address,

@@ -11,7 +11,7 @@ All order matching happens in this module.
 -  [Struct `OrderCanceled`](#0x0_order_OrderCanceled)
 -  [Struct `OrderModified`](#0x0_order_OrderModified)
 -  [Constants](#@Constants_0)
--  [Function `init_order`](#0x0_order_init_order)
+-  [Function `new`](#0x0_order_new)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
 -  [Function `owner`](#0x0_order_owner)
@@ -356,14 +356,14 @@ Emitted when a maker order is modified.
 
 
 
-<a name="0x0_order_init_order"></a>
+<a name="0x0_order_new"></a>
 
-## Function `init_order`
+## Function `new`
 
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_init_order">init_order</a>(order_id: u128, client_order_id: u64, owner: <b>address</b>, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, client_order_id: u64, owner: <b>address</b>, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -372,7 +372,7 @@ initialize the order struct.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_init_order">init_order</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(
     order_id: u128,
     client_order_id: u64,
     owner: <b>address</b>,
