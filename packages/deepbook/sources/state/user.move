@@ -11,6 +11,7 @@ module deepbook::user {
     public struct User has store, copy, drop {
         epoch: u64,
         open_orders: VecSet<u128>,
+        taker_volume: u64,
         maker_volume: u64,
         active_stake: u64,
         inactive_stake: u64,
@@ -26,6 +27,7 @@ module deepbook::user {
         User {
             epoch,
             open_orders: vec_set::empty(),
+            taker_volume: 0,
             maker_volume: 0,
             active_stake: 0,
             inactive_stake: 0,
@@ -48,6 +50,26 @@ module deepbook::user {
         self: &User,
     ): u64 {
         self.active_stake
+    }
+
+    public(package) fun increase_maker_volume(
+        self: &mut User,
+        volume: u64,
+    ) {
+        self.maker_volume = self.maker_volume + volume;
+    }
+
+    public(package) fun increase_taker_volume(
+        self: &mut User,
+        volume: u64,
+    ) {
+        self.taker_volume = self.taker_volume + volume;
+    }
+
+    public(package) fun taker_volume(
+        self: &User,
+    ): u64 {
+        self.taker_volume
     }
 
     public(package) fun maker_volume(
@@ -109,6 +131,7 @@ module deepbook::user {
 
         self.epoch = epoch;
         self.maker_volume = 0;
+        self.taker_volume = 0;
         self.active_stake = self.active_stake + self.inactive_stake;
         self.inactive_stake = 0;
         self.voted_proposal = option::none();
