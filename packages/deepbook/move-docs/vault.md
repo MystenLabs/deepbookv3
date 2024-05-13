@@ -16,9 +16,9 @@
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
-<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
-<b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
@@ -206,7 +206,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 3. Add to the user's settled and owed balances.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>)
 </code></pre>
 
 
@@ -217,25 +217,28 @@ and the remaining quantity is the only quantity left to be injected into the ord
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
-    order_info: &OrderInfo,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
     <a href="user.md#0x0_user">user</a>: &<b>mut</b> User,
 ) {
-    <b>let</b> base_conversion_rate = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
+    <b>let</b> base_to_deep = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
-    <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_conversion_rate);
-    <b>let</b> (taker_fee, maker_fee, stake_required) = order_info.trade_params().params();
+    <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_to_deep);
+    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="order_info.md#0x0_order_info">order_info</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> taker_fee = <a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee();
+    <b>let</b> maker_fee = <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee();
+    <b>let</b> stake_required = <a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required();
     <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
         <a href="math.md#0x0_math_div">math::div</a>(taker_fee, 2)
     } <b>else</b> {
         taker_fee
     };
 
-    <b>let</b> executed_quantity = order_info.executed_quantity();
-    <b>let</b> remaining_quantity = order_info.remaining_quantity();
-    <b>let</b> cumulative_quote_quantity = order_info.cumulative_quote_quantity();
+    <b>let</b> executed_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity();
+    <b>let</b> remaining_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity();
+    <b>let</b> cumulative_quote_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity();
     <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, maker_fee) + <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, taker_fee);
 
-    <b>if</b> (order_info.is_bid()) {
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         <a href="user.md#0x0_user">user</a>.add_settled_amounts(executed_quantity, 0, 0);
         <a href="user.md#0x0_user">user</a>.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
     } <b>else</b> {

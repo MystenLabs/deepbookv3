@@ -5,7 +5,8 @@ module deepbook::state {
 
     use deepbook::{
         history::{Self, History},
-        order::{OrderInfo, Order},
+        order::Order,
+        order_info::OrderInfo,
         governance::{Self, Governance},
         deep_price::{Self, DeepPrice},
         user::{Self, User},
@@ -74,7 +75,7 @@ module deepbook::state {
         self.update_user(owner, ctx.epoch());
 
         let user = &mut self.users[owner];
-        let cancel_quantity = order.book_quantity();
+        let cancel_quantity = order.quantity();
         let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(
             cancel_quantity,
             false,
@@ -200,7 +201,7 @@ module deepbook::state {
         epoch: u64,
     ): &mut User {
         self.update_user(user, epoch);
-        
+
         &mut self.users[user]
     }
 

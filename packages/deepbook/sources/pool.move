@@ -18,7 +18,7 @@ module deepbook::pool {
     use deepbook::{
         math,
         account::{Self, Account, TradeProof},
-        order,
+        order_info,
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, DEEP},
@@ -35,6 +35,7 @@ module deepbook::pool {
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const ENotEnoughDeep: u64 = 10;
+    const EInvalidOrderOwner: u64 = 11;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -90,7 +91,8 @@ module deepbook::pool {
             vault: vault::empty(),
         };
 
-        let (taker_fee, maker_fee, _) = pool.state.governance().trade_params().params();
+        let params = pool.state.governance().trade_params();
+        let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id,
             taker_fee,
@@ -129,8 +131,18 @@ module deepbook::pool {
     ) {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
         let trade_params = self.state.governance().trade_params();
-        let mut order_info =
-            order::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, trade_params);
+        let mut order_info = order_info::new(
+            self.id.to_inner(),
+            client_order_id,
+            account.owner(),
+            ctx.sender(),
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            expire_timestamp,
+            trade_params,
+        );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()));
@@ -156,7 +168,7 @@ module deepbook::pool {
             account,
             proof,
             client_order_id,
-            order::fill_or_kill(),
+            order_info::fill_or_kill(),
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,
@@ -188,7 +200,7 @@ module deepbook::pool {
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
         let base_to_deep = self.state.deep_price().conversion_rate();
-        let (taker_fee, _, _) = self.state.governance().trade_params().params();
+        let taker_fee = self.state.governance().trade_params().taker_fee();
         let deep_required = math::mul(base_quantity, base_to_deep);
         let deep_required = math::mul(deep_required, taker_fee);
         assert!(deep_in.value() >= deep_required, ENotEnoughDeep);
@@ -220,10 +232,11 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
         self.state.process_modify(account.owner(), base, quote, deep, ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     public fun cancel_order<BaseAsset, QuoteAsset>(
@@ -235,10 +248,11 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let mut order = self.book.cancel_order(order_id);
+        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
         self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     public fun stake<BaseAsset, QuoteAsset>(

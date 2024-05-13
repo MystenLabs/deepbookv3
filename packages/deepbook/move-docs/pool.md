@@ -39,8 +39,10 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
 <b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="vault.md#0x0_vault">0x0::vault</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
@@ -192,15 +194,6 @@ DeepBookAdminCap is used to call admin functions.
 ## Constants
 
 
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
-</code></pre>
-
-
-
 <a name="0x0_pool_MAX_PRICE"></a>
 
 
@@ -224,6 +217,15 @@ DeepBookAdminCap is used to call admin functions.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 6;
+</code></pre>
+
+
+
+<a name="0x0_pool_MAX_U64"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
 </code></pre>
 
 
@@ -278,6 +280,15 @@ DeepBookAdminCap is used to call admin functions.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>: u64 = 5;
+</code></pre>
+
+
+
+<a name="0x0_pool_EInvalidOrderOwner"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>: u64 = 11;
 </code></pre>
 
 
@@ -369,7 +380,8 @@ DeepBookAdminCap is used to call admin functions.
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
     };
 
-    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
+    <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -447,15 +459,25 @@ DeepBookAdminCap is used to call admin functions.
     ctx: &TxContext,
 ) {
     <b>assert</b>!(pay_with_deep || self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EFeeTypeNotSupported">EFeeTypeNotSupported</a>);
-    <b>let</b> trade_params = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
-    <b>let</b> <b>mut</b> order_info =
-        <a href="order.md#0x0_order_initial_order">order::initial_order</a>(self.id.to_inner(), client_order_id, <a href="account.md#0x0_account">account</a>.owner(), order_type, price, quantity, is_bid, expire_timestamp, trade_params);
-    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> order_info, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    self.<a href="state.md#0x0_state">state</a>.process_create(&order_info, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&order_info, self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()));
+    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
+        self.id.to_inner(),
+        client_order_id,
+        <a href="account.md#0x0_account">account</a>.owner(),
+        ctx.sender(),
+        order_type,
+        price,
+        quantity,
+        is_bid,
+        expire_timestamp,
+        <a href="trade_params.md#0x0_trade_params">trade_params</a>,
+    );
+    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()));
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
-    <b>if</b> (order_info.remaining_quantity() &gt; 0) order_info.emit_order_placed();
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
 }
 </code></pre>
 
@@ -495,7 +517,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
         <a href="account.md#0x0_account">account</a>,
         proof,
         client_order_id,
-        <a href="order.md#0x0_order_fill_or_kill">order::fill_or_kill</a>(),
+        <a href="order_info.md#0x0_order_info_fill_or_kill">order_info::fill_or_kill</a>(),
         <b>if</b> (is_bid) <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a> <b>else</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>,
         quantity,
         is_bid,
@@ -547,7 +569,7 @@ Swap exact amount without needing an account.
     };
     base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
     <b>let</b> base_to_deep = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().conversion_rate();
-    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
+    <b>let</b> taker_fee = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee();
     <b>let</b> deep_required = <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, base_to_deep);
     <b>let</b> deep_required = <a href="math.md#0x0_math_mul">math::mul</a>(deep_required, taker_fee);
     <b>assert</b>!(deep_in.value() &gt;= deep_required, <a href="pool.md#0x0_pool_ENotEnoughDeep">ENotEnoughDeep</a>);
@@ -599,10 +621,11 @@ Swap exact amount without needing an account.
     ctx: &TxContext,
 ) {
     <b>let</b> (base, quote, deep, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
     self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.owner(), base, quote, deep, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
-    <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
 </code></pre>
 
@@ -634,10 +657,11 @@ Swap exact amount without needing an account.
     ctx: &TxContext,
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
     self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.owner(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
-    <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
 </code></pre>
 

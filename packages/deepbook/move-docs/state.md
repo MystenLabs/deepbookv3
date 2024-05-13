@@ -28,6 +28,7 @@
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
@@ -139,7 +140,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -150,11 +151,11 @@
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    order_info: &OrderInfo,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
     ctx: &TxContext,
 ) {
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
-    <b>let</b> fills = order_info.fills();
+    <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
     <b>let</b> <b>mut</b> i = 0;
     <b>while</b> (i &lt; fills.length()) {
         <b>let</b> fill = &fills[i];
@@ -173,10 +174,10 @@
         i = i + 1;
     };
 
-    self.<a href="state.md#0x0_state_update_user">update_user</a>(order_info.owner(), ctx.epoch());
-    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[order_info.owner()];
-    <a href="user.md#0x0_user">user</a>.add_order(order_info.order_id());
-    <a href="user.md#0x0_user">user</a>.increase_taker_volume(order_info.executed_quantity());
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(<a href="order_info.md#0x0_order_info">order_info</a>.owner(), ctx.epoch());
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[<a href="order_info.md#0x0_order_info">order_info</a>.owner()];
+    <a href="user.md#0x0_user">user</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    <a href="user.md#0x0_user">user</a>.increase_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
 }
 </code></pre>
 
@@ -211,7 +212,7 @@
     self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
 
     <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
-    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
     <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(
         cancel_quantity,
         <b>false</b>,

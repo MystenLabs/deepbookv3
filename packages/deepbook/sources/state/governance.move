@@ -3,6 +3,7 @@
 
 module deepbook::governance {
     use sui::vec_map::{Self, VecMap};
+    use deepbook::trade_params::{Self, TradeParams};
 
     // === Errors ===
     const EInvalidMakerFee: u64 = 1;
@@ -32,12 +33,6 @@ module deepbook::governance {
         maker_fee: u64,
         stake_required: u64,
         votes: u64,
-    }
-
-    public struct TradeParams has store, drop, copy {
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
     }
 
     /// Details of a pool. This is refreshed every epoch by the first
@@ -70,8 +65,8 @@ module deepbook::governance {
             whitelisted: false,
             stable: false,
             proposals: vec_map::empty(),
-            trade_params: new_trade_params(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
-            next_trade_params: new_trade_params(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
+            trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
+            next_trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
             voting_power: 0,
             quorum: 0,
         }
@@ -86,8 +81,8 @@ module deepbook::governance {
         self.whitelisted = whitelisted;
         self.stable = false;
         self.proposals = vec_map::empty();
-        self.trade_params.taker_fee = 0;
-        self.trade_params.maker_fee = 0;
+        self.trade_params.set_taker_fee(0);
+        self.trade_params.set_maker_fee(0);
         self.next_trade_params = self.trade_params;
     }
 
@@ -107,11 +102,11 @@ module deepbook::governance {
         self.stable = stable;
         self.proposals = vec_map::empty();
         if (stable) {
-            self.trade_params.taker_fee = MAX_TAKER_STABLE;
-            self.trade_params.maker_fee = MAX_MAKER_STABLE;
+            self.trade_params.set_taker_fee(MAX_TAKER_STABLE);
+            self.trade_params.set_maker_fee(MAX_MAKER_STABLE);
         } else {
-            self.trade_params.taker_fee = MAX_TAKER_VOLATILE;
-            self.trade_params.maker_fee = MAX_MAKER_VOLATILE;
+            self.trade_params.set_taker_fee(MAX_TAKER_VOLATILE);
+            self.trade_params.set_maker_fee(MAX_MAKER_VOLATILE);
         };
         self.next_trade_params = self.trade_params;
     }
@@ -189,7 +184,12 @@ module deepbook::governance {
             assert!(self.proposals.contains(id), EProposalDoesNotExist);
             self.proposals[id].votes = self.proposals[id].votes + voting_power;
             if (self.proposals[id].votes > self.quorum) {
-                self.next_trade_params = self.proposals[id].to_trade_params();
+                let proposal = self.proposals[id];
+                self.next_trade_params = trade_params::new(
+                    proposal.taker_fee,
+                    proposal.maker_fee,
+                    proposal.stake_required,
+                );
                 return
             };
         };
@@ -213,10 +213,6 @@ module deepbook::governance {
         self.trade_params
     }
 
-    public(package) fun params(trade_params: &TradeParams): (u64, u64, u64) {
-        (trade_params.taker_fee, trade_params.maker_fee, trade_params.stake_required)
-    }
-
     // === Private Functions ===
     /// Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
     fun stake_to_voting_power(stake: u64): u64 {
@@ -233,28 +229,6 @@ module deepbook::governance {
             maker_fee,
             stake_required,
             votes: 0,
-        }
-    }
-
-    fun new_trade_params(
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
-    ): TradeParams {
-        TradeParams {
-            taker_fee,
-            maker_fee,
-            stake_required,
-        }
-    }
-
-    fun to_trade_params(
-        proposal: &Proposal,
-    ): TradeParams {
-        TradeParams {
-            taker_fee: proposal.taker_fee,
-            maker_fee: proposal.maker_fee,
-            stake_required: proposal.stake_required,
         }
     }
 
