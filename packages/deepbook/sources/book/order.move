@@ -6,7 +6,6 @@
 module deepbook::order {
     use sui::event;
     use deepbook::{math, utils};
-    use deepbook::order_info::OrderInfo;
 
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
@@ -51,22 +50,6 @@ module deepbook::order {
         self_matching_prevention: bool,
     }
 
-    /// Emitted when a maker order is filled.
-    public struct OrderFilled has copy, store, drop {
-        pool_id: ID,
-        maker_order_id: u128,
-        taker_order_id: u128,
-        maker_client_order_id: u64,
-        taker_client_order_id: u64,
-        price: u64,
-        is_bid: bool,
-        base_quantity: u64,
-        quote_quantity: u64,
-        maker_address: address,
-        taker_address: address,
-        timestamp: u64,
-    }
-
     /// Emitted when a maker order is canceled.
     public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
         pool_id: ID,
@@ -91,53 +74,28 @@ module deepbook::order {
         timestamp: u64,
     }
 
-    /// Emitted when a maker order is injected into the order book.
-    public struct OrderPlaced has copy, store, drop {
-        pool_id: ID,
+    /// initialize the order struct.
+    public(package) fun init_order(
         order_id: u128,
         client_order_id: u64,
         owner: address,
-        price: u64,
-        is_bid: bool,
-        original_quantity: u64,
-        executed_quantity: u64,
+        quantity: u64,
+        unpaid_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
         expire_timestamp: u64,
-    }
-
-    /// Fill struct represents the results of a match between two orders.
-    /// It is used to update the state.
-    public struct Fill has store, drop, copy {
-        // ID of the maker order
-        order_id: u128,
-        // Owner of the maker order
-        owner: address,
-        // Whether the maker order is expired
-        expired: bool,
-        // Whether the maker order is fully filled
-        complete: bool,
-        // Quantity settled in base asset terms for maker
-        settled_base: u64,
-        // Quantity settled in quote asset terms for maker
-        settled_quote: u64,
-        // Quantity settled in DEEP for maker
-        settled_deep: u64,
-    }
-
-    /// OrderInfo is converted to an Order before being injected into the order book.
-    /// This is done to save space in the order book. Order contains the minimum
-    /// information required to match orders.
-    public(package) fun to_order(order_info: &OrderInfo): Order {
-        let unpaid_fees = order_info.remaining_quantity() * order_info.maker_fee();
+        self_matching_prevention: bool,
+    ): Order {
         Order {
-            order_id: order_info.order_id(),
-            client_order_id: order_info.client_order_id(),
-            owner: order_info.owner(),
-            quantity: order_info.original_quantity(),
+            order_id,
+            client_order_id,
+            owner,
+            quantity,
             unpaid_fees,
-            fee_is_deep: order_info.fee_is_deep(),
-            status: order_info.status(),
-            expire_timestamp: order_info.expire_timestamp(),
-            self_matching_prevention: order_info.self_matching_prevention(),
+            fee_is_deep,
+            status,
+            expire_timestamp,
+            self_matching_prevention,
         }
     }
 
@@ -147,6 +105,10 @@ module deepbook::order {
 
     public(package) fun client_order_id(self: &Order): u64 {
         self.client_order_id
+    }
+
+    public(package) fun owner(self: &Order): address {
+        self.owner
     }
 
     public(package) fun quantity(self: &Order): u64 {
@@ -177,6 +139,14 @@ module deepbook::order {
         self.quantity = quantity;
     }
 
+    public(package) fun set_unpaid_fees(self: &mut Order, unpaid_fees: u64) {
+        self.unpaid_fees = unpaid_fees;
+    }
+
+    public(package) fun set_status(self: &mut Order, status: u8) {
+        self.status = status;
+    }
+
     public(package) fun validate_modification(
         order: &Order,
         quantity: u64,
@@ -199,16 +169,6 @@ module deepbook::order {
     /// Update the order status to expired.
     public(package) fun set_expired(self: &mut Order) {
         self.status = EXPIRED;
-    }
-
-    /// Returns the result of the fill and the maker id & owner.
-    public(package) fun fill_status(fill: &Fill): (u128, address, bool, bool) {
-        (fill.order_id, fill.owner, fill.expired, fill.complete)
-    }
-
-    /// Returns the settled quantities for the fill.
-    public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
-        (fill.settled_base, fill.settled_quote, fill.settled_deep)
     }
 
     /// Amounts to settle for a cancelled or modified order. Modifies the order in place.

@@ -6,6 +6,7 @@
 module deepbook::order_info {
     use sui::event;
     use deepbook::{math, utils};
+    use deepbook::order::{Self, Order};
 
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
@@ -258,6 +259,26 @@ module deepbook::order_info {
         self.order_id = order_id;
     }
 
+    /// OrderInfo is converted to an Order before being injected into the order book.
+    /// This is done to save space in the order book. Order contains the minimum
+    /// information required to match orders.
+    public(package) fun to_order(
+        self: &OrderInfo
+    ): Order {
+        let unpaid_fees = self.remaining_quantity() * self.maker_fee();
+        order::init_order(
+            self.order_id,
+            self.client_order_id,
+            self.owner,
+            self.original_quantity,
+            unpaid_fees,
+            self.fee_is_deep,
+            self.status,
+            self.expire_timestamp,
+            self.self_matching_prevention,
+        )
+    }
+
     /// Validates that the initial order created meets the pool requirements.
     public(package) fun validate_inputs(
         order_info: &OrderInfo,
@@ -309,6 +330,78 @@ module deepbook::order_info {
     /// Returns the settled quantities for the fill.
     public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
         (fill.settled_base, fill.settled_quote, fill.settled_deep)
+    }
+
+    /// Returns true if two opposite orders are overlapping in price.
+    public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
+        let (is_bid, price, _) = utils::decode_order_id(order.order_id());
+
+        (
+            self.original_quantity - self.executed_quantity > 0 &&
+            ((self.is_bid && !is_bid && self.price >= price) ||
+            (!self.is_bid && is_bid && self.price <= price))
+        )
+    }
+
+    /// Matches an OrderInfo with an Order from the book. Returns a Fill.
+    /// If the book order is expired, it returns a Fill with the expired flag set to true.
+    /// Funds for an expired order are returned to the maker as settled.
+    public(package) fun match_maker(
+        self: &mut OrderInfo,
+        maker: &mut Order,
+        timestamp: u64,
+    ): bool {
+        if (!self.crosses_price(maker)) return false;
+        let maker_quantity = maker.quantity();
+        if (maker.expire_timestamp() < timestamp) {
+            maker.set_status(EXPIRED);
+            let cancel_quantity = maker_quantity;
+            let (base, quote, deep) = maker.cancel_amounts(
+                cancel_quantity,
+                false,
+            );
+            self.fills.push_back(Fill {
+                order_id: maker.order_id(),
+                owner: maker.owner(),
+                expired: true,
+                complete: false,
+                settled_base: base,
+                settled_quote: quote,
+                settled_deep: deep,
+            });
+
+            return true
+        };
+
+        let (_, price, _) = utils::decode_order_id(maker.order_id());
+        let filled_quantity = math::min(self.remaining_quantity(), maker_quantity);
+        let quote_quantity = math::mul(filled_quantity, price);
+        maker.set_quantity(maker_quantity - filled_quantity);
+        self.executed_quantity = self.executed_quantity + filled_quantity;
+        self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
+
+        self.status = PARTIALLY_FILLED;
+        maker.set_status(PARTIALLY_FILLED);
+        if (self.remaining_quantity() == 0) self.status = FILLED;
+        if (maker.quantity() == 0) maker.set_status(FILLED);
+
+        let unpaid_fees = maker.unpaid_fees();
+        let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), maker.quantity());
+        maker.set_unpaid_fees(unpaid_fees - maker_fees);
+
+        self.emit_order_filled(timestamp);
+
+        self.fills.push_back(Fill {
+            order_id: maker.order_id(),
+            owner: maker.owner(),
+            expired: false,
+            complete: maker.quantity() == 0,
+            settled_base: if (self.is_bid) filled_quantity else 0,
+            settled_quote: if (self.is_bid) 0 else quote_quantity,
+            settled_deep: 0,
+        });
+
+        true
     }
 
     fun emit_order_filled(self: &OrderInfo, timestamp: u64) {
