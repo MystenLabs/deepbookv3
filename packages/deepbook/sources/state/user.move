@@ -1,4 +1,4 @@
-module deepbook::v3user {
+module deepbook::user {
     use sui::vec_set::{Self, VecSet};
 
     public struct Balances has store, copy, drop {

@@ -27,11 +27,14 @@ All order matching happens in this module.
 -  [Function `executed_quantity`](#0x0_order_executed_quantity)
 -  [Function `cumulative_quote_quantity`](#0x0_order_cumulative_quote_quantity)
 -  [Function `paid_fees`](#0x0_order_paid_fees)
--  [Function `total_fees`](#0x0_order_total_fees)
+-  [Function `maker_fee`](#0x0_order_maker_fee)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
 -  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
+-  [Function `fills`](#0x0_order_fills)
+-  [Function `last_fill`](#0x0_order_last_fill)
+-  [Function `set_order_id`](#0x0_order_set_order_id)
 -  [Function `book_order_id`](#0x0_order_book_order_id)
 -  [Function `book_client_order_id`](#0x0_order_book_client_order_id)
 -  [Function `book_quantity`](#0x0_order_book_quantity)
@@ -40,6 +43,7 @@ All order matching happens in this module.
 -  [Function `book_status`](#0x0_order_book_status)
 -  [Function `book_expire_timestamp`](#0x0_order_book_expire_timestamp)
 -  [Function `book_self_matching_prevention`](#0x0_order_book_self_matching_prevention)
+-  [Function `set_book_quantity`](#0x0_order_set_book_quantity)
 -  [Function `to_order`](#0x0_order_to_order)
 -  [Function `validate_inputs`](#0x0_order_validate_inputs)
 -  [Function `validate_modification`](#0x0_order_validate_modification)
@@ -49,7 +53,6 @@ All order matching happens in this module.
 -  [Function `assert_fill_or_kill`](#0x0_order_assert_fill_or_kill)
 -  [Function `is_immediate_or_cancel`](#0x0_order_is_immediate_or_cancel)
 -  [Function `fill_or_kill`](#0x0_order_fill_or_kill)
--  [Function `set_total_fees`](#0x0_order_set_total_fees)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
 -  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `fill_status`](#0x0_order_fill_status)
@@ -139,6 +142,12 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
+<code>expire_timestamp: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>executed_quantity: u64</code>
 </dt>
 <dd>
@@ -151,13 +160,7 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>paid_fees: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>total_fees: u64</code>
+<code>fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order.md#0x0_order_Fill">order::Fill</a>&gt;</code>
 </dt>
 <dd>
 
@@ -169,13 +172,19 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>status: u8</code>
+<code>paid_fees: u64</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>expire_timestamp: u64</code>
+<code>maker_fee: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>status: u8</code>
 </dt>
 <dd>
 
@@ -508,7 +517,7 @@ Emitted when a maker order is modified.
 Emitted when a maker order is injected into the order book.
 
 
-<pre><code><b>struct</b> <a href="order.md#0x0_order_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> <b>copy</b>, drop, store
+<pre><code><b>struct</b> <a href="order.md#0x0_order_OrderPlaced">OrderPlaced</a> <b>has</b> <b>copy</b>, drop, store
 </code></pre>
 
 
@@ -585,7 +594,7 @@ Fill struct represents the results of a match between two orders.
 It is used to update the state.
 
 
-<pre><code><b>struct</b> <a href="order.md#0x0_order_Fill">Fill</a> <b>has</b> drop
+<pre><code><b>struct</b> <a href="order.md#0x0_order_Fill">Fill</a> <b>has</b> <b>copy</b>, drop, store
 </code></pre>
 
 
@@ -842,7 +851,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, order_id: u128, client_order_id: u64, order_type: u8, price: u64, quantity: u64, fee_is_deep: bool, is_bid: bool, owner: <b>address</b>, expire_timestamp: u64): <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, maker_fee: u64): <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>
 </code></pre>
 
 
@@ -851,34 +860,34 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(
     pool_id: ID,
-    order_id: u128,
     client_order_id: u64,
+    owner: <b>address</b>,
     order_type: u8,
     price: u64,
     quantity: u64,
-    fee_is_deep: bool,
     is_bid: bool,
-    owner: <b>address</b>,
     expire_timestamp: u64,
+    maker_fee: u64,
 ): <a href="order.md#0x0_order_OrderInfo">OrderInfo</a> {
     <a href="order.md#0x0_order_OrderInfo">OrderInfo</a> {
         pool_id,
-        order_id,
+        order_id: 0,
         client_order_id,
+        owner,
         order_type,
         price,
+        is_bid,
         original_quantity: quantity,
+        expire_timestamp,
         executed_quantity: 0,
         cumulative_quote_quantity: 0,
+        fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
+        fee_is_deep: <b>false</b>,
         paid_fees: 0,
-        total_fees: 0,
-        fee_is_deep,
-        is_bid,
-        owner,
+        maker_fee,
         status: <a href="order.md#0x0_order_LIVE">LIVE</a>,
-        expire_timestamp,
         self_matching_prevention: <b>false</b>,
     }
 }
@@ -1152,13 +1161,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_order_total_fees"></a>
+<a name="0x0_order_maker_fee"></a>
 
-## Function `total_fees`
+## Function `maker_fee`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_total_fees">total_fees</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): u64
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_maker_fee">maker_fee</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): u64
 </code></pre>
 
 
@@ -1167,8 +1176,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_total_fees">total_fees</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
-    self.total_fees
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_maker_fee">maker_fee</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
+    self.maker_fee
 }
 </code></pre>
 
@@ -1272,6 +1281,78 @@ It is used to update the state.
 
 </details>
 
+<a name="0x0_order_fills"></a>
+
+## Function `fills`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_fills">fills</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order.md#0x0_order_Fill">order::Fill</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_fills">fills</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order.md#0x0_order_Fill">Fill</a>&gt; {
+    self.fills
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_last_fill"></a>
+
+## Function `last_fill`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_last_fill">last_fill</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): &<a href="order.md#0x0_order_Fill">order::Fill</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_last_fill">last_fill</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): &<a href="order.md#0x0_order_Fill">Fill</a> {
+    &self.fills[self.fills.length() - 1]
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_order_id"></a>
+
+## Function `set_order_id`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_order_id">set_order_id</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, order_id: u128)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_order_id">set_order_id</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">OrderInfo</a>, order_id: u128) {
+    self.order_id = order_id;
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_book_order_id"></a>
 
 ## Function `book_order_id`
@@ -1288,7 +1369,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u128 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_order_id">book_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u128 {
     self.order_id
 }
 </code></pre>
@@ -1312,7 +1393,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_client_order_id">book_client_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_client_order_id">book_client_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.client_order_id
 }
 </code></pre>
@@ -1336,7 +1417,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_quantity">book_quantity</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.quantity
 }
 </code></pre>
@@ -1360,7 +1441,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_unpaid_fees">book_unpaid_fees</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_unpaid_fees">book_unpaid_fees</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.unpaid_fees
 }
 </code></pre>
@@ -1384,7 +1465,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_fee_is_deep">book_fee_is_deep</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_fee_is_deep">book_fee_is_deep</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
     self.fee_is_deep
 }
 </code></pre>
@@ -1408,7 +1489,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_status">book_status</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u8 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_status">book_status</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u8 {
     self.status
 }
 </code></pre>
@@ -1432,7 +1513,7 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_expire_timestamp">book_expire_timestamp</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_expire_timestamp">book_expire_timestamp</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.expire_timestamp
 }
 </code></pre>
@@ -1456,8 +1537,32 @@ TODO: Better naming to avoid conflict?
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_book_self_matching_prevention">book_self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_book_self_matching_prevention">book_self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
     self.self_matching_prevention
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_book_quantity"></a>
+
+## Function `set_book_quantity`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_book_quantity">set_book_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_book_quantity">set_book_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, quantity: u64) {
+    self.quantity = quantity;
 }
 </code></pre>
 
@@ -1483,13 +1588,14 @@ information required to match orders.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_to_order">to_order</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): <a href="order.md#0x0_order_Order">Order</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_to_order">to_order</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): <a href="order.md#0x0_order_Order">Order</a> {
+    <b>let</b> unpaid_fees = self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>() * self.maker_fee;
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id: self.order_id,
         client_order_id: self.client_order_id,
         owner: self.owner,
         quantity: self.original_quantity,
-        unpaid_fees: self.total_fees - self.paid_fees,
+        unpaid_fees,
         fee_is_deep: self.fee_is_deep,
         status: self.status,
         expire_timestamp: self.expire_timestamp,
@@ -1518,7 +1624,7 @@ Validates that the initial order created meets the pool requirements.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_validate_inputs">validate_inputs</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_validate_inputs">validate_inputs</a>(
     order_info: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>,
     tick_size: u64,
     min_size: u64,
@@ -1553,7 +1659,7 @@ Validates that the initial order created meets the pool requirements.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(
     <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">Order</a>,
     book_quantity: u64,
     new_quantity: u64,
@@ -1588,7 +1694,7 @@ Returns true if two opposite orders are overlapping in price.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_crosses_price">crosses_price</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">Order</a>): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_crosses_price">crosses_price</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">Order</a>): bool {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.order_id);
 
     (
@@ -1619,7 +1725,7 @@ Returns the remaining quantity for the order.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
     self.original_quantity - self.executed_quantity
 }
 </code></pre>
@@ -1644,7 +1750,7 @@ Asserts that the order doesn't have any fills.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_assert_post_only">assert_post_only</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_assert_post_only">assert_post_only</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
     <b>if</b> (self.order_type == <a href="order.md#0x0_order_POST_ONLY">POST_ONLY</a>)
         <b>assert</b>!(self.executed_quantity == 0, <a href="order.md#0x0_order_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>);
 }
@@ -1670,7 +1776,7 @@ Asserts that the order is fully filled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_assert_fill_or_kill">assert_fill_or_kill</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_assert_fill_or_kill">assert_fill_or_kill</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
     <b>if</b> (self.order_type == <a href="order.md#0x0_order_FILL_OR_KILL">FILL_OR_KILL</a>)
         <b>assert</b>!(self.executed_quantity == self.original_quantity, <a href="order.md#0x0_order_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>);
 }
@@ -1696,7 +1802,7 @@ Checks whether this is an immediate or cancel type of order.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_is_immediate_or_cancel">is_immediate_or_cancel</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_is_immediate_or_cancel">is_immediate_or_cancel</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): bool {
     self.order_type == <a href="order.md#0x0_order_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>
 }
 </code></pre>
@@ -1721,33 +1827,8 @@ Returns the fill or kill constant.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_fill_or_kill">fill_or_kill</a>(): u8 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_fill_or_kill">fill_or_kill</a>(): u8 {
     <a href="order.md#0x0_order_FILL_OR_KILL">FILL_OR_KILL</a>
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_total_fees"></a>
-
-## Function `set_total_fees`
-
-Sets the total fees for the order.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_total_fees">set_total_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, total_fees: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_set_total_fees">set_total_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">OrderInfo</a>, total_fees: u64) {
-    self.total_fees = total_fees;
 }
 </code></pre>
 
@@ -1771,7 +1852,7 @@ Update the order status to canceled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
     self.status = <a href="order.md#0x0_order_CANCELED">CANCELED</a>;
 }
 </code></pre>
@@ -1796,7 +1877,7 @@ Update the order status to expired.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
     self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
 }
 </code></pre>
@@ -1821,7 +1902,7 @@ Returns the result of the fill and the maker id & owner.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_fill_status">fill_status</a>(fill: &<a href="order.md#0x0_order_Fill">Fill</a>): (u128, <b>address</b>, bool, bool) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_fill_status">fill_status</a>(fill: &<a href="order.md#0x0_order_Fill">Fill</a>): (u128, <b>address</b>, bool, bool) {
     (fill.order_id, fill.owner, fill.expired, fill.complete)
 }
 </code></pre>
@@ -1846,7 +1927,7 @@ Returns the settled quantities for the fill.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_settled_quantities">settled_quantities</a>(fill: &<a href="order.md#0x0_order_Fill">Fill</a>): (u64, u64, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_settled_quantities">settled_quantities</a>(fill: &<a href="order.md#0x0_order_Fill">Fill</a>): (u64, u64, u64) {
     (fill.settled_base, fill.settled_quote, fill.settled_deep)
 }
 </code></pre>
@@ -1864,7 +1945,7 @@ If the book order is expired, it returns a Fill with the expired flag set to tru
 Funds for an expired order are returned to the maker as settled.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_match_maker">match_maker</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, maker: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64): <a href="order.md#0x0_order_Fill">order::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_match_maker">match_maker</a>(self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, maker: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64): bool
 </code></pre>
 
 
@@ -1873,11 +1954,12 @@ Funds for an expired order are returned to the maker as settled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_match_maker">match_maker</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_match_maker">match_maker</a>(
     self: &<b>mut</b> <a href="order.md#0x0_order_OrderInfo">OrderInfo</a>,
     maker: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     timestamp: u64,
-): <a href="order.md#0x0_order_Fill">Fill</a> {
+): bool {
+    <b>if</b> (!self.<a href="order.md#0x0_order_crosses_price">crosses_price</a>(maker)) <b>return</b> <b>false</b>;
     <b>if</b> (maker.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp) {
         maker.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
         <b>let</b> cancel_quantity = maker.<a href="order.md#0x0_order_book_quantity">book_quantity</a>();
@@ -1885,7 +1967,7 @@ Funds for an expired order are returned to the maker as settled.
             cancel_quantity,
             <b>false</b>,
         );
-        <b>return</b> <a href="order.md#0x0_order_Fill">Fill</a> {
+        self.fills.push_back(<a href="order.md#0x0_order_Fill">Fill</a> {
             order_id: maker.order_id,
             owner: maker.owner,
             expired: <b>true</b>,
@@ -1893,7 +1975,9 @@ Funds for an expired order are returned to the maker as settled.
             settled_base: base,
             settled_quote: quote,
             settled_deep: deep,
-        }
+        });
+
+        <b>return</b> <b>true</b>
     };
 
     <b>let</b> (_, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(maker.order_id);
@@ -1913,7 +1997,7 @@ Funds for an expired order are returned to the maker as settled.
 
     self.<a href="order.md#0x0_order_emit_order_filled">emit_order_filled</a>(timestamp);
 
-    <a href="order.md#0x0_order_Fill">Fill</a> {
+    self.fills.push_back(<a href="order.md#0x0_order_Fill">Fill</a> {
         order_id: maker.order_id,
         owner: maker.owner,
         expired: <b>false</b>,
@@ -1921,7 +2005,9 @@ Funds for an expired order are returned to the maker as settled.
         settled_base: <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0,
         settled_quote: <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity,
         settled_deep: 0,
-    }
+    });
+
+    <b>true</b>
 }
 </code></pre>
 
@@ -1948,7 +2034,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
     self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     cancel_quantity: u64,
     modify_order: bool,
@@ -2021,7 +2107,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_placed">emit_order_placed</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_placed">emit_order_placed</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>)
 </code></pre>
 
 
@@ -2030,8 +2116,8 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_emit_order_placed">emit_order_placed</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderPlaced">OrderPlaced</a>&lt;BaseAsset, QuoteAsset&gt; {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_placed">emit_order_placed</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>) {
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderPlaced">OrderPlaced</a> {
         pool_id: self.pool_id,
         order_id: self.order_id,
         client_order_id: self.client_order_id,
@@ -2064,7 +2150,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
@@ -2098,11 +2184,11 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
-        pool_id,
         order_id: self.order_id,
+        pool_id,
         client_order_id: self.client_order_id,
         owner: self.owner,
         price,

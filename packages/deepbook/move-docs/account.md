@@ -593,7 +593,7 @@ Deposit funds to an account. Pool will call this to deposit funds.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
     proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
     to_deposit: Balance&lt;T&gt;,
@@ -631,7 +631,7 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
     proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
     amount: u64,
@@ -672,7 +672,7 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="account.md#0x0_account_delete">delete</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">Account</a>) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_delete">delete</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">Account</a>) {
     <b>let</b> <a href="account.md#0x0_account_Account">Account</a> {
         id,
         owner: _,

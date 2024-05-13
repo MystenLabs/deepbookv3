@@ -1,14 +1,14 @@
-module deepbook::v3vault {
+module deepbook::vault {
     use std::type_name::{Self, TypeName};
 
     use sui::balance::{Self, Balance};
 
     use deepbook::{
         math,
-        v3account::{Account, TradeProof},
-        v3deep_price::{Self, DeepPrice},
-        v3user::User,
-        v3order::OrderInfo,
+        account::{Account, TradeProof},
+        deep_price::{Self, DeepPrice},
+        user::User,
+        order::OrderInfo,
     };
 
     const EIneligibleTargetPool: u64 = 1;
@@ -27,7 +27,7 @@ module deepbook::v3vault {
             base_balance: balance::zero(),
             quote_balance: balance::zero(),
             deep_balance: balance::zero(),
-            deep_price: v3deep_price::empty(),
+            deep_price: deep_price::empty(),
         }
     }
 

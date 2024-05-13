@@ -1,10 +1,10 @@
-module deepbook::v3book {
+module deepbook::book {
     use deepbook::{
         big_vector::{Self, BigVector},
         utils,
         math,
 
-        v3order::{Order, OrderInfo},
+        order::{Order, OrderInfo},
     };
 
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;

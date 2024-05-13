@@ -3,7 +3,7 @@
 
 /// Public-facing interface for the package.
 /// TODO: No authorization checks are implemented;
-module deepbook::v3 {
+module deepbook::pool {
     use std::type_name;
 
     use sui::{
@@ -16,12 +16,12 @@ module deepbook::v3 {
     };
 
     use deepbook::{
-        v3account::{Self, Account, TradeProof},
-        v3order,
-        v3book::{Self, Book},
-        v3state::{Self, State},
-        v3vault::{Self, Vault, DEEP},
-        v3registry::Registry,
+        account::{Self, Account, TradeProof},
+        order,
+        book::{Self, Book},
+        state::{Self, State},
+        vault::{Self, Vault, DEEP},
+        registry::Registry,
     };
 
     const EInvalidFee: u64 = 1;
@@ -82,9 +82,9 @@ module deepbook::v3 {
 
         let pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
-            book: v3book::empty(tick_size, lot_size, min_size, ctx),
-            state: v3state::empty(ctx),
-            vault: v3vault::empty(),
+            book: book::empty(tick_size, lot_size, min_size, ctx),
+            state: state::empty(ctx),
+            vault: vault::empty(),
         };
 
         let (taker_fee, maker_fee, _) = pool.state.governance().trade_params();
@@ -125,7 +125,7 @@ module deepbook::v3 {
     ) {
         let (taker_fee, maker_fee, stake_required) = self.state.governance().trade_params();
         let mut order_info =
-            v3order::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
+            order::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()), taker_fee, maker_fee, stake_required);
@@ -150,7 +150,7 @@ module deepbook::v3 {
             account,
             proof,
             client_order_id,
-            v3order::fill_or_kill(),
+            order::fill_or_kill(),
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,
@@ -174,7 +174,7 @@ module deepbook::v3 {
         assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
         assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
 
-        let mut temp_account = v3account::new(ctx);
+        let mut temp_account = account::new(ctx);
         temp_account.deposit(base_in, ctx);
         temp_account.deposit(quote_in, ctx);
         temp_account.deposit(deep_in, ctx);

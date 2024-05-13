@@ -5,31 +5,34 @@
 
 
 
--  [Resource `State`](#0x0_state_State)
+-  [Struct `State`](#0x0_state_State)
 -  [Constants](#@Constants_0)
--  [Function `vault_value`](#0x0_state_vault_value)
--  [Function `create_and_share`](#0x0_state_create_and_share)
--  [Function `create_pool`](#0x0_state_create_pool)
--  [Function `set_pool_as_stable`](#0x0_state_set_pool_as_stable)
--  [Function `stake`](#0x0_state_stake)
--  [Function `unstake`](#0x0_state_unstake)
--  [Function `submit_proposal`](#0x0_state_submit_proposal)
--  [Function `vote`](#0x0_state_vote)
--  [Function `get_pool_metadata_mut`](#0x0_state_get_pool_metadata_mut)
--  [Function `apply_winning_proposal`](#0x0_state_apply_winning_proposal)
+-  [Function `empty`](#0x0_state_empty)
+-  [Function `whitelisted`](#0x0_state_whitelisted)
+-  [Function `set_whitelist`](#0x0_state_set_whitelist)
+-  [Function `process_create`](#0x0_state_process_create)
+-  [Function `process_cancel`](#0x0_state_process_cancel)
+-  [Function `process_modify`](#0x0_state_process_modify)
+-  [Function `process_stake`](#0x0_state_process_stake)
+-  [Function `process_unstake`](#0x0_state_process_unstake)
+-  [Function `process_proposal`](#0x0_state_process_proposal)
+-  [Function `process_vote`](#0x0_state_process_vote)
+-  [Function `deep_price`](#0x0_state_deep_price)
+-  [Function `governance`](#0x0_state_governance)
+-  [Function `governance_mut`](#0x0_state_governance_mut)
+-  [Function `user`](#0x0_state_user)
+-  [Function `user_mut`](#0x0_state_user_mut)
+-  [Function `update_user`](#0x0_state_update_user)
+-  [Function `add_new_user`](#0x0_state_add_new_user)
 
 
-<pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
-<b>use</b> <a href="pool.md#0x0_pool">0x0::pool</a>;
-<b>use</b> <a href="pool_metadata.md#0x0_pool_metadata">0x0::pool_metadata</a>;
-<b>use</b> <a href="state_manager.md#0x0_state_manager">0x0::state_manager</a>;
+<pre><code><b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
+<b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
+<b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
-<b>use</b> <a href="dependencies/sui-framework/bag.md#0x2_bag">0x2::bag</a>;
-<b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
-<b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
-<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
-<b>use</b> <a href="dependencies/sui-framework/sui.md#0x2_sui">0x2::sui</a>;
-<b>use</b> <a href="dependencies/sui-framework/transfer.md#0x2_transfer">0x2::transfer</a>;
+<b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -37,11 +40,11 @@
 
 <a name="0x0_state_State"></a>
 
-## Resource `State`
+## Struct `State`
 
 
 
-<pre><code><b>struct</b> <a href="state.md#0x0_state_State">State</a> <b>has</b> key
+<pre><code><b>struct</b> <a href="state.md#0x0_state_State">State</a> <b>has</b> store
 </code></pre>
 
 
@@ -52,19 +55,31 @@
 
 <dl>
 <dt>
-<code>id: <a href="dependencies/sui-framework/object.md#0x2_object_UID">object::UID</a></code>
+<code>users: <a href="dependencies/sui-framework/table.md#0x2_table_Table">table::Table</a>&lt;<b>address</b>, <a href="user.md#0x0_user_User">user::User</a>&gt;</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
+<code><a href="history.md#0x0_history">history</a>: <a href="history.md#0x0_history_History">history::History</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="pool.md#0x0_pool_DEEP">pool::DEEP</a>&gt;</code>
+<code><a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_Governance">governance::Governance</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code><a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>whitelisted: bool</code>
 </dt>
 <dd>
 
@@ -79,47 +94,11 @@
 ## Constants
 
 
-<a name="0x0_state_DEFAULT_MAKER_FEE"></a>
-
-
-
-<pre><code><b>const</b> <a href="state.md#0x0_state_DEFAULT_MAKER_FEE">DEFAULT_MAKER_FEE</a>: u64 = 500;
-</code></pre>
-
-
-
-<a name="0x0_state_DEFAULT_TAKER_FEE"></a>
-
-
-
-<pre><code><b>const</b> <a href="state.md#0x0_state_DEFAULT_TAKER_FEE">DEFAULT_TAKER_FEE</a>: u64 = 1000;
-</code></pre>
-
-
-
 <a name="0x0_state_ENotEnoughStake"></a>
 
 
 
-<pre><code><b>const</b> <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>: u64 = 3;
-</code></pre>
-
-
-
-<a name="0x0_state_EPoolAlreadyExists"></a>
-
-
-
-<pre><code><b>const</b> <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_state_EPoolDoesNotExist"></a>
-
-
-
-<pre><code><b>const</b> <a href="state.md#0x0_state_EPoolDoesNotExist">EPoolDoesNotExist</a>: u64 = 1;
+<pre><code><b>const</b> <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>: u64 = 2;
 </code></pre>
 
 
@@ -133,14 +112,13 @@
 
 
 
-<a name="0x0_state_vault_value"></a>
+<a name="0x0_state_empty"></a>
 
-## Function `vault_value`
-
-Number of DEEP tokens staked in the protocol.
+## Function `empty`
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="state.md#0x0_state_vault_value">vault_value</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): u64
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_empty">empty</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="state.md#0x0_state_State">state::State</a>
 </code></pre>
 
 
@@ -149,8 +127,14 @@ Number of DEEP tokens staked in the protocol.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="state.md#0x0_state_vault_value">vault_value</a>(self: &<a href="state.md#0x0_state_State">State</a>): u64 {
-    self.vault.value()
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_empty">empty</a>(ctx: &<b>mut</b> TxContext): <a href="state.md#0x0_state_State">State</a> {
+    <a href="state.md#0x0_state_State">State</a> {
+        <a href="history.md#0x0_history">history</a>: <a href="history.md#0x0_history_empty">history::empty</a>(ctx),
+        <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx.epoch()),
+        users: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
+        whitelisted: <b>false</b>,
+    }
 }
 </code></pre>
 
@@ -158,14 +142,13 @@ Number of DEEP tokens staked in the protocol.
 
 </details>
 
-<a name="0x0_state_create_and_share"></a>
+<a name="0x0_state_whitelisted"></a>
 
-## Function `create_and_share`
-
-Create a new State and share it. Called once during init.
+## Function `whitelisted`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_create_and_share">create_and_share</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_whitelisted">whitelisted</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): bool
 </code></pre>
 
 
@@ -174,13 +157,10 @@ Create a new State and share it. Called once during init.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_create_and_share">create_and_share</a>(ctx: &<b>mut</b> TxContext) {
-    <b>let</b> <a href="state.md#0x0_state">state</a> = <a href="state.md#0x0_state_State">State</a> {
-        id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
-        pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
-        vault: <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>(),
-    };
-    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="state.md#0x0_state">state</a>);
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_whitelisted">whitelisted</a>(
+    self: &<a href="state.md#0x0_state_State">State</a>,
+): bool {
+    self.whitelisted
 }
 </code></pre>
 
@@ -188,16 +168,13 @@ Create a new State and share it. Called once during init.
 
 </details>
 
-<a name="0x0_state_create_pool"></a>
+<a name="0x0_state_set_whitelist"></a>
 
-## Function `create_pool`
-
-Create a new pool. Calls create_pool inside Pool then registers it in
-the state. <code>pool_key</code> is a sorted, concatenated string of the two asset
-names. If SUI/USDC exists, you can't create USDC/SUI.
+## Function `set_whitelist`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_set_whitelist">set_whitelist</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, whitelisted: bool)
 </code></pre>
 
 
@@ -206,28 +183,11 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_set_whitelist">set_whitelist</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    tick_size: u64,
-    lot_size: u64,
-    min_size: u64,
-    creation_fee: Balance&lt;SUI&gt;,
-    ctx: &<b>mut</b> TxContext,
+    whitelisted: bool,
 ) {
-    <b>let</b> (pool_key, rev_key) = <a href="pool.md#0x0_pool_create_pool">pool::create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-        <a href="state.md#0x0_state_DEFAULT_TAKER_FEE">DEFAULT_TAKER_FEE</a>,
-        <a href="state.md#0x0_state_DEFAULT_MAKER_FEE">DEFAULT_MAKER_FEE</a>,
-        tick_size,
-        lot_size,
-        min_size,
-        creation_fee,
-        ctx
-    );
-
-    <b>assert</b>!(!self.pools.contains(pool_key) && !self.pools.contains(rev_key), <a href="state.md#0x0_state_EPoolAlreadyExists">EPoolAlreadyExists</a>);
-
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = <a href="pool_metadata.md#0x0_pool_metadata_empty">pool_metadata::empty</a>(ctx.epoch());
-    self.pools.add(pool_key, <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>);
+    self.whitelisted = whitelisted;
 }
 </code></pre>
 
@@ -235,15 +195,13 @@ names. If SUI/USDC exists, you can't create USDC/SUI.
 
 </details>
 
-<a name="0x0_state_set_pool_as_stable"></a>
+<a name="0x0_state_process_create"></a>
 
-## Function `set_pool_as_stable`
-
-Set the as stable or volatile. This changes the fee structure of the pool.
-New proposals will be asserted against the new fee structure.
+## Function `process_create`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -252,102 +210,32 @@ New proposals will be asserted against the new fee structure.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_set_pool_as_stable">set_pool_as_stable</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    stable: bool,
+    order_info: &OrderInfo,
     ctx: &TxContext,
 ) {
-    self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
-        .set_as_stable(stable);
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    <b>let</b> fills = order_info.fills();
+    <b>let</b> <b>mut</b> i = 0;
+    <b>while</b> (i &lt; fills.length()) {
+        <b>let</b> fill = &fills[i];
+        <b>let</b> (order_id, owner, expired, completed) = fill.fill_status();
+        <b>let</b> (base, quote, deep) = fill.settled_quantities();
+        self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+        <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
+        <a href="user.md#0x0_user">user</a>.add_settled_amounts(base, quote, deep);
+        <b>if</b> (expired || completed) {
+            <a href="user.md#0x0_user">user</a>.remove_order(order_id);
+        };
 
-    // TODO: set fees
-}
-</code></pre>
+        self.<a href="history.md#0x0_history">history</a>.add_volume(base, <a href="user.md#0x0_user">user</a>.active_stake(), <a href="user.md#0x0_user">user</a>.maker_volume() == 0);
 
-
-
-</details>
-
-<a name="0x0_state_stake"></a>
-
-## Function `stake`
-
-Stake DEEP in the pool. This will increase the user's voting power next epoch
-Individual user stakes are stored inside of the pool.
-A user's stake is tracked as stake_amount, staked before current epoch, their "active" amount,
-and next_stake_amount, stake_amount + new stake during this epoch. Upon refresh, stake_amount = next_stake_amount.
-Total voting power is maintained in the pool metadata.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
-    proof: &TradeProof,
-    amount: u64,
-    ctx: &<b>mut</b> TxContext,
-) {
-    <b>let</b> user = <a href="account.md#0x0_account">account</a>.owner();
-    <b>let</b> total_stake = <a href="pool.md#0x0_pool">pool</a>.increase_user_stake(user, amount, ctx);
-    self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx)
-        .adjust_voting_power(total_stake - amount, total_stake);
-    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof&lt;DEEP&gt;(proof, amount, <b>false</b>, ctx).into_balance();
-    self.vault.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_unstake"></a>
-
-## Function `unstake`
-
-Unstake DEEP in the pool. This will decrease the user's voting power.
-All stake for this user will be removed.
-If the user has voted, their vote will be removed.
-If the user had accumulated rebates during this epoch, they will be forfeited.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
-    proof: &TradeProof,
-    ctx: &<b>mut</b> TxContext
-) {
-    <b>let</b> user = <a href="account.md#0x0_account">account</a>.owner();
-    <b>let</b> total_stake = <a href="pool.md#0x0_pool">pool</a>.remove_user_stake(user, ctx);
-    <b>let</b> prev_proposal_id = <a href="pool.md#0x0_pool">pool</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), ctx);
-    <b>if</b> (prev_proposal_id.is_some()) {
-        <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
-        <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.adjust_voting_power(0, total_stake);
-        <b>let</b> winning_proposal = <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.<a href="state.md#0x0_state_vote">vote</a>(<a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), prev_proposal_id, total_stake);
-        self.<a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>(<a href="pool.md#0x0_pool">pool</a>, winning_proposal);
+        i = i + 1;
     };
 
-    <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.vault.split(total_stake).into_coin(ctx);
-    <a href="account.md#0x0_account">account</a>.deposit_with_proof&lt;DEEP&gt;(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(order_info.owner(), ctx.epoch());
+    self.users[order_info.owner()].add_order(order_info.order_id());
 }
 </code></pre>
 
@@ -355,15 +243,13 @@ If the user had accumulated rebates during this epoch, they will be forfeited.
 
 </details>
 
-<a name="0x0_state_submit_proposal"></a>
+<a name="0x0_state_process_cancel"></a>
 
-## Function `submit_proposal`
-
-Submit a proposal to change the fee structure of a pool.
-The user submitting this proposal must have vested stake in the pool.
+## Function `process_cancel`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, maker_fee: u64, taker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, order_id: u128, owner: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -372,20 +258,167 @@ The user submitting this proposal must have vested stake in the pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    user: <b>address</b>,
-    maker_fee: u64,
+    <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
+    order_id: u128,
+    owner: <b>address</b>,
+    ctx: &TxContext,
+) {
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    <a href="order.md#0x0_order">order</a>.set_canceled();
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
+    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.book_quantity();
+    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(
+        cancel_quantity,
+        <b>false</b>,
+    );
+    <a href="user.md#0x0_user">user</a>.remove_order(order_id);
+    <a href="user.md#0x0_user">user</a>.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_process_modify"></a>
+
+## Function `process_modify`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, owner: <b>address</b>, base_quantity: u64, quote_quantity: u64, deep_quantity: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    owner: <b>address</b>,
+    base_quantity: u64,
+    quote_quantity: u64,
+    deep_quantity: u64,
+    ctx: &TxContext,
+) {
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+
+    self.users[owner].add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_process_stake"></a>
+
+## Function `process_stake`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_stake">process_stake</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, owner: <b>address</b>, new_stake: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_stake">process_stake</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    owner: <b>address</b>,
+    new_stake: u64,
+    ctx: &TxContext,
+) {
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+
+    <b>let</b> (stake_before, stake_after) = self.users[owner].add_stake(new_stake);
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(stake_before, stake_after);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_process_unstake"></a>
+
+## Function `process_unstake`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_unstake">process_unstake</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, owner: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_unstake">process_unstake</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    owner: <b>address</b>,
+    ctx: &TxContext,
+) {
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
+    <b>let</b> (total_stake, voted_proposal) = <a href="user.md#0x0_user">user</a>.remove_stake();
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(total_stake, 0);
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(voted_proposal, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), total_stake);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_process_proposal"></a>
+
+## Function `process_proposal`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_proposal">process_proposal</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_proposal">process_proposal</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
     taker_fee: u64,
+    maker_fee: u64,
     stake_required: u64,
     ctx: &TxContext,
 ) {
-    <b>let</b> (stake, _) = <a href="pool.md#0x0_pool">pool</a>.get_user_stake(user, ctx);
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(<a href="user.md#0x0_user">user</a>, ctx.epoch());
+
+    <b>let</b> stake = self.users[<a href="user.md#0x0_user">user</a>].active_stake();
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
 
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
-    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.add_proposal(maker_fee, taker_fee, stake_required);
+    self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(taker_fee, maker_fee, stake_required, stake, <a href="user.md#0x0_user">user</a>);
+    self.<a href="state.md#0x0_state_process_vote">process_vote</a>(<a href="user.md#0x0_user">user</a>, <a href="user.md#0x0_user">user</a>, ctx);
 }
 </code></pre>
 
@@ -393,16 +426,13 @@ The user submitting this proposal must have vested stake in the pool.
 
 </details>
 
-<a name="0x0_state_vote"></a>
+<a name="0x0_state_process_vote"></a>
 
-## Function `vote`
-
-Vote on a proposal using the user's full voting power.
-If the vote pushes proposal over quorum, PoolData is created.
-Set the Pool's next_pool_data with the created PoolData.
+## Function `process_vote`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, user: <b>address</b>, proposal_id: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_vote">process_vote</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, proposal_id: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -411,20 +441,25 @@ Set the Pool's next_pool_data with the created PoolData.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="state.md#0x0_state_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_vote">process_vote</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
-    user: <b>address</b>,
-    proposal_id: u64,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    proposal_id: <b>address</b>,
     ctx: &TxContext,
 ) {
-    <b>let</b> (stake, _) = <a href="pool.md#0x0_pool">pool</a>.get_user_stake(user, ctx);
-    <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
-    <b>let</b> prev_proposal_id = <a href="pool.md#0x0_pool">pool</a>.set_user_voted_proposal(user, <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), ctx);
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(<a href="user.md#0x0_user">user</a>, ctx.epoch());
 
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a> = self.<a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>(<a href="pool.md#0x0_pool">pool</a>, ctx);
-    <b>let</b> winning_proposal = <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.<a href="state.md#0x0_state_vote">vote</a>(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id), prev_proposal_id, stake);
-    self.<a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>(<a href="pool.md#0x0_pool">pool</a>, winning_proposal);
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[<a href="user.md#0x0_user">user</a>];
+    <b>assert</b>!(<a href="user.md#0x0_user">user</a>.active_stake() &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+
+    <b>let</b> prev_proposal = <a href="user.md#0x0_user">user</a>.set_voted_proposal(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id));
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(
+        prev_proposal,
+        <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id),
+        <a href="user.md#0x0_user">user</a>.active_stake(),
+    );
 }
 </code></pre>
 
@@ -432,14 +467,13 @@ Set the Pool's next_pool_data with the created PoolData.
 
 </details>
 
-<a name="0x0_state_get_pool_metadata_mut"></a>
+<a name="0x0_state_deep_price"></a>
 
-## Function `get_pool_metadata_mut`
-
-Check whether pool exists, refresh and return its metadata.
+## Function `deep_price`
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="pool_metadata.md#0x0_pool_metadata_PoolMetadata">pool_metadata::PoolMetadata</a>
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price">deep_price</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>
 </code></pre>
 
 
@@ -448,17 +482,65 @@ Check whether pool exists, refresh and return its metadata.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_get_pool_metadata_mut">get_pool_metadata_mut</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price">deep_price</a>(
+    self: &<a href="state.md#0x0_state_State">State</a>,
+): &DeepPrice {
+    &self.<a href="deep_price.md#0x0_deep_price">deep_price</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_governance"></a>
+
+## Function `governance`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance">governance</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): &<a href="governance.md#0x0_governance_Governance">governance::Governance</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance">governance</a>(
+    self: &<a href="state.md#0x0_state_State">State</a>,
+): &Governance {
+    &self.<a href="governance.md#0x0_governance">governance</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_governance_mut"></a>
+
+## Function `governance_mut`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_governance_mut">governance_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_governance_mut">governance_mut</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &Pool&lt;BaseAsset, QuoteAsset&gt;,
-    ctx: &TxContext
-): &<b>mut</b> PoolMetadata {
-    <b>let</b> pool_key = <a href="pool.md#0x0_pool">pool</a>.key();
-    <b>assert</b>!(self.pools.contains(pool_key), <a href="state.md#0x0_state_EPoolDoesNotExist">EPoolDoesNotExist</a>);
+    ctx: &TxContext,
+): &<b>mut</b> Governance {
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
 
-    <b>let</b> <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>: &<b>mut</b> PoolMetadata = &<b>mut</b> self.pools[pool_key];
-    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>.refresh(ctx.epoch());
-    <a href="pool_metadata.md#0x0_pool_metadata">pool_metadata</a>
+    &<b>mut</b> self.<a href="governance.md#0x0_governance">governance</a>
 }
 </code></pre>
 
@@ -466,13 +548,13 @@ Check whether pool exists, refresh and return its metadata.
 
 </details>
 
-<a name="0x0_state_apply_winning_proposal"></a>
+<a name="0x0_state_user"></a>
 
-## Function `apply_winning_proposal`
+## Function `user`
 
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(_self: &<a href="state.md#0x0_state_State">state::State</a>, <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, winning_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="pool_metadata.md#0x0_pool_metadata_Proposal">pool_metadata::Proposal</a>&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="user.md#0x0_user">user</a>(self: &<a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>): &<a href="user.md#0x0_user_User">user::User</a>
 </code></pre>
 
 
@@ -481,22 +563,103 @@ Check whether pool exists, refresh and return its metadata.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_apply_winning_proposal">apply_winning_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
-    _self: &<a href="state.md#0x0_state_State">State</a>,
-    <a href="pool.md#0x0_pool">pool</a>: &<b>mut</b> Pool&lt;BaseAsset, QuoteAsset&gt;,
-    winning_proposal: Option&lt;Proposal&gt;,
-) {
-    <b>let</b> next_trade_params = <b>if</b> (winning_proposal.is_none()) {
-        <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>()
-    } <b>else</b> {
-        <b>let</b> (taker_fee, maker_fee, stake_required) = winning_proposal
-            .borrow()
-            .proposal_params();
+<pre><code><b>public</b>(package) <b>fun</b> <a href="user.md#0x0_user">user</a>(
+    self: &<a href="state.md#0x0_state_State">State</a>,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+): &User {
+    &self.users[<a href="user.md#0x0_user">user</a>]
+}
+</code></pre>
 
-        <b>let</b> fees = <a href="state_manager.md#0x0_state_manager_new_trade_params">state_manager::new_trade_params</a>(taker_fee, maker_fee, stake_required);
-        <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(fees)
+
+
+</details>
+
+<a name="0x0_state_user_mut"></a>
+
+## Function `user_mut`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_user_mut">user_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, epoch: u64): &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_user_mut">user_mut</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    epoch: u64,
+): &<b>mut</b> User {
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(<a href="user.md#0x0_user">user</a>, epoch);
+
+    &<b>mut</b> self.users[<a href="user.md#0x0_user">user</a>]
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_update_user"></a>
+
+## Function `update_user`
+
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_update_user">update_user</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, epoch: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_update_user">update_user</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    epoch: u64,
+) {
+    <a href="state.md#0x0_state_add_new_user">add_new_user</a>(self, <a href="user.md#0x0_user">user</a>, epoch);
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[<a href="user.md#0x0_user">user</a>];
+    <b>let</b> (prev_epoch, maker_volume, active_stake) = <a href="user.md#0x0_user">user</a>.<b>update</b>(epoch);
+    <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+    <a href="user.md#0x0_user">user</a>.add_rebates(rebates);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_add_new_user"></a>
+
+## Function `add_new_user`
+
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_user">add_new_user</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, epoch: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_user">add_new_user</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    epoch: u64,
+) {
+    <b>if</b> (!self.users.contains(<a href="user.md#0x0_user">user</a>)) {
+        self.users.add(<a href="user.md#0x0_user">user</a>, <a href="user.md#0x0_user_empty">user::empty</a>(epoch));
     };
-    <a href="pool.md#0x0_pool">pool</a>.set_next_trade_params(next_trade_params);
 }
 </code></pre>
 

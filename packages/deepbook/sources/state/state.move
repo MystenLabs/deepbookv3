@@ -1,14 +1,14 @@
-module deepbook::v3state {
+module deepbook::state {
     use sui::{
         table::{Self, Table},
     };
 
     use deepbook::{
-        v3history::{Self, History},
-        v3order::{OrderInfo, Order},
-        v3governance::{Self, Governance},
-        v3deep_price::{Self, DeepPrice},
-        v3user::{Self, User},
+        history::{Self, History},
+        order::{OrderInfo, Order},
+        governance::{Self, Governance},
+        deep_price::{Self, DeepPrice},
+        user::{Self, User},
     };
 
     const ENotEnoughStake: u64 = 2;
@@ -25,10 +25,10 @@ module deepbook::v3state {
 
     public(package) fun empty(ctx: &mut TxContext): State {
         State {
-            history: v3history::empty(ctx),
-            governance: v3governance::empty(ctx.epoch()),
+            history: history::empty(ctx),
+            governance: governance::empty(ctx.epoch()),
             users: table::new(ctx),
-            deep_price: v3deep_price::empty(),
+            deep_price: deep_price::empty(),
             whitelisted: false,
         }
     }
@@ -234,7 +234,7 @@ module deepbook::v3state {
         epoch: u64,
     ) {
         if (!self.users.contains(user)) {
-            self.users.add(user, v3user::empty(epoch));
+            self.users.add(user, user::empty(epoch));
         };
     }
 }

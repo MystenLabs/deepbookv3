@@ -3,7 +3,7 @@
 
 /// Order module defines the order struct and its methods.
 /// All order matching happens in this module.
-module deepbook::v3order {
+module deepbook::order {
     use sui::event;
     use deepbook::{math, utils};
 

@@ -8,7 +8,7 @@
 -  [Struct `Price`](#0x0_deep_price_Price)
 -  [Struct `DeepPrice`](#0x0_deep_price_DeepPrice)
 -  [Constants](#@Constants_0)
--  [Function `new`](#0x0_deep_price_new)
+-  [Function `empty`](#0x0_deep_price_empty)
 -  [Function `add_price_point`](#0x0_deep_price_add_price_point)
 -  [Function `verified`](#0x0_deep_price_verified)
 -  [Function `calculate_fees`](#0x0_deep_price_calculate_fees)
@@ -148,13 +148,13 @@ DEEP price points used for trading fee calculations.
 
 
 
-<a name="0x0_deep_price_new"></a>
+<a name="0x0_deep_price_empty"></a>
 
-## Function `new`
+## Function `empty`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new">new</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_empty">empty</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>
 </code></pre>
 
 
@@ -163,7 +163,7 @@ DEEP price points used for trading fee calculations.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new">new</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_empty">empty</a>(): <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
     <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a> {
         prices: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         index_to_replace: 0,
@@ -194,7 +194,7 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_add_price_point">add_price_point</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_add_price_point">add_price_point</a>(
     self: &<b>mut</b> <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
     timestamp: u64,
     base_conversion_rate: u64,
@@ -248,7 +248,7 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(
     self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
 ): bool {
     self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0
@@ -274,7 +274,7 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(
     self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
     fee_rate: u64,
     base_quantity: u64,

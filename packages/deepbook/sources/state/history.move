@@ -1,4 +1,4 @@
-module deepbook::v3history {
+module deepbook::history {
     use sui::table::{Self, Table};
 
     const EHistoricVolumesNotFound: u64 = 1;

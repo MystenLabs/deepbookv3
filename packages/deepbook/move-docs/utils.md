@@ -35,7 +35,7 @@ appeared in <code>v</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_pop_until">pop_until</a>&lt;T&gt;(v: &<b>mut</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt;, n: u64): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt; {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="utils.md#0x0_utils_pop_until">pop_until</a>&lt;T&gt;(v: &<b>mut</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt;, n: u64): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt; {
     <b>let</b> <b>mut</b> res = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>while</b> (v.length() &gt; n) {
         res.push_back(v.pop_back());
@@ -69,7 +69,7 @@ Aborts if <code>v</code> has fewer than <code>n</code> elements.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_pop_n">pop_n</a>&lt;T&gt;(v: &<b>mut</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt;, <b>mut</b> n: u64): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt; {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="utils.md#0x0_utils_pop_n">pop_n</a>&lt;T&gt;(v: &<b>mut</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt;, <b>mut</b> n: u64): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;T&gt; {
     <b>let</b> <b>mut</b> res = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[];
     <b>while</b> (n &gt; 0) {
         res.push_back(v.pop_back());
@@ -103,7 +103,7 @@ last 64 bits are order_id
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_encode_order_id">encode_order_id</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="utils.md#0x0_utils_encode_order_id">encode_order_id</a>(
     is_bid: bool,
     price: u64,
     order_id: u64
@@ -136,7 +136,7 @@ Decode order_id into (is_bid, price, order_id)
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="utils.md#0x0_utils_decode_order_id">decode_order_id</a>(
     encoded_order_id: u128
 ): (bool, u64, u64) {
     <b>let</b> is_bid = (encoded_order_id &gt;&gt; 127) == 0;
