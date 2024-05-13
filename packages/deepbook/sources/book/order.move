@@ -7,35 +7,16 @@ module deepbook::order {
     use sui::event;
     use deepbook::{math, utils};
 
-    const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
-
-    // Restrictions on limit orders.
-    const NO_RESTRICTION: u8 = 0;
-    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
-    const IMMEDIATE_OR_CANCEL: u8 = 1;
-    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
-    const FILL_OR_KILL: u8 = 2;
-    // Mandates that the entire order be passive. Otherwise, cancel the order.
-    const POST_ONLY: u8 = 3;
-    // Maximum restriction value.
-    const MAX_RESTRICTION: u8 = 3;
-
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
-    const EOrderInvalidPrice: u64 = 0;
+    const EInvalidNewQuantity: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
     const EOrderInvalidLotSize: u64 = 2;
-    const EInvalidExpireTimestamp: u64 = 3;
-    const EInvalidOrderType: u64 = 4;
-    const EPOSTOrderCrossesOrderbook: u64 = 5;
-    const EFOKOrderCannotBeFullyFilled: u64 = 6;
-    const EInvalidNewQuantity: u64 = 7;
-    const EOrderExpired: u64 = 8;
+    const EOrderExpired: u64 = 3;
 
     /// Order struct represents the order in the order book. It is optimized for space.
     public struct Order has store, drop {
@@ -143,10 +124,6 @@ module deepbook::order {
         self.unpaid_fees = unpaid_fees;
     }
 
-    public(package) fun set_status(self: &mut Order, status: u8) {
-        self.status = status;
-    }
-
     public(package) fun validate_modification(
         order: &Order,
         quantity: u64,
@@ -159,6 +136,18 @@ module deepbook::order {
         assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(timestamp < order.expire_timestamp(), EOrderExpired);
+    }
+
+    public(package) fun set_live(self: &mut Order) {
+        self.status = LIVE;
+    }
+
+    public(package) fun set_partially_filled(self: &mut Order) {
+        self.status = PARTIALLY_FILLED;
+    }
+
+    public(package) fun set_filled(self: &mut Order) {
+        self.status = FILLED;
     }
 
     /// Update the order status to canceled.

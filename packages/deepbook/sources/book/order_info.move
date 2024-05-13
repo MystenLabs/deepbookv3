@@ -25,8 +25,6 @@ module deepbook::order_info {
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
-    const CANCELED: u8 = 3;
-    const EXPIRED: u8 = 4;
 
     const EOrderInvalidPrice: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
@@ -35,8 +33,6 @@ module deepbook::order_info {
     const EInvalidOrderType: u64 = 4;
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
-    const EInvalidNewQuantity: u64 = 7;
-    const EOrderExpired: u64 = 8;
 
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
@@ -354,7 +350,7 @@ module deepbook::order_info {
         if (!self.crosses_price(maker)) return false;
         let maker_quantity = maker.quantity();
         if (maker.expire_timestamp() < timestamp) {
-            maker.set_status(EXPIRED);
+            maker.set_expired();
             let cancel_quantity = maker_quantity;
             let (base, quote, deep) = maker.cancel_amounts(
                 cancel_quantity,
@@ -381,9 +377,9 @@ module deepbook::order_info {
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
 
         self.status = PARTIALLY_FILLED;
-        maker.set_status(PARTIALLY_FILLED);
+        maker.set_partially_filled();
         if (self.remaining_quantity() == 0) self.status = FILLED;
-        if (maker.quantity() == 0) maker.set_status(FILLED);
+        if (maker.quantity() == 0) maker.set_filled();
 
         let unpaid_fees = maker.unpaid_fees();
         let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), maker.quantity());
