@@ -103,6 +103,12 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
+<code>trader: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>order_type: u8</code>
 </dt>
 <dd>
@@ -461,6 +467,12 @@ Emitted when a maker order is injected into the order book.
 
 </dd>
 <dt>
+<code>trader: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>price: u64</code>
 </dt>
 <dd>
@@ -473,13 +485,7 @@ Emitted when a maker order is injected into the order book.
 
 </dd>
 <dt>
-<code>original_quantity: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>executed_quantity: u64</code>
+<code>placed_quantity: u64</code>
 </dt>
 <dd>
 
@@ -724,7 +730,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, maker_fee: u64): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, maker_fee: u64): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -737,6 +743,7 @@ It is used to update the state.
     pool_id: ID,
     client_order_id: u64,
     owner: <b>address</b>,
+    trader: <b>address</b>,
     order_type: u8,
     price: u64,
     quantity: u64,
@@ -749,6 +756,7 @@ It is used to update the state.
         order_id: 0,
         client_order_id,
         owner,
+        trader,
         order_type,
         price,
         is_bid,
@@ -1664,8 +1672,8 @@ Funds for an expired order are returned to the maker as settled.
         client_order_id: self.client_order_id,
         is_bid: self.is_bid,
         owner: self.owner,
-        original_quantity: self.original_quantity,
-        executed_quantity: self.executed_quantity,
+        trader: self.trader,
+        placed_quantity: self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         price: self.price,
         expire_timestamp: self.expire_timestamp,
     });

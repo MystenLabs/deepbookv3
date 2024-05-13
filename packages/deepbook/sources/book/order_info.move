@@ -45,8 +45,10 @@ module deepbook::order_info {
         order_id: u128,
         // ID of the order defined by client
         client_order_id: u64,
-        // Owner of the order
+        // Owner of the account the order uses
         owner: address,
+        // Trader of the order
+        trader: address,
         // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
         order_type: u8,
         // Price, only used for limit orders
@@ -121,10 +123,10 @@ module deepbook::order_info {
         order_id: u128,
         client_order_id: u64,
         owner: address,
+        trader: address,
         price: u64,
         is_bid: bool,
-        original_quantity: u64,
-        executed_quantity: u64,
+        placed_quantity: u64,
         expire_timestamp: u64,
     }
 
@@ -151,6 +153,7 @@ module deepbook::order_info {
         pool_id: ID,
         client_order_id: u64,
         owner: address,
+        trader: address,
         order_type: u8,
         price: u64,
         quantity: u64,
@@ -163,6 +166,7 @@ module deepbook::order_info {
             order_id: 0,
             client_order_id,
             owner,
+            trader,
             order_type,
             price,
             is_bid,
@@ -438,8 +442,8 @@ module deepbook::order_info {
             client_order_id: self.client_order_id,
             is_bid: self.is_bid,
             owner: self.owner,
-            original_quantity: self.original_quantity,
-            executed_quantity: self.executed_quantity,
+            trader: self.trader,
+            placed_quantity: self.remaining_quantity(),
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });

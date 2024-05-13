@@ -37,6 +37,7 @@ module deepbook::order {
         order_id: u128,
         client_order_id: u64,
         owner: address,
+        trader: address,
         price: u64,
         is_bid: bool,
         base_asset_quantity_canceled: u64,
@@ -49,6 +50,7 @@ module deepbook::order {
         order_id: u128,
         client_order_id: u64,
         owner: address,
+        trader: address,
         price: u64,
         is_bid: bool,
         new_quantity: u64,
@@ -189,7 +191,12 @@ module deepbook::order {
         (base_quantity, quote_quantity, deep_quantity)
     }
 
-    public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(self: &Order, pool_id: ID, timestamp: u64) {
+    public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
+        self: &Order,
+        pool_id: ID,
+        trader: address,
+        timestamp: u64
+    ) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id,
@@ -197,19 +204,26 @@ module deepbook::order {
             client_order_id: self.client_order_id,
             is_bid,
             owner: self.owner,
+            trader,
             base_asset_quantity_canceled: self.quantity,
             timestamp,
             price,
         });
     }
 
-    public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(self: &Order, pool_id: ID, timestamp: u64) {
+    public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(
+        self: &Order,
+        pool_id: ID,
+        trader: address,
+        timestamp: u64
+    ) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
         event::emit(OrderModified<BaseAsset, QuoteAsset> {
             order_id: self.order_id,
             pool_id,
             client_order_id: self.client_order_id,
             owner: self.owner,
+            trader,
             price,
             is_bid,
             new_quantity: self.quantity,

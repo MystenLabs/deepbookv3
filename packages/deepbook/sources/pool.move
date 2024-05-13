@@ -125,7 +125,18 @@ module deepbook::pool {
     ) {
         let (taker_fee, maker_fee, stake_required) = self.state.governance().trade_params();
         let mut order_info =
-            order_info::initial_order(self.id.to_inner(), client_order_id, account.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
+            order_info::initial_order(
+                self.id.to_inner(),
+                client_order_id,
+                account.owner(),
+                ctx.sender(),
+                order_type,
+                price,
+                quantity,
+                is_bid,
+                expire_timestamp,
+                maker_fee
+            );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()), taker_fee, maker_fee, stake_required);
@@ -213,7 +224,7 @@ module deepbook::pool {
         self.state.process_modify(account.owner(), base, quote, deep, ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     public fun cancel_order<BaseAsset, QuoteAsset>(
@@ -228,7 +239,7 @@ module deepbook::pool {
         self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     public fun stake<BaseAsset, QuoteAsset>(

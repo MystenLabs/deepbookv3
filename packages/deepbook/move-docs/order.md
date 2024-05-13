@@ -160,6 +160,12 @@ Emitted when a maker order is canceled.
 
 </dd>
 <dt>
+<code>trader: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>price: u64</code>
 </dt>
 <dd>
@@ -225,6 +231,12 @@ Emitted when a maker order is modified.
 </dd>
 <dt>
 <code>owner: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>trader: <b>address</b></code>
 </dt>
 <dd>
 
@@ -864,7 +876,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
 </code></pre>
 
 
@@ -873,7 +885,12 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="order.md#0x0_order_Order">Order</a>,
+    pool_id: ID,
+    trader: <b>address</b>,
+    timestamp: u64
+) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
@@ -881,6 +898,7 @@ Modify_order is a flag to indicate whether the order should be modified.
         client_order_id: self.client_order_id,
         is_bid,
         owner: self.owner,
+        trader,
         base_asset_quantity_canceled: self.quantity,
         timestamp,
         price,
@@ -898,7 +916,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
 </code></pre>
 
 
@@ -907,13 +925,19 @@ Modify_order is a flag to indicate whether the order should be modified.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">Order</a>, pool_id: ID, timestamp: u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="order.md#0x0_order_Order">Order</a>,
+    pool_id: ID,
+    trader: <b>address</b>,
+    timestamp: u64
+) {
     <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
         order_id: self.order_id,
         pool_id,
         client_order_id: self.client_order_id,
         owner: self.owner,
+        trader,
         price,
         is_bid,
         new_quantity: self.quantity,
