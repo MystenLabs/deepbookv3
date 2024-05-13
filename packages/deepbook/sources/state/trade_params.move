@@ -8,10 +8,6 @@ module deepbook::trade_params {
         stake_required: u64,
     }
 
-    public(package) fun params(trade_params: &TradeParams): (u64, u64, u64) {
-        (trade_params.taker_fee, trade_params.maker_fee, trade_params.stake_required)
-    }
-
     public(package) fun new(
         taker_fee: u64,
         maker_fee: u64,

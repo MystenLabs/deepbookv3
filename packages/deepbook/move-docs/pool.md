@@ -361,7 +361,8 @@ DeepBookAdminCap is used to call admin functions.
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
     };
 
-    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
+    <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -546,7 +547,7 @@ Swap exact amount without needing an account.
     <b>let</b> proof = temp_account.generate_proof_as_owner(ctx);
 
     <b>let</b> is_bid = quote_quantity &gt; 0;
-    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
+    <b>let</b> taker_fee = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee();
     <b>let</b> (base_fee, quote_fee, _) = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().calculate_fees(taker_fee, base_quantity, quote_quantity);
     base_quantity = base_quantity - base_fee;
     quote_quantity = quote_quantity - quote_fee;

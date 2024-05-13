@@ -6,7 +6,6 @@
 
 
 -  [Struct `TradeParams`](#0x0_trade_params_TradeParams)
--  [Function `params`](#0x0_trade_params_params)
 -  [Function `new`](#0x0_trade_params_new)
 -  [Function `set_taker_fee`](#0x0_trade_params_set_taker_fee)
 -  [Function `set_maker_fee`](#0x0_trade_params_set_maker_fee)
@@ -54,30 +53,6 @@
 
 </dd>
 </dl>
-
-
-</details>
-
-<a name="0x0_trade_params_params"></a>
-
-## Function `params`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_params">params</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: &<a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="trade_params.md#0x0_trade_params_params">params</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: &<a href="trade_params.md#0x0_trade_params_TradeParams">TradeParams</a>): (u64, u64, u64) {
-    (<a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee, <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee, <a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required)
-}
-</code></pre>
-
 
 
 </details>

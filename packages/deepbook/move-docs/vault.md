@@ -226,7 +226,8 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> (base_conversion_rate, _) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rates();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
     <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_conversion_rate);
-    <b>let</b> (taker_fee, maker_fee, stake_required) = <a href="order_info.md#0x0_order_info">order_info</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
+    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="order_info.md#0x0_order_info">order_info</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> (taker_fee, maker_fee, stake_required) = (<a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee(), <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee(), <a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required());
     <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
         <a href="math.md#0x0_math_div">math::div</a>(taker_fee, 2)
     } <b>else</b> {

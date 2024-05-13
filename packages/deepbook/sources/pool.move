@@ -88,7 +88,8 @@ module deepbook::pool {
             vault: vault::empty(),
         };
 
-        let (taker_fee, maker_fee, _) = pool.state.governance().trade_params().params();
+        let params = pool.state.governance().trade_params();
+        let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id,
             taker_fee,
@@ -193,7 +194,7 @@ module deepbook::pool {
         let proof = temp_account.generate_proof_as_owner(ctx);
 
         let is_bid = quote_quantity > 0;
-        let (taker_fee, _, _) = self.state.governance().trade_params().params();
+        let taker_fee = self.state.governance().trade_params().taker_fee();
         let (base_fee, quote_fee, _) = self.state.deep_price().calculate_fees(taker_fee, base_quantity, quote_quantity);
         base_quantity = base_quantity - base_fee;
         quote_quantity = quote_quantity - quote_fee;
