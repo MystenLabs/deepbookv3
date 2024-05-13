@@ -225,17 +225,20 @@
         self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
         <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
         <a href="user.md#0x0_user">user</a>.add_settled_amounts(base, quote, deep);
+        <a href="user.md#0x0_user">user</a>.increase_maker_volume(base);
         <b>if</b> (expired || completed) {
             <a href="user.md#0x0_user">user</a>.remove_order(order_id);
         };
 
-        self.<a href="history.md#0x0_history">history</a>.add_volume(base, <a href="user.md#0x0_user">user</a>.active_stake(), <a href="user.md#0x0_user">user</a>.maker_volume() == 0);
+        self.<a href="history.md#0x0_history">history</a>.add_volume(base, <a href="user.md#0x0_user">user</a>.active_stake(), <a href="user.md#0x0_user">user</a>.maker_volume() == base);
 
         i = i + 1;
     };
 
     self.<a href="state.md#0x0_state_update_user">update_user</a>(order_info.owner(), ctx.epoch());
-    self.users[order_info.owner()].add_order(order_info.order_id());
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[order_info.owner()];
+    <a href="user.md#0x0_user">user</a>.add_order(order_info.order_id());
+    <a href="user.md#0x0_user">user</a>.increase_taker_volume(order_info.executed_quantity());
 }
 </code></pre>
 

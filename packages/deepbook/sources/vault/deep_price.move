@@ -79,6 +79,19 @@ module deepbook::deep_price {
         self.last_insert_timestamp() > 0
     }
 
+    public(package) fun conversion_rates(
+        self: &DeepPrice,
+    ): (u64, u64) {
+        if (self.verified()) {
+            let deep_per_base = math::div(self.cumulative_base, self.prices.length());
+            let deep_per_quote = math::div(self.cumulative_quote, self.prices.length());
+
+            (deep_per_base, deep_per_quote)
+        } else {
+            (0, 0)
+        }
+    }
+
     public(package) fun calculate_fees(
         self: &DeepPrice,
         fee_rate: u64,
@@ -86,8 +99,7 @@ module deepbook::deep_price {
         quote_quantity: u64,
     ): (u64, u64, u64) {
         if (self.verified()) {
-            let deep_per_base = math::div(self.cumulative_base, self.prices.length());
-            let deep_per_quote = math::div(self.cumulative_quote, self.prices.length());
+            let (deep_per_base, deep_per_quote) = self.conversion_rates();
             let base_fee = math::mul(fee_rate, math::mul(base_quantity, deep_per_base));
             let quote_fee = math::mul(fee_rate, math::mul(quote_quantity, deep_per_quote));
 
