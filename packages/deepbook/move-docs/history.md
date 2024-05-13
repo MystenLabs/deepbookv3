@@ -264,6 +264,8 @@ calculate the rebate and burn amounts.
     user_stake: u64,
     first_volume_by_user: bool,
 ) {
+    <b>if</b> (maker_volume == 0) <b>return</b>;
+
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
     <b>if</b> (user_stake &gt; self.volumes.stake_required) {
         self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
