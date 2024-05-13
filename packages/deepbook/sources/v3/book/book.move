@@ -11,6 +11,9 @@ module deepbook::v3book {
     const START_ASK_ORDER_ID: u64 = 1;
 
     const EInvalidAmountIn: u64 = 1;
+    const EEmptyOrderbook: u64 = 2;
+    const EInvalidPriceRange: u64 = 3;
+    const EInvalidTicks: u64 = 4;
 
     public struct Book has store {
         tick_size: u64,
@@ -120,6 +123,65 @@ module deepbook::v3book {
 
     public(package) fun lot_size(self: &Book): u64 {
         self.lot_size
+    }
+
+    public(package) fun mid_price(self: &Book): u64 {
+        let (ask_ref, ask_offset) = self.asks.min_slice();
+        let (bid_ref, bid_offset) = self.bids.max_slice();
+        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
+        let ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        let (_, ask_price, _) = utils::decode_order_id(ask_order.book_order_id());
+        let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        let (_, bid_price, _) = utils::decode_order_id(bid_order.book_order_id());
+
+        math::div(ask_price + bid_price, 2)
+    }
+
+    public(package) fun get_level2_range_and_ticks(
+        self: &Book,
+        price_low: u64,
+        price_high: u64,
+        ticks: u64,
+        is_bid: bool,
+    ): (vector<u64>, vector<u64>) {
+        assert!(price_low <= price_high, EInvalidPriceRange);
+        assert!(ticks > 0, EInvalidTicks);
+
+        let mut price_vec = vector[];
+        let mut quantity_vec = vector[];
+
+        // convert price_low and price_high to keys for searching
+        let key_low = (price_low as u128) << 64;
+        let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
+        let book_side = if (is_bid) &self.bids else &self.asks;
+        let (mut ref, mut offset) = if (is_bid) book_side.slice_before(key_high) else book_side.slice_following(key_low);
+        let mut ticks_left = ticks;
+        let mut cur_price = 0;
+        let mut cur_quantity = 0;
+
+        while (!ref.is_null() && ticks_left > 0) {
+            let order = &book_side.borrow_slice(ref)[offset];
+            let (_, order_price, _) = utils::decode_order_id(order.book_order_id());
+            if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
+            if (cur_price == 0) cur_price = order_price;
+
+            let order_quantity = order.book_quantity();
+            if (order_price != cur_price) {
+                price_vec.push_back(cur_price);
+                quantity_vec.push_back(cur_quantity);
+                cur_price = order_price;
+                cur_quantity = 0;
+            };
+
+            cur_quantity = cur_quantity + order_quantity;
+            ticks_left = ticks_left - 1;
+            (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
+        };
+
+        price_vec.push_back(cur_price);
+        quantity_vec.push_back(cur_quantity);
+
+        (price_vec, quantity_vec)
     }
 
     /// Matches the given order and quantity against the order book.

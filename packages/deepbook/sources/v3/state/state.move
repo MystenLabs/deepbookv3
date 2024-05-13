@@ -20,6 +20,7 @@ module deepbook::v3state {
         history: History,
         governance: Governance,
         deep_price: DeepPrice,
+        whitelisted: bool,
     }
 
     public(package) fun empty(ctx: &mut TxContext): State {
@@ -28,7 +29,21 @@ module deepbook::v3state {
             governance: v3governance::empty(ctx.epoch()),
             users: table::new(ctx),
             deep_price: v3deep_price::empty(),
+            whitelisted: false,
         }
+    }
+
+    public(package) fun whitelisted(
+        self: &State,
+    ): bool {
+        self.whitelisted
+    }
+
+    public(package) fun set_whitelist(
+        self: &mut State,
+        whitelisted: bool,
+    ) {
+        self.whitelisted = whitelisted;
     }
 
     public(package) fun process_create(
@@ -173,6 +188,22 @@ module deepbook::v3state {
         self: &State,
     ): &Governance {
         &self.governance
+    }
+
+    public(package) fun governance_mut(
+        self: &mut State,
+        ctx: &TxContext,
+    ): &mut Governance {
+        self.governance.update(ctx);
+
+        &mut self.governance
+    }
+
+    public(package) fun user(
+        self: &State,
+        user: address,
+    ): &User {
+        &self.users[user]
     }
 
     public(package) fun user_mut(

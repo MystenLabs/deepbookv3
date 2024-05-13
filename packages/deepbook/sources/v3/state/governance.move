@@ -71,6 +71,24 @@ module deepbook::v3governance {
         }
     }
 
+    public(package) fun set_stable(
+        self: &mut Governance,
+        stable: bool,
+    ) {
+        self.stable = stable;
+        if (stable) {
+            self.trade_params.taker_fee = MAX_TAKER_STABLE;
+            self.trade_params.maker_fee = MAX_MAKER_STABLE;
+            self.next_trade_params.taker_fee = MAX_TAKER_STABLE;
+            self.next_trade_params.maker_fee = MAX_MAKER_STABLE;
+        } else {
+            self.trade_params.taker_fee = MAX_TAKER_VOLATILE;
+            self.trade_params.maker_fee = MAX_MAKER_VOLATILE;
+            self.next_trade_params.taker_fee = MAX_TAKER_VOLATILE;
+            self.next_trade_params.maker_fee = MAX_MAKER_VOLATILE;
+        }
+    }
+
     public(package) fun update(self: &mut Governance, ctx: &TxContext) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;

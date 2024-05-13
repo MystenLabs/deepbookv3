@@ -4,9 +4,7 @@
 /// Public-facing interface for the package.
 /// TODO: No authorization checks are implemented;
 module deepbook::v3 {
-    use std::{
-        type_name,
-    };
+    use std::type_name;
 
     use sui::{
         coin::Coin,
@@ -14,25 +12,8 @@ module deepbook::v3 {
         sui::SUI,
         clock::Clock,
         event,
+        vec_set::VecSet,
     };
-
-    const EInvalidFee: u64 = 1;
-    const ESameBaseAndQuote: u64 = 2;
-    const EInvalidTickSize: u64 = 3;
-    const EInvalidLotSize: u64 = 4;
-    const EInvalidMinSize: u64 = 5;
-    // const EInvalidPriceRange: u64 = 6;
-    // const EInvalidTicks: u64 = 7;
-    const EInvalidAmountIn: u64 = 8;
-    // const EEmptyOrderbook: u64 = 9;
-    // const EIneligibleWhitelist: u64 = 10;
-    // const EIneligibleTargetPool: u64 = 11;
-    // const EIneligibleReferencePool: u64 = 12;
-
-    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
-    const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
-    const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     use deepbook::{
         v3account::{Self, Account, TradeProof},
@@ -42,6 +23,26 @@ module deepbook::v3 {
         v3vault::{Self, Vault, DEEP},
         v3registry::Registry,
     };
+
+    const EInvalidFee: u64 = 1;
+    const ESameBaseAndQuote: u64 = 2;
+    const EInvalidTickSize: u64 = 3;
+    const EInvalidLotSize: u64 = 4;
+    const EInvalidMinSize: u64 = 5;
+    const EInvalidAmountIn: u64 = 8;
+    const EIneligibleWhitelist: u64 = 10;
+    const EIneligibleReferencePool: u64 = 12;
+
+    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
+    const MIN_PRICE: u64 = 1;
+    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+    const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
+    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
+
+    /// DeepBookAdminCap is used to call admin functions.
+    public struct DeepBookAdminCap has key, store {
+        id: UID,
+    }
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -103,6 +104,12 @@ module deepbook::v3 {
         transfer::share_object(pool);
     }
 
+    public fun whitelisted<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): bool {
+        self.state.whitelisted()
+    }
+
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -151,14 +158,6 @@ module deepbook::v3 {
             clock,
             ctx,
         )
-    }
-
-    public fun get_amount_out<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        base_amount: u64,
-        quote_amount: u64,
-    ): (u64, u64) {
-        self.book.get_amount_out(base_amount, quote_amount)
     }
 
     /// Swap exact amount without needing an account.
@@ -281,4 +280,96 @@ module deepbook::v3 {
         self.state.process_vote(account.owner(), proposal_id, ctx);
     }
 
+    public fun claim_rebates<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        ctx: &TxContext,
+    ) {
+        let user = self.state.user_mut(account.owner(), ctx.epoch());
+        user.claim_rebates();
+        self.vault.settle_user(user, account, proof);
+    }
+
+    // GETTERS
+
+    public fun get_amount_out<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+    ): (u64, u64) {
+        self.book.get_amount_out(base_amount, quote_amount)
+    }
+
+    public fun mid_price<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): u64 {
+        self.book.mid_price()
+    }
+
+    public fun user_open_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        user: address,
+    ): VecSet<u128> {
+        self.state.user(user).open_orders()
+    }
+
+    public fun get_level2_range<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+        is_bid: bool,
+    ): (vector<u64>, vector<u64>) {
+        self.book.get_level2_range_and_ticks(price_low, price_high, MAX_U64, is_bid)
+    }
+
+    public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
+        let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, true);
+        let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, false);
+
+        (bid_price, bid_quantity, ask_price, ask_quantity)
+    }
+
+    // OPERATIONAL PUBLIC
+
+    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
+        target_pool: &mut Pool<BaseAsset, QuoteAsset>,
+        reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+        clock: &Clock,
+    ) {
+        assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
+        let deep_price = reference_pool.mid_price();
+        let pool_price = target_pool.mid_price();
+        let deep_base_type = type_name::get<DEEPBaseAsset>();
+        let deep_quote_type = type_name::get<DEEPQuoteAsset>();
+
+        target_pool.vault.add_deep_price_point(deep_price, pool_price, deep_base_type, deep_quote_type, clock.timestamp_ms());
+    }
+
+    // OPERATIONAL OWNER
+
+    public fun set_stable<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        _cap: &DeepBookAdminCap,
+        stable: bool,
+        ctx: &TxContext,
+    ) {
+        self.state.governance_mut(ctx).set_stable(stable);
+    }
+
+    public fun set_whitelist<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        _cap: &DeepBookAdminCap,
+        whitelist: bool,
+    ) {
+        let base = type_name::get<BaseAsset>();
+        let quote = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+
+        self.state.set_whitelist(whitelist);
+    }
 }

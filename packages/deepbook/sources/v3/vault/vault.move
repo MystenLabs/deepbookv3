@@ -1,4 +1,6 @@
 module deepbook::v3vault {
+    use std::type_name::{Self, TypeName};
+
     use sui::balance::{Self, Balance};
 
     use deepbook::{
@@ -8,6 +10,8 @@ module deepbook::v3vault {
         v3user::User,
         v3order::OrderInfo,
     };
+
+    const EIneligibleTargetPool: u64 = 1;
 
     public struct DEEP has store {}
 
@@ -116,5 +120,41 @@ module deepbook::v3vault {
 
         user.add_settled_amounts(base_out, quote_out, 0);
         user.add_owed_amounts(base_in, quote_in, deep_in);
+    }
+
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        deep_price: u64,
+        pool_price: u64,
+        deep_base_type: TypeName,
+        deep_quote_type: TypeName,
+        timestamp: u64,
+    ) {
+        let base_type = type_name::get<BaseAsset>();
+        let quote_type = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        if (base_type == deep_type) {
+            return self.deep_price.add_price_point(1, pool_price, timestamp)
+        };
+        if (quote_type == deep_type) {
+            return self.deep_price.add_price_point(pool_price, 1, timestamp)
+        };
+
+        assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
+                (quote_type == deep_base_type || quote_type == deep_quote_type), EIneligibleTargetPool);
+        assert!(!(base_type == deep_base_type && quote_type == deep_quote_type), EIneligibleTargetPool);
+
+        let deep_per_base = if (base_type == deep_base_type) {
+            deep_price
+        } else if (base_type == deep_quote_type) {
+            math::div(1, deep_price)
+        } else if (quote_type == deep_base_type) {
+            math::mul(deep_price, pool_price)
+        } else {
+            math::div(deep_price, pool_price)
+        };
+        let deep_per_quote = math::div(deep_per_base, pool_price);
+
+        self.deep_price.add_price_point(deep_per_base, deep_per_quote, timestamp)
     }
 }

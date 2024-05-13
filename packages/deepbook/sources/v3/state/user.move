@@ -1,7 +1,5 @@
 module deepbook::v3user {
-    use sui::{
-        vec_set::{Self, VecSet},
-    };
+    use sui::vec_set::{Self, VecSet};
 
     /// User data that is updated every epoch.
     public struct User has store, copy, drop {
@@ -107,6 +105,13 @@ module deepbook::v3user {
         self.unclaimed_rebates = self.unclaimed_rebates + rebates;
     }
 
+    public(package) fun claim_rebates(
+        self: &mut User,
+    ) {
+        self.settled_deep_amount = self.settled_deep_amount + self.unclaimed_rebates;
+        self.unclaimed_rebates = 0;
+    }
+
     public(package) fun add_settled_amounts(
         self: &mut User,
         base: u64,
@@ -165,5 +170,11 @@ module deepbook::v3user {
         self.settled_deep_amount = self.settled_deep_amount + stake_before;
 
         (stake_before, voted_proposal)
+    }
+
+    public(package) fun open_orders(
+        self: &User,
+    ): VecSet<u128> {
+        self.open_orders
     }
 }
