@@ -110,6 +110,8 @@ module deepbook::user {
         self.owed_balances.deep = self.owed_balances.deep + deep;
     }
 
+    /// Settle the user balances.
+    /// Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     public(package) fun settle(
         self: &mut User,
     ): (u64, u64, u64, u64, u64, u64) {
@@ -119,6 +121,8 @@ module deepbook::user {
         (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     }
 
+    /// Update the user data for the new epoch.
+    /// Returns the previous epoch, maker volume, and active stake.
     public(package) fun update(
         self: &mut User,
         epoch: u64,

@@ -273,7 +273,7 @@ module deepbook::order_info {
             self.order_id,
             self.client_order_id,
             self.owner,
-            self.original_quantity,
+            self.remaining_quantity(),
             unpaid_fees,
             self.fee_is_deep,
             self.status,

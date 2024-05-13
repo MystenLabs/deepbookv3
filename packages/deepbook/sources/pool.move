@@ -17,11 +17,13 @@ module deepbook::pool {
 
     use deepbook::{
         account::{Self, Account, TradeProof},
-        order_info,
+        order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, DEEP},
         registry::Registry,
+        big_vector::BigVector,
+        order::Order,
     };
 
     const EInvalidFee: u64 = 1;
@@ -124,7 +126,7 @@ module deepbook::pool {
         expire_timestamp: u64,
         clock: &Clock,
         ctx: &TxContext,
-    ) {
+    ): OrderInfo {
         let trade_params = self.state.governance().trade_params();
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -144,6 +146,8 @@ module deepbook::pool {
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
+
+        order_info
     }
 
     /// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
@@ -157,7 +161,7 @@ module deepbook::pool {
         is_bid: bool,
         clock: &Clock,
         ctx: &TxContext,
-    ) {
+    ): OrderInfo {
         self.place_limit_order(
             account,
             proof,
@@ -386,5 +390,17 @@ module deepbook::pool {
         assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
+    }
+
+    public(package) fun bids<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): &BigVector<Order> {
+        self.book.bids()
+    }
+
+    public(package) fun asks<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): &BigVector<Order> {
+        self.book.asks()
     }
 }
