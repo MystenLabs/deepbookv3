@@ -41,6 +41,7 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
 <b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="vault.md#0x0_vault">0x0::vault</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
@@ -192,15 +193,6 @@ DeepBookAdminCap is used to call admin functions.
 ## Constants
 
 
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
-</code></pre>
-
-
-
 <a name="0x0_pool_MAX_PRICE"></a>
 
 
@@ -224,6 +216,15 @@ DeepBookAdminCap is used to call admin functions.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 6;
+</code></pre>
+
+
+
+<a name="0x0_pool_MAX_U64"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
 </code></pre>
 
 
@@ -360,7 +361,7 @@ DeepBookAdminCap is used to call admin functions.
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
     };
 
-    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
+    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -436,7 +437,7 @@ DeepBookAdminCap is used to call admin functions.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
-    <b>let</b> trade_params = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
+    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> =
         <a href="order_info.md#0x0_order_info_initial_order">order_info::initial_order</a>(
             self.id.to_inner(),
@@ -448,7 +449,7 @@ DeepBookAdminCap is used to call admin functions.
             quantity,
             is_bid,
             expire_timestamp,
-            trade_params,
+            <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
@@ -545,7 +546,7 @@ Swap exact amount without needing an account.
     <b>let</b> proof = temp_account.generate_proof_as_owner(ctx);
 
     <b>let</b> is_bid = quote_quantity &gt; 0;
-    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
+    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
     <b>let</b> (base_fee, quote_fee, _) = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().calculate_fees(taker_fee, base_quantity, quote_quantity);
     base_quantity = base_quantity - base_fee;
     quote_quantity = quote_quantity - quote_fee;

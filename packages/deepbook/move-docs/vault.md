@@ -16,9 +16,9 @@
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
-<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
@@ -226,7 +226,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> (base_conversion_rate, _) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rates();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
     <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_conversion_rate);
-    <b>let</b> (taker_fee, maker_fee, stake_required) = <a href="order_info.md#0x0_order_info">order_info</a>.trade_params().params();
+    <b>let</b> (taker_fee, maker_fee, stake_required) = <a href="order_info.md#0x0_order_info">order_info</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().params();
     <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
         <a href="math.md#0x0_math_div">math::div</a>(taker_fee, 2)
     } <b>else</b> {

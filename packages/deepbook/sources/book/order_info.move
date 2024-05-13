@@ -8,7 +8,7 @@ module deepbook::order_info {
     use deepbook::{
         math,
         utils,
-        governance::TradeParams,
+        trade_params::TradeParams,
         order::{Self, Order}
     };
 
@@ -269,8 +269,7 @@ module deepbook::order_info {
     public(package) fun to_order(
         self: &OrderInfo
     ): Order {
-        let (_, maker_fee, _) = self.trade_params().params();
-        let unpaid_fees = math::mul(self.remaining_quantity(), maker_fee);
+        let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
         order::init_order(
             self.order_id,
             self.client_order_id,
