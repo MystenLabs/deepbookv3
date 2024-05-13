@@ -9,6 +9,9 @@
 -  [Struct `User`](#0x0_user_User)
 -  [Function `empty`](#0x0_user_empty)
 -  [Function `active_stake`](#0x0_user_active_stake)
+-  [Function `increase_maker_volume`](#0x0_user_increase_maker_volume)
+-  [Function `increase_taker_volume`](#0x0_user_increase_taker_volume)
+-  [Function `taker_volume`](#0x0_user_taker_volume)
 -  [Function `maker_volume`](#0x0_user_maker_volume)
 -  [Function `set_voted_proposal`](#0x0_user_set_voted_proposal)
 -  [Function `add_settled_amounts`](#0x0_user_add_settled_amounts)
@@ -100,6 +103,12 @@ User data that is updated every epoch.
 
 </dd>
 <dt>
+<code>taker_volume: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>maker_volume: u64</code>
 </dt>
 <dd>
@@ -167,6 +176,7 @@ User data that is updated every epoch.
     <a href="user.md#0x0_user_User">User</a> {
         epoch,
         open_orders: <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_empty">vec_set::empty</a>(),
+        taker_volume: 0,
         maker_volume: 0,
         active_stake: 0,
         inactive_stake: 0,
@@ -209,6 +219,86 @@ User data that is updated every epoch.
     self: &<a href="user.md#0x0_user_User">User</a>,
 ): u64 {
     self.active_stake
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_user_increase_maker_volume"></a>
+
+## Function `increase_maker_volume`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="user.md#0x0_user_increase_maker_volume">increase_maker_volume</a>(self: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>, volume: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="user.md#0x0_user_increase_maker_volume">increase_maker_volume</a>(
+    self: &<b>mut</b> <a href="user.md#0x0_user_User">User</a>,
+    volume: u64,
+) {
+    self.maker_volume = self.maker_volume + volume;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_user_increase_taker_volume"></a>
+
+## Function `increase_taker_volume`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="user.md#0x0_user_increase_taker_volume">increase_taker_volume</a>(self: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>, volume: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="user.md#0x0_user_increase_taker_volume">increase_taker_volume</a>(
+    self: &<b>mut</b> <a href="user.md#0x0_user_User">User</a>,
+    volume: u64,
+) {
+    self.taker_volume = self.taker_volume + volume;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_user_taker_volume"></a>
+
+## Function `taker_volume`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="user.md#0x0_user_taker_volume">taker_volume</a>(self: &<a href="user.md#0x0_user_User">user::User</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="user.md#0x0_user_taker_volume">taker_volume</a>(
+    self: &<a href="user.md#0x0_user_User">User</a>,
+): u64 {
+    self.taker_volume
 }
 </code></pre>
 
@@ -390,6 +480,7 @@ User data that is updated every epoch.
 
     self.epoch = epoch;
     self.maker_volume = 0;
+    self.taker_volume = 0;
     self.active_stake = self.active_stake + self.inactive_stake;
     self.inactive_stake = 0;
     self.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();

@@ -225,7 +225,9 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> (<b>mut</b> base_in, <b>mut</b> base_out) = (0, 0);
     <b>let</b> (<b>mut</b> quote_in, <b>mut</b> quote_out) = (0, 0);
     <b>let</b> <b>mut</b> deep_in = 0;
-    <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required) {
+    <b>let</b> (base_conversion_rate, _) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rates();
+    <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(<a href="user.md#0x0_user">user</a>.taker_volume(), base_conversion_rate);
+    <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
         taker_fee / 2
     } <b>else</b> {
         taker_fee
