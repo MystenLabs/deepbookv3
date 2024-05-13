@@ -10,7 +10,7 @@ module deepbook::governance {
     const EProposalDoesNotExist: u64 = 3;
     const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
     const EAlreadyProposed: u64 = 5;
-    const EWhitelistedPoolCannotChangeFees: u64 = 6;
+    const EWhitelistedPoolCannotChange: u64 = 6;
 
     // === Constants ===
     const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
@@ -78,8 +78,7 @@ module deepbook::governance {
     }
 
     /// Whitelist a pool. This pool can be used as a DEEP reference price for
-    /// other pools. This pool will have zero fees. Governance can only change
-    /// the pool's stake_required field.
+    /// other pools. This pool will have zero fees.
     public(package) fun set_whitelist(
         self: &mut Governance,
         whitelisted: bool,
@@ -103,7 +102,7 @@ module deepbook::governance {
         self: &mut Governance,
         stable: bool,
     ) {
-        assert!(!self.whitelisted, EWhitelistedPoolCannotChangeFees);
+        assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         self.stable = stable;
         self.proposals = vec_map::empty();
@@ -141,6 +140,7 @@ module deepbook::governance {
         proposer_address: address,
     ) {
         assert!(!self.proposals.contains(&proposer_address), EAlreadyProposed);
+        assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         if (self.stable) {
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
@@ -149,9 +149,6 @@ module deepbook::governance {
             assert!(taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE, EInvalidTakerFee);
             assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
         };
-
-        assert!(!self.whitelisted || taker_fee == 0, EWhitelistedPoolCannotChangeFees);
-        assert!(!self.whitelisted || maker_fee == 0, EWhitelistedPoolCannotChangeFees);
 
         let voting_power = stake_to_voting_power(stake_amount);
         if (self.proposals.size() == MAX_PROPOSALS) {

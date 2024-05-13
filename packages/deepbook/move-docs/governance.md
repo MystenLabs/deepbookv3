@@ -239,11 +239,11 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 
-<a name="0x0_governance_EWhitelistedPoolCannotChangeFees"></a>
+<a name="0x0_governance_EWhitelistedPoolCannotChange"></a>
 
 
 
-<pre><code><b>const</b> <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>: u64 = 6;
+<pre><code><b>const</b> <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>: u64 = 6;
 </code></pre>
 
 
@@ -387,8 +387,7 @@ Details of a pool. This is refreshed every epoch by the first
 ## Function `set_whitelist`
 
 Whitelist a pool. This pool can be used as a DEEP reference price for
-other pools. This pool will have zero fees. Governance can only change
-the pool's stake_required field.
+other pools. This pool will have zero fees.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_whitelist">set_whitelist</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, whitelisted: bool)
@@ -463,7 +462,7 @@ This resets governance. A whitelisted pool cannot be set to stable.
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
     stable: bool,
 ) {
-    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
+    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
 
     self.stable = stable;
     self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
@@ -541,6 +540,7 @@ Validation of the user adding is done in <code>State</code>.
     proposer_address: <b>address</b>,
 ) {
     <b>assert</b>!(!self.proposals.contains(&proposer_address), <a href="governance.md#0x0_governance_EAlreadyProposed">EAlreadyProposed</a>);
+    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
 
     <b>if</b> (self.stable) {
         <b>assert</b>!(taker_fee &gt;= <a href="governance.md#0x0_governance_MIN_TAKER_STABLE">MIN_TAKER_STABLE</a> && taker_fee &lt;= <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>, <a href="governance.md#0x0_governance_EInvalidTakerFee">EInvalidTakerFee</a>);
@@ -549,9 +549,6 @@ Validation of the user adding is done in <code>State</code>.
         <b>assert</b>!(taker_fee &gt;= <a href="governance.md#0x0_governance_MIN_TAKER_VOLATILE">MIN_TAKER_VOLATILE</a> && taker_fee &lt;= <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_EInvalidTakerFee">EInvalidTakerFee</a>);
         <b>assert</b>!(maker_fee &gt;= <a href="governance.md#0x0_governance_MIN_MAKER_VOLATILE">MIN_MAKER_VOLATILE</a> && maker_fee &lt;= <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_EInvalidMakerFee">EInvalidMakerFee</a>);
     };
-
-    <b>assert</b>!(!self.whitelisted || taker_fee == 0, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
-    <b>assert</b>!(!self.whitelisted || maker_fee == 0, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
 
     <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
     <b>if</b> (self.proposals.size() == <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>) {
