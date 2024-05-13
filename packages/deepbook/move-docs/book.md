@@ -327,18 +327,13 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
     } <b>else</b> {
         self.asks.borrow_mut(order_id)
     };
-    <b>let</b> quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
-    <a href="order.md#0x0_order">order</a>.validate_modification(
-        quantity,
+    <b>let</b> (base, quote, deep) = <a href="order.md#0x0_order">order</a>.modify(
         new_quantity,
         self.min_size,
         self.lot_size,
         timestamp,
     );
-    <a href="order.md#0x0_order">order</a>.set_quantity(new_quantity);
-
-    <b>let</b> (base, quote, deep) = <a href="order.md#0x0_order">order</a>.cancel_amounts(quantity - new_quantity, <b>true</b>);
 
     (base, quote, deep, <a href="order.md#0x0_order">order</a>)
 }

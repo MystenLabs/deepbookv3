@@ -156,18 +156,22 @@ module deepbook::order {
         self.status = EXPIRED;
     }
 
-    public(package) fun validate_modification(
-        order: &Order,
-        quantity: u64,
+    public(package) fun modify(
+        self: &mut Order,
         new_quantity: u64,
         min_size: u64,
         lot_size: u64,
         timestamp: u64,
-    ) {
-        assert!(new_quantity > 0 && new_quantity < quantity, EInvalidNewQuantity);
+    ): (u64, u64, u64) {
+        assert!(new_quantity > 0 && new_quantity < self.quantity, EInvalidNewQuantity);
         assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(timestamp < order.expire_timestamp(), EOrderExpired);
+        assert!(timestamp < self.expire_timestamp(), EOrderExpired);
+        let cancel_amount = self.quantity - new_quantity;
+        let (base, quote, deep) = self.cancel_amounts(cancel_amount, true);
+        self.quantity = new_quantity;
+
+        (base, quote, deep)
     }
 
     /// Amounts to settle for a cancelled or modified order. Modifies the order in place.

@@ -106,18 +106,13 @@ module deepbook::book {
         } else {
             self.asks.borrow_mut(order_id)
         };
-        let quantity = order.quantity();
 
-        order.validate_modification(
-            quantity,
+        let (base, quote, deep) = order.modify(
             new_quantity,
             self.min_size,
             self.lot_size,
             timestamp,
         );
-        order.set_quantity(new_quantity);
-
-        let (base, quote, deep) = order.cancel_amounts(quantity - new_quantity, true);
 
         (base, quote, deep, order)
     }

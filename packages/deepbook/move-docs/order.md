@@ -28,7 +28,7 @@ All order matching happens in this module.
 -  [Function `set_fill_status`](#0x0_order_set_fill_status)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
 -  [Function `set_expired`](#0x0_order_set_expired)
--  [Function `validate_modification`](#0x0_order_validate_modification)
+-  [Function `modify`](#0x0_order_modify)
 -  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
 -  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
@@ -796,13 +796,13 @@ Update the order status to expired.
 
 </details>
 
-<a name="0x0_order_validate_modification"></a>
+<a name="0x0_order_modify"></a>
 
-## Function `validate_modification`
+## Function `modify`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(<a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">order::Order</a>, quantity: u64, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64): (u64, u64, u64)
 </code></pre>
 
 
@@ -811,18 +811,22 @@ Update the order status to expired.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_validate_modification">validate_modification</a>(
-    <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">Order</a>,
-    quantity: u64,
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(
+    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     new_quantity: u64,
     min_size: u64,
     lot_size: u64,
     timestamp: u64,
-) {
-    <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+): (u64, u64, u64) {
+    <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
     <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(timestamp &lt; <a href="order.md#0x0_order">order</a>.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>let</b> cancel_amount = self.quantity - new_quantity;
+    <b>let</b> (base, quote, deep) = self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>true</b>);
+    self.quantity = new_quantity;
+
+    (base, quote, deep)
 }
 </code></pre>
 
