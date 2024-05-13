@@ -21,7 +21,6 @@ module deepbook::state {
         history: History,
         governance: Governance,
         deep_price: DeepPrice,
-        whitelisted: bool,
     }
 
     public(package) fun empty(ctx: &mut TxContext): State {
@@ -30,21 +29,7 @@ module deepbook::state {
             governance: governance::empty(ctx.epoch()),
             users: table::new(ctx),
             deep_price: deep_price::empty(),
-            whitelisted: false,
         }
-    }
-
-    public(package) fun whitelisted(
-        self: &State,
-    ): bool {
-        self.whitelisted
-    }
-
-    public(package) fun set_whitelist(
-        self: &mut State,
-        whitelisted: bool,
-    ) {
-        self.whitelisted = whitelisted;
     }
 
     public(package) fun process_create(

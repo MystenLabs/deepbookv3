@@ -88,7 +88,7 @@ module deepbook::pool {
             vault: vault::empty(),
         };
 
-        let (taker_fee, maker_fee, _) = pool.state.governance().trade_params();
+        let (taker_fee, maker_fee, _) = pool.state.governance().trade_params().params();
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id,
             taker_fee,
@@ -108,7 +108,7 @@ module deepbook::pool {
     public fun whitelisted<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): bool {
-        self.state.whitelisted()
+        self.state.governance().whitelisted()
     }
 
     public fun place_limit_order<BaseAsset, QuoteAsset>(
@@ -124,7 +124,7 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let (taker_fee, maker_fee, stake_required) = self.state.governance().trade_params();
+        let trade_params = self.state.governance().trade_params();
         let mut order_info =
             order_info::initial_order(
                 self.id.to_inner(),
@@ -140,7 +140,7 @@ module deepbook::pool {
             );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()), taker_fee, maker_fee, stake_required);
+        self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()));
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
@@ -193,7 +193,7 @@ module deepbook::pool {
         let proof = temp_account.generate_proof_as_owner(ctx);
 
         let is_bid = quote_quantity > 0;
-        let (taker_fee, _, _) = self.state.governance().trade_params();
+        let (taker_fee, _, _) = self.state.governance().trade_params().params();
         let (base_fee, quote_fee, _) = self.state.deep_price().calculate_fees(taker_fee, base_quantity, quote_quantity);
         base_quantity = base_quantity - base_fee;
         quote_quantity = quote_quantity - quote_fee;
@@ -377,12 +377,13 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         _cap: &DeepBookAdminCap,
         whitelist: bool,
+        ctx: &TxContext,
     ) {
         let base = type_name::get<BaseAsset>();
         let quote = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
         assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
-        self.state.set_whitelist(whitelist);
+        self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
 }
