@@ -77,6 +77,8 @@ module deepbook::history {
         user_stake: u64,
         first_volume_by_user: bool,
     ) {
+        if (maker_volume == 0) return;
+        
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
         if (user_stake > self.volumes.stake_required) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;

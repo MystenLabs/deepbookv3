@@ -65,22 +65,19 @@ module deepbook::vault {
         };
     }
 
-    /// Given an order, transfer the appropriate balances. Up until this point, any partial fills have been executed
+    /// Given an order, settle its balances. Up until this point, any partial fills have been executed
     /// and the remaining quantity is the only quantity left to be injected into the order book.
-    /// 1. Transfer the taker balances while applying taker fees.
-    /// 2. Transfer the maker balances while applying maker fees.
-    /// 3. Update the total fees for the order.
+    /// 1. Calculate the maker and taker fee for this user.
+    /// 2. Calculate the total fees for the maker and taker portion of the order.
+    /// 3. Add to the user's settled and owed balances.
     public(package) fun settle_order<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>,
         order_info: &OrderInfo,
         user: &mut User,
     ) {
-        let (mut base_in, mut base_out) = (0, 0);
-        let (mut quote_in, mut quote_out) = (0, 0);
-        let mut deep_in = 0;
-        let (base_conversion_rate, _) = self.deep_price.conversion_rates();
+        let base_to_deep = self.deep_price.conversion_rate();
         let total_volume = user.taker_volume() + user.maker_volume();
-        let volume_in_deep = math::mul(total_volume, base_conversion_rate);
+        let volume_in_deep = math::mul(total_volume, base_to_deep);
         let trade_params = order_info.trade_params();
         let taker_fee = trade_params.taker_fee();
         let maker_fee = trade_params.maker_fee();
@@ -90,40 +87,19 @@ module deepbook::vault {
         } else {
             taker_fee
         };
+
         let executed_quantity = order_info.executed_quantity();
         let remaining_quantity = order_info.remaining_quantity();
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
+        let deep_in = math::mul(executed_quantity, maker_fee) + math::mul(remaining_quantity, taker_fee);
 
-        // Calculate the taker balances. These are derived from executed quantity.
-        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
-            self.deep_price.calculate_fees(taker_fee, 0, cumulative_quote_quantity)
-        } else {
-            self.deep_price.calculate_fees(taker_fee, executed_quantity, 0)
-        };
-        deep_in = deep_in + deep_fee;
         if (order_info.is_bid()) {
-            quote_in = quote_in + cumulative_quote_quantity + quote_fee;
-            base_out = base_out + executed_quantity;
+            user.add_settled_amounts(executed_quantity, 0, 0);
+            user.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
         } else {
-            base_in = base_in + executed_quantity + base_fee;
-            quote_out = quote_out + cumulative_quote_quantity;
+            user.add_settled_amounts(0, cumulative_quote_quantity, 0);
+            user.add_owed_amounts(executed_quantity, 0, deep_in);
         };
-
-        // Calculate the maker balances. These are derived from the remaining quantity.
-        let (base_fee, quote_fee, deep_fee) = if (order_info.is_bid()) {
-            self.deep_price.calculate_fees(maker_fee, 0, math::mul(remaining_quantity, order_info.price()))
-        } else {
-            self.deep_price.calculate_fees(maker_fee, remaining_quantity, 0)
-        };
-        deep_in = deep_in + deep_fee;
-        if (order_info.is_bid()) {
-            quote_in = quote_in + math::mul(remaining_quantity, order_info.price()) + quote_fee;
-        } else {
-            base_in = base_in + remaining_quantity + base_fee;
-        };
-
-        user.add_settled_amounts(base_out, quote_out, 0);
-        user.add_owed_amounts(base_in, quote_in, deep_in);
     }
 
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
@@ -138,10 +114,10 @@ module deepbook::vault {
         let quote_type = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
         if (base_type == deep_type) {
-            return self.deep_price.add_price_point(1, pool_price, timestamp)
+            return self.deep_price.add_price_point(1, timestamp)
         };
         if (quote_type == deep_type) {
-            return self.deep_price.add_price_point(pool_price, 1, timestamp)
+            return self.deep_price.add_price_point(pool_price, timestamp)
         };
 
         assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
@@ -157,8 +133,7 @@ module deepbook::vault {
         } else {
             math::div(deep_price, pool_price)
         };
-        let deep_per_quote = math::div(deep_per_base, pool_price);
 
-        self.deep_price.add_price_point(deep_per_base, deep_per_quote, timestamp)
+        self.deep_price.add_price_point(deep_per_base, timestamp)
     }
 }
