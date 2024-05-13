@@ -199,11 +199,11 @@ Transfer any settled amounts for the user.
 
 ## Function `settle_order`
 
-Given an order, transfer the appropriate balances. Up until this point, any partial fills have been executed
+Given an order, settle its balances. Up until this point, any partial fills have been executed
 and the remaining quantity is the only quantity left to be injected into the order book.
-1. Transfer the taker balances while applying taker fees.
-2. Transfer the maker balances while applying maker fees.
-3. Update the total fees for the order.
+1. Calculate the maker and taker fee for this user.
+2. Calculate the total fees for the maker and taker portion of the order.
+3. Add to the user's settled and owed balances.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>)
@@ -220,10 +220,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     order_info: &OrderInfo,
     <a href="user.md#0x0_user">user</a>: &<b>mut</b> User,
 ) {
-    <b>let</b> (<b>mut</b> base_in, <b>mut</b> base_out) = (0, 0);
-    <b>let</b> (<b>mut</b> quote_in, <b>mut</b> quote_out) = (0, 0);
-    <b>let</b> <b>mut</b> deep_in = 0;
-    <b>let</b> (base_conversion_rate, _) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rates();
+    <b>let</b> base_conversion_rate = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
     <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_conversion_rate);
     <b>let</b> (taker_fee, maker_fee, stake_required) = order_info.trade_params().params();
@@ -232,40 +229,19 @@ and the remaining quantity is the only quantity left to be injected into the ord
     } <b>else</b> {
         taker_fee
     };
+
     <b>let</b> executed_quantity = order_info.executed_quantity();
     <b>let</b> remaining_quantity = order_info.remaining_quantity();
     <b>let</b> cumulative_quote_quantity = order_info.cumulative_quote_quantity();
+    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, maker_fee) + <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, taker_fee);
 
-    // Calculate the taker balances. These are derived from executed quantity.
-    <b>let</b> (base_fee, quote_fee, deep_fee) = <b>if</b> (order_info.is_bid()) {
-        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.calculate_fees(taker_fee, 0, cumulative_quote_quantity)
-    } <b>else</b> {
-        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.calculate_fees(taker_fee, executed_quantity, 0)
-    };
-    deep_in = deep_in + deep_fee;
     <b>if</b> (order_info.is_bid()) {
-        quote_in = quote_in + cumulative_quote_quantity + quote_fee;
-        base_out = base_out + executed_quantity;
+        <a href="user.md#0x0_user">user</a>.add_settled_amounts(executed_quantity, 0, 0);
+        <a href="user.md#0x0_user">user</a>.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
     } <b>else</b> {
-        base_in = base_in + executed_quantity + base_fee;
-        quote_out = quote_out + cumulative_quote_quantity;
+        <a href="user.md#0x0_user">user</a>.add_settled_amounts(0, cumulative_quote_quantity, 0);
+        <a href="user.md#0x0_user">user</a>.add_owed_amounts(executed_quantity, 0, deep_in);
     };
-
-    // Calculate the maker balances. These are derived from the remaining quantity.
-    <b>let</b> (base_fee, quote_fee, deep_fee) = <b>if</b> (order_info.is_bid()) {
-        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.calculate_fees(maker_fee, 0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, order_info.price()))
-    } <b>else</b> {
-        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.calculate_fees(maker_fee, remaining_quantity, 0)
-    };
-    deep_in = deep_in + deep_fee;
-    <b>if</b> (order_info.is_bid()) {
-        quote_in = quote_in + <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, order_info.price()) + quote_fee;
-    } <b>else</b> {
-        base_in = base_in + remaining_quantity + base_fee;
-    };
-
-    <a href="user.md#0x0_user">user</a>.add_settled_amounts(base_out, quote_out, 0);
-    <a href="user.md#0x0_user">user</a>.add_owed_amounts(base_in, quote_in, deep_in);
 }
 </code></pre>
 
@@ -300,10 +276,10 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;<a href="vault.md#0x0_vault_DEEP">DEEP</a>&gt;();
     <b>if</b> (base_type == deep_type) {
-        <b>return</b> self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(1, pool_price, timestamp)
+        <b>return</b> self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(1, timestamp)
     };
     <b>if</b> (quote_type == deep_type) {
-        <b>return</b> self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(pool_price, 1, timestamp)
+        <b>return</b> self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(pool_price, timestamp)
     };
 
     <b>assert</b>!((base_type == deep_base_type || base_type == deep_quote_type) ||
@@ -319,9 +295,8 @@ and the remaining quantity is the only quantity left to be injected into the ord
     } <b>else</b> {
         <a href="math.md#0x0_math_div">math::div</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
     };
-    <b>let</b> deep_per_quote = <a href="math.md#0x0_math_div">math::div</a>(deep_per_base, pool_price);
 
-    self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_base, deep_per_quote, timestamp)
+    self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_base, timestamp)
 }
 </code></pre>
 

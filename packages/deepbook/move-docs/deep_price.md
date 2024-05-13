@@ -10,9 +10,7 @@
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_deep_price_empty)
 -  [Function `add_price_point`](#0x0_deep_price_add_price_point)
--  [Function `verified`](#0x0_deep_price_verified)
--  [Function `conversion_rates`](#0x0_deep_price_conversion_rates)
--  [Function `calculate_fees`](#0x0_deep_price_calculate_fees)
+-  [Function `conversion_rate`](#0x0_deep_price_conversion_rate)
 -  [Function `last_insert_timestamp`](#0x0_deep_price_last_insert_timestamp)
 
 
@@ -47,12 +45,6 @@ DEEP price point.
 </dd>
 <dt>
 <code>base_conversion_rate: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>quote_conversion_rate: u64</code>
 </dt>
 <dd>
 
@@ -97,12 +89,6 @@ DEEP price points used for trading fee calculations.
 <dd>
 
 </dd>
-<dt>
-<code>cumulative_quote: u64</code>
-</dt>
-<dd>
-
-</dd>
 </dl>
 
 
@@ -118,6 +104,15 @@ DEEP price points used for trading fee calculations.
 
 
 <pre><code><b>const</b> <a href="deep_price.md#0x0_deep_price_EDataPointRecentlyAdded">EDataPointRecentlyAdded</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x0_deep_price_ENoDataPoints"></a>
+
+
+
+<pre><code><b>const</b> <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>: u64 = 2;
 </code></pre>
 
 
@@ -169,7 +164,6 @@ DEEP price points used for trading fee calculations.
         prices: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         index_to_replace: 0,
         cumulative_base: 0,
-        cumulative_quote: 0,
     }
 }
 </code></pre>
@@ -186,7 +180,7 @@ Add a price point. If max data points are reached, the oldest data point is remo
 Remove all data points older than MAX_DATA_POINT_AGE_MS.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_add_price_point">add_price_point</a>(self: &<b>mut</b> <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, timestamp: u64, base_conversion_rate: u64, quote_conversion_rate: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_add_price_point">add_price_point</a>(self: &<b>mut</b> <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, timestamp: u64, base_conversion_rate: u64)
 </code></pre>
 
 
@@ -199,21 +193,17 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
     self: &<b>mut</b> <a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
     timestamp: u64,
     base_conversion_rate: u64,
-    quote_conversion_rate: u64,
 ) {
     <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() + <a href="deep_price.md#0x0_deep_price_MIN_DURATION_BETWEEN_DATA_POINTS_MS">MIN_DURATION_BETWEEN_DATA_POINTS_MS</a> &lt; timestamp, <a href="deep_price.md#0x0_deep_price_EDataPointRecentlyAdded">EDataPointRecentlyAdded</a>);
     self.prices.push_back(<a href="deep_price.md#0x0_deep_price_Price">Price</a> {
         timestamp: timestamp,
         base_conversion_rate: base_conversion_rate,
-        quote_conversion_rate: quote_conversion_rate,
     });
     self.cumulative_base = self.cumulative_base + base_conversion_rate;
-    self.cumulative_quote = self.cumulative_quote + quote_conversion_rate;
 
     <b>let</b> idx = self.index_to_replace;
     <b>if</b> (self.prices.length() == <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a> + 1) {
         self.cumulative_base = self.cumulative_base - self.prices[idx].base_conversion_rate;
-        self.cumulative_quote = self.cumulative_quote - self.prices[idx].quote_conversion_rate;
         self.prices.swap_remove(idx);
         self.prices.swap_remove(idx);
         self.index_to_replace = self.index_to_replace + 1 % <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>;
@@ -222,7 +212,6 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
     <b>let</b> <b>mut</b> idx = self.index_to_replace;
     <b>while</b> (self.prices[idx].timestamp + <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINT_AGE_MS">MAX_DATA_POINT_AGE_MS</a> &lt; timestamp) {
         self.cumulative_base = self.cumulative_base - self.prices[idx].base_conversion_rate;
-        self.cumulative_quote = self.cumulative_quote - self.prices[idx].quote_conversion_rate;
         self.prices.remove(idx);
         self.index_to_replace = self.index_to_replace + 1 % <a href="deep_price.md#0x0_deep_price_MAX_DATA_POINTS">MAX_DATA_POINTS</a>;
         idx = self.index_to_replace;
@@ -234,13 +223,13 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 
 </details>
 
-<a name="0x0_deep_price_verified"></a>
+<a name="0x0_deep_price_conversion_rate"></a>
 
-## Function `verified`
+## Function `conversion_rate`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rate">conversion_rate</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): u64
 </code></pre>
 
 
@@ -249,83 +238,13 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_verified">verified</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rate">conversion_rate</a>(
     self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
-): bool {
-    self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0
-}
-</code></pre>
+): u64 {
+    <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0, <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>);
+    <b>let</b> deep_per_base = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_base, self.prices.length());
 
-
-
-</details>
-
-<a name="0x0_deep_price_conversion_rates"></a>
-
-## Function `conversion_rates`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rates">conversion_rates</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): (u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rates">conversion_rates</a>(
-    self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
-): (u64, u64) {
-    <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_verified">verified</a>()) {
-        <b>let</b> deep_per_base = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_base, self.prices.length());
-        <b>let</b> deep_per_quote = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_quote, self.prices.length());
-
-        (deep_per_base, deep_per_quote)
-    } <b>else</b> {
-        (0, 0)
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_deep_price_calculate_fees"></a>
-
-## Function `calculate_fees`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, fee_rate: u64, base_quantity: u64, quote_quantity: u64): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_fees">calculate_fees</a>(
-    self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
-    fee_rate: u64,
-    base_quantity: u64,
-    quote_quantity: u64,
-): (u64, u64, u64) {
-    <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_verified">verified</a>()) {
-        <b>let</b> (deep_per_base, deep_per_quote) = self.<a href="deep_price.md#0x0_deep_price_conversion_rates">conversion_rates</a>();
-        <b>let</b> base_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, deep_per_base));
-        <b>let</b> quote_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, <a href="math.md#0x0_math_mul">math::mul</a>(quote_quantity, deep_per_quote));
-
-        <b>return</b> (0, 0, base_fee + quote_fee)
-    };
-
-    <b>let</b> base_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, base_quantity);
-    <b>let</b> quote_fee = <a href="math.md#0x0_math_mul">math::mul</a>(fee_rate, quote_quantity);
-
-    (base_fee, quote_fee, 0)
+    deep_per_base
 }
 </code></pre>
 
