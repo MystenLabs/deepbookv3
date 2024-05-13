@@ -91,7 +91,7 @@ module deepbook::vault {
         let executed_quantity = order_info.executed_quantity();
         let remaining_quantity = order_info.remaining_quantity();
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
-        let deep_in = math::mul(executed_quantity, maker_fee) + math::mul(remaining_quantity, taker_fee);
+        let deep_in = math::mul(executed_quantity, taker_fee);
 
         if (order_info.is_bid()) {
             user.add_settled_amounts(executed_quantity, 0, 0);
@@ -99,6 +99,16 @@ module deepbook::vault {
         } else {
             user.add_settled_amounts(0, cumulative_quote_quantity, 0);
             user.add_owed_amounts(executed_quantity, 0, deep_in);
+        };
+
+        // Maker Part of Settling Order
+        if (remaining_quantity > 0 && !order_info.is_immediate_or_cancel()) {
+            let deep_in = math::mul(remaining_quantity, maker_fee);
+            if (order_info.is_bid()) {
+                user.add_owed_amounts(0, math::mul(remaining_quantity, order_info.price()), deep_in);
+            } else {
+                user.add_owed_amounts(remaining_quantity, 0, deep_in);
+            };
         };
     }
 

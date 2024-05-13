@@ -163,6 +163,7 @@ module deepbook::order_info {
         price: u64,
         quantity: u64,
         is_bid: bool,
+        fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
     ): OrderInfo {
@@ -180,7 +181,7 @@ module deepbook::order_info {
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
             fills: vector[],
-            fee_is_deep: false,
+            fee_is_deep,
             paid_fees: 0,
             trade_params,
             status: LIVE,
@@ -271,6 +272,7 @@ module deepbook::order_info {
         self: &OrderInfo
     ): Order {
         let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
+        assert!(unpaid_fees == 500000, 5);
         order::new(
             self.order_id,
             self.client_order_id,

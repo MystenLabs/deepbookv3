@@ -201,15 +201,15 @@ module deepbook::account {
         balances.destroy_empty();
     }
 
+    public(package) fun trader(trade_proof: &TradeProof): address {
+        trade_proof.trader
+    }
+
     fun validate_owner(account: &Account, ctx: &TxContext) {
         assert!(ctx.sender() == account.owner(), EInvalidOwner);
     }
 
     fun validate_trader(account: &Account, trade_cap: &TradeCap) {
         assert!(account.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
-    }
-
-    public(package) fun trader(trade_proof: &TradeProof): address {
-        trade_proof.trader
     }
 }

@@ -29,9 +29,9 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Function `deposit_with_proof`](#0x0_account_deposit_with_proof)
 -  [Function `withdraw_with_proof`](#0x0_account_withdraw_with_proof)
 -  [Function `delete`](#0x0_account_delete)
+-  [Function `trader`](#0x0_account_trader)
 -  [Function `validate_owner`](#0x0_account_validate_owner)
 -  [Function `validate_trader`](#0x0_account_validate_trader)
--  [Function `trader`](#0x0_account_trader)
 
 
 <pre><code><b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
@@ -698,6 +698,30 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
 </details>
 
+<a name="0x0_account_trader"></a>
+
+## Function `trader`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>): <b>address</b>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>): <b>address</b> {
+    trade_proof.trader
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_account_validate_owner"></a>
 
 ## Function `validate_owner`
@@ -739,30 +763,6 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
 <pre><code><b>fun</b> <a href="account.md#0x0_account_validate_trader">validate_trader</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">TradeCap</a>) {
     <b>assert</b>!(<a href="account.md#0x0_account">account</a>.allow_listed.contains(<a href="dependencies/sui-framework/object.md#0x2_object_borrow_id">object::borrow_id</a>(trade_cap)), <a href="account.md#0x0_account_EInvalidTrader">EInvalidTrader</a>);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_trader"></a>
-
-## Function `trader`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>): <b>address</b>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>): <b>address</b> {
-    trade_proof.trader
 }
 </code></pre>
 

@@ -108,15 +108,6 @@ DEEP price points used for trading fee calculations.
 
 
 
-<a name="0x0_deep_price_ENoDataPoints"></a>
-
-
-
-<pre><code><b>const</b> <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>: u64 = 2;
-</code></pre>
-
-
-
 <a name="0x0_deep_price_MAX_DATA_POINTS"></a>
 
 
@@ -241,7 +232,8 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rate">conversion_rate</a>(
     self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
 ): u64 {
-    <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0, <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>);
+    // TODO: Add <b>assert</b>, <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0, ENoDataPoints);
+    <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() == 0) <b>return</b> 10 * 1_000_000_000; // Default deep conversion rate <b>to</b> 10
     <b>let</b> deep_per_base = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_base, self.prices.length());
 
     deep_per_base

@@ -131,7 +131,6 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ): OrderInfo {
-    ) {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
         let trade_params = self.state.governance().trade_params();
         let mut order_info = order_info::new(
@@ -143,6 +142,7 @@ module deepbook::pool {
             price,
             quantity,
             is_bid,
+            pay_with_deep,
             expire_timestamp,
             trade_params,
         );
@@ -201,7 +201,7 @@ module deepbook::pool {
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
         if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity); 
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity);
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
         let base_to_deep = self.state.deep_price().conversion_rate();

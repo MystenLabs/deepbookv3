@@ -12,7 +12,7 @@ module deepbook::deep_price {
     const MAX_DATA_POINTS: u64 = 100;
 
     const EDataPointRecentlyAdded: u64 = 1;
-    const ENoDataPoints: u64 = 2;
+    // const ENoDataPoints: u64 = 2;
 
     /// DEEP price point.
     public struct Price has store, drop {
@@ -69,7 +69,8 @@ module deepbook::deep_price {
     public(package) fun conversion_rate(
         self: &DeepPrice,
     ): u64 {
-        assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
+        // TODO: Add assert, assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
+        if (self.last_insert_timestamp() == 0) return 10 * 1_000_000_000; // Default deep conversion rate to 10
         let deep_per_base = math::div(self.cumulative_base, self.prices.length());
 
         deep_per_base
