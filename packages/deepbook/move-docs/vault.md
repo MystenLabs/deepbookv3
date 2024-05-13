@@ -16,6 +16,7 @@
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
@@ -205,7 +206,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 3. Update the total fees for the order.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>, taker_fee: u64, maker_fee: u64, stake_required: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, order_info: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>)
 </code></pre>
 
 
@@ -218,9 +219,6 @@ and the remaining quantity is the only quantity left to be injected into the ord
     self: &<a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
     order_info: &OrderInfo,
     <a href="user.md#0x0_user">user</a>: &<b>mut</b> User,
-    taker_fee: u64,
-    maker_fee: u64,
-    stake_required: u64,
 ) {
     <b>let</b> (<b>mut</b> base_in, <b>mut</b> base_out) = (0, 0);
     <b>let</b> (<b>mut</b> quote_in, <b>mut</b> quote_out) = (0, 0);
@@ -228,6 +226,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> (base_conversion_rate, _) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rates();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
     <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(total_volume, base_conversion_rate);
+    <b>let</b> (taker_fee, maker_fee, stake_required) = order_info.trade_params().params();
     <b>let</b> taker_fee = <b>if</b> (<a href="user.md#0x0_user">user</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
         <a href="math.md#0x0_math_div">math::div</a>(taker_fee, 2)
     } <b>else</b> {

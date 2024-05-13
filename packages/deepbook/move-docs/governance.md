@@ -10,13 +10,15 @@
 -  [Struct `Governance`](#0x0_governance_Governance)
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_governance_empty)
+-  [Function `set_whitelist`](#0x0_governance_set_whitelist)
+-  [Function `whitelisted`](#0x0_governance_whitelisted)
 -  [Function `set_stable`](#0x0_governance_set_stable)
 -  [Function `update`](#0x0_governance_update)
 -  [Function `add_proposal`](#0x0_governance_add_proposal)
 -  [Function `adjust_vote`](#0x0_governance_adjust_vote)
 -  [Function `adjust_voting_power`](#0x0_governance_adjust_voting_power)
--  [Function `params`](#0x0_governance_params)
 -  [Function `trade_params`](#0x0_governance_trade_params)
+-  [Function `params`](#0x0_governance_params)
 -  [Function `stake_to_voting_power`](#0x0_governance_stake_to_voting_power)
 -  [Function `new_proposal`](#0x0_governance_new_proposal)
 -  [Function `new_trade_params`](#0x0_governance_new_trade_params)
@@ -141,6 +143,12 @@ Details of a pool. This is refreshed every epoch by the first
  Tracks refreshes.
 </dd>
 <dt>
+<code>whitelisted: bool</code>
+</dt>
+<dd>
+ If Pool is whitelisted.
+</dd>
+<dt>
 <code>stable: bool</code>
 </dt>
 <dd>
@@ -156,13 +164,13 @@ Details of a pool. This is refreshed every epoch by the first
 <code>trade_params: <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a></code>
 </dt>
 <dd>
-
+ Trade parameters for the current epoch.
 </dd>
 <dt>
 <code>next_trade_params: <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a></code>
 </dt>
 <dd>
-
+ Trade parameters for the next epoch.
 </dd>
 <dt>
 <code>voting_power: u64</code>
@@ -227,6 +235,15 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 <pre><code><b>const</b> <a href="governance.md#0x0_governance_EProposalDoesNotExist">EProposalDoesNotExist</a>: u64 = 3;
+</code></pre>
+
+
+
+<a name="0x0_governance_EWhitelistedPoolCannotChangeFees"></a>
+
+
+
+<pre><code><b>const</b> <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>: u64 = 6;
 </code></pre>
 
 
@@ -350,6 +367,7 @@ Details of a pool. This is refreshed every epoch by the first
 ): <a href="governance.md#0x0_governance_Governance">Governance</a> {
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
         epoch,
+        whitelisted: <b>false</b>,
         stable: <b>false</b>,
         proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
         trade_params: <a href="governance.md#0x0_governance_new_trade_params">new_trade_params</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, 0),
@@ -364,10 +382,72 @@ Details of a pool. This is refreshed every epoch by the first
 
 </details>
 
+<a name="0x0_governance_set_whitelist"></a>
+
+## Function `set_whitelist`
+
+Whitelist a pool. This pool can be used as a DEEP reference price for
+other pools. This pool will have zero fees. Governance can only change
+the pool's stake_required field.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_whitelist">set_whitelist</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, whitelisted: bool)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_set_whitelist">set_whitelist</a>(
+    self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
+    whitelisted: bool,
+) {
+    self.whitelisted = whitelisted;
+    self.stable = <b>false</b>;
+    self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
+    self.trade_params.taker_fee = 0;
+    self.trade_params.maker_fee = 0;
+    self.next_trade_params = self.trade_params;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_governance_whitelisted"></a>
+
+## Function `whitelisted`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_whitelisted">whitelisted</a>(self: &<a href="governance.md#0x0_governance_Governance">governance::Governance</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_whitelisted">whitelisted</a>(self: &<a href="governance.md#0x0_governance_Governance">Governance</a>): bool {
+    self.whitelisted
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_governance_set_stable"></a>
 
 ## Function `set_stable`
 
+Set the pool to stable or volatile. If stable, the fees are set to
+stable fees. If volatile, the fees are set to volatile fees.
+This resets governance. A whitelisted pool cannot be set to stable.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_stable">set_stable</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stable: bool)
@@ -383,18 +463,18 @@ Details of a pool. This is refreshed every epoch by the first
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
     stable: bool,
 ) {
+    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
+
     self.stable = stable;
+    self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
     <b>if</b> (stable) {
         self.trade_params.taker_fee = <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>;
         self.trade_params.maker_fee = <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>;
-        self.next_trade_params.taker_fee = <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>;
-        self.next_trade_params.maker_fee = <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>;
     } <b>else</b> {
         self.trade_params.taker_fee = <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>;
         self.trade_params.maker_fee = <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>;
-        self.next_trade_params.taker_fee = <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>;
-        self.next_trade_params.maker_fee = <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>;
-    }
+    };
+    self.next_trade_params = self.trade_params;
 }
 </code></pre>
 
@@ -462,17 +542,20 @@ Validation of the user adding is done in <code>State</code>.
 ) {
     <b>assert</b>!(!self.proposals.contains(&proposer_address), <a href="governance.md#0x0_governance_EAlreadyProposed">EAlreadyProposed</a>);
 
-    <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
-    <b>if</b> (self.proposals.size() == <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>) {
-        self.<a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(voting_power);
-    };
-
     <b>if</b> (self.stable) {
         <b>assert</b>!(taker_fee &gt;= <a href="governance.md#0x0_governance_MIN_TAKER_STABLE">MIN_TAKER_STABLE</a> && taker_fee &lt;= <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>, <a href="governance.md#0x0_governance_EInvalidTakerFee">EInvalidTakerFee</a>);
         <b>assert</b>!(maker_fee &gt;= <a href="governance.md#0x0_governance_MIN_MAKER_STABLE">MIN_MAKER_STABLE</a> && maker_fee &lt;= <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>, <a href="governance.md#0x0_governance_EInvalidMakerFee">EInvalidMakerFee</a>);
     } <b>else</b> {
         <b>assert</b>!(taker_fee &gt;= <a href="governance.md#0x0_governance_MIN_TAKER_VOLATILE">MIN_TAKER_VOLATILE</a> && taker_fee &lt;= <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_EInvalidTakerFee">EInvalidTakerFee</a>);
         <b>assert</b>!(maker_fee &gt;= <a href="governance.md#0x0_governance_MIN_MAKER_VOLATILE">MIN_MAKER_VOLATILE</a> && maker_fee &lt;= <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_EInvalidMakerFee">EInvalidMakerFee</a>);
+    };
+
+    <b>assert</b>!(!self.whitelisted || taker_fee == 0, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
+    <b>assert</b>!(!self.whitelisted || maker_fee == 0, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChangeFees">EWhitelistedPoolCannotChangeFees</a>);
+
+    <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
+    <b>if</b> (self.proposals.size() == <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>) {
+        self.<a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(voting_power);
     };
 
     <b>let</b> new_proposal = <a href="governance.md#0x0_governance_new_proposal">new_proposal</a>(taker_fee, maker_fee, stake_required);
@@ -574,13 +657,13 @@ Validation of inputs done in <code>State</code>.
 
 </details>
 
-<a name="0x0_governance_params"></a>
+<a name="0x0_governance_trade_params"></a>
 
-## Function `params`
+## Function `trade_params`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_params">params</a>(proposal: &<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_trade_params">trade_params</a>(self: &<a href="governance.md#0x0_governance_Governance">governance::Governance</a>): <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a>
 </code></pre>
 
 
@@ -589,8 +672,8 @@ Validation of inputs done in <code>State</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_params">params</a>(proposal: &<a href="governance.md#0x0_governance_Proposal">Proposal</a>): (u64, u64, u64) {
-    (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_trade_params">trade_params</a>(self: &<a href="governance.md#0x0_governance_Governance">Governance</a>): <a href="governance.md#0x0_governance_TradeParams">TradeParams</a> {
+    self.trade_params
 }
 </code></pre>
 
@@ -598,13 +681,13 @@ Validation of inputs done in <code>State</code>.
 
 </details>
 
-<a name="0x0_governance_trade_params"></a>
+<a name="0x0_governance_params"></a>
 
-## Function `trade_params`
+## Function `params`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_trade_params">trade_params</a>(self: &<a href="governance.md#0x0_governance_Governance">governance::Governance</a>): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_params">params</a>(trade_params: &<a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a>): (u64, u64, u64)
 </code></pre>
 
 
@@ -613,8 +696,8 @@ Validation of inputs done in <code>State</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_trade_params">trade_params</a>(self: &<a href="governance.md#0x0_governance_Governance">Governance</a>): (u64, u64, u64) {
-    (self.trade_params.taker_fee, self.trade_params.maker_fee, self.trade_params.stake_required)
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_params">params</a>(trade_params: &<a href="governance.md#0x0_governance_TradeParams">TradeParams</a>): (u64, u64, u64) {
+    (trade_params.taker_fee, trade_params.maker_fee, trade_params.stake_required)
 }
 </code></pre>
 

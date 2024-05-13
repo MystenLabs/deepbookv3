@@ -8,8 +8,6 @@
 -  [Struct `State`](#0x0_state_State)
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_state_empty)
--  [Function `whitelisted`](#0x0_state_whitelisted)
--  [Function `set_whitelist`](#0x0_state_set_whitelist)
 -  [Function `process_create`](#0x0_state_process_create)
 -  [Function `process_cancel`](#0x0_state_process_cancel)
 -  [Function `process_modify`](#0x0_state_process_modify)
@@ -78,12 +76,6 @@
 <dd>
 
 </dd>
-<dt>
-<code>whitelisted: bool</code>
-</dt>
-<dd>
-
-</dd>
 </dl>
 
 
@@ -133,61 +125,7 @@
         <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx.epoch()),
         users: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
         <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
-        whitelisted: <b>false</b>,
     }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_whitelisted"></a>
-
-## Function `whitelisted`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_whitelisted">whitelisted</a>(self: &<a href="state.md#0x0_state_State">state::State</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_whitelisted">whitelisted</a>(
-    self: &<a href="state.md#0x0_state_State">State</a>,
-): bool {
-    self.whitelisted
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_set_whitelist"></a>
-
-## Function `set_whitelist`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_set_whitelist">set_whitelist</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, whitelisted: bool)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_set_whitelist">set_whitelist</a>(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    whitelisted: bool,
-) {
-    self.whitelisted = whitelisted;
 }
 </code></pre>
 

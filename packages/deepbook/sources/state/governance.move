@@ -10,6 +10,7 @@ module deepbook::governance {
     const EProposalDoesNotExist: u64 = 3;
     const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
     const EAlreadyProposed: u64 = 5;
+    const EWhitelistedPoolCannotChangeFees: u64 = 6;
 
     // === Constants ===
     const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
@@ -44,11 +45,15 @@ module deepbook::governance {
     public struct Governance has store {
         /// Tracks refreshes.
         epoch: u64,
+        /// If Pool is whitelisted.
+        whitelisted: bool,
         /// If Pool is stable or volatile.
         stable: bool,
         /// List of proposals for the current epoch.
         proposals: VecMap<address, Proposal>,
+        /// Trade parameters for the current epoch.
         trade_params: TradeParams,
+        /// Trade parameters for the next epoch.
         next_trade_params: TradeParams,
         /// All voting power from the current stakes.
         voting_power: u64,
@@ -62,6 +67,7 @@ module deepbook::governance {
     ): Governance {
         Governance {
             epoch,
+            whitelisted: false,
             stable: false,
             proposals: vec_map::empty(),
             trade_params: new_trade_params(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
@@ -71,22 +77,44 @@ module deepbook::governance {
         }
     }
 
+    /// Whitelist a pool. This pool can be used as a DEEP reference price for
+    /// other pools. This pool will have zero fees. Governance can only change
+    /// the pool's stake_required field.
+    public(package) fun set_whitelist(
+        self: &mut Governance,
+        whitelisted: bool,
+    ) {
+        self.whitelisted = whitelisted;
+        self.stable = false;
+        self.proposals = vec_map::empty();
+        self.trade_params.taker_fee = 0;
+        self.trade_params.maker_fee = 0;
+        self.next_trade_params = self.trade_params;
+    }
+
+    public(package) fun whitelisted(self: &Governance): bool {
+        self.whitelisted
+    }
+
+    /// Set the pool to stable or volatile. If stable, the fees are set to
+    /// stable fees. If volatile, the fees are set to volatile fees.
+    /// This resets governance. A whitelisted pool cannot be set to stable.
     public(package) fun set_stable(
         self: &mut Governance,
         stable: bool,
     ) {
+        assert!(!self.whitelisted, EWhitelistedPoolCannotChangeFees);
+
         self.stable = stable;
+        self.proposals = vec_map::empty();
         if (stable) {
             self.trade_params.taker_fee = MAX_TAKER_STABLE;
             self.trade_params.maker_fee = MAX_MAKER_STABLE;
-            self.next_trade_params.taker_fee = MAX_TAKER_STABLE;
-            self.next_trade_params.maker_fee = MAX_MAKER_STABLE;
         } else {
             self.trade_params.taker_fee = MAX_TAKER_VOLATILE;
             self.trade_params.maker_fee = MAX_MAKER_VOLATILE;
-            self.next_trade_params.taker_fee = MAX_TAKER_VOLATILE;
-            self.next_trade_params.maker_fee = MAX_MAKER_VOLATILE;
-        }
+        };
+        self.next_trade_params = self.trade_params;
     }
 
     public(package) fun update(self: &mut Governance, ctx: &TxContext) {
@@ -114,17 +142,20 @@ module deepbook::governance {
     ) {
         assert!(!self.proposals.contains(&proposer_address), EAlreadyProposed);
 
-        let voting_power = stake_to_voting_power(stake_amount);
-        if (self.proposals.size() == MAX_PROPOSALS) {
-            self.remove_lowest_proposal(voting_power);
-        };
-
         if (self.stable) {
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
             assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
         } else {
             assert!(taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE, EInvalidTakerFee);
             assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
+        };
+
+        assert!(!self.whitelisted || taker_fee == 0, EWhitelistedPoolCannotChangeFees);
+        assert!(!self.whitelisted || maker_fee == 0, EWhitelistedPoolCannotChangeFees);
+
+        let voting_power = stake_to_voting_power(stake_amount);
+        if (self.proposals.size() == MAX_PROPOSALS) {
+            self.remove_lowest_proposal(voting_power);
         };
 
         let new_proposal = new_proposal(taker_fee, maker_fee, stake_required);
@@ -181,12 +212,12 @@ module deepbook::governance {
             stake_to_voting_power(stake_before);
     }
 
-    public(package) fun params(proposal: &Proposal): (u64, u64, u64) {
-        (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
+    public(package) fun trade_params(self: &Governance): TradeParams {
+        self.trade_params
     }
 
-    public(package) fun trade_params(self: &Governance): (u64, u64, u64) {
-        (self.trade_params.taker_fee, self.trade_params.maker_fee, self.trade_params.stake_required)
+    public(package) fun params(trade_params: &TradeParams): (u64, u64, u64) {
+        (trade_params.taker_fee, trade_params.maker_fee, trade_params.stake_required)
     }
 
     // === Private Functions ===
@@ -259,6 +290,7 @@ module deepbook::governance {
     public fun delete(self: Governance) {
         let Governance {
             epoch: _,
+            whitelisted: _,
             stable: _,
             proposals: _,
             trade_params: _,
