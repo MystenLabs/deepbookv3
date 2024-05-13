@@ -236,10 +236,10 @@
         i = i + 1;
     };
 
-    self.<a href="state.md#0x0_state_update_user">update_user</a>(order_info.owner(), ctx.epoch());
-    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[order_info.owner()];
-    <a href="user.md#0x0_user">user</a>.add_order(order_info.order_id());
-    <a href="user.md#0x0_user">user</a>.increase_taker_volume(order_info.executed_quantity());
+    self.<a href="state.md#0x0_state_update_user">update_user</a>(<a href="order_info.md#0x0_order_info">order_info</a>.owner(), ctx.epoch());
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[<a href="order_info.md#0x0_order_info">order_info</a>.owner()];
+    <a href="user.md#0x0_user">user</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    <a href="user.md#0x0_user">user</a>.increase_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
 }
 </code></pre>
 
