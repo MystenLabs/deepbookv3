@@ -144,6 +144,8 @@ module deepbook::order_info {
         expired: bool,
         // Whether the maker order is fully filled
         complete: bool,
+        // Quantity filled
+        volume: u64,
         // Quantity settled in base asset terms for maker
         settled_base: u64,
         // Quantity settled in quote asset terms for maker
@@ -335,15 +337,18 @@ module deepbook::order_info {
         (fill.settled_base, fill.settled_quote, fill.settled_deep)
     }
 
+    /// Returns the volume of the fill.
+    public(package) fun volume(fill: &Fill): u64 {
+        fill.volume
+    }
+
     /// Returns true if two opposite orders are overlapping in price.
     public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
         let maker_price = order.price();
 
-        (
-            self.original_quantity - self.executed_quantity > 0 &&
-            self.is_bid && self.price >= maker_price ||
-            !self.is_bid && self.price <= maker_price
-        )
+        (self.original_quantity - self.executed_quantity > 0 &&
+        self.is_bid && self.price >= maker_price ||
+        !self.is_bid && self.price <= maker_price)
     }
 
     /// Matches an OrderInfo with an Order from the book. Returns a Fill.
@@ -368,6 +373,7 @@ module deepbook::order_info {
                 owner: maker.owner(),
                 expired: true,
                 complete: false,
+                volume: 0,
                 settled_base: base,
                 settled_quote: quote,
                 settled_deep: deep,
@@ -402,6 +408,7 @@ module deepbook::order_info {
             owner: maker.owner(),
             expired: false,
             complete: maker.quantity() == 0,
+            volume: filled_quantity,
             settled_base: if (self.is_bid) filled_quantity else 0,
             settled_quote: if (self.is_bid) 0 else quote_quantity,
             settled_deep: 0,

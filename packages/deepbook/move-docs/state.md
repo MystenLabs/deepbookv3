@@ -161,15 +161,17 @@
         <b>let</b> fill = &fills[i];
         <b>let</b> (order_id, owner, expired, completed) = fill.fill_status();
         <b>let</b> (base, quote, deep) = fill.settled_quantities();
+        <b>let</b> volume = fill.volume();
         self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+
         <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
         <a href="user.md#0x0_user">user</a>.add_settled_amounts(base, quote, deep);
-        <a href="user.md#0x0_user">user</a>.increase_maker_volume(base);
+        <a href="user.md#0x0_user">user</a>.increase_maker_volume(volume);
         <b>if</b> (expired || completed) {
             <a href="user.md#0x0_user">user</a>.remove_order(order_id);
         };
 
-        self.<a href="history.md#0x0_history">history</a>.add_volume(base, <a href="user.md#0x0_user">user</a>.active_stake(), <a href="user.md#0x0_user">user</a>.maker_volume() == base);
+        self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="user.md#0x0_user">user</a>.active_stake(), <a href="user.md#0x0_user">user</a>.maker_volume() == volume);
 
         i = i + 1;
     };

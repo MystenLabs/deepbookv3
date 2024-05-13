@@ -43,6 +43,7 @@ All order matching happens in this module.
 -  [Function `fill_or_kill`](#0x0_order_info_fill_or_kill)
 -  [Function `fill_status`](#0x0_order_info_fill_status)
 -  [Function `settled_quantities`](#0x0_order_info_settled_quantities)
+-  [Function `volume`](#0x0_order_info_volume)
 -  [Function `crosses_price`](#0x0_order_info_crosses_price)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
@@ -539,6 +540,12 @@ It is used to update the state.
 </dd>
 <dt>
 <code>complete: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>volume: u64</code>
 </dt>
 <dd>
 
@@ -1487,6 +1494,31 @@ Returns the settled quantities for the fill.
 
 </details>
 
+<a name="0x0_order_info_volume"></a>
+
+## Function `volume`
+
+Returns the volume of the fill.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_volume">volume</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_volume">volume</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): u64 {
+    fill.volume
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_info_crosses_price"></a>
 
 ## Function `crosses_price`
@@ -1506,11 +1538,9 @@ Returns true if two opposite orders are overlapping in price.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &Order): bool {
     <b>let</b> maker_price = <a href="order.md#0x0_order">order</a>.<a href="order_info.md#0x0_order_info_price">price</a>();
 
-    (
-        self.original_quantity - self.executed_quantity &gt; 0 &&
-        self.is_bid && self.price &gt;= maker_price ||
-        !self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price
-    )
+    (self.original_quantity - self.executed_quantity &gt; 0 &&
+    self.is_bid && self.price &gt;= maker_price ||
+    !self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price)
 }
 </code></pre>
 
@@ -1555,6 +1585,7 @@ Funds for an expired order are returned to the maker as settled.
             owner: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
             expired: <b>true</b>,
             complete: <b>false</b>,
+            volume: 0,
             settled_base: base,
             settled_quote: quote,
             settled_deep: deep,
@@ -1589,6 +1620,7 @@ Funds for an expired order are returned to the maker as settled.
         owner: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
         expired: <b>false</b>,
         complete: maker.quantity() == 0,
+        volume: filled_quantity,
         settled_base: <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0,
         settled_quote: <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity,
         settled_deep: 0,
