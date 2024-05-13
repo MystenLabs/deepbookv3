@@ -27,7 +27,7 @@ All order matching happens in this module.
 -  [Function `executed_quantity`](#0x0_order_executed_quantity)
 -  [Function `cumulative_quote_quantity`](#0x0_order_cumulative_quote_quantity)
 -  [Function `paid_fees`](#0x0_order_paid_fees)
--  [Function `maker_fee`](#0x0_order_maker_fee)
+-  [Function `trade_params`](#0x0_order_trade_params)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
@@ -65,7 +65,8 @@ All order matching happens in this module.
 -  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
 
 
-<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<pre><code><b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
@@ -178,7 +179,7 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>maker_fee: u64</code>
+<code>trade_params: <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a></code>
 </dt>
 <dd>
 
@@ -851,7 +852,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, maker_fee: u64): <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_initial_order">initial_order</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, trade_params: <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a>): <a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>
 </code></pre>
 
 
@@ -869,7 +870,7 @@ It is used to update the state.
     quantity: u64,
     is_bid: bool,
     expire_timestamp: u64,
-    maker_fee: u64,
+    trade_params: TradeParams,
 ): <a href="order.md#0x0_order_OrderInfo">OrderInfo</a> {
     <a href="order.md#0x0_order_OrderInfo">OrderInfo</a> {
         pool_id,
@@ -886,7 +887,7 @@ It is used to update the state.
         fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         fee_is_deep: <b>false</b>,
         paid_fees: 0,
-        maker_fee,
+        trade_params,
         status: <a href="order.md#0x0_order_LIVE">LIVE</a>,
         self_matching_prevention: <b>false</b>,
     }
@@ -1161,13 +1162,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_order_maker_fee"></a>
+<a name="0x0_order_trade_params"></a>
 
-## Function `maker_fee`
+## Function `trade_params`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_maker_fee">maker_fee</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): u64
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_trade_params">trade_params</a>(self: &<a href="order.md#0x0_order_OrderInfo">order::OrderInfo</a>): <a href="governance.md#0x0_governance_TradeParams">governance::TradeParams</a>
 </code></pre>
 
 
@@ -1176,8 +1177,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_maker_fee">maker_fee</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): u64 {
-    self.maker_fee
+<pre><code><b>public</b> <b>fun</b> <a href="order.md#0x0_order_trade_params">trade_params</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): TradeParams {
+    self.trade_params
 }
 </code></pre>
 
@@ -1589,7 +1590,8 @@ information required to match orders.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_to_order">to_order</a>(self: &<a href="order.md#0x0_order_OrderInfo">OrderInfo</a>): <a href="order.md#0x0_order_Order">Order</a> {
-    <b>let</b> unpaid_fees = self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>() * self.maker_fee;
+    <b>let</b> (_, maker_fee, _) = self.trade_params.params();
+    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order.md#0x0_order_remaining_quantity">remaining_quantity</a>(), maker_fee);
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id: self.order_id,
         client_order_id: self.client_order_id,

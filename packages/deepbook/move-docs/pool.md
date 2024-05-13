@@ -191,6 +191,15 @@ DeepBookAdminCap is used to call admin functions.
 ## Constants
 
 
+<a name="0x0_pool_MAX_U64"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
+</code></pre>
+
+
+
 <a name="0x0_pool_MAX_PRICE"></a>
 
 
@@ -213,16 +222,7 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 8;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 6;
 </code></pre>
 
 
@@ -231,7 +231,7 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>: u64 = 12;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>: u64 = 8;
 </code></pre>
 
 
@@ -240,7 +240,7 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>: u64 = 10;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>: u64 = 7;
 </code></pre>
 
 
@@ -350,7 +350,7 @@ DeepBookAdminCap is used to call admin functions.
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
     };
 
-    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
+    <b>let</b> (taker_fee, maker_fee, _) = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -390,7 +390,7 @@ DeepBookAdminCap is used to call admin functions.
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): bool {
-    self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
+    self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
 }
 </code></pre>
 
@@ -426,12 +426,12 @@ DeepBookAdminCap is used to call admin functions.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
-    <b>let</b> (taker_fee, maker_fee, stake_required) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
+    <b>let</b> trade_params = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
     <b>let</b> <b>mut</b> order_info =
-        <a href="order.md#0x0_order_initial_order">order::initial_order</a>(self.id.to_inner(), client_order_id, <a href="account.md#0x0_account">account</a>.owner(), order_type, price, quantity, is_bid, expire_timestamp, maker_fee);
+        <a href="order.md#0x0_order_initial_order">order::initial_order</a>(self.id.to_inner(), client_order_id, <a href="account.md#0x0_account">account</a>.owner(), order_type, price, quantity, is_bid, expire_timestamp, trade_params);
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> order_info, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     self.<a href="state.md#0x0_state">state</a>.process_create(&order_info, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&order_info, self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), taker_fee, maker_fee, stake_required);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&order_info, self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()));
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <b>if</b> (order_info.remaining_quantity() &gt; 0) order_info.emit_order_placed();
@@ -524,7 +524,7 @@ Swap exact amount without needing an account.
     <b>let</b> proof = temp_account.generate_proof_as_owner(ctx);
 
     <b>let</b> is_bid = quote_quantity &gt; 0;
-    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params();
+    <b>let</b> (taker_fee, _, _) = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().trade_params().params();
     <b>let</b> (base_fee, quote_fee, _) = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().calculate_fees(taker_fee, base_quantity, quote_quantity);
     base_quantity = base_quantity - base_fee;
     quote_quantity = quote_quantity - quote_fee;
@@ -988,7 +988,7 @@ Swap exact amount without needing an account.
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _cap: &<a href="pool.md#0x0_pool_DeepBookAdminCap">pool::DeepBookAdminCap</a>, whitelist: bool)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _cap: &<a href="pool.md#0x0_pool_DeepBookAdminCap">pool::DeepBookAdminCap</a>, whitelist: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -1001,13 +1001,14 @@ Swap exact amount without needing an account.
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     _cap: &<a href="pool.md#0x0_pool_DeepBookAdminCap">DeepBookAdminCap</a>,
     whitelist: bool,
+    ctx: &TxContext,
 ) {
     <b>let</b> base = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
     <b>let</b> quote = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
     <b>assert</b>!(base == deep_type || quote == deep_type, <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>);
 
-    self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(whitelist);
+    self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(whitelist);
 }
 </code></pre>
 

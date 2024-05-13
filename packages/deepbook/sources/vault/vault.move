@@ -74,9 +74,6 @@ module deepbook::vault {
         self: &Vault<BaseAsset, QuoteAsset>,
         order_info: &OrderInfo,
         user: &mut User,
-        taker_fee: u64,
-        maker_fee: u64,
-        stake_required: u64,
     ) {
         let (mut base_in, mut base_out) = (0, 0);
         let (mut quote_in, mut quote_out) = (0, 0);
@@ -84,6 +81,7 @@ module deepbook::vault {
         let (base_conversion_rate, _) = self.deep_price.conversion_rates();
         let total_volume = user.taker_volume() + user.maker_volume();
         let volume_in_deep = math::mul(total_volume, base_conversion_rate);
+        let (taker_fee, maker_fee, stake_required) = order_info.trade_params().params();
         let taker_fee = if (user.active_stake() >= stake_required && volume_in_deep >= stake_required) {
             math::div(taker_fee, 2)
         } else {

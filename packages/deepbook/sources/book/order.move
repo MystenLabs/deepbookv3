@@ -5,7 +5,7 @@
 /// All order matching happens in this module.
 module deepbook::order {
     use sui::event;
-    use deepbook::{math, utils};
+    use deepbook::{math, utils, governance::TradeParams};
 
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
@@ -70,8 +70,8 @@ module deepbook::order {
         fee_is_deep: bool,
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
-        // Maker fee when injecting order
-        maker_fee: u64,
+        // TradeParams that apply to this order
+        trade_params: TradeParams,
         // Status of the order
         status: u8,
         // Reserved field for prevent self_matching
@@ -172,7 +172,7 @@ module deepbook::order {
         quantity: u64,
         is_bid: bool,
         expire_timestamp: u64,
-        maker_fee: u64,
+        trade_params: TradeParams,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -189,7 +189,7 @@ module deepbook::order {
             fills: vector[],
             fee_is_deep: false,
             paid_fees: 0,
-            maker_fee,
+            trade_params,
             status: LIVE,
             self_matching_prevention: false,
         }
@@ -239,8 +239,8 @@ module deepbook::order {
         self.paid_fees
     }
 
-    public fun maker_fee(self: &OrderInfo): u64 {
-        self.maker_fee
+    public fun trade_params(self: &OrderInfo): TradeParams {
+        self.trade_params
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
@@ -312,7 +312,8 @@ module deepbook::order {
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(self: &OrderInfo): Order {
-        let unpaid_fees = self.remaining_quantity() * self.maker_fee;
+        let (_, maker_fee, _) = self.trade_params.params();
+        let unpaid_fees = math::mul(self.remaining_quantity(), maker_fee);
         Order {
             order_id: self.order_id,
             client_order_id: self.client_order_id,
