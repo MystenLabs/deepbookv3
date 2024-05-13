@@ -213,8 +213,10 @@ module deepbook::state {
         add_new_user(self, user_addr, epoch);
         let user = &mut self.users[user_addr];
         let (prev_epoch, maker_volume, active_stake) = user.update(epoch);
-        let rebates = 0; // self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-        user.add_rebates(rebates);
+        if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
+            let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+            user.add_rebates(rebates);
+        }
     }
 
     fun add_new_user(
