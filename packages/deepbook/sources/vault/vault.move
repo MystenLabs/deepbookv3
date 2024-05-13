@@ -8,7 +8,7 @@ module deepbook::vault {
         account::{Account, TradeProof},
         deep_price::{Self, DeepPrice},
         user::User,
-        order::OrderInfo,
+        order_info::OrderInfo,
     };
 
     const EIneligibleTargetPool: u64 = 1;
@@ -81,7 +81,10 @@ module deepbook::vault {
         let (base_conversion_rate, _) = self.deep_price.conversion_rates();
         let total_volume = user.taker_volume() + user.maker_volume();
         let volume_in_deep = math::mul(total_volume, base_conversion_rate);
-        let (taker_fee, maker_fee, stake_required) = order_info.trade_params().params();
+        let trade_params = order_info.trade_params();
+        let taker_fee = trade_params.taker_fee();
+        let maker_fee = trade_params.maker_fee();
+        let stake_required = trade_params.stake_required();
         let taker_fee = if (user.active_stake() >= stake_required && volume_in_deep >= stake_required) {
             math::div(taker_fee, 2)
         } else {
