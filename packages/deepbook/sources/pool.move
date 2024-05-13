@@ -29,9 +29,10 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
-    const EInvalidAmountIn: u64 = 8;
-    const EIneligibleWhitelist: u64 = 10;
-    const EIneligibleReferencePool: u64 = 12;
+    const EInvalidAmountIn: u64 = 6;
+    const EIneligibleWhitelist: u64 = 7;
+    const EIneligibleReferencePool: u64 = 8;
+    const EInvalidOrderOwner: u64 = 9;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -236,6 +237,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let mut order = self.book.cancel_order(order_id);
+        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
         self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
