@@ -136,7 +136,7 @@ module deepbook::pool {
                 quantity,
                 is_bid,
                 expire_timestamp,
-                maker_fee
+                trade_params,
             );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);

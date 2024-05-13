@@ -5,8 +5,12 @@
 /// All order matching happens in this module.
 module deepbook::order_info {
     use sui::event;
-    use deepbook::{math, utils};
-    use deepbook::order::{Self, Order};
+    use deepbook::{
+        math,
+        utils,
+        governance::TradeParams,
+        order::{Self, Order}
+    };
 
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
@@ -70,7 +74,7 @@ module deepbook::order_info {
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
         // Maker fee when injecting order
-        maker_fee: u64,
+        trade_params: TradeParams,
         // Status of the order
         status: u8,
         // Reserved field for prevent self_matching
@@ -159,7 +163,7 @@ module deepbook::order_info {
         quantity: u64,
         is_bid: bool,
         expire_timestamp: u64,
-        maker_fee: u64,
+        trade_params: TradeParams,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -177,7 +181,7 @@ module deepbook::order_info {
             fills: vector[],
             fee_is_deep: false,
             paid_fees: 0,
-            maker_fee,
+            trade_params,
             status: LIVE,
             self_matching_prevention: false,
         }
@@ -227,8 +231,8 @@ module deepbook::order_info {
         self.paid_fees
     }
 
-    public fun maker_fee(self: &OrderInfo): u64 {
-        self.maker_fee
+    public fun trade_params(self: &OrderInfo): TradeParams {
+        self.trade_params
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
@@ -265,7 +269,8 @@ module deepbook::order_info {
     public(package) fun to_order(
         self: &OrderInfo
     ): Order {
-        let unpaid_fees = self.remaining_quantity() * self.maker_fee();
+        let (_, maker_fee, _) = self.trade_params().params();
+        let unpaid_fees = math::mul(self.remaining_quantity(), maker_fee);
         order::init_order(
             self.order_id,
             self.client_order_id,
