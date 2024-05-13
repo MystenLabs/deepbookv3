@@ -61,17 +61,20 @@ module deepbook::state {
             self.update_user(owner, ctx.epoch());
             let user = &mut self.users[owner];
             user.add_settled_amounts(base, quote, deep);
+            user.increase_maker_volume(base);
             if (expired || completed) {
                 user.remove_order(order_id);
             };
 
-            self.history.add_volume(base, user.active_stake(), user.maker_volume() == 0);
+            self.history.add_volume(base, user.active_stake(), user.maker_volume() == base);
 
             i = i + 1;
         };
 
         self.update_user(order_info.owner(), ctx.epoch());
-        self.users[order_info.owner()].add_order(order_info.order_id());
+        let user = &mut self.users[order_info.owner()];
+        user.add_order(order_info.order_id());
+        user.increase_taker_volume(order_info.executed_quantity());
     }
 
     public(package) fun process_cancel(
