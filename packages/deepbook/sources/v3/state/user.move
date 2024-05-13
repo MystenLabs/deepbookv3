@@ -1,6 +1,12 @@
 module deepbook::v3user {
     use sui::vec_set::{Self, VecSet};
 
+    public struct Balances has store, copy, drop {
+        base: u64,
+        quote: u64,
+        deep: u64,
+    }
+
     /// User data that is updated every epoch.
     public struct User has store, copy, drop {
         epoch: u64,
@@ -10,12 +16,8 @@ module deepbook::v3user {
         inactive_stake: u64,
         voted_proposal: Option<address>,
         unclaimed_rebates: u64,
-        settled_base_amount: u64,
-        settled_quote_amount: u64,
-        settled_deep_amount: u64,
-        owed_base_amount: u64,
-        owed_quote_amount: u64,
-        owed_deep_amount: u64,
+        settled_balances: Balances,
+        owed_balances: Balances,
     }
 
     public(package) fun empty(
@@ -29,12 +31,16 @@ module deepbook::v3user {
             inactive_stake: 0,
             voted_proposal: option::none(),
             unclaimed_rebates: 0,
-            settled_base_amount: 0,
-            settled_quote_amount: 0,
-            settled_deep_amount: 0,
-            owed_base_amount: 0,
-            owed_quote_amount: 0,
-            owed_deep_amount: 0,
+            settled_balances: Balances {
+                base: 0,
+                quote: 0,
+                deep: 0,
+            },
+            owed_balances: Balances {
+                base: 0,
+                quote: 0,
+                deep: 0,
+            },
         }
     }
 
@@ -60,21 +66,33 @@ module deepbook::v3user {
         prev_proposal
     }
 
+    public(package) fun add_settled_amounts(
+        self: &mut User,
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
+        self.settled_balances.base = self.settled_balances.base + base;
+        self.settled_balances.quote = self.settled_balances.quote + quote;
+        self.settled_balances.deep = self.settled_balances.deep + deep;
+    }
+
+    public(package) fun add_owed_amounts(
+        self: &mut User,
+        base: u64,
+        quote: u64,
+        deep: u64,
+    ) {
+        self.owed_balances.base = self.owed_balances.base + base;
+        self.owed_balances.quote = self.owed_balances.quote + quote;
+        self.owed_balances.deep = self.owed_balances.deep + deep;
+    }
+
     public(package) fun settle(
         self: &mut User,
     ): (u64, u64, u64, u64, u64, u64) {
-        let base_out = self.settled_base_amount;
-        let quote_out = self.settled_quote_amount;
-        let deep_out = self.settled_deep_amount;
-        let base_in = self.owed_base_amount;
-        let quote_in = self.owed_quote_amount;
-        let deep_in = self.owed_deep_amount;
-        self.settled_base_amount = 0;
-        self.settled_quote_amount = 0;
-        self.settled_deep_amount = 0;
-        self.owed_base_amount = 0;
-        self.owed_quote_amount = 0;
-        self.owed_deep_amount = 0;
+        let (base_out, quote_out, deep_out) = self.settled_balances.reset();
+        let (base_in, quote_in, deep_in) = self.owed_balances.reset();
 
         (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     }
@@ -108,30 +126,8 @@ module deepbook::v3user {
     public(package) fun claim_rebates(
         self: &mut User,
     ) {
-        self.settled_deep_amount = self.settled_deep_amount + self.unclaimed_rebates;
+        self.settled_balances.deep = self.settled_balances.deep + self.unclaimed_rebates;
         self.unclaimed_rebates = 0;
-    }
-
-    public(package) fun add_settled_amounts(
-        self: &mut User,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        self.settled_base_amount = self.settled_base_amount + base;
-        self.settled_quote_amount = self.settled_quote_amount + quote;
-        self.settled_deep_amount = self.settled_deep_amount + deep;
-    }
-
-    public(package) fun add_owed_amounts(
-        self: &mut User,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        self.owed_base_amount = self.owed_base_amount + base;
-        self.owed_quote_amount = self.owed_quote_amount + quote;
-        self.owed_deep_amount = self.owed_deep_amount + deep;
     }
 
     public(package) fun add_order(
@@ -154,7 +150,7 @@ module deepbook::v3user {
     ): (u64, u64) {
         let stake_before = self.active_stake + self.inactive_stake;
         self.inactive_stake = self.inactive_stake + stake;
-        self.owed_deep_amount = self.owed_deep_amount + stake;
+        self.owed_balances.deep = self.owed_balances.deep + stake;
 
         (stake_before, stake_before + self.inactive_stake)
     }
@@ -167,7 +163,7 @@ module deepbook::v3user {
         self.active_stake = 0;
         self.inactive_stake = 0;
         self.voted_proposal = option::none();
-        self.settled_deep_amount = self.settled_deep_amount + stake_before;
+        self.settled_balances.deep = self.settled_balances.deep + stake_before;
 
         (stake_before, voted_proposal)
     }
@@ -176,5 +172,16 @@ module deepbook::v3user {
         self: &User,
     ): VecSet<u128> {
         self.open_orders
+    }
+
+    fun reset(balances: &mut Balances): (u64, u64, u64) {
+        let base = balances.base;
+        let quote = balances.quote;
+        let deep = balances.deep;
+        balances.base = 0;
+        balances.quote = 0;
+        balances.deep = 0;
+
+        (base, quote, deep)
     }
 }
