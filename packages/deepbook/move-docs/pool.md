@@ -595,6 +595,7 @@ Swap exact amount without needing an account.
     ctx: &TxContext,
 ) {
     <b>let</b> (base, quote, deep, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
     self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.owner(), base, quote, deep, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 

@@ -222,6 +222,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
         self.state.process_modify(account.owner(), base, quote, deep, ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
