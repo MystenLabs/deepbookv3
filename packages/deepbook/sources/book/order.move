@@ -361,11 +361,9 @@ module deepbook::order {
     public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
         let (is_bid, price, _) = utils::decode_order_id(order.order_id);
 
-        (
             self.original_quantity - self.executed_quantity > 0 &&
             ((self.is_bid && !is_bid && self.price >= price) ||
             (!self.is_bid && is_bid && self.price <= price))
-        )
     }
 
     /// Returns the remaining quantity for the order.
