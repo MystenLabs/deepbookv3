@@ -16,6 +16,7 @@ module deepbook::pool {
     };
 
     use deepbook::{
+        math,
         account::{Self, Account, TradeProof},
         order_info,
         book::{Self, Book},
@@ -32,7 +33,9 @@ module deepbook::pool {
     const EInvalidAmountIn: u64 = 6;
     const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
-    const EInvalidOrderOwner: u64 = 9;
+    const EFeeTypeNotSupported: u64 = 9;
+    const ENotEnoughDeep: u64 = 10;
+    const EInvalidOrderOwner: u64 = 11;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -121,10 +124,12 @@ module deepbook::pool {
         price: u64,
         quantity: u64,
         is_bid: bool,
+        pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
         ctx: &TxContext,
     ) {
+        assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
         let trade_params = self.state.governance().trade_params();
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -155,6 +160,7 @@ module deepbook::pool {
         client_order_id: u64,
         quantity: u64,
         is_bid: bool,
+        pay_with_deep: bool,
         clock: &Clock,
         ctx: &TxContext,
     ) {
@@ -166,6 +172,7 @@ module deepbook::pool {
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,
+            pay_with_deep,
             clock.timestamp_ms(),
             clock,
             ctx,
@@ -182,9 +189,21 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let mut base_quantity = base_in.value();
-        let mut quote_quantity = quote_in.value();
+        let quote_quantity = quote_in.value();
         assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
         assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+
+        let pay_with_deep = deep_in.value() > 0;
+        let is_bid = quote_quantity > 0;
+        if (is_bid) {
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity); 
+        };
+        base_quantity = base_quantity - base_quantity % self.book.lot_size();
+        let base_to_deep = self.state.deep_price().conversion_rate();
+        let taker_fee = self.state.governance().trade_params().taker_fee();
+        let deep_required = math::mul(base_quantity, base_to_deep);
+        let deep_required = math::mul(deep_required, taker_fee);
+        assert!(deep_in.value() >= deep_required, ENotEnoughDeep);
 
         let mut temp_account = account::new(ctx);
         temp_account.deposit(base_in, ctx);
@@ -192,17 +211,8 @@ module deepbook::pool {
         temp_account.deposit(deep_in, ctx);
         let proof = temp_account.generate_proof_as_owner(ctx);
 
-        let is_bid = quote_quantity > 0;
-        let taker_fee = self.state.governance().trade_params().taker_fee();
-        let (base_fee, quote_fee, _) = self.state.deep_price().calculate_fees(taker_fee, base_quantity, quote_quantity);
-        base_quantity = base_quantity - base_fee;
-        quote_quantity = quote_quantity - quote_fee;
-        if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity);
-        };
-        base_quantity = base_quantity - base_quantity % self.book.lot_size();
+        self.place_market_order(&mut temp_account, &proof, 0, base_quantity, is_bid, pay_with_deep, clock, ctx);
 
-        self.place_market_order(&mut temp_account, &proof, 0, base_quantity, is_bid, clock, ctx);
         let base_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
         let quote_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
         let deep_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
