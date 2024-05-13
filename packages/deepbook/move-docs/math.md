@@ -58,7 +58,7 @@ scaling setting for float
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_mul">mul</a>(x: u64, y: u64): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_mul">mul</a>(x: u64, y: u64): u64 {
     <b>let</b> (_, result) = <a href="math.md#0x0_math_unsafe_mul_round">unsafe_mul_round</a>(x, y);
     result
 }
@@ -83,7 +83,7 @@ scaling setting for float
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_mul_round_up">mul_round_up</a>(x: u64, y: u64): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_mul_round_up">mul_round_up</a>(x: u64, y: u64): u64 {
     <b>let</b> (is_round_down, result) = <a href="math.md#0x0_math_unsafe_mul_round">unsafe_mul_round</a>(x, y);
     <b>assert</b>!(result &gt; 0, <a href="math.md#0x0_math_EUnderflow">EUnderflow</a>);
     <b>if</b> (is_round_down) {
@@ -113,7 +113,7 @@ scaling setting for float
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_unsafe_mul_round">unsafe_mul_round</a>(x: u64, y: u64): (bool, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_unsafe_mul_round">unsafe_mul_round</a>(x: u64, y: u64): (bool, u64) {
     <b>let</b> x = x <b>as</b> u128;
     <b>let</b> y = y <b>as</b> u128;
     <b>let</b> <b>mut</b> is_round_down = <b>true</b>;
@@ -142,7 +142,7 @@ divide two floating numbers
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_div">div</a>(x: u64, y: u64): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_div">div</a>(x: u64, y: u64): u64 {
     <b>let</b> (_, result) = <a href="math.md#0x0_math_unsafe_div_round">unsafe_div_round</a>(x, y);
     result
 }
@@ -169,7 +169,7 @@ also returns whether the result is rounded down
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_unsafe_div_round">unsafe_div_round</a>(x: u64, y: u64): (bool, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_unsafe_div_round">unsafe_div_round</a>(x: u64, y: u64): (bool, u64) {
     <b>let</b> x = x <b>as</b> u128;
     <b>let</b> y = y <b>as</b> u128;
     <b>let</b> <b>mut</b> is_round_down = <b>true</b>;
@@ -197,7 +197,7 @@ also returns whether the result is rounded down
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <b>min</b>(x: u64, y: u64): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <b>min</b>(x: u64, y: u64): u64 {
     <b>if</b> (x &lt;= y) {
         x
     } <b>else</b> {
@@ -225,7 +225,7 @@ also returns whether the result is rounded down
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="math.md#0x0_math_max">max</a>(x: u64, y: u64): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_max">max</a>(x: u64, y: u64): u64 {
     <b>if</b> (x &gt; y) {
         x
     } <b>else</b> {

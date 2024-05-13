@@ -116,7 +116,7 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="registry.md#0x0_registry_register_pool">register_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="registry.md#0x0_registry_register_pool">register_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">Registry</a>,
 ) {
     <b>let</b> key = <a href="registry.md#0x0_registry_PoolKey">PoolKey</a> {
@@ -148,7 +148,7 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(<a href="dependencies/sui-framework/package.md#0x2_package">package</a>) <b>fun</b> <a href="registry.md#0x0_registry_create_and_share">create_and_share</a>(ctx: &<b>mut</b> TxContext) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="registry.md#0x0_registry_create_and_share">create_and_share</a>(ctx: &<b>mut</b> TxContext) {
     <b>let</b> <a href="registry.md#0x0_registry">registry</a> = <a href="registry.md#0x0_registry_Registry">Registry</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
         pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),

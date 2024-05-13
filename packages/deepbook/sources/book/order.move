@@ -58,20 +58,22 @@ module deepbook::order {
         is_bid: bool,
         // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
+        // Expiration timestamp in ms
+        expire_timestamp: u64,
         // Quantity executed so far
         executed_quantity: u64,
         // Cumulative quote quantity executed so far
         cumulative_quote_quantity: u64,
+        // Any partial fills
+        fills: vector<Fill>,
+        // Whether the fee is in DEEP terms
+        fee_is_deep: bool,
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
-        // Total fees for the order in base/quote/DEEP terms
-        total_fees: u64,
-        // Whether or not pool is verified at order placement
-        fee_is_deep: bool,
+        // Maker fee when injecting order
+        maker_fee: u64,
         // Status of the order
         status: u8,
-        // Expiration timestamp in ms
-        expire_timestamp: u64,
         // Reserved field for prevent self_matching
         self_matching_prevention: bool,
     }
@@ -130,7 +132,7 @@ module deepbook::order {
     }
 
     /// Emitted when a maker order is injected into the order book.
-    public struct OrderPlaced<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+    public struct OrderPlaced has copy, store, drop {
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
@@ -144,7 +146,7 @@ module deepbook::order {
 
     /// Fill struct represents the results of a match between two orders.
     /// It is used to update the state.
-    public struct Fill has drop {
+    public struct Fill has store, drop, copy {
         // ID of the maker order
         order_id: u128,
         // Owner of the maker order
@@ -163,32 +165,32 @@ module deepbook::order {
 
     public(package) fun initial_order(
         pool_id: ID,
-        order_id: u128,
         client_order_id: u64,
+        owner: address,
         order_type: u8,
         price: u64,
         quantity: u64,
-        fee_is_deep: bool,
         is_bid: bool,
-        owner: address,
         expire_timestamp: u64,
+        maker_fee: u64,
     ): OrderInfo {
         OrderInfo {
             pool_id,
-            order_id,
+            order_id: 0,
             client_order_id,
+            owner,
             order_type,
             price,
+            is_bid,
             original_quantity: quantity,
+            expire_timestamp,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
+            fills: vector[],
+            fee_is_deep: false,
             paid_fees: 0,
-            total_fees: 0,
-            fee_is_deep,
-            is_bid,
-            owner,
+            maker_fee,
             status: LIVE,
-            expire_timestamp,
             self_matching_prevention: false,
         }
     }
@@ -237,8 +239,8 @@ module deepbook::order {
         self.paid_fees
     }
 
-    public fun total_fees(self: &OrderInfo): u64 {
-        self.total_fees
+    public fun maker_fee(self: &OrderInfo): u64 {
+        self.maker_fee
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
@@ -255,6 +257,18 @@ module deepbook::order {
 
     public fun self_matching_prevention(self: &OrderInfo): bool {
         self.self_matching_prevention
+    }
+
+    public fun fills(self: &OrderInfo): vector<Fill> {
+        self.fills
+    }
+
+    public(package) fun last_fill(self: &OrderInfo): &Fill {
+        &self.fills[self.fills.length() - 1]
+    }
+
+    public(package) fun set_order_id(self: &mut OrderInfo, order_id: u128) {
+        self.order_id = order_id;
     }
 
     /// TODO: Better naming to avoid conflict?
@@ -290,16 +304,21 @@ module deepbook::order {
         self.self_matching_prevention
     }
 
+    public(package) fun set_book_quantity(self: &mut Order, quantity: u64) {
+        self.quantity = quantity;
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(self: &OrderInfo): Order {
+        let unpaid_fees = self.remaining_quantity() * self.maker_fee;
         Order {
             order_id: self.order_id,
             client_order_id: self.client_order_id,
             owner: self.owner,
             quantity: self.original_quantity,
-            unpaid_fees: self.total_fees - self.paid_fees,
+            unpaid_fees,
             fee_is_deep: self.fee_is_deep,
             status: self.status,
             expire_timestamp: self.expire_timestamp,
@@ -375,11 +394,6 @@ module deepbook::order {
         FILL_OR_KILL
     }
 
-    /// Sets the total fees for the order.
-    public(package) fun set_total_fees(self: &mut OrderInfo, total_fees: u64) {
-        self.total_fees = total_fees;
-    }
-
     /// Update the order status to canceled.
     public(package) fun set_canceled(self: &mut Order) {
         self.status = CANCELED;
@@ -407,7 +421,8 @@ module deepbook::order {
         self: &mut OrderInfo,
         maker: &mut Order,
         timestamp: u64,
-    ): Fill {
+    ): bool {
+        if (!self.crosses_price(maker)) return false;
         if (maker.expire_timestamp < timestamp) {
             maker.status = EXPIRED;
             let cancel_quantity = maker.book_quantity();
@@ -415,7 +430,7 @@ module deepbook::order {
                 cancel_quantity,
                 false,
             );
-            return Fill {
+            self.fills.push_back(Fill {
                 order_id: maker.order_id,
                 owner: maker.owner,
                 expired: true,
@@ -423,7 +438,9 @@ module deepbook::order {
                 settled_base: base,
                 settled_quote: quote,
                 settled_deep: deep,
-            }
+            });
+
+            return true
         };
 
         let (_, price, _) = utils::decode_order_id(maker.order_id);
@@ -443,7 +460,7 @@ module deepbook::order {
 
         self.emit_order_filled(timestamp);
 
-        Fill {
+        self.fills.push_back(Fill {
             order_id: maker.order_id,
             owner: maker.owner,
             expired: false,
@@ -451,7 +468,9 @@ module deepbook::order {
             settled_base: if (self.is_bid) filled_quantity else 0,
             settled_quote: if (self.is_bid) 0 else quote_quantity,
             settled_deep: 0,
-        }
+        });
+
+        true
     }
 
     /// Amounts to settle for a cancelled or modified order. Modifies the order in place.
@@ -500,8 +519,8 @@ module deepbook::order {
         });
     }
 
-    public(package) fun emit_order_placed<BaseAsset, QuoteAsset>(self: &OrderInfo) {
-        event::emit(OrderPlaced<BaseAsset, QuoteAsset> {
+    public(package) fun emit_order_placed(self: &OrderInfo) {
+        event::emit(OrderPlaced {
             pool_id: self.pool_id,
             order_id: self.order_id,
             client_order_id: self.client_order_id,
@@ -531,8 +550,8 @@ module deepbook::order {
     public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(self: &Order, pool_id: ID, timestamp: u64) {
         let (is_bid, price, _) = utils::decode_order_id(self.order_id);
         event::emit(OrderModified<BaseAsset, QuoteAsset> {
-            pool_id,
             order_id: self.order_id,
+            pool_id,
             client_order_id: self.client_order_id,
             owner: self.owner,
             price,

@@ -28,7 +28,7 @@ module deepbook::deep_price {
         cumulative_quote: u64,
     }
 
-    public(package) fun new(): DeepPrice {
+    public(package) fun empty(): DeepPrice {
         DeepPrice {
             prices: vector[],
             index_to_replace: 0,

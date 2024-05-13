@@ -33,15 +33,23 @@ module deepbook::governance {
         votes: u64,
     }
 
+    public struct TradeParams has store, drop, copy {
+        taker_fee: u64,
+        maker_fee: u64,
+        stake_required: u64,
+    }
+
     /// Details of a pool. This is refreshed every epoch by the first
     /// `State` action against this pool.
     public struct Governance has store {
         /// Tracks refreshes.
         epoch: u64,
+        /// If Pool is stable or volatile.
+        stable: bool,
         /// List of proposals for the current epoch.
         proposals: VecMap<address, Proposal>,
-        /// The winning proposal for the current epoch.
-        winning_proposal: Option<Proposal>,
+        trade_params: TradeParams,
+        next_trade_params: TradeParams,
         /// All voting power from the current stakes.
         voting_power: u64,
         /// Quorum for the current epoch.
@@ -54,29 +62,41 @@ module deepbook::governance {
     ): Governance {
         Governance {
             epoch,
+            stable: false,
             proposals: vec_map::empty(),
-            winning_proposal: option::none(),
+            trade_params: new_trade_params(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
+            next_trade_params: new_trade_params(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
             voting_power: 0,
             quorum: 0,
         }
     }
 
-    public(package) fun default_fees(stable: bool): (u64, u64) {
+    public(package) fun set_stable(
+        self: &mut Governance,
+        stable: bool,
+    ) {
+        self.stable = stable;
         if (stable) {
-            (MAX_TAKER_STABLE, MAX_MAKER_STABLE)
+            self.trade_params.taker_fee = MAX_TAKER_STABLE;
+            self.trade_params.maker_fee = MAX_MAKER_STABLE;
+            self.next_trade_params.taker_fee = MAX_TAKER_STABLE;
+            self.next_trade_params.maker_fee = MAX_MAKER_STABLE;
         } else {
-            (MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE)
+            self.trade_params.taker_fee = MAX_TAKER_VOLATILE;
+            self.trade_params.maker_fee = MAX_MAKER_VOLATILE;
+            self.next_trade_params.taker_fee = MAX_TAKER_VOLATILE;
+            self.next_trade_params.maker_fee = MAX_MAKER_VOLATILE;
         }
     }
 
-    /// Refresh the pool metadata. This is called by every `State`
-    /// action, but only processed once per epoch.
-    public(package) fun refresh(self: &mut Governance, epoch: u64) {
+    public(package) fun update(self: &mut Governance, ctx: &TxContext) {
+        let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
 
         self.epoch = epoch;
         self.quorum = self.voting_power / 2;
         self.proposals = vec_map::empty();
+        self.trade_params = self.next_trade_params;
     }
 
     /// Add a new proposal to governance.
@@ -86,7 +106,6 @@ module deepbook::governance {
     /// Validation of the user adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut Governance,
-        stable: bool,
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
@@ -100,7 +119,7 @@ module deepbook::governance {
             self.remove_lowest_proposal(voting_power);
         };
 
-        if (stable) {
+        if (self.stable) {
             assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
             assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
         } else {
@@ -120,7 +139,7 @@ module deepbook::governance {
         from_proposal_id: Option<address>,
         to_proposal_id: Option<address>,
         stake_amount: u64,
-    ): Option<Proposal> {
+    ) {
         let voting_power = stake_to_voting_power(stake_amount);
 
         if (from_proposal_id.is_some()) {
@@ -131,7 +150,8 @@ module deepbook::governance {
                 // This was the winning proposal, now it is not.
                 if (self.proposals[id].votes + voting_power > self.quorum &&
                     self.proposals[id].votes <= self.quorum) {
-                    self.winning_proposal = option::none();
+                    self.next_trade_params = self.trade_params;
+                    return
                 };
             };
         };
@@ -141,11 +161,10 @@ module deepbook::governance {
             assert!(self.proposals.contains(id), EProposalDoesNotExist);
             self.proposals[id].votes = self.proposals[id].votes + voting_power;
             if (self.proposals[id].votes > self.quorum) {
-                self.winning_proposal = option::some(self.proposals[id]);
+                self.next_trade_params = self.proposals[id].to_trade_params();
+                return
             };
         };
-
-        self.winning_proposal
     }
 
     /// Adjust the total voting power by adding and removing stake. If a user's
@@ -166,6 +185,10 @@ module deepbook::governance {
         (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
     }
 
+    public(package) fun trade_params(self: &Governance): (u64, u64, u64) {
+        (self.trade_params.taker_fee, self.trade_params.maker_fee, self.trade_params.stake_required)
+    }
+
     // === Private Functions ===
     /// Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
     fun stake_to_voting_power(stake: u64): u64 {
@@ -182,6 +205,28 @@ module deepbook::governance {
             maker_fee,
             stake_required,
             votes: 0,
+        }
+    }
+
+    fun new_trade_params(
+        taker_fee: u64,
+        maker_fee: u64,
+        stake_required: u64,
+    ): TradeParams {
+        TradeParams {
+            taker_fee,
+            maker_fee,
+            stake_required,
+        }
+    }
+
+    fun to_trade_params(
+        proposal: &Proposal,
+    ): TradeParams {
+        TradeParams {
+            taker_fee: proposal.taker_fee,
+            maker_fee: proposal.maker_fee,
+            stake_required: proposal.stake_required,
         }
     }
 
@@ -214,8 +259,10 @@ module deepbook::governance {
     public fun delete(self: Governance) {
         let Governance {
             epoch: _,
+            stable: _,
             proposals: _,
-            winning_proposal: _,
+            trade_params: _,
+            next_trade_params: _,
             voting_power: _,
             quorum: _,
         } = self;

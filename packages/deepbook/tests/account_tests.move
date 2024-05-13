@@ -10,9 +10,11 @@ module deepbook::account_tests {
     };
     use deepbook::{
         account::{Self, Account, TradeCap},
-        pool::{DEEP},
-        pool_tests::{SPAM, USDC},
+        vault::{DEEP},
     };
+
+    public struct SPAM has store {}
+    public struct USDC has store {}
 
     #[test]
     fun test_deposit_ok() {
