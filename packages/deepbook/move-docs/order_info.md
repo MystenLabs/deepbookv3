@@ -1260,7 +1260,7 @@ information required to match orders.
         self.order_id,
         self.client_order_id,
         self.owner,
-        self.original_quantity,
+        self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         unpaid_fees,
         self.fee_is_deep,
         self.status,

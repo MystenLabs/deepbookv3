@@ -132,7 +132,7 @@ module deepbook::pool {
             self.id.to_inner(),
             client_order_id,
             account.owner(),
-            ctx.sender(),
+            proof.trader(),
             order_type,
             price,
             quantity,
@@ -230,7 +230,7 @@ module deepbook::pool {
         self.state.process_modify(account.owner(), base, quote, deep, ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
     public fun cancel_order<BaseAsset, QuoteAsset>(
@@ -246,7 +246,7 @@ module deepbook::pool {
         self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
     public fun stake<BaseAsset, QuoteAsset>(
