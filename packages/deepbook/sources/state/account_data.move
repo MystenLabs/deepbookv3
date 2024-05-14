@@ -1,4 +1,4 @@
-module deepbook::user {
+module deepbook::account_data {
     use sui::vec_set::{Self, VecSet};
 
     public struct Balances has store, copy, drop {
@@ -7,7 +7,7 @@ module deepbook::user {
         deep: u64,
     }
 
-    /// User data that is updated every epoch.
+    /// Account data that is updated every epoch.
     public struct AccountData has store, copy, drop {
         epoch: u64,
         open_orders: VecSet<u128>,
@@ -110,7 +110,7 @@ module deepbook::user {
         self.owed_balances.deep = self.owed_balances.deep + deep;
     }
 
-    /// Settle the user balances.
+    /// Settle the account balances.
     /// Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     public(package) fun settle(
         self: &mut AccountData,
@@ -121,7 +121,7 @@ module deepbook::user {
         (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     }
 
-    /// Update the user data for the new epoch.
+    /// Update the account data for the new epoch.
     /// Returns the previous epoch, maker volume, and active stake.
     public(package) fun update(
         self: &mut AccountData,
@@ -150,6 +150,7 @@ module deepbook::user {
         self.unclaimed_rebates = self.unclaimed_rebates + rebates;
     }
 
+    //
     public(package) fun claim_rebates(
         self: &mut AccountData,
     ) {

@@ -152,8 +152,8 @@ module deepbook::pool {
         let deep_per_base = self.state.deep_price().conversion_rate();
         self.book.create_order(&mut order_info, deep_per_base, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&order_info, self.state.user_mut(account.id(), ctx.epoch()), deep_per_base);
-        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
+        self.vault.settle_order(&order_info, self.state.account_mut(account.id(), ctx.epoch()), deep_per_base);
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
@@ -243,14 +243,14 @@ module deepbook::pool {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
         self.state.process_modify(account.id(), base, quote, deep, ctx);
-        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
     /// Cancel an order. The order must be owned by the account.
-    /// The order is removed from the book and the user's open orders.
-    /// The user's balance is updated with the order's remaining quantity.
+    /// The order is removed from the book and the account's open orders.
+    /// The account's balance is updated with the order's remaining quantity.
     /// Order canceled event is emitted.
     public fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -263,7 +263,7 @@ module deepbook::pool {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
         self.state.process_cancel(&mut order, order_id, account.id(), ctx);
-        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -276,7 +276,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         self.state.process_stake(account.id(), amount, ctx);
-        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
     }
 
     public fun unstake<BaseAsset, QuoteAsset>(
@@ -288,7 +288,7 @@ module deepbook::pool {
         account.validate_proof(proof);
 
         self.state.process_unstake(account.id(), ctx);
-        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
     }
 
     public fun submit_proposal<BaseAsset, QuoteAsset>(
@@ -323,9 +323,9 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        let user = self.state.user_mut(account.id(), ctx.epoch());
-        user.claim_rebates();
-        self.vault.settle_user(user, account, proof);
+        let account_data = self.state.account_mut(account.id(), ctx.epoch());
+        account_data.claim_rebates();
+        self.vault.settle_account(account_data, account, proof);
     }
 
     // GETTERS
@@ -344,7 +344,7 @@ module deepbook::pool {
         self.book.mid_price()
     }
 
-    public fun user_open_orders<BaseAsset, QuoteAsset>(
+    public fun account_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         account: ID,
     ): VecSet<u128> {

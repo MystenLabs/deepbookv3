@@ -3,7 +3,7 @@
 
 # Module `0x0::account`
 
-The Account is a shared object that holds all of the balances for a user. A combination of <code><a href="account.md#0x0_account_Account">Account</a></code> and
+The Account is a shared object that holds all of the balances for different assets. A combination of <code><a href="account.md#0x0_account_Account">Account</a></code> and
 <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> are passed into a pool to perform trades. A <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> can be generated in two ways: by the
 owner directly, or by any <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner. The owner can generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> without the risk of
 equivocation. The <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner, due to it being an owned object, risks equivocation when generating

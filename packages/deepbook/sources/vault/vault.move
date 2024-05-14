@@ -7,7 +7,7 @@ module deepbook::vault {
         math,
         account::{Account, TradeProof},
         deep_price::{Self, DeepPrice},
-        user::AccountData,
+        account_data::AccountData,
         order_info::OrderInfo,
     };
 
@@ -31,14 +31,14 @@ module deepbook::vault {
         }
     }
 
-    /// Transfer any settled amounts for the user.
-    public(package) fun settle_user<BaseAsset, QuoteAsset>(
+    /// Transfer any settled amounts for the account.
+    public(package) fun settle_account<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
-        user: &mut AccountData,
+        account_data: &mut AccountData,
         account: &mut Account,
         proof: &TradeProof,
     ) {
-        let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = user.settle();
+        let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = account_data.settle();
         if (base_out > base_in) {
             let balance = self.base_balance.split(base_out - base_in);
             account.deposit_with_proof(proof, balance);
@@ -67,9 +67,9 @@ module deepbook::vault {
 
     /// Given an order, settle its balances. Up until this point, any partial fills have been executed
     /// and the remaining quantity is the only quantity left to be injected into the order book.
-    /// 1. Calculate the maker and taker fee for this user.
+    /// 1. Calculate the maker and taker fee for this account.
     /// 2. Calculate the total fees for the maker and taker portion of the order.
-    /// 3. Add to the user's settled and owed balances.
+    /// 3. Add to the account's settled and owed balances.
     public(package) fun settle_order<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>,
         order_info: &OrderInfo,

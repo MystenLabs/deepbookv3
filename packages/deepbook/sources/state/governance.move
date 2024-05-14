@@ -125,7 +125,7 @@ module deepbook::governance {
     /// Check if proposer already voted, if so will give error.
     /// If proposer has not voted, and there are already MAX_PROPOSALS proposals,
     /// remove the proposal with the lowest votes if it has less votes than the voting power.
-    /// Validation of the user adding is done in `State`.
+    /// Validation of the account adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut Governance,
         taker_fee: u64,
@@ -154,9 +154,9 @@ module deepbook::governance {
         self.proposals.insert(account_id, new_proposal);
     }
 
-    /// Vote on a proposal. Validation of the user and stake is done in `State`.
-    /// If `from_proposal_id` is some, the user is removing their vote from that proposal.
-    /// If `to_proposal_id` is some, the user is voting for that proposal.
+    /// Vote on a proposal. Validation of the account and stake is done in `State`.
+    /// If `from_proposal_id` is some, the account is removing their vote from that proposal.
+    /// If `to_proposal_id` is some, the account is voting for that proposal.
     public(package) fun adjust_vote(
         self: &mut Governance,
         from_proposal_id: Option<ID>,
@@ -195,7 +195,7 @@ module deepbook::governance {
         };
     }
 
-    /// Adjust the total voting power by adding and removing stake. If a user's
+    /// Adjust the total voting power by adding and removing stake. If an account's
     /// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after` is 3000.
     /// Validation of inputs done in `State`.
     public(package) fun adjust_voting_power(

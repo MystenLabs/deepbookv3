@@ -40,7 +40,7 @@ module deepbook::order_info {
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
     /// gets updated until it is completed or placed in the book.
-    /// It is returned to the user at the end of the order lifecycle.
+    /// It is returned at the end of the order lifecycle.
     public struct OrderInfo has store, drop {
         // ID of the pool
         pool_id: ID,
@@ -332,7 +332,7 @@ module deepbook::order_info {
         IMMEDIATE_OR_CANCEL
     }
 
-    /// Returns the result of the fill and the maker id & owner.
+    /// Returns the result of the fill and the maker id & account id.
     public(package) fun fill_status(fill: &Fill): (u128, ID, bool, bool) {
         (fill.order_id, fill.account_id, fill.expired, fill.complete)
     }

@@ -9,7 +9,7 @@ module deepbook::state {
         order_info::OrderInfo,
         governance::{Self, Governance},
         deep_price::{Self, DeepPrice},
-        user::{Self, AccountData},
+        account_data::{Self, AccountData},
     };
 
     const ENotEnoughStake: u64 = 2;
@@ -48,28 +48,28 @@ module deepbook::state {
             let (order_id, maker, expired, completed) = fill.fill_status();
             let (base, quote, deep) = fill.settled_quantities();
             let volume = fill.volume();
-            self.update_user(maker, ctx.epoch());
+            self.update_account(maker, ctx.epoch());
 
-            let user = &mut self.accounts[maker];
-            user.add_settled_amounts(base, quote, deep);
-            user.increase_maker_volume(volume);
+            let account_data = &mut self.accounts[maker];
+            account_data.add_settled_amounts(base, quote, deep);
+            account_data.increase_maker_volume(volume);
             if (expired || completed) {
-                user.remove_order(order_id);
+                account_data.remove_order(order_id);
             };
 
-            self.history.add_volume(volume, user.active_stake(), user.maker_volume() == volume);
+            self.history.add_volume(volume, account_data.active_stake(), account_data.maker_volume() == volume);
 
             i = i + 1;
         };
 
-        self.update_user(order_info.account_id(), ctx.epoch());
-        let user = &mut self.accounts[order_info.account_id()];
-        user.add_order(order_info.order_id());
-        user.increase_taker_volume(order_info.executed_quantity());
+        self.update_account(order_info.account_id(), ctx.epoch());
+        let account_data = &mut self.accounts[order_info.account_id()];
+        account_data.add_order(order_info.order_id());
+        account_data.increase_taker_volume(order_info.executed_quantity());
     }
 
-    /// Update user settled balances and volumes.
-    /// Remove order from user orders.
+    /// Update account settled balances and volumes.
+    /// Remove order from account orders.
     public(package) fun process_cancel(
         self: &mut State,
         order: &mut Order,
@@ -79,16 +79,16 @@ module deepbook::state {
     ) {
         self.history.update(ctx);
         order.set_canceled();
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
-        let user = &mut self.accounts[account_id];
+        let account_data = &mut self.accounts[account_id];
         let cancel_quantity = order.quantity();
         let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(
             cancel_quantity,
             false,
         );
-        user.remove_order(order_id);
-        user.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+        account_data.remove_order(order_id);
+        account_data.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
     }
 
     public(package) fun process_modify(
@@ -100,7 +100,7 @@ module deepbook::state {
         ctx: &TxContext,
     ) {
         self.history.update(ctx);
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
         self.accounts[account_id].add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
     }
@@ -113,7 +113,7 @@ module deepbook::state {
     ) {
         self.history.update(ctx);
         self.governance.update(ctx);
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
         self.governance.adjust_voting_power(stake_before, stake_after);
@@ -126,10 +126,10 @@ module deepbook::state {
     ) {
         self.history.update(ctx);
         self.governance.update(ctx);
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
-        let user = &mut self.accounts[account_id];
-        let (total_stake, voted_proposal) = user.remove_stake();
+        let account_data = &mut self.accounts[account_id];
+        let (total_stake, voted_proposal) = account_data.remove_stake();
         self.governance.adjust_voting_power(total_stake, 0);
         self.governance.adjust_vote(voted_proposal, option::none(), total_stake);
     }
@@ -144,7 +144,7 @@ module deepbook::state {
     ) {
         self.history.update(ctx);
         self.governance.update(ctx);
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
         let stake = self.accounts[account_id].active_stake();
         assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
@@ -161,16 +161,16 @@ module deepbook::state {
     ) {
         self.history.update(ctx);
         self.governance.update(ctx);
-        self.update_user(account_id, ctx.epoch());
+        self.update_account(account_id, ctx.epoch());
 
-        let user = &mut self.accounts[account_id];
-        assert!(user.active_stake() >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        let account_data = &mut self.accounts[account_id];
+        assert!(account_data.active_stake() >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
 
-        let prev_proposal = user.set_voted_proposal(option::some(proposal_id));
+        let prev_proposal = account_data.set_voted_proposal(option::some(proposal_id));
         self.governance.adjust_vote(
             prev_proposal,
             option::some(proposal_id),
-            user.active_stake(),
+            account_data.active_stake(),
         );
     }
 
@@ -202,37 +202,37 @@ module deepbook::state {
         &self.accounts[account_id]
     }
 
-    public(package) fun user_mut(
+    public(package) fun account_mut(
         self: &mut State,
         account_id: ID,
         epoch: u64,
     ): &mut AccountData {
-        self.update_user(account_id, epoch);
+        self.update_account(account_id, epoch);
 
         &mut self.accounts[account_id]
     }
 
-    fun update_user(
+    fun update_account(
         self: &mut State,
         account_id: ID,
         epoch: u64,
     ) {
-        add_new_user(self, account_id, epoch);
-        let user = &mut self.accounts[account_id];
-        let (prev_epoch, maker_volume, active_stake) = user.update(epoch);
+        add_new_account(self, account_id, epoch);
+        let account_id = &mut self.accounts[account_id];
+        let (prev_epoch, maker_volume, active_stake) = account_id.update(epoch);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-            user.add_rebates(rebates);
+            account_id.add_rebates(rebates);
         }
     }
 
-    fun add_new_user(
+    fun add_new_account(
         self: &mut State,
         account_id: ID,
         epoch: u64,
     ) {
         if (!self.accounts.contains(account_id)) {
-            self.accounts.add(account_id, user::empty(epoch));
+            self.accounts.add(account_id, account_data::empty(epoch));
         };
     }
 }
