@@ -91,7 +91,7 @@ module deepbook::vault {
         let executed_quantity = order_info.executed_quantity();
         let remaining_quantity = order_info.remaining_quantity();
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
-        let deep_in = math::mul(executed_quantity, taker_fee);
+        let deep_in = math::mul(executed_quantity, taker_fee); // TODO: multiply by deep price as well
 
         if (order_info.is_bid()) {
             user.add_settled_amounts(executed_quantity, 0, 0);

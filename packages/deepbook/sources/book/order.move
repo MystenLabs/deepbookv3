@@ -178,6 +178,7 @@ module deepbook::order {
     /// Returns the base, quote and deep quantities to settle.
     /// Cancel quantity used to calculate the quantity outputs.
     /// Modify_order is a flag to indicate whether the order should be modified.
+    /// Unpaid_fees is always in deep asset terms.
     public(package) fun cancel_amounts(
         self: &mut Order,
         cancel_quantity: u64,

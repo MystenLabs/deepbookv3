@@ -117,6 +117,8 @@ module deepbook::pool {
         self.state.governance().whitelisted()
     }
 
+    /// Place a limit order. Quantity is in base asset terms.
+    /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -146,7 +148,8 @@ module deepbook::pool {
             expire_timestamp,
             trade_params,
         );
-        self.book.create_order(&mut order_info, clock.timestamp_ms());
+        let deep_per_base = self.state.deep_price().conversion_rate();
+        self.book.create_order(&mut order_info, deep_per_base, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
         self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()));
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
@@ -157,7 +160,7 @@ module deepbook::pool {
     }
 
     /// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
-    /// a price of MAX_PRICE for bids and MIN_PRICE for asks. Fills or kills the order.
+    /// a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
     public fun place_market_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -173,7 +176,7 @@ module deepbook::pool {
             account,
             proof,
             client_order_id,
-            order_info::fill_or_kill(),
+            order_info::immediate_or_cancel(),
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,
@@ -244,6 +247,10 @@ module deepbook::pool {
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
+    /// Cancel an order. The order must be owned by the account.
+    /// The order is removed from the book and the user's open orders.
+    /// The user's balance is updated with the order's remaining quantity.
+    /// Order canceled event is emitted.
     public fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,

@@ -32,6 +32,9 @@ module deepbook::state {
         }
     }
 
+    /// Process order fills.
+    /// Update all maker settled balances and volumes.
+    /// Update taker settled balances and volumes.
     public(package) fun process_create(
         self: &mut State,
         order_info: &OrderInfo,
@@ -42,12 +45,12 @@ module deepbook::state {
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &fills[i];
-            let (order_id, owner, expired, completed) = fill.fill_status();
+            let (order_id, maker, expired, completed) = fill.fill_status();
             let (base, quote, deep) = fill.settled_quantities();
             let volume = fill.volume();
-            self.update_user(owner, ctx.epoch());
+            self.update_user(maker, ctx.epoch());
 
-            let user = &mut self.users[owner];
+            let user = &mut self.users[maker];
             user.add_settled_amounts(base, quote, deep);
             user.increase_maker_volume(volume);
             if (expired || completed) {
@@ -65,6 +68,8 @@ module deepbook::state {
         user.increase_taker_volume(order_info.executed_quantity());
     }
 
+    /// Update user settled balances and volumes.
+    /// Remove order from user orders.
     public(package) fun process_cancel(
         self: &mut State,
         order: &mut Order,

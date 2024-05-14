@@ -269,9 +269,10 @@ module deepbook::order_info {
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(
-        self: &OrderInfo
+        self: &OrderInfo,
+        deep_per_base: u64,
     ): Order {
-        let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
+        let unpaid_fees = math::mul(deep_per_base, math::mul(self.remaining_quantity(), self.trade_params().maker_fee()));
         order::new(
             self.order_id,
             self.client_order_id,
@@ -326,6 +327,11 @@ module deepbook::order_info {
     /// Returns the fill or kill constant.
     public(package) fun fill_or_kill(): u8 {
         FILL_OR_KILL
+    }
+
+    /// Returns the immediate or cancel constant.
+    public(package) fun immediate_or_cancel(): u8 {
+        IMMEDIATE_OR_CANCEL
     }
 
     /// Returns the result of the fill and the maker id & owner.

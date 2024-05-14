@@ -37,6 +37,8 @@ module deepbook::history {
         }
     }
 
+    /// Update the epoch if it has changed.
+    /// If there are users with rebates, add the current epoch's volume data to the historic volumes.
     public(package) fun update(
         self: &mut History,
         ctx: &TxContext,
@@ -71,6 +73,8 @@ module deepbook::history {
         0
     }
 
+    /// Add volume to the current epoch's volume data.
+    /// Increments the total volume and total staked volume.
     public(package) fun add_volume(
         self: &mut History,
         maker_volume: u64,
@@ -78,7 +82,7 @@ module deepbook::history {
         first_volume_by_user: bool,
     ) {
         if (maker_volume == 0) return;
-        
+
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
         if (user_stake > self.volumes.stake_required) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
