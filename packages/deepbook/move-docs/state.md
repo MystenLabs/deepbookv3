@@ -555,7 +555,7 @@
 
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_update_user">update_user</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="user.md#0x0_user">user</a>: <b>address</b>, epoch: u64)
+<pre><code><b>fun</b> <a href="state.md#0x0_state_update_user">update_user</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, user_addr: <b>address</b>, epoch: u64)
 </code></pre>
 
 
@@ -566,14 +566,16 @@
 
 <pre><code><b>fun</b> <a href="state.md#0x0_state_update_user">update_user</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    user_addr: <b>address</b>,
     epoch: u64,
 ) {
-    <a href="state.md#0x0_state_add_new_user">add_new_user</a>(self, <a href="user.md#0x0_user">user</a>, epoch);
-    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[<a href="user.md#0x0_user">user</a>];
+    <a href="state.md#0x0_state_add_new_user">add_new_user</a>(self, user_addr, epoch);
+    <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[user_addr];
     <b>let</b> (prev_epoch, maker_volume, active_stake) = <a href="user.md#0x0_user">user</a>.<b>update</b>(epoch);
-    <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-    <a href="user.md#0x0_user">user</a>.add_rebates(rebates);
+    <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
+        <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+        <a href="user.md#0x0_user">user</a>.add_rebates(rebates);
+    }
 }
 </code></pre>
 

@@ -737,7 +737,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -755,6 +755,7 @@ It is used to update the state.
     price: u64,
     quantity: u64,
     is_bid: bool,
+    fee_is_deep: bool,
     expire_timestamp: u64,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
@@ -772,7 +773,7 @@ It is used to update the state.
         executed_quantity: 0,
         cumulative_quote_quantity: 0,
         fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
-        fee_is_deep: <b>false</b>,
+        fee_is_deep,
         paid_fees: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
@@ -1267,7 +1268,7 @@ information required to match orders.
         self.order_id,
         self.client_order_id,
         self.owner,
-        self.original_quantity,
+        self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         unpaid_fees,
         self.fee_is_deep,
         self.status,

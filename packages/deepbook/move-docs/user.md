@@ -428,6 +428,8 @@ User data that is updated every epoch.
 
 ## Function `settle`
 
+Settle the user balances.
+Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="user.md#0x0_user_settle">settle</a>(self: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>): (u64, u64, u64, u64, u64, u64)
@@ -457,6 +459,8 @@ User data that is updated every epoch.
 
 ## Function `update`
 
+Update the user data for the new epoch.
+Returns the previous epoch, maker volume, and active stake.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>, epoch: u64): (u64, u64, u64)

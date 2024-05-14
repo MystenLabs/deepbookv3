@@ -209,14 +209,16 @@ module deepbook::state {
 
     fun update_user(
         self: &mut State,
-        user: address,
+        user_addr: address,
         epoch: u64,
     ) {
-        add_new_user(self, user, epoch);
-        let user = &mut self.users[user];
+        add_new_user(self, user_addr, epoch);
+        let user = &mut self.users[user_addr];
         let (prev_epoch, maker_volume, active_stake) = user.update(epoch);
-        let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-        user.add_rebates(rebates);
+        if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
+            let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+            user.add_rebates(rebates);
+        }
     }
 
     fun add_new_user(

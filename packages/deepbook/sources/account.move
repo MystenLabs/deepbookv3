@@ -44,6 +44,7 @@ module deepbook::account {
     /// `TradeProof` is used to validate the account when trading on DeepBook.
     public struct TradeProof has drop {
         account_id: ID,
+        trader: address,
     }
 
     public fun new(ctx: &mut TxContext): Account {
@@ -101,16 +102,18 @@ module deepbook::account {
 
         TradeProof {
             account_id: object::id(account),
+            trader: ctx.sender(),
         }
     }
 
     /// Generate a `TradeProof` with a `TradeCap`.
     /// Risk of equivocation since `TradeCap` is an owned object.
-    public fun generate_proof_as_trader(account: &mut Account, trade_cap: &TradeCap): TradeProof {
+    public fun generate_proof_as_trader(account: &mut Account, trade_cap: &TradeCap, ctx: &TxContext): TradeProof {
         account.validate_trader(trade_cap);
 
         TradeProof {
             account_id: object::id(account),
+            trader: ctx.sender(),
         }
     }
 
@@ -196,6 +199,10 @@ module deepbook::account {
 
         id.delete();
         balances.destroy_empty();
+    }
+
+    public(package) fun trader(trade_proof: &TradeProof): address {
+        trade_proof.trader
     }
 
     fun validate_owner(account: &Account, ctx: &TxContext) {

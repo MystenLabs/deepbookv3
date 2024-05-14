@@ -75,7 +75,7 @@ module deepbook::account_tests {
             let mut account = account::new(test.ctx());
             account_id = object::id(&account);
             let cap = account.mint_trade_cap(test.ctx());
-            let proof = account.generate_proof_as_trader(&cap);
+            let proof = account.generate_proof_as_trader(&cap, test.ctx());
 
             account.deposit_with_proof(&proof,
                 mint_for_testing<SUI>(100, test.ctx()).into_balance()
@@ -91,7 +91,7 @@ module deepbook::account_tests {
         {
             let mut account = test.take_shared_by_id<Account>(account_id);
             let cap = test.take_from_sender<TradeCap>();
-            let proof = account.generate_proof_as_trader(&cap);
+            let proof = account.generate_proof_as_trader(&cap, test.ctx());
 
             account.deposit_with_proof(&proof,
                 mint_for_testing<DEEP>(100000, test.ctx()).into_balance()
@@ -169,7 +169,7 @@ module deepbook::account_tests {
             let mut account = account::new(test.ctx());
             account_id = object::id(&account);
             let cap = account.mint_trade_cap(test.ctx());
-            let proof = account.generate_proof_as_trader(&cap);
+            let proof = account.generate_proof_as_trader(&cap, test.ctx());
 
             account.deposit_with_proof(&proof,
                 mint_for_testing<SUI>(100, test.ctx()).into_balance()
@@ -186,7 +186,7 @@ module deepbook::account_tests {
         {
             let mut account = test.take_shared_by_id<Account>(account_id);
             let cap = test.take_from_sender<TradeCap>();
-            let proof = account.generate_proof_as_trader(&cap);
+            let proof = account.generate_proof_as_trader(&cap, test.ctx());
 
             account.deposit_with_proof(&proof,
                 mint_for_testing<DEEP>(100000, test.ctx()).into_balance()

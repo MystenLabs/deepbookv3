@@ -15,6 +15,8 @@
 -  [Function `lot_size`](#0x0_book_lot_size)
 -  [Function `mid_price`](#0x0_book_mid_price)
 -  [Function `get_level2_range_and_ticks`](#0x0_book_get_level2_range_and_ticks)
+-  [Function `bids`](#0x0_book_bids)
+-  [Function `asks`](#0x0_book_asks)
 -  [Function `match_against_book`](#0x0_book_match_against_book)
 -  [Function `get_order_id`](#0x0_book_get_order_id)
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
@@ -459,6 +461,54 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
     quantity_vec.push_back(cur_quantity);
 
     (price_vec, quantity_vec)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_bids"></a>
+
+## Function `bids`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.bids
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_asks"></a>
+
+## Function `asks`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.asks
 }
 </code></pre>
 

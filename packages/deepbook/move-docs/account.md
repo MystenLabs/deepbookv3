@@ -29,6 +29,7 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Function `deposit_with_proof`](#0x0_account_deposit_with_proof)
 -  [Function `withdraw_with_proof`](#0x0_account_withdraw_with_proof)
 -  [Function `delete`](#0x0_account_delete)
+-  [Function `trader`](#0x0_account_trader)
 -  [Function `validate_owner`](#0x0_account_validate_owner)
 -  [Function `validate_trader`](#0x0_account_validate_trader)
 
@@ -172,6 +173,12 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 <dl>
 <dt>
 <code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>trader: <b>address</b></code>
 </dt>
 <dd>
 
@@ -427,6 +434,7 @@ and can generate TradeProofs without the risk of equivocation.
 
     <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
         account_id: <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>),
+        trader: ctx.sender(),
     }
 }
 </code></pre>
@@ -443,7 +451,7 @@ Generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></cod
 Risk of equivocation since <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> is an owned object.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">account::TradeCap</a>): <a href="account.md#0x0_account_TradeProof">account::TradeProof</a>
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">account::TradeCap</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="account.md#0x0_account_TradeProof">account::TradeProof</a>
 </code></pre>
 
 
@@ -452,11 +460,12 @@ Risk of equivocation since <code><a href="account.md#0x0_account_TradeCap">Trade
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">TradeCap</a>): <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">TradeCap</a>, ctx: &TxContext): <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
     <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_trader">validate_trader</a>(trade_cap);
 
     <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
         account_id: <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>),
+        trader: ctx.sender(),
     }
 }
 </code></pre>
@@ -682,6 +691,30 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
     id.<a href="account.md#0x0_account_delete">delete</a>();
     balances.destroy_empty();
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_trader"></a>
+
+## Function `trader`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>): <b>address</b>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>): <b>address</b> {
+    trade_proof.trader
 }
 </code></pre>
 

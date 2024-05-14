@@ -3,7 +3,6 @@ module deepbook::book {
         big_vector::{Self, BigVector},
         utils,
         math,
-
         order::Order,
         order_info::OrderInfo,
     };
@@ -178,6 +177,14 @@ module deepbook::book {
         quantity_vec.push_back(cur_quantity);
 
         (price_vec, quantity_vec)
+    }
+
+    public(package) fun bids(self: &Book): &BigVector<Order> {
+        &self.bids
+    }
+
+    public(package) fun asks(self: &Book): &BigVector<Order> {
+        &self.asks
     }
 
     /// Matches the given order and quantity against the order book.
