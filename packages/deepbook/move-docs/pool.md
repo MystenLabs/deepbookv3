@@ -474,15 +474,15 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
         order_type,
         price,
         quantity,
+        self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().conversion_rate(),
         is_bid,
         pay_with_deep,
         expire_timestamp,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     );
-    <b>let</b> deep_per_base = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().conversion_rate();
-    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, deep_per_base, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), deep_per_base);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()));
     self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();

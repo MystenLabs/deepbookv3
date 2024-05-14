@@ -24,6 +24,7 @@ All order matching happens in this module.
 -  [Function `is_bid`](#0x0_order_info_is_bid)
 -  [Function `original_quantity`](#0x0_order_info_original_quantity)
 -  [Function `executed_quantity`](#0x0_order_info_executed_quantity)
+-  [Function `deep_per_base`](#0x0_order_info_deep_per_base)
 -  [Function `cumulative_quote_quantity`](#0x0_order_info_cumulative_quote_quantity)
 -  [Function `paid_fees`](#0x0_order_info_paid_fees)
 -  [Function `trade_params`](#0x0_order_info_trade_params)
@@ -130,6 +131,12 @@ It is returned at the end of the order lifecycle.
 </dd>
 <dt>
 <code>original_quantity: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>deep_per_base: u64</code>
 </dt>
 <dd>
 
@@ -726,7 +733,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, deep_per_base: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -743,6 +750,7 @@ It is used to update the state.
     order_type: u8,
     price: u64,
     quantity: u64,
+    deep_per_base: u64,
     is_bid: bool,
     fee_is_deep: bool,
     expire_timestamp: u64,
@@ -758,6 +766,7 @@ It is used to update the state.
         price,
         is_bid,
         original_quantity: quantity,
+        deep_per_base,
         expire_timestamp,
         executed_quantity: 0,
         cumulative_quote_quantity: 0,
@@ -984,6 +993,30 @@ It is used to update the state.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_executed_quantity">executed_quantity</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
     self.executed_quantity
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_deep_per_base"></a>
+
+## Function `deep_per_base`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_base">deep_per_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_base">deep_per_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
+    self.deep_per_base
 }
 </code></pre>
 
