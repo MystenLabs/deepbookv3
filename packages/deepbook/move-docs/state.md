@@ -123,7 +123,7 @@
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_empty">empty</a>(ctx: &<b>mut</b> TxContext): <a href="state.md#0x0_state_State">State</a> {
     <a href="state.md#0x0_state_State">State</a> {
         <a href="history.md#0x0_history">history</a>: <a href="history.md#0x0_history_empty">history::empty</a>(ctx),
-        <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx.epoch()),
+        <a href="governance.md#0x0_governance">governance</a>: <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx),
         users: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
         <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
     }

@@ -154,9 +154,7 @@ module deepbook::governance {
     ) {
         let votes = stake_to_voting_power(stake_amount);
 
-        if (from_proposal_id.is_some()) {
-            if (!self.proposals.contains(from_proposal_id.borrow())) return;
-
+        if (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
             let proposal = &mut self.proposals[from_proposal_id.borrow()];
             proposal.votes = proposal.votes - votes;
             if (proposal.votes + votes > self.quorum && proposal.votes < self.quorum) {
@@ -167,7 +165,7 @@ module deepbook::governance {
         if (to_proposal_id.is_some()) {
             assert!(self.proposals.contains(to_proposal_id.borrow()), EProposalDoesNotExist);
 
-            let proposal = &mut self.proposals[from_proposal_id.borrow()];
+            let proposal = &mut self.proposals[to_proposal_id.borrow()];
             proposal.votes = proposal.votes + votes;
             if (proposal.votes > self.quorum) {
                 self.next_trade_params = proposal.to_trade_params();
@@ -197,7 +195,7 @@ module deepbook::governance {
     /// Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
     fun stake_to_voting_power(stake: u64): u64 {
         if (stake > VOTING_POWER_CUTOFF) {
-            stake - (stake - VOTING_POWER_CUTOFF) / 2
+            stake - ((stake - VOTING_POWER_CUTOFF) / 2)
         } else {
             stake
         }

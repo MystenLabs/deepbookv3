@@ -20,6 +20,8 @@
 -  [Function `stake_to_voting_power`](#0x0_governance_stake_to_voting_power)
 -  [Function `new_proposal`](#0x0_governance_new_proposal)
 -  [Function `remove_lowest_proposal`](#0x0_governance_remove_lowest_proposal)
+-  [Function `reset_trade_params`](#0x0_governance_reset_trade_params)
+-  [Function `to_trade_params`](#0x0_governance_to_trade_params)
 
 
 <pre><code><b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
@@ -311,7 +313,7 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(epoch: u64): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
 </code></pre>
 
 
@@ -321,10 +323,10 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(
-    epoch: u64,
+    ctx: &TxContext,
 ): <a href="governance.md#0x0_governance_Governance">Governance</a> {
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
-        epoch,
+        epoch: ctx.epoch(),
         whitelisted: <b>false</b>,
         stable: <b>false</b>,
         proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
@@ -363,10 +365,7 @@ other pools. This pool will have zero fees.
 ) {
     self.whitelisted = whitelisted;
     self.stable = <b>false</b>;
-    self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
-    self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_taker_fee(0);
-    self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_maker_fee(0);
-    self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
+    self.<a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>();
 }
 </code></pre>
 
@@ -423,15 +422,7 @@ This resets governance. A whitelisted pool cannot be set to stable.
     <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
 
     self.stable = stable;
-    self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
-    <b>if</b> (stable) {
-        self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_taker_fee(<a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>);
-        self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_maker_fee(<a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>);
-    } <b>else</b> {
-        self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_taker_fee(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>);
-        self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.set_maker_fee(<a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>);
-    };
-    self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
+    self.<a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>();
 }
 </code></pre>
 
@@ -546,34 +537,23 @@ If <code>to_proposal_id</code> is some, the user is voting for that proposal.
     to_proposal_id: Option&lt;<b>address</b>&gt;,
     stake_amount: u64,
 ) {
-    <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
+    <b>let</b> votes = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
 
-    <b>if</b> (from_proposal_id.is_some()) {
-        <b>let</b> id = from_proposal_id.borrow();
-        <b>if</b> (self.proposals.contains(id)) {
-            self.proposals[id].votes = self.proposals[id].votes - voting_power;
-
-            // This was the winning proposal, now it is not.
-            <b>if</b> (self.proposals[id].votes + voting_power &gt; self.quorum &&
-                self.proposals[id].votes &lt;= self.quorum) {
-                self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
-                <b>return</b>
-            };
+    <b>if</b> (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
+        <b>let</b> proposal = &<b>mut</b> self.proposals[from_proposal_id.borrow()];
+        proposal.votes = proposal.votes - votes;
+        <b>if</b> (proposal.votes + votes &gt; self.quorum && proposal.votes &lt; self.quorum) {
+            self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
         };
     };
 
     <b>if</b> (to_proposal_id.is_some()) {
-        <b>let</b> id = to_proposal_id.borrow();
-        <b>assert</b>!(self.proposals.contains(id), <a href="governance.md#0x0_governance_EProposalDoesNotExist">EProposalDoesNotExist</a>);
-        self.proposals[id].votes = self.proposals[id].votes + voting_power;
-        <b>if</b> (self.proposals[id].votes &gt; self.quorum) {
-            <b>let</b> proposal = self.proposals[id];
-            self.next_trade_params = <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(
-                proposal.taker_fee,
-                proposal.maker_fee,
-                proposal.stake_required,
-            );
-            <b>return</b>
+        <b>assert</b>!(self.proposals.contains(to_proposal_id.borrow()), <a href="governance.md#0x0_governance_EProposalDoesNotExist">EProposalDoesNotExist</a>);
+
+        <b>let</b> proposal = &<b>mut</b> self.proposals[to_proposal_id.borrow()];
+        proposal.votes = proposal.votes + votes;
+        <b>if</b> (proposal.votes &gt; self.quorum) {
+            self.next_trade_params = proposal.<a href="governance.md#0x0_governance_to_trade_params">to_trade_params</a>();
         };
     };
 }
@@ -658,8 +638,8 @@ Convert stake to voting power. If the stake is above the cutoff, then the voting
 
 
 <pre><code><b>fun</b> <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake: u64): u64 {
-    <b>if</b> (stake &gt;= <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
-        stake - (stake - <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) / 2
+    <b>if</b> (stake &gt; <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
+        stake - ((stake - <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) / 2)
     } <b>else</b> {
         stake
     }
@@ -736,6 +716,65 @@ If there are multiple proposals with the same lowest votes, the latest one is re
 
     <b>assert</b>!(removal_id.is_some(), <a href="governance.md#0x0_governance_EMaxProposalsReachedNotEnoughVotes">EMaxProposalsReachedNotEnoughVotes</a>);
     self.proposals.remove(removal_id.borrow());
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_governance_reset_trade_params"></a>
+
+## Function `reset_trade_params`
+
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>(
+    self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
+) {
+    self.proposals = <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>();
+    <b>let</b> stake = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required();
+    <b>if</b> (self.whitelisted) {
+        self.<a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(0, 0, 0);
+    } <b>else</b> <b>if</b> (self.stable) {
+        self.<a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a>, stake);
+    } <b>else</b> {
+        self.<a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, stake);
+    };
+    self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_governance_to_trade_params"></a>
+
+## Function `to_trade_params`
+
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_to_trade_params">to_trade_params</a>(proposal: &<a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>): <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_to_trade_params">to_trade_params</a>(proposal: &<a href="governance.md#0x0_governance_Proposal">Proposal</a>): TradeParams {
+    <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
 }
 </code></pre>
 
