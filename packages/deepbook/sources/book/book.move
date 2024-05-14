@@ -3,7 +3,6 @@ module deepbook::book {
         big_vector::{Self, BigVector},
         utils,
         math,
-
         order::Order,
         order_info::OrderInfo,
     };
@@ -38,7 +37,15 @@ module deepbook::book {
         }
     }
 
-    public(package) fun create_order(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
+    /// Creates a new order.
+    /// Order is matched against the book and injected into the book if necessary.
+    /// If order is IOC or fully executed, it will not be injected.
+    public(package) fun create_order(
+        self: &mut Book,
+        order_info: &mut OrderInfo,
+        deep_per_base: u64,
+        timestamp: u64
+    ) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
         let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
         order_info.set_order_id(order_id);
@@ -50,7 +57,7 @@ module deepbook::book {
         };
 
         if (order_info.remaining_quantity() > 0) {
-            self.inject_limit_order(order_info);
+            self.inject_limit_order(order_info, deep_per_base);
         };
     }
 
@@ -180,6 +187,14 @@ module deepbook::book {
         (price_vec, quantity_vec)
     }
 
+    public(package) fun bids(self: &Book): &BigVector<Order> {
+        &self.bids
+    }
+
+    public(package) fun asks(self: &Book): &BigVector<Order> {
+        &self.asks
+    }
+
     /// Matches the given order and quantity against the order book.
     /// If is_bid, it will match against asks, otherwise against bids.
     /// Mutates the order and the maker order as necessary.
@@ -218,8 +233,9 @@ module deepbook::book {
     fun inject_limit_order(
         self: &mut Book,
         order_info: &OrderInfo,
+        deep_per_base: u64,
     ) {
-        let order = order_info.to_order();
+        let order = order_info.to_order(deep_per_base);
         if (order_info.is_bid()) {
             self.bids.insert(order_info.order_id(), order);
         } else {

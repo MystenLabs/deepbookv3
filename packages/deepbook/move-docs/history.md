@@ -62,7 +62,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 </dd>
 <dt>
-<code>users_with_rebates: u64</code>
+<code>accounts_with_rebates: u64</code>
 </dt>
 <dd>
 
@@ -154,7 +154,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
         total_staked_volume: 0,
         total_fees_collected: 0,
         stake_required: 0,
-        users_with_rebates: 0,
+        accounts_with_rebates: 0,
     };
     <a href="history.md#0x0_history_History">History</a> {
         epoch: ctx.epoch(),
@@ -173,6 +173,8 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 ## Function `update`
 
+Update the epoch if it has changed.
+If there are accounts with rebates, add the current epoch's volume data to the historic volumes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -190,7 +192,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 ) {
     <b>let</b> epoch = ctx.epoch();
     <b>if</b> (self.epoch == epoch) <b>return</b>;
-    <b>if</b> (self.volumes.users_with_rebates &gt; 0) {
+    <b>if</b> (self.volumes.accounts_with_rebates &gt; 0) {
         self.historic_volumes.add(self.epoch, self.volumes);
     };
     self.epoch = epoch;
@@ -205,11 +207,11 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 ## Function `calculate_rebate_amount`
 
-Given the epoch's volume data and the user's volume data,
+Given the epoch's volume data and the account's volume data,
 calculate the rebate and burn amounts.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, epoch: u64, _maker_volume: u64, user_stake: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, epoch: u64, _maker_volume: u64, account_stake: u64): u64
 </code></pre>
 
 
@@ -222,16 +224,16 @@ calculate the rebate and burn amounts.
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
     epoch: u64,
     _maker_volume: u64,
-    user_stake: u64,
+    account_stake: u64,
 ): u64 {
     <b>assert</b>!(self.historic_volumes.contains(epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
     <b>let</b> volumes = &<b>mut</b> self.historic_volumes[epoch];
-    <b>if</b> (volumes.stake_required &gt; user_stake) <b>return</b> 0;
+    <b>if</b> (volumes.stake_required &gt; account_stake) <b>return</b> 0;
 
     // TODO: calculate and add <b>to</b> burn <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>
 
-    volumes.users_with_rebates = volumes.users_with_rebates - 1;
-    <b>if</b> (volumes.users_with_rebates == 0) {
+    volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
+    <b>if</b> (volumes.accounts_with_rebates == 0) {
         self.historic_volumes.remove(epoch);
     };
 
@@ -247,9 +249,11 @@ calculate the rebate and burn amounts.
 
 ## Function `add_volume`
 
+Add volume to the current epoch's volume data.
+Increments the total volume and total staked volume.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_volume">add_volume</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, maker_volume: u64, user_stake: u64, first_volume_by_user: bool)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_volume">add_volume</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, maker_volume: u64, account_stake: u64, first_volume_by_account: bool)
 </code></pre>
 
 
@@ -261,16 +265,16 @@ calculate the rebate and burn amounts.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_add_volume">add_volume</a>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
     maker_volume: u64,
-    user_stake: u64,
-    first_volume_by_user: bool,
+    account_stake: u64,
+    first_volume_by_account: bool,
 ) {
     <b>if</b> (maker_volume == 0) <b>return</b>;
 
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-    <b>if</b> (user_stake &gt; self.volumes.stake_required) {
+    <b>if</b> (account_stake &gt; self.volumes.stake_required) {
         self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
-        <b>if</b> (first_volume_by_user) {
-            self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+        <b>if</b> (first_volume_by_account) {
+            self.volumes.accounts_with_rebates = self.volumes.accounts_with_rebates + 1;
         }
     };
 }

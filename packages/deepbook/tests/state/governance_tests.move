@@ -4,6 +4,7 @@ module deepbook::governance_tests {
         address,
         test_scenario::{next_tx, begin, end},
         test_utils::{destroy, assert_eq},
+        object::id_from_address,
     };
     use deepbook::governance;
 
@@ -20,9 +21,9 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         assert!(gov.proposals().size() == 1, 0);
-        let (taker_fee, maker_fee, stake_required) = gov.proposals().get(&alice).params();
+        let (taker_fee, maker_fee, stake_required) = gov.proposals().get(&id_from_address(alice)).params();
         assert!(taker_fee == 500000, 0);
         assert!(maker_fee == 200000, 0);
         assert!(stake_required == 10000, 0);
@@ -38,7 +39,7 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(490000, 200000, 10000, 1000, alice);
+        gov.add_proposal(490000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -49,7 +50,7 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(1010000, 200000, 10000, 1000, alice);
+        gov.add_proposal(1010000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -60,7 +61,7 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 190000, 10000, 1000, alice);
+        gov.add_proposal(500000, 190000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -71,7 +72,7 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 510000, 10000, 1000, alice);
+        gov.add_proposal(500000, 510000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -85,7 +86,7 @@ module deepbook::governance_tests {
         gov.set_stable(true);
         
         test.next_tx(alice);
-        gov.add_proposal(50000, 20000, 10000, 1000, alice);
+        gov.add_proposal(50000, 20000, 10000, 1000, id_from_address(alice));
         assert!(gov.proposals().size() == 1, 0);
 
         destroy(gov);
@@ -102,7 +103,7 @@ module deepbook::governance_tests {
         gov.set_stable(true);
 
         test.next_tx(alice);
-        gov.add_proposal(500000, 20000, 10000, 1000, alice);
+        gov.add_proposal(500000, 20000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -116,7 +117,7 @@ module deepbook::governance_tests {
         gov.set_stable(true);
 
         test.next_tx(alice);
-        gov.add_proposal(50000, 200000, 10000, 1000, alice);
+        gov.add_proposal(50000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -127,16 +128,17 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         
         test.next_tx(alice);
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
     #[test]
     fun set_stable_ok() {
         let mut test = begin(OWNER);
+        let alice = ALICE;
         
         test.next_tx(OWNER);
         let mut gov = governance::empty(test.ctx());
@@ -155,7 +157,7 @@ module deepbook::governance_tests {
         assert!(!gov.stable(), 0);
 
         test.next_tx(ALICE);
-        gov.add_proposal(500000, 200000, 10000, 1000, ALICE);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         assert!(gov.proposals().size() == 1, 0);
 
         test.next_tx(OWNER);
@@ -172,7 +174,7 @@ module deepbook::governance_tests {
         
         test.next_tx(OWNER);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, OWNER);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(OWNER));
         assert!(gov.proposals().size() == 1, 0);
 
         // Setting whitelist to true removes all proposals,
@@ -221,13 +223,14 @@ module deepbook::governance_tests {
     #[test, expected_failure(abort_code = governance::EWhitelistedPoolCannotChange)]
     fun add_proposal_whitelisted_e() {
         let mut test = begin(OWNER);
+        let alice = ALICE;
         
         test.next_tx(OWNER);
         let mut gov = governance::empty(test.ctx());
         gov.set_whitelist(true);
         
         test.next_tx(ALICE);
-        gov.add_proposal(500000, 200000, 10000, 1000, ALICE);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
@@ -293,8 +296,8 @@ module deepbook::governance_tests {
         assert!(gov.quorum() == 500, 0);
 
         test.next_tx(alice);
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
-        gov.adjust_vote(option::none(), option::some(alice), 1000);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
         assert!(gov.proposals().size() == 1, 0);
         assert!(gov.quorum() == 500, 0);
         let trade_params = gov.trade_params();
@@ -348,42 +351,42 @@ module deepbook::governance_tests {
 
         // alice proposes proposal 0, votes with 200 votes, not over quorum
         test.next_tx(alice);
-        gov.add_proposal(500000, 200000, 10000, 200, alice);
-        gov.adjust_vote(option::none(), option::some(alice), 200);
-        assert!(gov.proposals().get(&alice).votes() == 200, 0);
+        gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 200);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 200, 0);
         assert!(gov.next_trade_params().taker_fee() == 1000000, 0);
         assert_eq(gov.trade_params(), gov.next_trade_params());
 
         // bob proposes proposal 1, votes with 300 votes, over quorum
         test.next_tx(bob);
-        gov.add_proposal(600000, 300000, 10000, 300, bob);
-        gov.adjust_vote(option::none(), option::some(bob), 300);
-        assert!(gov.proposals().get(&alice).votes() == 200, 0);
-        assert!(gov.proposals().get(&bob).votes() == 300, 0);
+        gov.add_proposal(600000, 300000, 10000, 300, id_from_address(bob));
+        gov.adjust_vote(option::none(), option::some(id_from_address(bob)), 300);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 200, 0);
+        assert!(gov.proposals().get(&id_from_address(bob)).votes() == 300, 0);
         assert!(gov.next_trade_params().taker_fee() == 600000, 0);
         assert!(gov.next_trade_params().maker_fee() == 300000, 0);
 
         // alice moves her votes from proposal 0 to 1
         test.next_tx(alice);
-        gov.adjust_vote(option::some(alice), option::some(bob), 200);
-        assert!(gov.proposals().get(&alice).votes() == 0, 0);
-        assert!(gov.proposals().get(&bob).votes() == 500, 0);
+        gov.adjust_vote(option::some(id_from_address(alice)), option::some(id_from_address(bob)), 200);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 0, 0);
+        assert!(gov.proposals().get(&id_from_address(bob)).votes() == 500, 0);
         assert!(gov.next_trade_params().taker_fee() == 600000, 0);
         assert!(gov.next_trade_params().maker_fee() == 300000, 0);
 
         // bob moves his votes from proposal 1 to 0, making it the next trade params
         test.next_tx(bob);
-        gov.adjust_vote(option::some(bob), option::some(alice), 300);
-        assert!(gov.proposals().get(&alice).votes() == 300, 0);
-        assert!(gov.proposals().get(&bob).votes() == 200, 0);
+        gov.adjust_vote(option::some(id_from_address(bob)), option::some(id_from_address(alice)), 300);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 300, 0);
+        assert!(gov.proposals().get(&id_from_address(bob)).votes() == 200, 0);
         assert!(gov.next_trade_params().taker_fee() == 500000, 0);
         assert!(gov.next_trade_params().maker_fee() == 200000, 0);
 
         // bob removes his votes completely, making the default trade params the next trade params
         test.next_tx(bob);
-        gov.adjust_vote(option::some(alice), option::none(), 300);
-        assert!(gov.proposals().get(&alice).votes() == 0, 0);
-        assert!(gov.proposals().get(&bob).votes() == 200, 0);
+        gov.adjust_vote(option::some(id_from_address(alice)), option::none(), 300);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 0, 0);
+        assert!(gov.proposals().get(&id_from_address(bob)).votes() == 200, 0);
         assert!(gov.next_trade_params().taker_fee() == 1000000, 0);
         assert!(gov.next_trade_params().maker_fee() == 500000, 0);
 
@@ -398,7 +401,7 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.adjust_vote(option::none(), option::some(alice), 1000);
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
         abort 0
     }
 
@@ -410,9 +413,9 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 200, alice);
-        gov.adjust_vote(option::none(), option::some(alice), 1000);
-        gov.adjust_vote(option::some(alice), option::some(bob), 1000);
+        gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
+        gov.adjust_vote(option::some(id_from_address(alice)), option::some(id_from_address(bob)), 1000);
         abort 0
     }
 
@@ -424,9 +427,9 @@ module deepbook::governance_tests {
         
         test.next_tx(alice);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 200, alice);
-        gov.adjust_vote(option::some(bob), option::some(alice), 1000);
-        assert!(gov.proposals().get(&alice).votes() == 1000, 0);
+        gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
+        gov.adjust_vote(option::some(id_from_address(bob)), option::some(id_from_address(alice)), 1000);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 1000, 0);
         
         destroy(gov);
         end(test);
@@ -458,23 +461,23 @@ module deepbook::governance_tests {
         let mut i = 0;
         while (i < dummy_proposals) {
             let address = address::from_u256(i + (1 << 10));
-            gov.add_proposal(500000, 200000, 10000, 1000, address);
+            gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(address));
             // Bigger vote than Alice to make sure proposal doesn't get removed
-            gov.adjust_vote(option::none(), option::some(address), 110000);
+            gov.adjust_vote(option::none(), option::some(id_from_address(address)), 110000);
             i = i + 1;
         };
 
         // Alice proposes and votes with 100000 stake, not enough to push proposal ALICE over quorum
-        gov.add_proposal(500000, 200000, 10000, 100000, alice);
-        gov.adjust_vote(option::none(), option::some(alice), 100000);
+        gov.add_proposal(500000, 200000, 10000, 100000, id_from_address(alice));
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 100000);
         assert_eq(gov.trade_params(), gov.next_trade_params());
         // Bob proposes and votes with 200000 stake, not enough to push proposal Bob over quorum
-        gov.add_proposal(600000, 300000, 20000, 200000, BOB);
-        gov.adjust_vote(option::none(), option::some(BOB), 200000);
+        gov.add_proposal(600000, 300000, 20000, 200000, id_from_address(bob));
+        gov.adjust_vote(option::none(), option::some(id_from_address(bob)), 200000);
         assert_eq(gov.trade_params(), gov.next_trade_params());
 
         // Charlie votes with 150000 stake, enough to push proposal ALICE over quorum
-        gov.adjust_vote(option::none(), option::some(alice), 150000);
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 150000);
         // assert winning proposal is ALICE
         let trade_params = gov.next_trade_params();
         assert!(trade_params.taker_fee() == 500000, 0);
@@ -484,14 +487,14 @@ module deepbook::governance_tests {
         assert!(gov.proposals().size() == (100 as u64), 0);
 
         // Charlie makes a new proposal, proposal ALICE should be removed, not BOB
-        gov.adjust_vote(option::some(ALICE), option::none(), 150000);
-        gov.add_proposal(700000, 400000, 30000, 150000, charlie);
-        gov.adjust_vote(option::none(), option::some(charlie), 150000);
-        assert!(gov.proposals().contains(&bob), 0);
-        assert!(!gov.proposals().contains(&alice), 0);
+        gov.adjust_vote(option::some(id_from_address(alice)), option::none(), 150000);
+        gov.add_proposal(700000, 400000, 30000, 150000, id_from_address(charlie));
+        gov.adjust_vote(option::none(), option::some(id_from_address(charlie)), 150000);
+        assert!(gov.proposals().contains(&id_from_address(bob)), 0);
+        assert!(!gov.proposals().contains(&id_from_address(alice)), 0);
 
         // Voting on proposal ALICE should error
-        gov.adjust_vote(option::none(), option::some(alice), 100);
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 100);
 
         destroy(gov);
         end(test);
@@ -508,14 +511,14 @@ module deepbook::governance_tests {
         let mut i = 0;
         while (i < MAX_PROPOSALS) {
             let address = address::from_u256(i + (1 << 10));
-            gov.add_proposal(500000, 200000, 10000, 1000, address);
+            gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(address));
             // Bigger vote than Alice to make sure proposal doesn't get removed
-            gov.adjust_vote(option::none(), option::some(address), 110000);
+            gov.adjust_vote(option::none(), option::some(id_from_address(address)), 110000);
             i = i + 1;
         };
 
         assert!(gov.proposals().size() == (MAX_PROPOSALS as u64), 0);
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
 
         abort 0
     }
@@ -528,24 +531,24 @@ module deepbook::governance_tests {
         
         test.next_tx(OWNER);
         let mut gov = governance::empty(test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, alice);
-        gov.adjust_vote(option::none(), option::some(alice), 1000);
-        assert!(gov.proposals().get(&alice).votes() == 1000, 0);
+        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
+        gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
+        assert!(gov.proposals().get(&id_from_address(alice)).votes() == 1000, 0);
 
         let mut i = 0;
         while (i < MAX_PROPOSALS - 1) {
             let address = address::from_u256(i + (1 << 10));
-            gov.add_proposal(500000, 200000, 10000, 2000, address);
-            gov.adjust_vote(option::none(), option::some(address), 2000);
+            gov.add_proposal(500000, 200000, 10000, 2000, id_from_address(address));
+            gov.adjust_vote(option::none(), option::some(id_from_address(address)), 2000);
             i = i + 1;
         };
         assert!(gov.proposals().size() == 100, 0);
 
         test.next_tx(bob);
-        gov.add_proposal(500000, 200000, 10000, 3000, bob);
-        assert!(!gov.proposals().contains(&alice), 0);
-        gov.adjust_vote(option::some(alice), option::some(bob), 3000);
-        assert!(gov.proposals().get(&bob).votes() == 2000, 0);
+        gov.add_proposal(500000, 200000, 10000, 3000, id_from_address(bob));
+        assert!(!gov.proposals().contains(&id_from_address(alice)), 0);
+        gov.adjust_vote(option::some(id_from_address(alice)), option::some(id_from_address(bob)), 3000);
+        assert!(gov.proposals().get(&id_from_address(bob)).votes() == 2000, 0);
 
         destroy(gov);
         end(test);

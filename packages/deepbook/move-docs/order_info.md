@@ -15,10 +15,10 @@ All order matching happens in this module.
 -  [Struct `Fill`](#0x0_order_info_Fill)
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_order_info_new)
+-  [Function `account_id`](#0x0_order_info_account_id)
 -  [Function `pool_id`](#0x0_order_info_pool_id)
 -  [Function `order_id`](#0x0_order_info_order_id)
 -  [Function `client_order_id`](#0x0_order_info_client_order_id)
--  [Function `owner`](#0x0_order_info_owner)
 -  [Function `order_type`](#0x0_order_info_order_type)
 -  [Function `price`](#0x0_order_info_price)
 -  [Function `is_bid`](#0x0_order_info_is_bid)
@@ -41,6 +41,7 @@ All order matching happens in this module.
 -  [Function `assert_fill_or_kill`](#0x0_order_info_assert_fill_or_kill)
 -  [Function `is_immediate_or_cancel`](#0x0_order_info_is_immediate_or_cancel)
 -  [Function `fill_or_kill`](#0x0_order_info_fill_or_kill)
+-  [Function `immediate_or_cancel`](#0x0_order_info_immediate_or_cancel)
 -  [Function `fill_status`](#0x0_order_info_fill_status)
 -  [Function `settled_quantities`](#0x0_order_info_settled_quantities)
 -  [Function `volume`](#0x0_order_info_volume)
@@ -66,7 +67,7 @@ All order matching happens in this module.
 OrderInfo struct represents all order information.
 This objects gets created at the beginning of the order lifecycle and
 gets updated until it is completed or placed in the book.
-It is returned to the user at the end of the order lifecycle.
+It is returned at the end of the order lifecycle.
 
 
 <pre><code><b>struct</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> <b>has</b> drop, store
@@ -92,13 +93,13 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>client_order_id: u64</code>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>owner: <b>address</b></code>
+<code>client_order_id: u64</code>
 </dt>
 <dd>
 
@@ -264,13 +265,13 @@ Emitted when a maker order is filled.
 
 </dd>
 <dt>
-<code>maker_address: <b>address</b></code>
+<code>maker_account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>taker_address: <b>address</b></code>
+<code>taker_account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -317,12 +318,6 @@ Emitted when a maker order is canceled.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
 </dt>
 <dd>
 
@@ -392,12 +387,6 @@ Emitted when a maker order is modified.
 
 </dd>
 <dt>
-<code>owner: <b>address</b></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
 <code>price: u64</code>
 </dt>
 <dd>
@@ -444,6 +433,12 @@ Emitted when a maker order is injected into the order book.
 
 <dl>
 <dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
@@ -457,12 +452,6 @@ Emitted when a maker order is injected into the order book.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
 </dt>
 <dd>
 
@@ -527,7 +516,7 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>owner: <b>address</b></code>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -737,7 +726,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -748,21 +737,22 @@ It is used to update the state.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(
     pool_id: ID,
+    account_id: ID,
     client_order_id: u64,
-    owner: <b>address</b>,
     trader: <b>address</b>,
     order_type: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
+    fee_is_deep: bool,
     expire_timestamp: u64,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
         pool_id,
         order_id: 0,
+        account_id,
         client_order_id,
-        owner,
         trader,
         order_type,
         price,
@@ -772,12 +762,36 @@ It is used to update the state.
         executed_quantity: 0,
         cumulative_quote_quantity: 0,
         fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
-        fee_is_deep: <b>false</b>,
+        fee_is_deep,
         paid_fees: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
         self_matching_prevention: <b>false</b>,
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_account_id"></a>
+
+## Function `account_id`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_account_id">account_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_account_id">account_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): ID {
+    self.account_id
 }
 </code></pre>
 
@@ -850,30 +864,6 @@ It is used to update the state.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_client_order_id">client_order_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
     self.client_order_id
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_owner"></a>
-
-## Function `owner`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_owner">owner</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <b>address</b>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_owner">owner</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): <b>address</b> {
-    self.owner
 }
 </code></pre>
 
@@ -1250,7 +1240,7 @@ This is done to save space in the order book. Order contains the minimum
 information required to match orders.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1260,14 +1250,15 @@ information required to match orders.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(
-    self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>
+    self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
+    deep_per_base: u64,
 ): Order {
-    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee());
+    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee()));
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
+        self.account_id,
         self.client_order_id,
-        self.owner,
-        self.original_quantity,
+        self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         unpaid_fees,
         self.fee_is_deep,
         self.status,
@@ -1444,14 +1435,14 @@ Returns the fill or kill constant.
 
 </details>
 
-<a name="0x0_order_info_fill_status"></a>
+<a name="0x0_order_info_immediate_or_cancel"></a>
 
-## Function `fill_status`
+## Function `immediate_or_cancel`
 
-Returns the result of the fill and the maker id & owner.
+Returns the immediate or cancel constant.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): (u128, <b>address</b>, bool, bool)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8
 </code></pre>
 
 
@@ -1460,8 +1451,33 @@ Returns the result of the fill and the maker id & owner.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): (u128, <b>address</b>, bool, bool) {
-    (fill.order_id, fill.owner, fill.expired, fill.complete)
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8 {
+    <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_fill_status"></a>
+
+## Function `fill_status`
+
+Returns the result of the fill and the maker id & account id.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): (u128, <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, bool, bool)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): (u128, ID, bool, bool) {
+    (fill.order_id, fill.account_id, fill.expired, fill.complete)
 }
 </code></pre>
 
@@ -1582,7 +1598,7 @@ Funds for an expired order are returned to the maker as settled.
         );
         self.fills.push_back(<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
             order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-            owner: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
+            account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
             expired: <b>true</b>,
             complete: <b>false</b>,
             volume: 0,
@@ -1617,7 +1633,7 @@ Funds for an expired order are returned to the maker as settled.
 
     self.fills.push_back(<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
         order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-        owner: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
+        account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
         expired: <b>false</b>,
         complete: maker.quantity() == 0,
         volume: filled_quantity,
@@ -1651,11 +1667,11 @@ Funds for an expired order are returned to the maker as settled.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order_info.md#0x0_order_info_OrderPlaced">OrderPlaced</a> {
+        account_id: self.account_id,
         pool_id: self.pool_id,
         order_id: self.order_id,
         client_order_id: self.client_order_id,
         is_bid: self.is_bid,
-        owner: self.owner,
         trader: self.trader,
         placed_quantity: self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         price: self.price,
@@ -1700,8 +1716,8 @@ Funds for an expired order are returned to the maker as settled.
         base_quantity: filled_quantity,
         quote_quantity: quote_quantity,
         price,
-        maker_address: maker.<a href="order_info.md#0x0_order_info_owner">owner</a>(),
-        taker_address: self.owner,
+        maker_account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
+        taker_account_id: self.account_id,
         taker_is_bid: self.is_bid,
         timestamp,
     });

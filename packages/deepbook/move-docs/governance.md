@@ -26,6 +26,7 @@
 
 <pre><code><b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
+<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map">0x2::vec_map</a>;
 </code></pre>
@@ -115,7 +116,7 @@ Details of a pool. This is refreshed every epoch by the first
  If Pool is stable or volatile.
 </dd>
 <dt>
-<code>proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<b>address</b>, <a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;</code>
+<code>proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_VecMap">vec_map::VecMap</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, <a href="governance.md#0x0_governance_Proposal">governance::Proposal</a>&gt;</code>
 </dt>
 <dd>
  List of proposals for the current epoch.
@@ -468,10 +469,10 @@ Add a new proposal to governance.
 Check if proposer already voted, if so will give error.
 If proposer has not voted, and there are already MAX_PROPOSALS proposals,
 remove the proposal with the lowest votes if it has less votes than the voting power.
-Validation of the user adding is done in <code>State</code>.
+Validation of the account adding is done in <code>State</code>.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, stake_amount: u64, proposer_address: <b>address</b>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_add_proposal">add_proposal</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, stake_amount: u64, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>)
 </code></pre>
 
 
@@ -486,9 +487,9 @@ Validation of the user adding is done in <code>State</code>.
     maker_fee: u64,
     stake_required: u64,
     stake_amount: u64,
-    proposer_address: <b>address</b>,
+    account_id: ID,
 ) {
-    <b>assert</b>!(!self.proposals.contains(&proposer_address), <a href="governance.md#0x0_governance_EAlreadyProposed">EAlreadyProposed</a>);
+    <b>assert</b>!(!self.proposals.contains(&account_id), <a href="governance.md#0x0_governance_EAlreadyProposed">EAlreadyProposed</a>);
     <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
 
     <b>if</b> (self.stable) {
@@ -505,7 +506,7 @@ Validation of the user adding is done in <code>State</code>.
     };
 
     <b>let</b> new_proposal = <a href="governance.md#0x0_governance_new_proposal">new_proposal</a>(taker_fee, maker_fee, stake_required);
-    self.proposals.insert(proposer_address, new_proposal);
+    self.proposals.insert(account_id, new_proposal);
 }
 </code></pre>
 
@@ -517,12 +518,12 @@ Validation of the user adding is done in <code>State</code>.
 
 ## Function `adjust_vote`
 
-Vote on a proposal. Validation of the user and stake is done in <code>State</code>.
-If <code>from_proposal_id</code> is some, the user is removing their vote from that proposal.
-If <code>to_proposal_id</code> is some, the user is voting for that proposal.
+Vote on a proposal. Validation of the account and stake is done in <code>State</code>.
+If <code>from_proposal_id</code> is some, the account is removing their vote from that proposal.
+If <code>to_proposal_id</code> is some, the account is voting for that proposal.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_adjust_vote">adjust_vote</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, from_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<b>address</b>&gt;, to_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<b>address</b>&gt;, stake_amount: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_adjust_vote">adjust_vote</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, from_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;, to_proposal_id: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;, stake_amount: u64)
 </code></pre>
 
 
@@ -533,8 +534,8 @@ If <code>to_proposal_id</code> is some, the user is voting for that proposal.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_adjust_vote">adjust_vote</a>(
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
-    from_proposal_id: Option&lt;<b>address</b>&gt;,
-    to_proposal_id: Option&lt;<b>address</b>&gt;,
+    from_proposal_id: Option&lt;ID&gt;,
+    to_proposal_id: Option&lt;ID&gt;,
     stake_amount: u64,
 ) {
     <b>let</b> votes = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
@@ -567,7 +568,7 @@ If <code>to_proposal_id</code> is some, the user is voting for that proposal.
 
 ## Function `adjust_voting_power`
 
-Adjust the total voting power by adding and removing stake. If a user's
+Adjust the total voting power by adding and removing stake. If an account's
 stake goes from 2000 to 3000, then <code>stake_before</code> is 2000 and <code>stake_after</code> is 3000.
 Validation of inputs done in <code>State</code>.
 
@@ -700,7 +701,7 @@ If there are multiple proposals with the same lowest votes, the latest one is re
     self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
     voting_power: u64,
 ) {
-    <b>let</b> <b>mut</b> removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>&lt;<b>address</b>&gt;();
+    <b>let</b> <b>mut</b> removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>&lt;ID&gt;();
     <b>let</b> <b>mut</b> cur_lowest_votes = <a href="governance.md#0x0_governance_MAX_U64">MAX_U64</a>;
     <b>let</b> (keys, values) = self.proposals.into_keys_values();
     <b>let</b> <b>mut</b> i = 0;

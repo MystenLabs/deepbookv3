@@ -40,16 +40,16 @@ module deepbook::order_info {
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
     /// gets updated until it is completed or placed in the book.
-    /// It is returned to the user at the end of the order lifecycle.
+    /// It is returned at the end of the order lifecycle.
     public struct OrderInfo has store, drop {
         // ID of the pool
         pool_id: ID,
         // ID of the order within the pool
         order_id: u128,
+        // ID of the account the order uses
+        account_id: ID,
         // ID of the order defined by client
         client_order_id: u64,
-        // Owner of the account the order uses
-        owner: address,
         // Trader of the order
         trader: address,
         // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
@@ -91,8 +91,8 @@ module deepbook::order_info {
         taker_is_bid: bool,
         base_quantity: u64,
         quote_quantity: u64,
-        maker_address: address,
-        taker_address: address,
+        maker_account_id: ID,
+        taker_account_id: ID,
         timestamp: u64,
     }
 
@@ -101,7 +101,6 @@ module deepbook::order_info {
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         price: u64,
         is_bid: bool,
         base_asset_quantity_canceled: u64,
@@ -113,7 +112,6 @@ module deepbook::order_info {
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         price: u64,
         is_bid: bool,
         new_quantity: u64,
@@ -122,10 +120,10 @@ module deepbook::order_info {
 
     /// Emitted when a maker order is injected into the order book.
     public struct OrderPlaced has copy, store, drop {
+        account_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         trader: address,
         price: u64,
         is_bid: bool,
@@ -138,8 +136,8 @@ module deepbook::order_info {
     public struct Fill has store, drop, copy {
         // ID of the maker order
         order_id: u128,
-        // Owner of the maker order
-        owner: address,
+        // account_id of the maker order
+        account_id: ID,
         // Whether the maker order is expired
         expired: bool,
         // Whether the maker order is fully filled
@@ -156,21 +154,22 @@ module deepbook::order_info {
 
     public(package) fun new(
         pool_id: ID,
+        account_id: ID,
         client_order_id: u64,
-        owner: address,
         trader: address,
         order_type: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
+        fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
     ): OrderInfo {
         OrderInfo {
             pool_id,
             order_id: 0,
+            account_id,
             client_order_id,
-            owner,
             trader,
             order_type,
             price,
@@ -180,12 +179,16 @@ module deepbook::order_info {
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
             fills: vector[],
-            fee_is_deep: false,
+            fee_is_deep,
             paid_fees: 0,
             trade_params,
             status: LIVE,
             self_matching_prevention: false,
         }
+    }
+
+    public fun account_id(self: &OrderInfo): ID {
+        self.account_id
     }
 
     public fun pool_id(self: &OrderInfo): ID {
@@ -198,10 +201,6 @@ module deepbook::order_info {
 
     public fun client_order_id(self: &OrderInfo): u64 {
         self.client_order_id
-    }
-
-    public fun owner(self: &OrderInfo): address {
-        self.owner
     }
 
     public fun order_type(self: &OrderInfo): u8 {
@@ -268,14 +267,15 @@ module deepbook::order_info {
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(
-        self: &OrderInfo
+        self: &OrderInfo,
+        deep_per_base: u64,
     ): Order {
-        let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
+        let unpaid_fees = math::mul(deep_per_base, math::mul(self.remaining_quantity(), self.trade_params().maker_fee()));
         order::new(
             self.order_id,
+            self.account_id,
             self.client_order_id,
-            self.owner,
-            self.original_quantity,
+            self.remaining_quantity(),
             unpaid_fees,
             self.fee_is_deep,
             self.status,
@@ -327,9 +327,14 @@ module deepbook::order_info {
         FILL_OR_KILL
     }
 
-    /// Returns the result of the fill and the maker id & owner.
-    public(package) fun fill_status(fill: &Fill): (u128, address, bool, bool) {
-        (fill.order_id, fill.owner, fill.expired, fill.complete)
+    /// Returns the immediate or cancel constant.
+    public(package) fun immediate_or_cancel(): u8 {
+        IMMEDIATE_OR_CANCEL
+    }
+
+    /// Returns the result of the fill and the maker id & account id.
+    public(package) fun fill_status(fill: &Fill): (u128, ID, bool, bool) {
+        (fill.order_id, fill.account_id, fill.expired, fill.complete)
     }
 
     /// Returns the settled quantities for the fill.
@@ -370,7 +375,7 @@ module deepbook::order_info {
             );
             self.fills.push_back(Fill {
                 order_id: maker.order_id(),
-                owner: maker.owner(),
+                account_id: maker.account_id(),
                 expired: true,
                 complete: false,
                 volume: 0,
@@ -405,7 +410,7 @@ module deepbook::order_info {
 
         self.fills.push_back(Fill {
             order_id: maker.order_id(),
-            owner: maker.owner(),
+            account_id: maker.account_id(),
             expired: false,
             complete: maker.quantity() == 0,
             volume: filled_quantity,
@@ -419,11 +424,11 @@ module deepbook::order_info {
 
     public(package) fun emit_order_placed(self: &OrderInfo) {
         event::emit(OrderPlaced {
+            account_id: self.account_id,
             pool_id: self.pool_id,
             order_id: self.order_id,
             client_order_id: self.client_order_id,
             is_bid: self.is_bid,
-            owner: self.owner,
             trader: self.trader,
             placed_quantity: self.remaining_quantity(),
             price: self.price,
@@ -448,8 +453,8 @@ module deepbook::order_info {
             base_quantity: filled_quantity,
             quote_quantity: quote_quantity,
             price,
-            maker_address: maker.owner(),
-            taker_address: self.owner,
+            maker_account_id: maker.account_id(),
+            taker_account_id: self.account_id,
             taker_is_bid: self.is_bid,
             timestamp,
         });

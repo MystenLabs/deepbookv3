@@ -15,6 +15,8 @@
 -  [Function `lot_size`](#0x0_book_lot_size)
 -  [Function `mid_price`](#0x0_book_mid_price)
 -  [Function `get_level2_range_and_ticks`](#0x0_book_get_level2_range_and_ticks)
+-  [Function `bids`](#0x0_book_bids)
+-  [Function `asks`](#0x0_book_asks)
 -  [Function `match_against_book`](#0x0_book_match_against_book)
 -  [Function `get_order_id`](#0x0_book_get_order_id)
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
@@ -25,6 +27,7 @@
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
+<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -188,9 +191,12 @@
 
 ## Function `create_order`
 
+Creates a new order.
+Order is matched against the book and injected into the book if necessary.
+If order is IOC or fully executed, it will not be injected.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, timestamp: u64)
 </code></pre>
 
 
@@ -199,7 +205,12 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo, timestamp: u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(
+    self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
+    deep_per_base: u64,
+    timestamp: u64
+) {
     <a href="order_info.md#0x0_order_info">order_info</a>.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
     <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid(), <a href="order_info.md#0x0_order_info">order_info</a>.price(), self.<a href="book.md#0x0_book_get_order_id">get_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()));
     <a href="order_info.md#0x0_order_info">order_info</a>.set_order_id(order_id);
@@ -211,7 +222,7 @@
     };
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
-        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>);
+        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, deep_per_base);
     };
 }
 </code></pre>
@@ -466,6 +477,54 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
 </details>
 
+<a name="0x0_book_bids"></a>
+
+## Function `bids`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.bids
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_asks"></a>
+
+## Function `asks`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.asks
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_book_match_against_book"></a>
 
 ## Function `match_against_book`
@@ -547,7 +606,7 @@ Mutates the order and the maker order as necessary.
 Balance accounting happens before this function is called
 
 
-<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
+<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64)
 </code></pre>
 
 
@@ -559,8 +618,9 @@ Balance accounting happens before this function is called
 <pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
+    deep_per_base: u64,
 ) {
-    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order();
+    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order(deep_per_base);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         self.bids.insert(<a href="order_info.md#0x0_order_info">order_info</a>.order_id(), <a href="order.md#0x0_order">order</a>);
     } <b>else</b> {
