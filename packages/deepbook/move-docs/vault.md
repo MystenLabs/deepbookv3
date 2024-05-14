@@ -206,7 +206,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 3. Add to the user's settled and owed balances.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="user.md#0x0_user">user</a>: &<b>mut</b> <a href="user.md#0x0_user_User">user::User</a>, deep_per_base: u64)
 </code></pre>
 
 
@@ -219,6 +219,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     self: &<a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
     <a href="user.md#0x0_user">user</a>: &<b>mut</b> User,
+    deep_per_base: u64,
 ) {
     <b>let</b> base_to_deep = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
     <b>let</b> total_volume = <a href="user.md#0x0_user">user</a>.taker_volume() + <a href="user.md#0x0_user">user</a>.maker_volume();
@@ -236,7 +237,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> executed_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity();
     <b>let</b> remaining_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity();
     <b>let</b> cumulative_quote_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity();
-    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, taker_fee);
+    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, taker_fee));
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         <a href="user.md#0x0_user">user</a>.add_settled_amounts(executed_quantity, 0, 0);
@@ -248,7 +249,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 
     // Maker Part of Settling Order
     <b>if</b> (remaining_quantity &gt; 0 && !<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel()) {
-        <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee);
+        <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee));
         <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
             <a href="user.md#0x0_user">user</a>.add_owed_amounts(0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, <a href="order_info.md#0x0_order_info">order_info</a>.price()), deep_in);
         } <b>else</b> {

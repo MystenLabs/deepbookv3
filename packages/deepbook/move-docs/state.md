@@ -138,6 +138,9 @@
 
 ## Function `process_create`
 
+Process order fills.
+Update all maker settled balances and volumes.
+Update taker settled balances and volumes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -159,12 +162,12 @@
     <b>let</b> <b>mut</b> i = 0;
     <b>while</b> (i &lt; fills.length()) {
         <b>let</b> fill = &fills[i];
-        <b>let</b> (order_id, owner, expired, completed) = fill.fill_status();
+        <b>let</b> (order_id, maker, expired, completed) = fill.fill_status();
         <b>let</b> (base, quote, deep) = fill.settled_quantities();
         <b>let</b> volume = fill.volume();
-        self.<a href="state.md#0x0_state_update_user">update_user</a>(owner, ctx.epoch());
+        self.<a href="state.md#0x0_state_update_user">update_user</a>(maker, ctx.epoch());
 
-        <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[owner];
+        <b>let</b> <a href="user.md#0x0_user">user</a> = &<b>mut</b> self.users[maker];
         <a href="user.md#0x0_user">user</a>.add_settled_amounts(base, quote, deep);
         <a href="user.md#0x0_user">user</a>.increase_maker_volume(volume);
         <b>if</b> (expired || completed) {
@@ -191,6 +194,8 @@
 
 ## Function `process_cancel`
 
+Update user settled balances and volumes.
+Remove order from user orders.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, order_id: u128, owner: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)

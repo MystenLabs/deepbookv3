@@ -173,6 +173,8 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 ## Function `update`
 
+Update the epoch if it has changed.
+If there are users with rebates, add the current epoch's volume data to the historic volumes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -247,6 +249,8 @@ calculate the rebate and burn amounts.
 
 ## Function `add_volume`
 
+Add volume to the current epoch's volume data.
+Increments the total volume and total staked volume.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_volume">add_volume</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, maker_volume: u64, user_stake: u64, first_volume_by_user: bool)

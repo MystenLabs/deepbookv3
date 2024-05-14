@@ -41,6 +41,7 @@ All order matching happens in this module.
 -  [Function `assert_fill_or_kill`](#0x0_order_info_assert_fill_or_kill)
 -  [Function `is_immediate_or_cancel`](#0x0_order_info_is_immediate_or_cancel)
 -  [Function `fill_or_kill`](#0x0_order_info_fill_or_kill)
+-  [Function `immediate_or_cancel`](#0x0_order_info_immediate_or_cancel)
 -  [Function `fill_status`](#0x0_order_info_fill_status)
 -  [Function `settled_quantities`](#0x0_order_info_settled_quantities)
 -  [Function `volume`](#0x0_order_info_volume)
@@ -1251,7 +1252,7 @@ This is done to save space in the order book. Order contains the minimum
 information required to match orders.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1261,9 +1262,10 @@ information required to match orders.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(
-    self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>
+    self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
+    deep_per_base: u64,
 ): Order {
-    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee());
+    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee()));
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.client_order_id,
@@ -1438,6 +1440,31 @@ Returns the fill or kill constant.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_or_kill">fill_or_kill</a>(): u8 {
     <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_immediate_or_cancel"></a>
+
+## Function `immediate_or_cancel`
+
+Returns the immediate or cancel constant.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8 {
+    <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>
 }
 </code></pre>
 
