@@ -7,8 +7,6 @@
 
 -  [Struct `TradeParams`](#0x0_trade_params_TradeParams)
 -  [Function `new`](#0x0_trade_params_new)
--  [Function `set_taker_fee`](#0x0_trade_params_set_taker_fee)
--  [Function `set_maker_fee`](#0x0_trade_params_set_maker_fee)
 -  [Function `maker_fee`](#0x0_trade_params_maker_fee)
 -  [Function `taker_fee`](#0x0_trade_params_taker_fee)
 -  [Function `stake_required`](#0x0_trade_params_stake_required)
@@ -82,60 +80,6 @@
         maker_fee,
         stake_required,
     }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_trade_params_set_taker_fee"></a>
-
-## Function `set_taker_fee`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_set_taker_fee">set_taker_fee</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: &<b>mut</b> <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, taker_fee: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="trade_params.md#0x0_trade_params_set_taker_fee">set_taker_fee</a>(
-    <a href="trade_params.md#0x0_trade_params">trade_params</a>: &<b>mut</b> <a href="trade_params.md#0x0_trade_params_TradeParams">TradeParams</a>,
-    taker_fee: u64,
-) {
-    <a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee = taker_fee;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_trade_params_set_maker_fee"></a>
-
-## Function `set_maker_fee`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_set_maker_fee">set_maker_fee</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: &<b>mut</b> <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, maker_fee: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="trade_params.md#0x0_trade_params_set_maker_fee">set_maker_fee</a>(
-    <a href="trade_params.md#0x0_trade_params">trade_params</a>: &<b>mut</b> <a href="trade_params.md#0x0_trade_params_TradeParams">TradeParams</a>,
-    maker_fee: u64,
-) {
-    <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee = maker_fee;
 }
 </code></pre>
 

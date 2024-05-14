@@ -58,10 +58,10 @@ module deepbook::governance {
 
     // === Public-Package Functions ===
     public(package) fun empty(
-        epoch: u64,
+        ctx: &TxContext,
     ): Governance {
         Governance {
-            epoch,
+            epoch: ctx.epoch(),
             whitelisted: false,
             stable: false,
             proposals: vec_map::empty(),
@@ -80,10 +80,7 @@ module deepbook::governance {
     ) {
         self.whitelisted = whitelisted;
         self.stable = false;
-        self.proposals = vec_map::empty();
-        self.trade_params.set_taker_fee(0);
-        self.trade_params.set_maker_fee(0);
-        self.next_trade_params = self.trade_params;
+        self.reset_trade_params();
     }
 
     public(package) fun whitelisted(self: &Governance): bool {
@@ -100,15 +97,7 @@ module deepbook::governance {
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         self.stable = stable;
-        self.proposals = vec_map::empty();
-        if (stable) {
-            self.trade_params.set_taker_fee(MAX_TAKER_STABLE);
-            self.trade_params.set_maker_fee(MAX_MAKER_STABLE);
-        } else {
-            self.trade_params.set_taker_fee(MAX_TAKER_VOLATILE);
-            self.trade_params.set_maker_fee(MAX_MAKER_VOLATILE);
-        };
-        self.next_trade_params = self.trade_params;
+        self.reset_trade_params();
     }
 
     public(package) fun update(self: &mut Governance, ctx: &TxContext) {
@@ -163,34 +152,23 @@ module deepbook::governance {
         to_proposal_id: Option<ID>,
         stake_amount: u64,
     ) {
-        let voting_power = stake_to_voting_power(stake_amount);
+        let votes = stake_to_voting_power(stake_amount);
 
-        if (from_proposal_id.is_some()) {
-            let id = from_proposal_id.borrow();
-            if (self.proposals.contains(id)) {
-                self.proposals[id].votes = self.proposals[id].votes - voting_power;
-
-                // This was the winning proposal, now it is not.
-                if (self.proposals[id].votes + voting_power > self.quorum &&
-                    self.proposals[id].votes <= self.quorum) {
-                    self.next_trade_params = self.trade_params;
-                    return
-                };
+        if (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
+            let proposal = &mut self.proposals[from_proposal_id.borrow()];
+            proposal.votes = proposal.votes - votes;
+            if (proposal.votes + votes > self.quorum && proposal.votes < self.quorum) {
+                self.next_trade_params = self.trade_params;
             };
         };
 
         if (to_proposal_id.is_some()) {
-            let id = to_proposal_id.borrow();
-            assert!(self.proposals.contains(id), EProposalDoesNotExist);
-            self.proposals[id].votes = self.proposals[id].votes + voting_power;
-            if (self.proposals[id].votes > self.quorum) {
-                let proposal = self.proposals[id];
-                self.next_trade_params = trade_params::new(
-                    proposal.taker_fee,
-                    proposal.maker_fee,
-                    proposal.stake_required,
-                );
-                return
+            assert!(self.proposals.contains(to_proposal_id.borrow()), EProposalDoesNotExist);
+
+            let proposal = &mut self.proposals[to_proposal_id.borrow()];
+            proposal.votes = proposal.votes + votes;
+            if (proposal.votes > self.quorum) {
+                self.next_trade_params = proposal.to_trade_params();
             };
         };
     }
@@ -216,8 +194,8 @@ module deepbook::governance {
     // === Private Functions ===
     /// Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
     fun stake_to_voting_power(stake: u64): u64 {
-        if (stake >= VOTING_POWER_CUTOFF) {
-            stake - (stake - VOTING_POWER_CUTOFF) / 2
+        if (stake > VOTING_POWER_CUTOFF) {
+            stake - ((stake - VOTING_POWER_CUTOFF) / 2)
         } else {
             stake
         }
@@ -256,24 +234,34 @@ module deepbook::governance {
         self.proposals.remove(removal_id.borrow());
     }
 
-    // === Test Functions ===
-    #[test_only]
-    public fun delete(self: Governance) {
-        let Governance {
-            epoch: _,
-            whitelisted: _,
-            stable: _,
-            proposals: _,
-            trade_params: _,
-            next_trade_params: _,
-            voting_power: _,
-            quorum: _,
-        } = self;
+    fun reset_trade_params(
+        self: &mut Governance,
+    ) {
+        self.proposals = vec_map::empty();
+        let stake = self.trade_params.stake_required();
+        if (self.whitelisted) {
+            self.trade_params = trade_params::new(0, 0, 0);
+        } else if (self.stable) {
+            self.trade_params = trade_params::new(MAX_TAKER_STABLE, MAX_MAKER_STABLE, stake);
+        } else {
+            self.trade_params = trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, stake);
+        };
+        self.next_trade_params = self.trade_params;
     }
 
+    fun to_trade_params(proposal: &Proposal): TradeParams {
+        trade_params::new(proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
+    }
+
+    // === Test Functions ===
     #[test_only]
     public fun voting_power(self: &Governance): u64 {
         self.voting_power
+    }
+
+    #[test_only]
+    public fun stable(self: &Governance): bool {
+        self.stable
     }
 
     #[test_only]
@@ -287,7 +275,17 @@ module deepbook::governance {
     }
 
     #[test_only]
-    public fun proposal_votes(self: &Governance, account_id: ID): u64 {
-        self.proposals[&account_id].votes
+    public fun next_trade_params(self: &Governance): TradeParams {
+        self.next_trade_params
+    }
+
+    #[test_only]
+    public fun votes(proposal: &Proposal): u64 {
+        proposal.votes
+    }
+
+    #[test_only]
+    public fun params(proposal: &Proposal): (u64, u64, u64) {
+        (proposal.taker_fee, proposal.maker_fee, proposal.stake_required)
     }
 }
