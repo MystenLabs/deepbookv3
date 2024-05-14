@@ -74,7 +74,6 @@ module deepbook::vault {
         self: &Vault<BaseAsset, QuoteAsset>,
         order_info: &OrderInfo,
         account_data: &mut AccountData,
-        deep_per_base: u64,
     ) {
         let base_to_deep = self.deep_price.conversion_rate();
         let total_volume = account_data.taker_volume() + account_data.maker_volume();
@@ -92,7 +91,7 @@ module deepbook::vault {
         let executed_quantity = order_info.executed_quantity();
         let remaining_quantity = order_info.remaining_quantity();
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
-        let deep_in = math::mul(deep_per_base, math::mul(executed_quantity, taker_fee));
+        let deep_in = math::mul(order_info.deep_per_base(), math::mul(executed_quantity, taker_fee));
 
         if (order_info.is_bid()) {
             account_data.add_settled_amounts(executed_quantity, 0, 0);
@@ -104,7 +103,7 @@ module deepbook::vault {
 
         // Maker Part of Settling Order
         if (remaining_quantity > 0 && !order_info.is_immediate_or_cancel()) {
-            let deep_in = math::mul(deep_per_base, math::mul(remaining_quantity, maker_fee));
+            let deep_in = math::mul(order_info.deep_per_base(), math::mul(remaining_quantity, maker_fee));
             if (order_info.is_bid()) {
                 account_data.add_owed_amounts(0, math::mul(remaining_quantity, order_info.price()), deep_in);
             } else {

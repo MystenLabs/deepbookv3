@@ -60,6 +60,8 @@ module deepbook::order_info {
         is_bid: bool,
         // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
+        // DEEP conversion per base asset
+        deep_per_base: u64,
         // Expiration timestamp in ms
         expire_timestamp: u64,
         // Quantity executed so far
@@ -160,6 +162,7 @@ module deepbook::order_info {
         order_type: u8,
         price: u64,
         quantity: u64,
+        deep_per_base: u64,
         is_bid: bool,
         fee_is_deep: bool,
         expire_timestamp: u64,
@@ -175,6 +178,7 @@ module deepbook::order_info {
             price,
             is_bid,
             original_quantity: quantity,
+            deep_per_base,
             expire_timestamp,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
@@ -221,6 +225,10 @@ module deepbook::order_info {
 
     public fun executed_quantity(self: &OrderInfo): u64 {
         self.executed_quantity
+    }
+
+    public fun deep_per_base(self: &OrderInfo): u64 {
+        self.deep_per_base
     }
 
     public fun cumulative_quote_quantity(self: &OrderInfo): u64 {
