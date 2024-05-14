@@ -272,7 +272,6 @@ module deepbook::order_info {
         self: &OrderInfo
     ): Order {
         let unpaid_fees = math::mul(self.remaining_quantity(), self.trade_params().maker_fee());
-        assert!(unpaid_fees == 500000, 5);
         order::new(
             self.order_id,
             self.client_order_id,

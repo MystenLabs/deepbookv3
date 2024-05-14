@@ -1264,7 +1264,6 @@ information required to match orders.
     self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>
 ): Order {
     <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee());
-    <b>assert</b>!(unpaid_fees == 500000, 5);
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.client_order_id,
