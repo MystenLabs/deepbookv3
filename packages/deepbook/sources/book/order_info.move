@@ -158,8 +158,8 @@ module deepbook::order_info {
 
     public(package) fun new(
         pool_id: ID,
-        client_order_id: u64,
         account_id: ID,
+        client_order_id: u64,
         owner: address,
         trader: address,
         order_type: u8,
@@ -279,8 +279,8 @@ module deepbook::order_info {
         let unpaid_fees = math::mul(deep_per_base, math::mul(self.remaining_quantity(), self.trade_params().maker_fee()));
         order::new(
             self.order_id,
-            self.client_order_id,
             self.account_id,
+            self.client_order_id,
             self.owner,
             self.remaining_quantity(),
             unpaid_fees,

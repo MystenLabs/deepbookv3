@@ -467,8 +467,8 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
-        client_order_id,
         <a href="account.md#0x0_account">account</a>.id(),
+        client_order_id,
         <a href="account.md#0x0_account">account</a>.owner(),
         proof.trader(),
         order_type,

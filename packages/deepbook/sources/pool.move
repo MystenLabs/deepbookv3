@@ -137,8 +137,8 @@ module deepbook::pool {
         let trade_params = self.state.governance().trade_params();
         let mut order_info = order_info::new(
             self.id.to_inner(),
-            client_order_id,
             account.id(),
+            client_order_id,
             account.owner(),
             proof.trader(),
             order_type,

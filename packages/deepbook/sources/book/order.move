@@ -21,8 +21,8 @@ module deepbook::order {
     /// Order struct represents the order in the order book. It is optimized for space.
     public struct Order has store, drop {
         order_id: u128,
-        client_order_id: u64,
         account_id: ID,
+        client_order_id: u64,
         owner: address,
         quantity: u64,
         unpaid_fees: u64,
@@ -61,8 +61,8 @@ module deepbook::order {
     /// initialize the order struct.
     public(package) fun new(
         order_id: u128,
-        client_order_id: u64,
         account_id: ID,
+        client_order_id: u64,
         owner: address,
         quantity: u64,
         unpaid_fees: u64,
@@ -73,8 +73,8 @@ module deepbook::order {
     ): Order {
         Order {
             order_id,
-            client_order_id,
             account_id,
+            client_order_id,
             owner,
             quantity,
             unpaid_fees,

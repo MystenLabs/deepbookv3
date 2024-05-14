@@ -744,7 +744,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -755,8 +755,8 @@ It is used to update the state.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(
     pool_id: ID,
-    client_order_id: u64,
     account_id: ID,
+    client_order_id: u64,
     owner: <b>address</b>,
     trader: <b>address</b>,
     order_type: u8,
@@ -1276,8 +1276,8 @@ information required to match orders.
     <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee()));
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
-        self.client_order_id,
         self.account_id,
+        self.client_order_id,
         self.owner,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         unpaid_fees,
