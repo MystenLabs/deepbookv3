@@ -54,7 +54,7 @@ module deepbook::pool_tests {
     const TICK_SIZE: u64 = 1000;
     const LOT_SIZE: u64 = 1000;
     const MIN_SIZE: u64 = 10000;
-    const DEEP_MULTIPLIER: u64 = 10 * 1_000_000_000;
+    const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
 
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
@@ -417,6 +417,7 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    /// Helper, verify OrderInfo
     fun verify_order_info(
         order_info: &OrderInfo,
         client_order_id: u64,
@@ -442,30 +443,7 @@ module deepbook::pool_tests {
         assert!(order_info.self_matching_prevention() == self_matching_prevention, EOrderInfoMismatch);
     }
 
-    /// Verify an order in the book
-    fun verify_book_order(
-        order: &Order,
-        book_order_id: u128,
-        client_order_id: u64,
-        quantity: u64,
-        _unpaid_fees: u64,
-        fee_is_deep: bool,
-        status: u8,
-        expire_timestamp: u64,
-        self_matching_prevention: bool,
-    ) {
-        assert!(order.order_id() == book_order_id, EBookOrderMismatch);
-        assert!(order.client_order_id() == client_order_id, EBookOrderMismatch);
-        assert!(order.quantity() == quantity, EBookOrderMismatch);
-        // assert!(order.unpaid_fees() == unpaid_fees, EBookOrderMismatch);
-        // TODO: add more scenarios
-        assert!(order.fee_is_deep() == fee_is_deep, EBookOrderMismatch);
-        assert!(order.status() == status, EBookOrderMismatch);
-        assert!(order.expire_timestamp() == expire_timestamp, EBookOrderMismatch);
-        assert!(order.self_matching_prevention() == self_matching_prevention, EBookOrderMismatch);
-    }
-
-    /// Borrow orderbook and verify an order
+    /// Helper, borrow orderbook and verify an order
     fun borrow_and_verify_book_order(
         book_order_id: u128,
         is_bid: bool,
@@ -493,6 +471,28 @@ module deepbook::pool_tests {
             self_matching_prevention,
         );
         return_shared(pool);
+    }
+
+    /// Verify an order in the book, internal function
+    fun verify_book_order(
+        order: &Order,
+        book_order_id: u128,
+        client_order_id: u64,
+        quantity: u64,
+        unpaid_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
+        expire_timestamp: u64,
+        self_matching_prevention: bool,
+    ) {
+        assert!(order.order_id() == book_order_id, EBookOrderMismatch);
+        assert!(order.client_order_id() == client_order_id, EBookOrderMismatch);
+        assert!(order.quantity() == quantity, EBookOrderMismatch);
+        assert!(order.unpaid_fees() == unpaid_fees, EBookOrderMismatch);
+        assert!(order.fee_is_deep() == fee_is_deep, EBookOrderMismatch);
+        assert!(order.status() == status, EBookOrderMismatch);
+        assert!(order.expire_timestamp() == expire_timestamp, EBookOrderMismatch);
+        assert!(order.self_matching_prevention() == self_matching_prevention, EBookOrderMismatch);
     }
 
     fun borrow_orderbook<BaseAsset, QuoteAsset>(

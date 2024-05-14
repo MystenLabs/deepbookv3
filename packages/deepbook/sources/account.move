@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The Account is a shared object that holds all of the balances for a user. A combination of `Account` and
+/// The Account is a shared object that holds all of the balances for different assets. A combination of `Account` and
 /// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
 /// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of
 /// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating
@@ -147,6 +147,11 @@ module deepbook::account {
     /// Returns the owner of the account.
     public fun owner(account: &Account): address {
         account.owner
+    }
+
+    /// Returns the owner of the account.
+    public fun id(account: &Account): ID {
+        account.id.to_inner()
     }
 
     /// Deposit funds to an account. Pool will call this to deposit funds.
