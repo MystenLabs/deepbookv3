@@ -26,7 +26,7 @@ module deepbook::state {
     public(package) fun empty(ctx: &mut TxContext): State {
         State {
             history: history::empty(ctx),
-            governance: governance::empty(ctx.epoch()),
+            governance: governance::empty(ctx),
             users: table::new(ctx),
             deep_price: deep_price::empty(),
         }
