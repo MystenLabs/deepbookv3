@@ -14,6 +14,7 @@ All order matching happens in this module.
 -  [Function `new`](#0x0_order_new)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
+-  [Function `account_id`](#0x0_order_account_id)
 -  [Function `price`](#0x0_order_price)
 -  [Function `is_bid`](#0x0_order_is_bid)
 -  [Function `owner`](#0x0_order_owner)
@@ -68,6 +69,12 @@ Order struct represents the order in the order book. It is optimized for space.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -364,7 +371,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, client_order_id: u64, owner: <b>address</b>, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, client_order_id: u64, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, owner: <b>address</b>, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -376,6 +383,7 @@ initialize the order struct.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(
     order_id: u128,
     client_order_id: u64,
+    account_id: ID,
     owner: <b>address</b>,
     quantity: u64,
     unpaid_fees: u64,
@@ -387,6 +395,7 @@ initialize the order struct.
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id,
         client_order_id,
+        account_id,
         owner,
         quantity,
         unpaid_fees,
@@ -443,6 +452,30 @@ initialize the order struct.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_client_order_id">client_order_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.client_order_id
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_account_id"></a>
+
+## Function `account_id`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): ID {
+    self.account_id
 }
 </code></pre>
 

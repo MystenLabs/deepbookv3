@@ -48,6 +48,8 @@ module deepbook::order_info {
         order_id: u128,
         // ID of the order defined by client
         client_order_id: u64,
+        // ID of the account the order uses
+        account_id: ID,
         // Owner of the account the order uses
         owner: address,
         // Trader of the order
@@ -157,6 +159,7 @@ module deepbook::order_info {
     public(package) fun new(
         pool_id: ID,
         client_order_id: u64,
+        account_id: ID,
         owner: address,
         trader: address,
         order_type: u8,
@@ -171,6 +174,7 @@ module deepbook::order_info {
             pool_id,
             order_id: 0,
             client_order_id,
+            account_id,
             owner,
             trader,
             order_type,
@@ -276,6 +280,7 @@ module deepbook::order_info {
         order::new(
             self.order_id,
             self.client_order_id,
+            self.account_id,
             self.owner,
             self.remaining_quantity(),
             unpaid_fees,

@@ -99,6 +99,12 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>owner: <b>address</b></code>
 </dt>
 <dd>
@@ -738,7 +744,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, owner: <b>address</b>, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -750,6 +756,7 @@ It is used to update the state.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(
     pool_id: ID,
     client_order_id: u64,
+    account_id: ID,
     owner: <b>address</b>,
     trader: <b>address</b>,
     order_type: u8,
@@ -764,6 +771,7 @@ It is used to update the state.
         pool_id,
         order_id: 0,
         client_order_id,
+        account_id,
         owner,
         trader,
         order_type,
@@ -1269,6 +1277,7 @@ information required to match orders.
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.client_order_id,
+        self.account_id,
         self.owner,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         unpaid_fees,

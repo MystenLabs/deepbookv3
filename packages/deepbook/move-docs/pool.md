@@ -287,11 +287,11 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<a name="0x0_pool_EInvalidOrderOwner"></a>
+<a name="0x0_pool_EInvalidOrderAccount"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>: u64 = 11;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>: u64 = 11;
 </code></pre>
 
 
@@ -468,6 +468,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
         client_order_id,
+        <a href="account.md#0x0_account">account</a>.id(),
         <a href="account.md#0x0_account">account</a>.owner(),
         proof.trader(),
         order_type,
@@ -630,7 +631,7 @@ Swap exact amount without needing an account.
     ctx: &TxContext,
 ) {
     <b>let</b> (base, quote, deep, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
     self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.owner(), base, quote, deep, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
@@ -670,7 +671,7 @@ Order canceled event is emitted.
     ctx: &TxContext,
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
     self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.owner(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 

@@ -22,6 +22,7 @@ module deepbook::order {
     public struct Order has store, drop {
         order_id: u128,
         client_order_id: u64,
+        account_id: ID,
         owner: address,
         quantity: u64,
         unpaid_fees: u64,
@@ -61,6 +62,7 @@ module deepbook::order {
     public(package) fun new(
         order_id: u128,
         client_order_id: u64,
+        account_id: ID,
         owner: address,
         quantity: u64,
         unpaid_fees: u64,
@@ -72,6 +74,7 @@ module deepbook::order {
         Order {
             order_id,
             client_order_id,
+            account_id,
             owner,
             quantity,
             unpaid_fees,
@@ -88,6 +91,10 @@ module deepbook::order {
 
     public(package) fun client_order_id(self: &Order): u64 {
         self.client_order_id
+    }
+
+    public(package) fun account_id(self: &Order): ID {
+        self.account_id
     }
 
     public(package) fun price(self: &Order): u64 {

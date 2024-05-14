@@ -267,6 +267,8 @@ and the remaining quantity is the only quantity left to be injected into the ord
 
 ## Function `add_deep_price_point`
 
+Adds a price point along with a timestamp to the deep price.
+Allows for the calculation of deep price per base asset.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="deep_price.md#0x0_deep_price">deep_price</a>: u64, pool_price: u64, deep_base_type: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a>, deep_quote_type: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_TypeName">type_name::TypeName</a>, timestamp: u64)

@@ -149,6 +149,11 @@ module deepbook::account {
         account.owner
     }
 
+    /// Returns the owner of the account.
+    public fun id(account: &Account): ID {
+        account.id.to_inner()
+    }
+
     /// Deposit funds to an account. Pool will call this to deposit funds.
     public(package) fun deposit_with_proof<T>(
         account: &mut Account,

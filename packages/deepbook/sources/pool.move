@@ -37,7 +37,7 @@ module deepbook::pool {
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const ENotEnoughDeep: u64 = 10;
-    const EInvalidOrderOwner: u64 = 11;
+    const EInvalidOrderAccount: u64 = 11;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -138,6 +138,7 @@ module deepbook::pool {
         let mut order_info = order_info::new(
             self.id.to_inner(),
             client_order_id,
+            account.id(),
             account.owner(),
             proof.trader(),
             order_type,
@@ -240,7 +241,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
-        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
+        assert!(order.account_id() == account.id(), EInvalidOrderAccount);
         self.state.process_modify(account.owner(), base, quote, deep, ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 
@@ -260,7 +261,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let mut order = self.book.cancel_order(order_id);
-        assert!(order.owner() == account.owner(), EInvalidOrderOwner);
+        assert!(order.account_id() == account.id(), EInvalidOrderAccount);
         self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
         self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
 

@@ -113,6 +113,8 @@ module deepbook::vault {
         };
     }
 
+    /// Adds a price point along with a timestamp to the deep price.
+    /// Allows for the calculation of deep price per base asset.
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
         deep_price: u64,
