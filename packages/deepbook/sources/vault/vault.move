@@ -65,6 +65,46 @@ module deepbook::vault {
         };
     }
 
+        /// Transfer any settled amounts for the account.
+    public(package) fun settle_account2<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        account_data: &mut AccountData,
+        account: &mut Account,
+        proof: &TradeProof,
+    ) {
+        let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = account_data.settle();
+        assert!(base_in == 0, 5);
+        assert!(quote_out == 0, 5);
+        assert!(base_out == 1 * 1_000_000_000, 5);
+        assert!(quote_in == 2 * 1_000_000_000, 5);
+        assert!(base_out == 1 * 1_000_000_000, 5);
+        assert!(deep_in < 2 * 1_000_000_000, 5);
+        if (base_out > base_in) {
+            let balance = self.base_balance.split(base_out - base_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (quote_out > quote_in) {
+            let balance = self.quote_balance.split(quote_out - quote_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (deep_out > deep_in) {
+            let balance = self.deep_balance.split(deep_out - deep_in);
+            account.deposit_with_proof(proof, balance);
+        };
+        if (base_in > base_out) {
+            let balance = account.withdraw_with_proof(proof, base_in - base_out, false);
+            self.base_balance.join(balance);
+        };
+        if (quote_in > quote_out) {
+            let balance = account.withdraw_with_proof(proof, quote_in - quote_out, false);
+            self.quote_balance.join(balance);
+        };
+        if (deep_in > deep_out) {
+            let balance = account.withdraw_with_proof(proof, deep_in - deep_out, false);
+            self.deep_balance.join(balance);
+        };
+    }
+
     /// Given an order, settle its balances. Up until this point, any partial fills have been executed
     /// and the remaining quantity is the only quantity left to be injected into the order book.
     /// 1. Calculate the maker and taker fee for this account.
@@ -84,7 +124,7 @@ module deepbook::vault {
         let maker_fee = trade_params.maker_fee();
         let stake_required = trade_params.stake_required();
         let taker_fee = if (account_data.active_stake() >= stake_required && volume_in_deep >= stake_required) {
-            math::div(taker_fee, 2)
+            math::mul(taker_fee, 500_000_000)
         } else {
             taker_fee
         };

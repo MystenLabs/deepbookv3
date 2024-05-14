@@ -85,17 +85,24 @@ module deepbook::pool_tests {
         place_and_cancel_order_ok(false);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    #[test]
+    /// Fill information is correct
     fun test_place_ask_then_immediate_or_cancel_bid() {
-        place_ask_then_immediate_or_cancel(false);
+        place_then_fill(true);
+    }
+
+    #[test]
+    /// Fill information is correct
+    fun test_place_ask_then_immediate_or_cancel_ask() {
+        place_then_fill(false);
     }
 
     /// Place normal ask order, then try to place immediate or cancel bid order
-    /// with price that's lower than the ask order. No trades should occur.
+    /// with price that's lower than the ask order.
     /// Alice places first ask order, Bob places bid order.
     /// Other direction can be tested using is_bid = false
     /// Note this function is work in progress
-    fun place_ask_then_immediate_or_cancel(
+    fun place_then_fill(
         is_bid: bool,
     ) {
         let owner: address = ALICE;
@@ -125,21 +132,12 @@ module deepbook::pool_tests {
         );
 
         let client_order_id = 2;
-        let order_type = IMMEDIATE_OR_CANCEL;
+        let order_type = NO_RESTRICTION;
         let price = if (is_bid) {
-            3 * FLOAT_SCALING
-        } else {
             1 * FLOAT_SCALING
+        } else {
+            3 * FLOAT_SCALING
         };
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
-        let placed_quantity = 0;
-        let unpaid_fees = 0;
-        let _total_fees = 0;
-        let fee_is_deep = true;
-        let status = CANCELED;
-        let self_matching_prevention = false;
-        let _executed_quantity = 0;
 
         let order_info = &place_order(
             BOB,
@@ -154,33 +152,27 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        // // TODO: total fees is not 0, need to debug but order is not placed
-        // verify_order_info(
-        //     order_info,
-        //     client_order_id,
-        //     price,
-        //     quantity,
-        //     placed_quantity,
-        //     executed_quantity,
-        //     unpaid_fees,
-        //     total_fees,
-        //     fee_is_deep,
-        //     status,
-        //     expire_timestamp,
-        //     self_matching_prevention,
-        // );
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let paid_fees = 0;
+        let fee_is_deep = true;
+        let executed_quantity = 1 * FLOAT_SCALING;
+        let cumulative_quote_quantity = 2 * FLOAT_SCALING;
+        let status = FILLED;
+        let self_matching_prevention = false;
 
-        borrow_and_verify_book_order(
-            order_info.order_id(),
-            !is_bid,
+        verify_order_info(
+            order_info,
             client_order_id,
-            placed_quantity,
-            unpaid_fees,
+            price,
+            quantity,
+            executed_quantity,
+            cumulative_quote_quantity,
+            paid_fees,
             fee_is_deep,
             status,
             expire_timestamp,
             self_matching_prevention,
-            &mut test,
         );
         end(test);
     }
@@ -495,6 +487,7 @@ module deepbook::pool_tests {
         assert!(order.self_matching_prevention() == self_matching_prevention, EBookOrderMismatch);
     }
 
+    /// Internal function to borrow orderbook
     fun borrow_orderbook<BaseAsset, QuoteAsset>(
         pool: &Pool<BaseAsset, QuoteAsset>,
         is_bid: bool,
@@ -522,7 +515,7 @@ module deepbook::pool_tests {
 
     /// Place an order
     fun place_order(
-        owner: address,
+        trader: address,
         acct_id: ID,
         client_order_id: u64,
         order_type: u8,
@@ -533,7 +526,7 @@ module deepbook::pool_tests {
         expire_timestamp: u64,
         test: &mut Scenario,
     ): OrderInfo {
-        test.next_tx(owner);
+        test.next_tx(trader);
         {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
             let clock = test.take_shared<Clock>();
