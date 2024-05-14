@@ -61,6 +61,31 @@ module deepbook::book {
         };
     }
 
+        /// Creates a new order.
+    /// Order is matched against the book and injected into the book if necessary.
+    /// If order is IOC or fully executed, it will not be injected.
+    public(package) fun create_order2(
+        self: &mut Book,
+        order_info: &mut OrderInfo,
+        deep_per_base: u64,
+        timestamp: u64
+    ) {
+        order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
+        let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
+        order_info.set_order_id(order_id);
+        self.match_against_book2(order_info, timestamp);
+        order_info.assert_post_only();
+        order_info.assert_fill_or_kill();
+
+        if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
+            return
+        };
+
+        if (order_info.remaining_quantity() > 0) {
+            self.inject_limit_order(order_info, deep_per_base);
+        };
+    }
+
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
     /// Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
     public(package) fun get_amount_out(self: &Book, base_amount: u64, quote_amount: u64): (u64, u64) {
@@ -206,6 +231,30 @@ module deepbook::book {
         let is_bid = order_info.is_bid();
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+
+        while (!ref.is_null()) {
+            let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
+            if (!order_info.match_maker(maker_order, timestamp)) break;
+            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
+
+            let (order_id, _, expired, complete) = order_info.last_fill().fill_status();
+            if (expired || complete) {
+                book_side.remove(order_id);
+            };
+        };
+    }
+        /// Matches the given order and quantity against the order book.
+    /// If is_bid, it will match against asks, otherwise against bids.
+    /// Mutates the order and the maker order as necessary.
+    fun match_against_book2(
+        self: &mut Book,
+        order_info: &mut OrderInfo,
+        timestamp: u64,
+    ) {
+        let is_bid = order_info.is_bid();
+        let book_side = if (is_bid) &mut self.asks else &mut self.bids;
+        let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+        assert!(is_bid == false, 2);
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];

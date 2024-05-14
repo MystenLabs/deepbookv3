@@ -87,13 +87,13 @@ module deepbook::pool_tests {
 
     #[test]
     /// Fill information is correct
-    fun test_place_ask_then_immediate_or_cancel_bid() {
+    fun test_place_then_fill_bid_ask() {
         place_then_fill(true);
     }
 
     #[test]
     /// Fill information is correct
-    fun test_place_ask_then_immediate_or_cancel_ask() {
+    fun test_place_then_fill_ask_bid() {
         place_then_fill(false);
     }
 
@@ -139,7 +139,7 @@ module deepbook::pool_tests {
             3 * FLOAT_SCALING
         };
 
-        let order_info = &place_order(
+        let order_info = place_order(
             BOB,
             acct_id_bob,
             client_order_id,
@@ -162,7 +162,7 @@ module deepbook::pool_tests {
         let self_matching_prevention = false;
 
         verify_order_info(
-            order_info,
+            &order_info,
             client_order_id,
             price,
             quantity,

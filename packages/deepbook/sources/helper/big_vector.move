@@ -544,7 +544,12 @@ module deepbook::big_vector {
         if (offset > 0) {
             (ref, offset - 1)
         } else {
-            (slice.prev(), self.borrow_slice(slice.prev()).vals.length() - 1)
+            if (slice.prev().is_null()) {
+                (SliceRef { ix: NO_SLICE }, 0)
+            } else {
+                let prev = self.borrow_slice(slice.prev());
+                (slice.prev(), prev.vals.length() - 1)
+            }
         }
     }
 
