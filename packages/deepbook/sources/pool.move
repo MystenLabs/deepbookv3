@@ -144,15 +144,15 @@ module deepbook::pool {
             order_type,
             price,
             quantity,
+            self.state.deep_price().conversion_rate(),
             is_bid,
             pay_with_deep,
             expire_timestamp,
             trade_params,
         );
-        let deep_per_base = self.state.deep_price().conversion_rate();
-        self.book.create_order(&mut order_info, deep_per_base, clock.timestamp_ms());
+        self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&order_info, self.state.account_mut(account.id(), ctx.epoch()), deep_per_base);
+        self.vault.settle_order(&order_info, self.state.account_mut(account.id(), ctx.epoch()));
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();

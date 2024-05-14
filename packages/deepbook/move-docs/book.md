@@ -196,7 +196,7 @@ Order is matched against the book and injected into the book if necessary.
 If order is IOC or fully executed, it will not be injected.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
 </code></pre>
 
 
@@ -208,7 +208,6 @@ If order is IOC or fully executed, it will not be injected.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
-    deep_per_base: u64,
     timestamp: u64
 ) {
     <a href="order_info.md#0x0_order_info">order_info</a>.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
@@ -222,7 +221,7 @@ If order is IOC or fully executed, it will not be injected.
     };
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
-        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, deep_per_base);
+        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base());
     };
 }
 </code></pre>

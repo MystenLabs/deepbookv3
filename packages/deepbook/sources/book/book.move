@@ -43,7 +43,6 @@ module deepbook::book {
     public(package) fun create_order(
         self: &mut Book,
         order_info: &mut OrderInfo,
-        deep_per_base: u64,
         timestamp: u64
     ) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
@@ -57,7 +56,7 @@ module deepbook::book {
         };
 
         if (order_info.remaining_quantity() > 0) {
-            self.inject_limit_order(order_info, deep_per_base);
+            self.inject_limit_order(order_info, order_info.deep_per_base());
         };
     }
 
