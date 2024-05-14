@@ -20,9 +20,9 @@ module deepbook::order {
 
     /// Order struct represents the order in the order book. It is optimized for space.
     public struct Order has store, drop {
+        account_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         quantity: u64,
         unpaid_fees: u64,
         fee_is_deep: bool,
@@ -33,10 +33,10 @@ module deepbook::order {
 
     /// Emitted when a maker order is canceled.
     public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        account_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         trader: address,
         price: u64,
         is_bid: bool,
@@ -46,10 +46,10 @@ module deepbook::order {
 
     /// Emitted when a maker order is modified.
     public struct OrderModified<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+        account_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
-        owner: address,
         trader: address,
         price: u64,
         is_bid: bool,
@@ -60,8 +60,8 @@ module deepbook::order {
     /// initialize the order struct.
     public(package) fun new(
         order_id: u128,
+        account_id: ID,
         client_order_id: u64,
-        owner: address,
         quantity: u64,
         unpaid_fees: u64,
         fee_is_deep: bool,
@@ -71,8 +71,8 @@ module deepbook::order {
     ): Order {
         Order {
             order_id,
+            account_id,
             client_order_id,
-            owner,
             quantity,
             unpaid_fees,
             fee_is_deep,
@@ -90,6 +90,10 @@ module deepbook::order {
         self.client_order_id
     }
 
+    public(package) fun account_id(self: &Order): ID {
+        self.account_id
+    }
+
     public(package) fun price(self: &Order): u64 {
         let (_, price, _) = utils::decode_order_id(self.order_id);
 
@@ -100,10 +104,6 @@ module deepbook::order {
         let (is_bid, _, _) = utils::decode_order_id(self.order_id);
 
         is_bid
-    }
-
-    public(package) fun owner(self: &Order): address {
-        self.owner
     }
 
     public(package) fun quantity(self: &Order): u64 {
@@ -222,9 +222,9 @@ module deepbook::order {
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id,
             order_id: self.order_id,
+            account_id: self.account_id,
             client_order_id: self.client_order_id,
             is_bid,
-            owner: self.owner,
             trader,
             base_asset_quantity_canceled: self.quantity,
             timestamp,
@@ -244,7 +244,7 @@ module deepbook::order {
             order_id: self.order_id,
             pool_id,
             client_order_id: self.client_order_id,
-            owner: self.owner,
+            account_id: self.account_id,
             trader,
             price,
             is_bid,

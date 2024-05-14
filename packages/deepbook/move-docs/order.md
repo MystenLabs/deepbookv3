@@ -14,9 +14,9 @@ All order matching happens in this module.
 -  [Function `new`](#0x0_order_new)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
+-  [Function `account_id`](#0x0_order_account_id)
 -  [Function `price`](#0x0_order_price)
 -  [Function `is_bid`](#0x0_order_is_bid)
--  [Function `owner`](#0x0_order_owner)
 -  [Function `quantity`](#0x0_order_quantity)
 -  [Function `unpaid_fees`](#0x0_order_unpaid_fees)
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
@@ -61,6 +61,12 @@ Order struct represents the order in the order book. It is optimized for space.
 
 <dl>
 <dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>order_id: u128</code>
 </dt>
 <dd>
@@ -68,12 +74,6 @@ Order struct represents the order in the order book. It is optimized for space.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
 </dt>
 <dd>
 
@@ -137,6 +137,12 @@ Emitted when a maker order is canceled.
 
 <dl>
 <dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
@@ -150,12 +156,6 @@ Emitted when a maker order is canceled.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
 </dt>
 <dd>
 
@@ -213,6 +213,12 @@ Emitted when a maker order is modified.
 
 <dl>
 <dt>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
@@ -226,12 +232,6 @@ Emitted when a maker order is modified.
 </dd>
 <dt>
 <code>client_order_id: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>owner: <b>address</b></code>
 </dt>
 <dd>
 
@@ -364,7 +364,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, client_order_id: u64, owner: <b>address</b>, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -375,8 +375,8 @@ initialize the order struct.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(
     order_id: u128,
+    account_id: ID,
     client_order_id: u64,
-    owner: <b>address</b>,
     quantity: u64,
     unpaid_fees: u64,
     fee_is_deep: bool,
@@ -386,8 +386,8 @@ initialize the order struct.
 ): <a href="order.md#0x0_order_Order">Order</a> {
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id,
+        account_id,
         client_order_id,
-        owner,
         quantity,
         unpaid_fees,
         fee_is_deep,
@@ -450,6 +450,30 @@ initialize the order struct.
 
 </details>
 
+<a name="0x0_order_account_id"></a>
+
+## Function `account_id`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): ID {
+    self.account_id
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_price"></a>
 
 ## Function `price`
@@ -495,30 +519,6 @@ initialize the order struct.
     <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(self.order_id);
 
     is_bid
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_owner"></a>
-
-## Function `owner`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_owner">owner</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <b>address</b>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_owner">owner</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): <b>address</b> {
-    self.owner
 }
 </code></pre>
 
@@ -937,9 +937,9 @@ Unpaid_fees is always in deep asset terms.
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         order_id: self.order_id,
+        account_id: self.account_id,
         client_order_id: self.client_order_id,
         is_bid,
-        owner: self.owner,
         trader,
         base_asset_quantity_canceled: self.quantity,
         timestamp,
@@ -979,7 +979,7 @@ Unpaid_fees is always in deep asset terms.
         order_id: self.order_id,
         pool_id,
         client_order_id: self.client_order_id,
-        owner: self.owner,
+        account_id: self.account_id,
         trader,
         price,
         is_bid,

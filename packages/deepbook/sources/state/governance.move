@@ -45,7 +45,7 @@ module deepbook::governance {
         /// If Pool is stable or volatile.
         stable: bool,
         /// List of proposals for the current epoch.
-        proposals: VecMap<address, Proposal>,
+        proposals: VecMap<ID, Proposal>,
         /// Trade parameters for the current epoch.
         trade_params: TradeParams,
         /// Trade parameters for the next epoch.
@@ -125,16 +125,16 @@ module deepbook::governance {
     /// Check if proposer already voted, if so will give error.
     /// If proposer has not voted, and there are already MAX_PROPOSALS proposals,
     /// remove the proposal with the lowest votes if it has less votes than the voting power.
-    /// Validation of the user adding is done in `State`.
+    /// Validation of the account adding is done in `State`.
     public(package) fun add_proposal(
         self: &mut Governance,
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
         stake_amount: u64,
-        proposer_address: address,
+        account_id: ID,
     ) {
-        assert!(!self.proposals.contains(&proposer_address), EAlreadyProposed);
+        assert!(!self.proposals.contains(&account_id), EAlreadyProposed);
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         if (self.stable) {
@@ -151,16 +151,16 @@ module deepbook::governance {
         };
 
         let new_proposal = new_proposal(taker_fee, maker_fee, stake_required);
-        self.proposals.insert(proposer_address, new_proposal);
+        self.proposals.insert(account_id, new_proposal);
     }
 
-    /// Vote on a proposal. Validation of the user and stake is done in `State`.
-    /// If `from_proposal_id` is some, the user is removing their vote from that proposal.
-    /// If `to_proposal_id` is some, the user is voting for that proposal.
+    /// Vote on a proposal. Validation of the account and stake is done in `State`.
+    /// If `from_proposal_id` is some, the account is removing their vote from that proposal.
+    /// If `to_proposal_id` is some, the account is voting for that proposal.
     public(package) fun adjust_vote(
         self: &mut Governance,
-        from_proposal_id: Option<address>,
-        to_proposal_id: Option<address>,
+        from_proposal_id: Option<ID>,
+        to_proposal_id: Option<ID>,
         stake_amount: u64,
     ) {
         let voting_power = stake_to_voting_power(stake_amount);
@@ -195,7 +195,7 @@ module deepbook::governance {
         };
     }
 
-    /// Adjust the total voting power by adding and removing stake. If a user's
+    /// Adjust the total voting power by adding and removing stake. If an account's
     /// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after` is 3000.
     /// Validation of inputs done in `State`.
     public(package) fun adjust_voting_power(
@@ -238,7 +238,7 @@ module deepbook::governance {
         self: &mut Governance,
         voting_power: u64,
     ) {
-        let mut removal_id = option::none<address>();
+        let mut removal_id = option::none<ID>();
         let mut cur_lowest_votes = MAX_U64;
         let (keys, values) = self.proposals.into_keys_values();
         let mut i = 0;
@@ -282,12 +282,12 @@ module deepbook::governance {
     }
 
     #[test_only]
-    public fun proposals(self: &Governance): VecMap<address, Proposal> {
+    public fun proposals(self: &Governance): VecMap<ID, Proposal> {
         self.proposals
     }
 
     #[test_only]
-    public fun proposal_votes(self: &Governance, addr: address): u64 {
-        self.proposals[&addr].votes
+    public fun proposal_votes(self: &Governance, account_id: ID): u64 {
+        self.proposals[&account_id].votes
     }
 }

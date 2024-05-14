@@ -25,7 +25,7 @@ TODO: No authorization checks are implemented;
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
 -  [Function `mid_price`](#0x0_pool_mid_price)
--  [Function `user_open_orders`](#0x0_pool_user_open_orders)
+-  [Function `account_open_orders`](#0x0_pool_account_open_orders)
 -  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
@@ -36,6 +36,7 @@ TODO: No authorization checks are implemented;
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
+<b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
@@ -46,7 +47,6 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
 <b>use</b> <a href="state.md#0x0_state">0x0::state</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
-<b>use</b> <a href="user.md#0x0_user">0x0::user</a>;
 <b>use</b> <a href="vault.md#0x0_vault">0x0::vault</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
@@ -287,11 +287,11 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<a name="0x0_pool_EInvalidOrderOwner"></a>
+<a name="0x0_pool_EInvalidOrderAccount"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>: u64 = 11;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>: u64 = 11;
 </code></pre>
 
 
@@ -465,10 +465,11 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
 ): OrderInfo {
     <b>assert</b>!(pay_with_deep || self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EFeeTypeNotSupported">EFeeTypeNotSupported</a>);
     <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
+        <a href="account.md#0x0_account">account</a>.id(),
         client_order_id,
-        <a href="account.md#0x0_account">account</a>.owner(),
         proof.trader(),
         order_type,
         price,
@@ -481,8 +482,8 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     <b>let</b> deep_per_base = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().conversion_rate();
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, deep_per_base, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), deep_per_base);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), deep_per_base);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
 
@@ -630,9 +631,9 @@ Swap exact amount without needing an account.
     ctx: &TxContext,
 ) {
     <b>let</b> (base, quote, deep, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
-    self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.owner(), base, quote, deep, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
+    self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), base, quote, deep, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -647,8 +648,8 @@ Swap exact amount without needing an account.
 ## Function `cancel_order`
 
 Cancel an order. The order must be owned by the account.
-The order is removed from the book and the user's open orders.
-The user's balance is updated with the order's remaining quantity.
+The order is removed from the book and the account's open orders.
+The account's balance is updated with the order's remaining quantity.
 Order canceled event is emitted.
 
 
@@ -670,9 +671,9 @@ Order canceled event is emitted.
     ctx: &TxContext,
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.owner() == <a href="account.md#0x0_account">account</a>.owner(), <a href="pool.md#0x0_pool_EInvalidOrderOwner">EInvalidOrderOwner</a>);
-    self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.owner(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
+    self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -704,8 +705,8 @@ Order canceled event is emitted.
     amount: u64,
     ctx: &TxContext,
 ) {
-    self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="account.md#0x0_account">account</a>.owner(), amount, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="account.md#0x0_account">account</a>.id(), amount, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -736,8 +737,8 @@ Order canceled event is emitted.
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="account.md#0x0_account">account</a>.owner(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="account.md#0x0_account">account</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -771,7 +772,7 @@ Order canceled event is emitted.
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_proposal(<a href="account.md#0x0_account">account</a>.owner(), taker_fee, maker_fee, stake_required, ctx);
+    self.<a href="state.md#0x0_state">state</a>.process_proposal(<a href="account.md#0x0_account">account</a>.id(), taker_fee, maker_fee, stake_required, ctx);
 }
 </code></pre>
 
@@ -785,7 +786,7 @@ Order canceled event is emitted.
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: <b>address</b>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -798,12 +799,12 @@ Order canceled event is emitted.
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,
-    proposal_id: <b>address</b>,
+    proposal_id: ID,
     ctx: &TxContext,
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_vote(<a href="account.md#0x0_account">account</a>.owner(), proposal_id, ctx);
+    self.<a href="state.md#0x0_state">state</a>.process_vote(<a href="account.md#0x0_account">account</a>.id(), proposal_id, ctx);
 }
 </code></pre>
 
@@ -832,9 +833,9 @@ Order canceled event is emitted.
     proof: &TradeProof,
     ctx: &TxContext,
 ) {
-    <b>let</b> <a href="user.md#0x0_user">user</a> = self.<a href="state.md#0x0_state">state</a>.user_mut(<a href="account.md#0x0_account">account</a>.owner(), ctx.epoch());
-    <a href="user.md#0x0_user">user</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_user(<a href="user.md#0x0_user">user</a>, <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch());
+    <a href="account_data.md#0x0_account_data">account_data</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(<a href="account_data.md#0x0_account_data">account_data</a>, <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -896,13 +897,13 @@ Order canceled event is emitted.
 
 </details>
 
-<a name="0x0_pool_user_open_orders"></a>
+<a name="0x0_pool_account_open_orders"></a>
 
-## Function `user_open_orders`
+## Function `account_open_orders`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_user_open_orders">user_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="user.md#0x0_user">user</a>: <b>address</b>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
 </code></pre>
 
 
@@ -911,11 +912,11 @@ Order canceled event is emitted.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_user_open_orders">user_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="user.md#0x0_user">user</a>: <b>address</b>,
+    <a href="account.md#0x0_account">account</a>: ID,
 ): VecSet&lt;u128&gt; {
-    self.<a href="state.md#0x0_state">state</a>.<a href="user.md#0x0_user">user</a>(<a href="user.md#0x0_user">user</a>).open_orders()
+    self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="account.md#0x0_account">account</a>).open_orders()
 }
 </code></pre>
 

@@ -9,7 +9,7 @@ module deepbook::history {
         total_staked_volume: u64,
         total_fees_collected: u64,
         stake_required: u64,
-        users_with_rebates: u64,
+        accounts_with_rebates: u64,
     }
 
     public struct History has store {
@@ -27,7 +27,7 @@ module deepbook::history {
             total_staked_volume: 0,
             total_fees_collected: 0,
             stake_required: 0,
-            users_with_rebates: 0,
+            accounts_with_rebates: 0,
         };
         History {
             epoch: ctx.epoch(),
@@ -38,35 +38,35 @@ module deepbook::history {
     }
 
     /// Update the epoch if it has changed.
-    /// If there are users with rebates, add the current epoch's volume data to the historic volumes.
+    /// If there are accounts with rebates, add the current epoch's volume data to the historic volumes.
     public(package) fun update(
         self: &mut History,
         ctx: &TxContext,
     ) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
-        if (self.volumes.users_with_rebates > 0) {
+        if (self.volumes.accounts_with_rebates > 0) {
             self.historic_volumes.add(self.epoch, self.volumes);
         };
         self.epoch = epoch;
     }
 
-    /// Given the epoch's volume data and the user's volume data,
+    /// Given the epoch's volume data and the account's volume data,
     /// calculate the rebate and burn amounts.
     public(package) fun calculate_rebate_amount(
         self: &mut History,
         epoch: u64,
         _maker_volume: u64,
-        user_stake: u64,
+        account_stake: u64,
     ): u64 {
         assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[epoch];
-        if (volumes.stake_required > user_stake) return 0;
+        if (volumes.stake_required > account_stake) return 0;
 
         // TODO: calculate and add to burn balance
 
-        volumes.users_with_rebates = volumes.users_with_rebates - 1;
-        if (volumes.users_with_rebates == 0) {
+        volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
+        if (volumes.accounts_with_rebates == 0) {
             self.historic_volumes.remove(epoch);
         };
 
@@ -78,16 +78,16 @@ module deepbook::history {
     public(package) fun add_volume(
         self: &mut History,
         maker_volume: u64,
-        user_stake: u64,
-        first_volume_by_user: bool,
+        account_stake: u64,
+        first_volume_by_account: bool,
     ) {
         if (maker_volume == 0) return;
 
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-        if (user_stake > self.volumes.stake_required) {
+        if (account_stake > self.volumes.stake_required) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
-            if (first_volume_by_user) {
-                self.volumes.users_with_rebates = self.volumes.users_with_rebates + 1;
+            if (first_volume_by_account) {
+                self.volumes.accounts_with_rebates = self.volumes.accounts_with_rebates + 1;
             }
         };
     }

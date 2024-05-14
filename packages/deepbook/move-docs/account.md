@@ -3,7 +3,7 @@
 
 # Module `0x0::account`
 
-The Account is a shared object that holds all of the balances for a user. A combination of <code><a href="account.md#0x0_account_Account">Account</a></code> and
+The Account is a shared object that holds all of the balances for different assets. A combination of <code><a href="account.md#0x0_account_Account">Account</a></code> and
 <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> are passed into a pool to perform trades. A <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> can be generated in two ways: by the
 owner directly, or by any <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner. The owner can generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> without the risk of
 equivocation. The <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner, due to it being an owned object, risks equivocation when generating
@@ -26,6 +26,7 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Function `withdraw`](#0x0_account_withdraw)
 -  [Function `validate_proof`](#0x0_account_validate_proof)
 -  [Function `owner`](#0x0_account_owner)
+-  [Function `id`](#0x0_account_id)
 -  [Function `deposit_with_proof`](#0x0_account_deposit_with_proof)
 -  [Function `withdraw_with_proof`](#0x0_account_withdraw_with_proof)
 -  [Function `delete`](#0x0_account_delete)
@@ -579,6 +580,31 @@ Returns the owner of the account.
 
 <pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_owner">owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): <b>address</b> {
     <a href="account.md#0x0_account">account</a>.owner
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_id"></a>
+
+## Function `id`
+
+Returns the owner of the account.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): ID {
+    <a href="account.md#0x0_account">account</a>.id.to_inner()
 }
 </code></pre>
 
