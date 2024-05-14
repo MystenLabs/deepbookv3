@@ -135,11 +135,11 @@ module deepbook::pool {
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
         let trade_params = self.state.governance().trade_params();
+
         let mut order_info = order_info::new(
             self.id.to_inner(),
             account.id(),
             client_order_id,
-            account.owner(),
             proof.trader(),
             order_type,
             price,
@@ -152,8 +152,8 @@ module deepbook::pool {
         let deep_per_base = self.state.deep_price().conversion_rate();
         self.book.create_order(&mut order_info, deep_per_base, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&order_info, self.state.user_mut(account.owner(), ctx.epoch()), deep_per_base);
-        self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
+        self.vault.settle_order(&order_info, self.state.user_mut(account.id(), ctx.epoch()), deep_per_base);
+        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
@@ -242,8 +242,8 @@ module deepbook::pool {
     ) {
         let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_modify(account.owner(), base, quote, deep, ctx);
-        self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
+        self.state.process_modify(account.id(), base, quote, deep, ctx);
+        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -262,8 +262,8 @@ module deepbook::pool {
     ) {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_cancel(&mut order, order_id, account.owner(), ctx);
-        self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
+        self.state.process_cancel(&mut order, order_id, account.id(), ctx);
+        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -275,8 +275,8 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ) {
-        self.state.process_stake(account.owner(), amount, ctx);
-        self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
+        self.state.process_stake(account.id(), amount, ctx);
+        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
     }
 
     public fun unstake<BaseAsset, QuoteAsset>(
@@ -287,8 +287,8 @@ module deepbook::pool {
     ) {
         account.validate_proof(proof);
 
-        self.state.process_unstake(account.owner(), ctx);
-        self.vault.settle_user(self.state.user_mut(account.owner(), ctx.epoch()), account, proof);
+        self.state.process_unstake(account.id(), ctx);
+        self.vault.settle_user(self.state.user_mut(account.id(), ctx.epoch()), account, proof);
     }
 
     public fun submit_proposal<BaseAsset, QuoteAsset>(
@@ -302,19 +302,19 @@ module deepbook::pool {
     ) {
         account.validate_proof(proof);
 
-        self.state.process_proposal(account.owner(), taker_fee, maker_fee, stake_required, ctx);
+        self.state.process_proposal(account.id(), taker_fee, maker_fee, stake_required, ctx);
     }
 
     public fun vote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
-        proposal_id: address,
+        proposal_id: ID,
         ctx: &TxContext,
     ) {
         account.validate_proof(proof);
 
-        self.state.process_vote(account.owner(), proposal_id, ctx);
+        self.state.process_vote(account.id(), proposal_id, ctx);
     }
 
     public fun claim_rebates<BaseAsset, QuoteAsset>(
@@ -323,7 +323,7 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        let user = self.state.user_mut(account.owner(), ctx.epoch());
+        let user = self.state.user_mut(account.id(), ctx.epoch());
         user.claim_rebates();
         self.vault.settle_user(user, account, proof);
     }
@@ -346,9 +346,9 @@ module deepbook::pool {
 
     public fun user_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
-        user: address,
+        account: ID,
     ): VecSet<u128> {
-        self.state.user(user).open_orders()
+        self.state.account(account).open_orders()
     }
 
     public fun get_level2_range<BaseAsset, QuoteAsset>(

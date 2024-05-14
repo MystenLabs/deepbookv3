@@ -7,7 +7,7 @@ module deepbook::vault {
         math,
         account::{Account, TradeProof},
         deep_price::{Self, DeepPrice},
-        user::User,
+        user::AccountData,
         order_info::OrderInfo,
     };
 
@@ -34,7 +34,7 @@ module deepbook::vault {
     /// Transfer any settled amounts for the user.
     public(package) fun settle_user<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
-        user: &mut User,
+        user: &mut AccountData,
         account: &mut Account,
         proof: &TradeProof,
     ) {
@@ -73,17 +73,17 @@ module deepbook::vault {
     public(package) fun settle_order<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>,
         order_info: &OrderInfo,
-        user: &mut User,
+        account_data: &mut AccountData,
         deep_per_base: u64,
     ) {
         let base_to_deep = self.deep_price.conversion_rate();
-        let total_volume = user.taker_volume() + user.maker_volume();
+        let total_volume = account_data.taker_volume() + account_data.maker_volume();
         let volume_in_deep = math::mul(total_volume, base_to_deep);
         let trade_params = order_info.trade_params();
         let taker_fee = trade_params.taker_fee();
         let maker_fee = trade_params.maker_fee();
         let stake_required = trade_params.stake_required();
-        let taker_fee = if (user.active_stake() >= stake_required && volume_in_deep >= stake_required) {
+        let taker_fee = if (account_data.active_stake() >= stake_required && volume_in_deep >= stake_required) {
             math::div(taker_fee, 2)
         } else {
             taker_fee
@@ -95,20 +95,20 @@ module deepbook::vault {
         let deep_in = math::mul(deep_per_base, math::mul(executed_quantity, taker_fee));
 
         if (order_info.is_bid()) {
-            user.add_settled_amounts(executed_quantity, 0, 0);
-            user.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
+            account_data.add_settled_amounts(executed_quantity, 0, 0);
+            account_data.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
         } else {
-            user.add_settled_amounts(0, cumulative_quote_quantity, 0);
-            user.add_owed_amounts(executed_quantity, 0, deep_in);
+            account_data.add_settled_amounts(0, cumulative_quote_quantity, 0);
+            account_data.add_owed_amounts(executed_quantity, 0, deep_in);
         };
 
         // Maker Part of Settling Order
         if (remaining_quantity > 0 && !order_info.is_immediate_or_cancel()) {
             let deep_in = math::mul(deep_per_base, math::mul(remaining_quantity, maker_fee));
             if (order_info.is_bid()) {
-                user.add_owed_amounts(0, math::mul(remaining_quantity, order_info.price()), deep_in);
+                account_data.add_owed_amounts(0, math::mul(remaining_quantity, order_info.price()), deep_in);
             } else {
-                user.add_owed_amounts(remaining_quantity, 0, deep_in);
+                account_data.add_owed_amounts(remaining_quantity, 0, deep_in);
             };
         };
     }

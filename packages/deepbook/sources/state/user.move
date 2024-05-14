@@ -8,14 +8,14 @@ module deepbook::user {
     }
 
     /// User data that is updated every epoch.
-    public struct User has store, copy, drop {
+    public struct AccountData has store, copy, drop {
         epoch: u64,
         open_orders: VecSet<u128>,
         taker_volume: u64,
         maker_volume: u64,
         active_stake: u64,
         inactive_stake: u64,
-        voted_proposal: Option<address>,
+        voted_proposal: Option<ID>,
         unclaimed_rebates: u64,
         settled_balances: Balances,
         owed_balances: Balances,
@@ -23,8 +23,8 @@ module deepbook::user {
 
     public(package) fun empty(
         epoch: u64,
-    ): User {
-        User {
+    ): AccountData {
+        AccountData {
             epoch,
             open_orders: vec_set::empty(),
             taker_volume: 0,
@@ -47,41 +47,41 @@ module deepbook::user {
     }
 
     public(package) fun active_stake(
-        self: &User,
+        self: &AccountData,
     ): u64 {
         self.active_stake
     }
 
     public(package) fun increase_maker_volume(
-        self: &mut User,
+        self: &mut AccountData,
         volume: u64,
     ) {
         self.maker_volume = self.maker_volume + volume;
     }
 
     public(package) fun increase_taker_volume(
-        self: &mut User,
+        self: &mut AccountData,
         volume: u64,
     ) {
         self.taker_volume = self.taker_volume + volume;
     }
 
     public(package) fun taker_volume(
-        self: &User,
+        self: &AccountData,
     ): u64 {
         self.taker_volume
     }
 
     public(package) fun maker_volume(
-        self: &User,
+        self: &AccountData,
     ): u64 {
         self.maker_volume
     }
 
     public(package) fun set_voted_proposal(
-        self: &mut User,
-        proposal: Option<address>
-    ): Option<address> {
+        self: &mut AccountData,
+        proposal: Option<ID>
+    ): Option<ID> {
         let prev_proposal = self.voted_proposal;
         self.voted_proposal = proposal;
 
@@ -89,7 +89,7 @@ module deepbook::user {
     }
 
     public(package) fun add_settled_amounts(
-        self: &mut User,
+        self: &mut AccountData,
         base: u64,
         quote: u64,
         deep: u64,
@@ -100,7 +100,7 @@ module deepbook::user {
     }
 
     public(package) fun add_owed_amounts(
-        self: &mut User,
+        self: &mut AccountData,
         base: u64,
         quote: u64,
         deep: u64,
@@ -113,7 +113,7 @@ module deepbook::user {
     /// Settle the user balances.
     /// Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     public(package) fun settle(
-        self: &mut User,
+        self: &mut AccountData,
     ): (u64, u64, u64, u64, u64, u64) {
         let (base_out, quote_out, deep_out) = self.settled_balances.reset();
         let (base_in, quote_in, deep_in) = self.owed_balances.reset();
@@ -124,7 +124,7 @@ module deepbook::user {
     /// Update the user data for the new epoch.
     /// Returns the previous epoch, maker volume, and active stake.
     public(package) fun update(
-        self: &mut User,
+        self: &mut AccountData,
         epoch: u64,
     ): (u64, u64, u64) {
         if (self.epoch == epoch) return (0, 0, 0);
@@ -144,35 +144,35 @@ module deepbook::user {
     }
 
     public(package) fun add_rebates(
-        self: &mut User,
+        self: &mut AccountData,
         rebates: u64,
     ) {
         self.unclaimed_rebates = self.unclaimed_rebates + rebates;
     }
 
     public(package) fun claim_rebates(
-        self: &mut User,
+        self: &mut AccountData,
     ) {
         self.settled_balances.deep = self.settled_balances.deep + self.unclaimed_rebates;
         self.unclaimed_rebates = 0;
     }
 
     public(package) fun add_order(
-        self: &mut User,
+        self: &mut AccountData,
         order_id: u128,
     ) {
         self.open_orders.insert(order_id);
     }
 
     public(package) fun remove_order(
-        self: &mut User,
+        self: &mut AccountData,
         order_id: u128,
     ) {
         self.open_orders.remove(&order_id)
     }
 
     public(package) fun add_stake(
-        self: &mut User,
+        self: &mut AccountData,
         stake: u64,
     ): (u64, u64) {
         let stake_before = self.active_stake + self.inactive_stake;
@@ -183,8 +183,8 @@ module deepbook::user {
     }
 
     public(package) fun remove_stake(
-        self: &mut User,
-    ): (u64, Option<address>) {
+        self: &mut AccountData,
+    ): (u64, Option<ID>) {
         let stake_before = self.active_stake + self.inactive_stake;
         let voted_proposal = self.voted_proposal;
         self.active_stake = 0;
@@ -196,7 +196,7 @@ module deepbook::user {
     }
 
     public(package) fun open_orders(
-        self: &User,
+        self: &AccountData,
     ): VecSet<u128> {
         self.open_orders
     }
