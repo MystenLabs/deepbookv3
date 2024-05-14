@@ -438,7 +438,7 @@ module deepbook::governance_tests {
     /// C votes on A's proposal and pushes it over quorum
     /// C then makes a new proposal. The proposal that's removed should be A
     /// Check to make sure A's removed by voting on proposal A, which will error (EProposalDoesNotExist)
-    fun remove_proposal() {
+    fun remove_proposal_vote_e() {
         let mut test = begin(OWNER);
         let alice = ALICE;
         let bob = BOB;
@@ -492,6 +492,60 @@ module deepbook::governance_tests {
 
         // Voting on proposal ALICE should error
         gov.adjust_vote(option::none(), option::some(alice), 100);
+
+        destroy(gov);
+        end(test);
+    }
+
+    #[test, expected_failure(abort_code = governance::EMaxProposalsReachedNotEnoughVotes)]
+    fun remove_proposal_stake_too_low_e() {
+        let mut test = begin(OWNER);
+        let alice = ALICE;
+        
+        test.next_tx(OWNER);
+        let mut gov = governance::empty(test.ctx());
+
+        let mut i = 0;
+        while (i < MAX_PROPOSALS) {
+            let address = address::from_u256(i + (1 << 10));
+            gov.add_proposal(500000, 200000, 10000, 1000, address);
+            // Bigger vote than Alice to make sure proposal doesn't get removed
+            gov.adjust_vote(option::none(), option::some(address), 110000);
+            i = i + 1;
+        };
+
+        assert!(gov.proposals().size() == (MAX_PROPOSALS as u64), 0);
+        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+
+        abort 0
+    }
+
+    #[test]
+    fun adjust_votes_remove_from_removed_ok() {
+        let mut test = begin(OWNER);
+        let alice = ALICE;
+        let bob = BOB;
+        
+        test.next_tx(OWNER);
+        let mut gov = governance::empty(test.ctx());
+        gov.add_proposal(500000, 200000, 10000, 1000, alice);
+        gov.adjust_vote(option::none(), option::some(alice), 1000);
+        assert!(gov.proposals().get(&alice).votes() == 1000, 0);
+
+        let mut i = 0;
+        while (i < MAX_PROPOSALS - 1) {
+            let address = address::from_u256(i + (1 << 10));
+            gov.add_proposal(500000, 200000, 10000, 2000, address);
+            gov.adjust_vote(option::none(), option::some(address), 2000);
+            i = i + 1;
+        };
+        assert!(gov.proposals().size() == 100, 0);
+
+        test.next_tx(bob);
+        gov.add_proposal(500000, 200000, 10000, 3000, bob);
+        assert!(!gov.proposals().contains(&alice), 0);
+        gov.adjust_vote(option::some(alice), option::some(bob), 3000);
+        assert!(gov.proposals().get(&bob).votes() == 2000, 0);
 
         destroy(gov);
         end(test);
