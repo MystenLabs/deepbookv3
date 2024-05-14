@@ -46,10 +46,10 @@ module deepbook::order_info {
         pool_id: ID,
         // ID of the order within the pool
         order_id: u128,
-        // ID of the order defined by client
-        client_order_id: u64,
         // ID of the account the order uses
         account_id: ID,
+        // ID of the order defined by client
+        client_order_id: u64,
         // Owner of the account the order uses
         owner: address,
         // Trader of the order
@@ -173,8 +173,8 @@ module deepbook::order_info {
         OrderInfo {
             pool_id,
             order_id: 0,
-            client_order_id,
             account_id,
+            client_order_id,
             owner,
             trader,
             order_type,

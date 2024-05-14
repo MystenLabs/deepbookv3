@@ -93,13 +93,13 @@ It is returned to the user at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>client_order_id: u64</code>
+<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>client_order_id: u64</code>
 </dt>
 <dd>
 
@@ -770,8 +770,8 @@ It is used to update the state.
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
         pool_id,
         order_id: 0,
-        client_order_id,
         account_id,
+        client_order_id,
         owner,
         trader,
         order_type,
