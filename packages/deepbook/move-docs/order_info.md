@@ -1646,15 +1646,13 @@ Funds for an expired order are returned to the maker as settled.
     <b>let</b> price = maker.<a href="order_info.md#0x0_order_info_price">price</a>();
     <b>let</b> filled_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), maker_quantity);
     <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, price);
+    maker.set_unpaid_fees(filled_quantity);
     maker.set_quantity(maker_quantity - filled_quantity);
     self.executed_quantity = self.executed_quantity + filled_quantity;
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
-
     self.status = <a href="order_info.md#0x0_order_info_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
     maker.set_fill_status();
-
-    maker.set_unpaid_fees(filled_quantity);
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,

@@ -544,7 +544,13 @@ module deepbook::big_vector {
         if (offset > 0) {
             (ref, offset - 1)
         } else {
-            (slice.prev(), self.borrow_slice(slice.prev()).vals.length() - 1)
+            let mut prev_index = 0;
+            let prev_slice = slice.prev();
+            if (!prev_slice.is_null()) {
+                prev_index = self.borrow_slice(prev_slice).vals.length() - 1
+            };
+
+            (prev_slice, prev_index)
         }
     }
 

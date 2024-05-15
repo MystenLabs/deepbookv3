@@ -398,15 +398,13 @@ module deepbook::order_info {
         let price = maker.price();
         let filled_quantity = math::min(self.remaining_quantity(), maker_quantity);
         let quote_quantity = math::mul(filled_quantity, price);
+        maker.set_unpaid_fees(filled_quantity);
         maker.set_quantity(maker_quantity - filled_quantity);
         self.executed_quantity = self.executed_quantity + filled_quantity;
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
-
         self.status = PARTIALLY_FILLED;
         if (self.remaining_quantity() == 0) self.status = FILLED;
         maker.set_fill_status();
-
-        maker.set_unpaid_fees(filled_quantity);
 
         self.emit_order_filled(
             maker,
