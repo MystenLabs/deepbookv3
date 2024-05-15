@@ -632,7 +632,7 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Test placing and cancelling a limit order
+    /// Test placing and cancelling a limit order.
     fun place_and_cancel_order_ok(
         is_bid: bool,
     ) {
@@ -691,7 +691,8 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Helper, verify OrderInfo
+    /// Helper, verify OrderInfo.
+    /// TODO: create an OrderInfo struct and use that instead of multiple parameters
     fun verify_order_info(
         order_info: &OrderInfo,
         client_order_id: u64,
@@ -717,7 +718,7 @@ module deepbook::pool_tests {
         assert!(order_info.self_matching_prevention() == self_matching_prevention, EOrderInfoMismatch);
     }
 
-    /// Helper, borrow orderbook and verify an order
+    /// Helper, borrow orderbook and verify an order.
     fun borrow_and_verify_book_order(
         book_order_id: u128,
         is_bid: bool,
@@ -747,6 +748,7 @@ module deepbook::pool_tests {
         return_shared(pool);
     }
 
+    /// Internal function to borrow orderbook to ensure order exists
     fun borrow_order_ok(
         book_order_id: u128,
         is_bid: bool,
@@ -758,7 +760,7 @@ module deepbook::pool_tests {
         return_shared(pool);
     }
 
-    /// Verify an order in the book, internal function
+    /// Internal function to verifies an order in the book
     fun verify_book_order(
         order: &Order,
         book_order_id: u128,
