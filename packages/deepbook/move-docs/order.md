@@ -12,6 +12,16 @@ All order matching happens in this module.
 -  [Struct `OrderModified`](#0x0_order_OrderModified)
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_order_new)
+-  [Function `modify`](#0x0_order_modify)
+-  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
+-  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
+-  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
+-  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
+-  [Function `set_quantity`](#0x0_order_set_quantity)
+-  [Function `set_live`](#0x0_order_set_live)
+-  [Function `set_fill_status`](#0x0_order_set_fill_status)
+-  [Function `set_canceled`](#0x0_order_set_canceled)
+-  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
 -  [Function `account_id`](#0x0_order_account_id)
@@ -23,16 +33,6 @@ All order matching happens in this module.
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
 -  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
--  [Function `set_quantity`](#0x0_order_set_quantity)
--  [Function `set_live`](#0x0_order_set_live)
--  [Function `set_fill_status`](#0x0_order_set_fill_status)
--  [Function `set_canceled`](#0x0_order_set_canceled)
--  [Function `set_expired`](#0x0_order_set_expired)
--  [Function `modify`](#0x0_order_modify)
--  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
--  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
--  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
--  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
 
 
 <pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
@@ -402,6 +402,330 @@ initialize the order struct.
 
 </details>
 
+<a name="0x0_order_modify"></a>
+
+## Function `modify`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64): (u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(
+    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
+    new_quantity: u64,
+    min_size: u64,
+    lot_size: u64,
+    timestamp: u64,
+): (u64, u64, u64) {
+    <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+    <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
+    <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
+    <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>let</b> cancel_amount = self.quantity - new_quantity;
+    <b>let</b> (base, quote, deep) = self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>true</b>);
+    self.quantity = new_quantity;
+
+    (base, quote, deep)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_cancel_amounts"></a>
+
+## Function `cancel_amounts`
+
+Amounts to settle for a cancelled or modified order. Modifies the order in place.
+Returns the base, quote and deep quantities to settle.
+Cancel quantity used to calculate the quantity outputs.
+Modify_order is a flag to indicate whether the order should be modified.
+Unpaid_fees is always in deep asset terms.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): (u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
+    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
+    cancel_quantity: u64,
+    modify_order: bool,
+): (u64, u64, u64) {
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
+    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
+    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) <b>else</b> 0;
+    <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, cancel_quantity), self.quantity);
+    <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
+        fee_refund
+    } <b>else</b> {
+        <b>if</b> (is_bid) quote_quantity = quote_quantity + fee_refund
+        <b>else</b> base_quantity = base_quantity + fee_refund;
+        0
+    };
+
+    <b>if</b> (modify_order) {
+        self.quantity = self.quantity - cancel_quantity;
+        self.unpaid_fees = self.unpaid_fees - fee_refund;
+    };
+
+    (base_quantity, quote_quantity, deep_quantity)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_unpaid_fees"></a>
+
+## Function `set_unpaid_fees`
+
+Calculate the amount of fees to be paid for a maker order already live.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, filled_quantity: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, filled_quantity: u64) {
+    <b>let</b> unpaid_fees = self.unpaid_fees;
+    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), self.quantity);
+    self.unpaid_fees = unpaid_fees - maker_fees;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_emit_order_canceled"></a>
+
+## Function `emit_order_canceled`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="order.md#0x0_order_Order">Order</a>,
+    pool_id: ID,
+    trader: <b>address</b>,
+    timestamp: u64
+) {
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
+        pool_id,
+        order_id: self.order_id,
+        account_id: self.account_id,
+        client_order_id: self.client_order_id,
+        is_bid,
+        trader,
+        base_asset_quantity_canceled: self.quantity,
+        timestamp,
+        price,
+    });
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_emit_order_modified"></a>
+
+## Function `emit_order_modified`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="order.md#0x0_order_Order">Order</a>,
+    pool_id: ID,
+    trader: <b>address</b>,
+    timestamp: u64
+) {
+    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
+    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
+        order_id: self.order_id,
+        pool_id,
+        client_order_id: self.client_order_id,
+        account_id: self.account_id,
+        trader,
+        price,
+        is_bid,
+        new_quantity: self.quantity,
+        timestamp,
+    });
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_quantity"></a>
+
+## Function `set_quantity`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, quantity: u64) {
+    self.quantity = quantity;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_live"></a>
+
+## Function `set_live`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+    self.status = <a href="order.md#0x0_order_LIVE">LIVE</a>;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_fill_status"></a>
+
+## Function `set_fill_status`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+    <b>if</b> (self.quantity == 0) {
+        self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
+    } <b>else</b> {
+        self.status = <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_canceled"></a>
+
+## Function `set_canceled`
+
+Update the order status to canceled.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+    self.status = <a href="order.md#0x0_order_CANCELED">CANCELED</a>;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_set_expired"></a>
+
+## Function `set_expired`
+
+Update the order status to expired.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
+    self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_order_id"></a>
 
 ## Function `order_id`
@@ -663,329 +987,6 @@ initialize the order struct.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
     self.self_matching_prevention
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_quantity"></a>
-
-## Function `set_quantity`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, quantity: u64) {
-    self.quantity = quantity;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_live"></a>
-
-## Function `set_live`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_LIVE">LIVE</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_fill_status"></a>
-
-## Function `set_fill_status`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    <b>if</b> (self.quantity == 0) {
-        self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
-    } <b>else</b> {
-        self.status = <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_canceled"></a>
-
-## Function `set_canceled`
-
-Update the order status to canceled.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_CANCELED">CANCELED</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_expired"></a>
-
-## Function `set_expired`
-
-Update the order status to expired.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_modify"></a>
-
-## Function `modify`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(
-    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
-    new_quantity: u64,
-    min_size: u64,
-    lot_size: u64,
-    timestamp: u64,
-): (u64, u64, u64) {
-    <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
-    <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
-    <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
-    <b>let</b> cancel_amount = self.quantity - new_quantity;
-    <b>let</b> (base, quote, deep) = self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>true</b>);
-    self.quantity = new_quantity;
-
-    (base, quote, deep)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_cancel_amounts"></a>
-
-## Function `cancel_amounts`
-
-Amounts to settle for a cancelled or modified order. Modifies the order in place.
-Returns the base, quote and deep quantities to settle.
-Cancel quantity used to calculate the quantity outputs.
-Modify_order is a flag to indicate whether the order should be modified.
-Unpaid_fees is always in deep asset terms.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(
-    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
-    cancel_quantity: u64,
-    modify_order: bool,
-): (u64, u64, u64) {
-    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
-    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
-    <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
-    <b>let</b> <b>mut</b> quote_quantity = <b>if</b> (is_bid) <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) <b>else</b> 0;
-    <b>let</b> fee_refund = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(self.unpaid_fees, cancel_quantity), self.quantity);
-    <b>let</b> deep_quantity = <b>if</b> (self.fee_is_deep) {
-        fee_refund
-    } <b>else</b> {
-        <b>if</b> (is_bid) quote_quantity = quote_quantity + fee_refund
-        <b>else</b> base_quantity = base_quantity + fee_refund;
-        0
-    };
-
-    <b>if</b> (modify_order) {
-        self.quantity = self.quantity - cancel_quantity;
-        self.unpaid_fees = self.unpaid_fees - fee_refund;
-    };
-
-    (base_quantity, quote_quantity, deep_quantity)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_unpaid_fees"></a>
-
-## Function `set_unpaid_fees`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, filled_quantity: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, filled_quantity: u64) {
-    <b>let</b> unpaid_fees = self.unpaid_fees;
-    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), self.quantity);
-    self.unpaid_fees = unpaid_fees - maker_fees;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_emit_order_canceled"></a>
-
-## Function `emit_order_canceled`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_canceled">emit_order_canceled</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="order.md#0x0_order_Order">Order</a>,
-    pool_id: ID,
-    trader: <b>address</b>,
-    timestamp: u64
-) {
-    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
-    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
-        pool_id,
-        order_id: self.order_id,
-        account_id: self.account_id,
-        client_order_id: self.client_order_id,
-        is_bid,
-        trader,
-        base_asset_quantity_canceled: self.quantity,
-        timestamp,
-        price,
-    });
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_emit_order_modified"></a>
-
-## Function `emit_order_modified`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="order.md#0x0_order_Order">order::Order</a>, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, trader: <b>address</b>, timestamp: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_emit_order_modified">emit_order_modified</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="order.md#0x0_order_Order">Order</a>,
-    pool_id: ID,
-    trader: <b>address</b>,
-    timestamp: u64
-) {
-    <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
-    <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderModified">OrderModified</a>&lt;BaseAsset, QuoteAsset&gt; {
-        order_id: self.order_id,
-        pool_id,
-        client_order_id: self.client_order_id,
-        account_id: self.account_id,
-        trader,
-        price,
-        is_bid,
-        new_quantity: self.quantity,
-        timestamp,
-    });
 }
 </code></pre>
 

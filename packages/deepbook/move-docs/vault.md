@@ -206,7 +206,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 3. Add to the account's settled and owed balances.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="account_data.md#0x0_account_data">account_data</a>: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="account_data.md#0x0_account_data">account_data</a>: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>)
 </code></pre>
 
 
@@ -217,7 +217,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="vault.md#0x0_vault_settle_order">settle_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
     <a href="account_data.md#0x0_account_data">account_data</a>: &<b>mut</b> AccountData,
 ) {
     <b>let</b> base_to_deep = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
@@ -237,6 +237,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> remaining_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity();
     <b>let</b> cumulative_quote_quantity = <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity();
     <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(<a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base(), <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, taker_fee));
+    <a href="order_info.md#0x0_order_info">order_info</a>.set_paid_fees(deep_in);
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(executed_quantity, 0, 0);

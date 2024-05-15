@@ -345,6 +345,9 @@ DeepBookAdminCap is used to call admin functions.
 
 ## Function `create_pool`
 
+Create a new pool. The pool is registered in the registry.
+Checks are performed to ensure the tick size, lot size, and min size are valid.
+The creation fee is transferred to the treasury address.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -371,7 +374,6 @@ DeepBookAdminCap is used to call admin functions.
 
     <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
     <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;();
-    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;QuoteAsset, BaseAsset&gt;();
 
     <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
     <b>let</b> pool_id = pool_uid.to_inner();
@@ -410,6 +412,7 @@ DeepBookAdminCap is used to call admin functions.
 
 ## Function `whitelisted`
 
+Accessor to check if the pool is whitelisted.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): bool
@@ -482,7 +485,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()));
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()));
     self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
@@ -610,6 +613,9 @@ Swap exact amount without needing an account.
 
 ## Function `modify_order`
 
+Modifies an order given order_id and new_quantity.
+New quantity must be less than the original quantity.
+Order must not have already expired.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -687,6 +693,8 @@ Order canceled event is emitted.
 
 ## Function `stake`
 
+Stake DEEP tokens to the pool. The account must have enough DEEP tokens.
+The account's data is updated with the staked amount.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -718,6 +726,9 @@ Order canceled event is emitted.
 
 ## Function `unstake`
 
+Unstake DEEP tokens from the pool. The account must have enough staked DEEP tokens.
+The account's data is updated with the unstaked amount.
+Balance is transferred to the account immediately.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -750,6 +761,11 @@ Order canceled event is emitted.
 
 ## Function `submit_proposal`
 
+Submit a proposal to change the taker fee, maker fee, and stake required.
+The account must have enough staked DEEP tokens to participate.
+Each account can only submit one proposal per epoch.
+If the maximum proposal is reached, the proposal with the lowest vote is removed.
+If the account has less voting power than the lowest voted proposal, the proposal is not added.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -784,6 +800,9 @@ Order canceled event is emitted.
 
 ## Function `vote`
 
+Vote on a proposal. The account must have enough staked DEEP tokens to participate.
+Full voting power of the account is used.
+Voting for a new proposal will remove the vote from the previous proposal.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -816,6 +835,8 @@ Order canceled event is emitted.
 
 ## Function `claim_rebates`
 
+Claim the rewards for the account. The account must have rewards to claim.
+The account's data is updated with the claimed rewards.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -847,6 +868,8 @@ Order canceled event is emitted.
 
 ## Function `get_amount_out`
 
+Dry run to determine the amount out for a given base or quote amount.
+Only one out of base or quote amount should be non-zero.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64): (u64, u64)
@@ -875,6 +898,7 @@ Order canceled event is emitted.
 
 ## Function `mid_price`
 
+Returns the mid price of the pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): u64
@@ -901,6 +925,7 @@ Order canceled event is emitted.
 
 ## Function `account_open_orders`
 
+Returns the order_id for all open order for the account in the pool.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
@@ -928,6 +953,9 @@ Order canceled event is emitted.
 
 ## Function `get_level2_range`
 
+Returns the (price_vec, quantity_vec) for the level2 order book.
+The price_low and price_high are inclusive.
+is_bid is true for bids and false for asks.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_level2_range">get_level2_range</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, price_low: u64, price_high: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
@@ -957,6 +985,10 @@ Order canceled event is emitted.
 
 ## Function `get_level2_ticks_from_mid`
 
+Returns the (price_vec, quantity_vec) for the level2 order book.
+The ticks are the number of ticks from best bid and best ask.
+(bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
+The price vectors are sorted in descending order for bids and ascending order for asks.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_level2_ticks_from_mid">get_level2_ticks_from_mid</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ticks: u64): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)
@@ -987,6 +1019,7 @@ Order canceled event is emitted.
 
 ## Function `add_deep_price_point`
 
+Add a deep price point to the pool. The deep price is used to calculate the conversion rate.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
@@ -1021,6 +1054,8 @@ Order canceled event is emitted.
 
 ## Function `set_stable`
 
+Set a pool as a stable pool. Stable pools have a lower fee.
+Only Admin can set a pool as stable.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_stable">set_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _cap: &<a href="pool.md#0x0_pool_DeepBookAdminCap">pool::DeepBookAdminCap</a>, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -1050,6 +1085,8 @@ Order canceled event is emitted.
 
 ## Function `set_whitelist`
 
+Set a pool as a whitelist pool. Whitelist pools have zero fees.
+Only Admin can set a pool as whitelist.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _cap: &<a href="pool.md#0x0_pool_DeepBookAdminCap">pool::DeepBookAdminCap</a>, whitelist: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)

@@ -105,6 +105,8 @@
 
 ## Function `register_pool`
 
+Register a new pool in the registry.
+Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="registry.md#0x0_registry_register_pool">register_pool</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>)
@@ -119,6 +121,12 @@
 <pre><code><b>public</b>(package) <b>fun</b> <a href="registry.md#0x0_registry_register_pool">register_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">Registry</a>,
 ) {
+    <b>let</b> key = <a href="registry.md#0x0_registry_PoolKey">PoolKey</a> {
+        base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
+        quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
+    };
+    <b>assert</b>!(!self.pools.contains(key), <a href="registry.md#0x0_registry_EPoolAlreadyExists">EPoolAlreadyExists</a>);
+
     <b>let</b> key = <a href="registry.md#0x0_registry_PoolKey">PoolKey</a> {
         base: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;(),
         quote: <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(),
@@ -137,6 +145,7 @@
 
 ## Function `create_and_share`
 
+Create a new registry and share it.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="registry.md#0x0_registry_create_and_share">create_and_share</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
