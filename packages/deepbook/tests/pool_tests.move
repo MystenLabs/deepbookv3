@@ -86,42 +86,84 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_place_then_fill_bid_ask() {
-        place_then_fill(true, NO_RESTRICTION, FILLED);
+        place_then_fill(
+            true,
+            NO_RESTRICTION,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            0,
+            FILLED
+        );
     }
 
     #[test]
     fun test_place_then_fill_ask_bid() {
-        place_then_fill(false, NO_RESTRICTION, FILLED);
+        place_then_fill(
+            false,
+            NO_RESTRICTION,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            0,
+            FILLED
+        );
     }
 
     #[test]
     fun test_place_then_ioc_bid_ask() {
-        place_then_fill(true, IMMEDIATE_OR_CANCEL, FILLED);
+        place_then_fill(
+            true,
+            IMMEDIATE_OR_CANCEL,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            0,
+            FILLED
+        );
     }
 
     #[test]
     fun test_place_then_ioc_ask_bid() {
-        place_then_fill(false, IMMEDIATE_OR_CANCEL, FILLED);
+        place_then_fill(
+            false,
+            IMMEDIATE_OR_CANCEL,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            0,
+            FILLED
+        );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     fun test_place_then_ioc_no_fill_bid_ask_order_removed_e() {
-        place_then_no_fill(true, IMMEDIATE_OR_CANCEL, CANCELED);
+        place_then_no_fill(
+            true,
+            IMMEDIATE_OR_CANCEL,
+            0,
+            0,
+            0,
+            CANCELED
+        );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     fun test_place_then_ioc_no_fill_ask_bid_order_removed_e() {
-        place_then_no_fill(false, IMMEDIATE_OR_CANCEL, CANCELED);
+        place_then_no_fill(
+            false,
+            IMMEDIATE_OR_CANCEL,
+            0,
+            0,
+            0,
+            CANCELED
+        );
     }
 
-    /// Place normal ask order, then try to place immediate or cancel bid order
-    /// with price that's lower than the ask order.
-    /// Alice places first ask order, Bob places bid order.
-    /// Other direction can be tested using is_bid = false
-    /// Note this function is work in progress
+    /// Place normal ask order, then try to fill full order.
+    /// Alice places first order, Bob places second order.
     fun place_then_fill(
         is_bid: bool,
         order_type: u8,
+        expected_executed_quantity: u64,
+        expected_cumulative_quote_quantity: u64,
+        expected_paid_fees: u64,
         expected_status: u8,
     ) {
         let owner: address = @0x1;
@@ -171,10 +213,7 @@ module deepbook::pool_tests {
 
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
-        let paid_fees = 0;
         let fee_is_deep = true;
-        let executed_quantity = 1 * FLOAT_SCALING;
-        let cumulative_quote_quantity = 2 * FLOAT_SCALING;
         let self_matching_prevention = false;
 
         verify_order_info(
@@ -182,9 +221,9 @@ module deepbook::pool_tests {
             client_order_id,
             price,
             quantity,
-            executed_quantity,
-            cumulative_quote_quantity,
-            paid_fees,
+            expected_executed_quantity,
+            expected_cumulative_quote_quantity,
+            expected_paid_fees,
             fee_is_deep,
             expected_status,
             expire_timestamp,
@@ -193,9 +232,14 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    /// Place normal ask order, then try to place without filling.
+    /// Alice places first order, Bob places second order.
     fun place_then_no_fill(
         is_bid: bool,
         order_type: u8,
+        expected_executed_quantity: u64,
+        expected_cumulative_quote_quantity: u64,
+        expected_paid_fees: u64,
         expected_status: u8,
     ) {
         let owner: address = @0x1;
@@ -245,10 +289,7 @@ module deepbook::pool_tests {
 
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
-        let paid_fees = 0;
         let fee_is_deep = true;
-        let executed_quantity = 0;
-        let cumulative_quote_quantity = 0;
         let self_matching_prevention = false;
 
         verify_order_info(
@@ -256,9 +297,9 @@ module deepbook::pool_tests {
             client_order_id,
             price,
             quantity,
-            executed_quantity,
-            cumulative_quote_quantity,
-            paid_fees,
+            expected_executed_quantity,
+            expected_cumulative_quote_quantity,
+            expected_paid_fees,
             fee_is_deep,
             expected_status,
             expire_timestamp,

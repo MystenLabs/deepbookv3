@@ -443,7 +443,7 @@ module deepbook::order_info {
         });
     }
 
-    public(package) fun is_live(self: &mut OrderInfo): bool {
+    public(package) fun is_live(self: &OrderInfo): bool {
         self.status == LIVE
     }
 
