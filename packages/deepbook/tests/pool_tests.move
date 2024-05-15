@@ -157,7 +157,7 @@ module deepbook::pool_tests {
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun test_expired_order_removed_e(){
+    fun test_expired_order_removed_bid_ask_e(){
         place_order_expire_timestamp_e(
             true,
             NO_RESTRICTION,
@@ -167,6 +167,123 @@ module deepbook::pool_tests {
             LIVE,
             math::mul(MAKER_FEE, DEEP_MULTIPLIER)
         );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_expired_order_removed_ask_bid_e(){
+        place_order_expire_timestamp_e(
+            false,
+            NO_RESTRICTION,
+            0,
+            0,
+            0,
+            LIVE,
+            math::mul(MAKER_FEE, DEEP_MULTIPLIER)
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidOrderType)]
+    /// placing an order > MAX_RESTRICTIONS should fail
+    fun place_order_max_restrictions_e() {
+        let owner: address = ALICE;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        let client_order_id = 1;
+        let order_type = MAX_RESTRICTION + 1;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let pay_with_deep = true;
+
+        place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            true,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    /// Trying to cancel a cancelled order should fail
+    fun place_and_cancel_order_empty_e() {
+        let owner: address = ALICE;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let is_bid = true;
+        let pay_with_deep = true;
+
+        let placed_order_id = place_order(
+            owner,
+            acct_id,
+            client_order_id, // client_order_id
+            order_type,
+            price, // price
+            quantity, // quantity
+            is_bid,
+            pay_with_deep,
+            expire_timestamp, // no expiration
+            &mut test,
+        ).order_id();
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
+        cancel_order(
+            owner,
+            acct_id,
+            placed_order_id,
+            &mut test
+        );
+        end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
+    /// Trying to place an order that's expiring should fail
+    fun place_order_expired_order_skipped() {
+        let owner: address = ALICE;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
+        set_time(100, &mut test);
+
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = 0;
+        let is_bid = true;
+        let pay_with_deep = true;
+
+        place_order(
+            owner,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        end(test);
     }
 
     /// Place normal ask order, then try to fill full order.
@@ -328,81 +445,9 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidOrderType)]
-    /// placing an order > MAX_RESTRICTIONS should fail
-    fun place_order_max_restrictions_e() {
-        let owner: address = ALICE;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        let client_order_id = 1;
-        let order_type = MAX_RESTRICTION + 1;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
-        let pay_with_deep = true;
-
-        place_order(
-            owner,
-            acct_id,
-            client_order_id,
-            order_type,
-            price,
-            quantity,
-            true,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-        end(test);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    /// Trying to cancel a cancelled order should fail
-    fun place_and_cancel_order_empty_e() {
-        let owner: address = ALICE;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-
-        let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
-        let is_bid = true;
-        let pay_with_deep = true;
-
-        let placed_order_id = place_order(
-            owner,
-            acct_id,
-            client_order_id, // client_order_id
-            order_type,
-            price, // price
-            quantity, // quantity
-            is_bid,
-            pay_with_deep,
-            expire_timestamp, // no expiration
-            &mut test,
-        ).order_id();
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
-        cancel_order(
-            owner,
-            acct_id,
-            placed_order_id,
-            &mut test
-        );
-        end(test);
-    }
-
-    /// Trying to fill an order that's expired on the book should remove order
-    /// New order should be placed successfully
-    /// Old order no longer exists
+    /// Trying to fill an order that's expired on the book should remove order.
+    /// New order should be placed successfully.
+    /// Old order no longer exists.
     fun place_order_expire_timestamp_e(
         is_bid: bool,
         order_type: u8,
@@ -494,38 +539,6 @@ module deepbook::pool_tests {
         borrow_order_ok(
             order_info_alice.order_id(),
             !is_bid,
-            &mut test,
-        );
-        end(test);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
-    /// Trying to place an order that's expiring should fail
-    fun place_order_expired_order_skipped() {
-        let owner: address = ALICE;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
-        let acct_id = create_acct_and_share_with_funds(owner, &mut test);
-        set_time(100, &mut test);
-
-        let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = 0;
-        let is_bid = true;
-        let pay_with_deep = true;
-
-        place_order(
-            owner,
-            acct_id,
-            client_order_id,
-            order_type,
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
             &mut test,
         );
         end(test);
