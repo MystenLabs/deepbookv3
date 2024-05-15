@@ -53,7 +53,6 @@ module deepbook::book {
         order_info.assert_fill_or_kill();
         if (order_info.is_immediate_or_cancel() && order_info.is_live()) {
             order_info.set_cancelled();
-            return
         };
         if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
             return

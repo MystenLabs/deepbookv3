@@ -218,7 +218,6 @@ If order is IOC or fully executed, it will not be injected.
     <a href="order_info.md#0x0_order_info">order_info</a>.assert_fill_or_kill();
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() && <a href="order_info.md#0x0_order_info">order_info</a>.is_live()) {
         <a href="order_info.md#0x0_order_info">order_info</a>.set_cancelled();
-        <b>return</b>
     };
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() || <a href="order_info.md#0x0_order_info">order_info</a>.original_quantity() == <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()) {
         <b>return</b>
