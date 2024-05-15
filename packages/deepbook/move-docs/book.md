@@ -9,6 +9,7 @@
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_book_empty)
 -  [Function `create_order`](#0x0_book_create_order)
+-  [Function `create_order2`](#0x0_book_create_order2)
 -  [Function `get_amount_out`](#0x0_book_get_amount_out)
 -  [Function `cancel_order`](#0x0_book_cancel_order)
 -  [Function `modify_order`](#0x0_book_modify_order)
@@ -18,6 +19,7 @@
 -  [Function `bids`](#0x0_book_bids)
 -  [Function `asks`](#0x0_book_asks)
 -  [Function `match_against_book`](#0x0_book_match_against_book)
+-  [Function `match_against_book2`](#0x0_book_match_against_book2)
 -  [Function `get_order_id`](#0x0_book_get_order_id)
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
 
@@ -217,6 +219,51 @@ If order is IOC or fully executed, it will not be injected.
     self.<a href="book.md#0x0_book_match_against_book">match_against_book</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
     <a href="order_info.md#0x0_order_info">order_info</a>.assert_post_only();
     <a href="order_info.md#0x0_order_info">order_info</a>.assert_fill_or_kill();
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() || <a href="order_info.md#0x0_order_info">order_info</a>.original_quantity() == <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()) {
+        <b>return</b>
+    };
+
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
+        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, deep_per_base);
+    };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_create_order2"></a>
+
+## Function `create_order2`
+
+Creates a new order.
+Order is matched against the book and injected into the book if necessary.
+If order is IOC or fully executed, it will not be injected.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order2">create_order2</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_create_order2">create_order2</a>(
+    self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
+    deep_per_base: u64,
+    timestamp: u64
+) {
+    <a href="order_info.md#0x0_order_info">order_info</a>.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
+    <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid(), <a href="order_info.md#0x0_order_info">order_info</a>.price(), self.<a href="book.md#0x0_book_get_order_id">get_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()));
+    <a href="order_info.md#0x0_order_info">order_info</a>.set_order_id(order_id);
+    self.<a href="book.md#0x0_book_match_against_book2">match_against_book2</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
+    <a href="order_info.md#0x0_order_info">order_info</a>.assert_post_only();
+    <a href="order_info.md#0x0_order_info">order_info</a>.assert_fill_or_kill();
+
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() || <a href="order_info.md#0x0_order_info">order_info</a>.original_quantity() == <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()) {
         <b>return</b>
     };
@@ -551,6 +598,51 @@ Mutates the order and the maker order as necessary.
     <b>let</b> is_bid = <a href="order_info.md#0x0_order_info">order_info</a>.is_bid();
     <b>let</b> book_side = <b>if</b> (is_bid) &<b>mut</b> self.asks <b>else</b> &<b>mut</b> self.bids;
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
+
+    <b>while</b> (!ref.is_null()) {
+        <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
+        <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
+        (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
+
+        <b>let</b> (order_id, _, expired, complete) = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill().fill_status();
+        <b>if</b> (expired || complete) {
+            book_side.remove(order_id);
+        };
+    };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_match_against_book2"></a>
+
+## Function `match_against_book2`
+
+Matches the given order and quantity against the order book.
+If is_bid, it will match against asks, otherwise against bids.
+Mutates the order and the maker order as necessary.
+
+
+<pre><code><b>fun</b> <a href="book.md#0x0_book_match_against_book2">match_against_book2</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="book.md#0x0_book_match_against_book2">match_against_book2</a>(
+    self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
+    <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
+    timestamp: u64,
+) {
+    <b>let</b> is_bid = <a href="order_info.md#0x0_order_info">order_info</a>.is_bid();
+    <b>let</b> book_side = <b>if</b> (is_bid) &<b>mut</b> self.asks <b>else</b> &<b>mut</b> self.bids;
+    <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
+    <b>assert</b>!(is_bid == <b>false</b>, 2);
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];

@@ -1352,7 +1352,13 @@ Given the current slice and offset, get the previous slice and offset. Can be nu
     <b>if</b> (offset &gt; 0) {
         (ref, offset - 1)
     } <b>else</b> {
-        (slice.prev(), self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(slice.prev()).vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1)
+        <b>let</b> <b>mut</b> prev_index = 0;
+        <b>let</b> prev_slice = slice.prev();
+        <b>if</b> (!prev_slice.is_null()) {
+            prev_index = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_slice).vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1
+        };
+
+        (prev_slice, prev_index)
     }
 }
 </code></pre>

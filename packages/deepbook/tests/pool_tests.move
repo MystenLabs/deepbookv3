@@ -88,13 +88,23 @@ module deepbook::pool_tests {
     #[test]
     /// Fill information is correct
     fun test_place_then_fill_bid_ask() {
-        place_then_fill(true);
+        place_then_fill(true, NO_RESTRICTION);
     }
 
     #[test]
     /// Fill information is correct
     fun test_place_then_fill_ask_bid() {
-        place_then_fill(false);
+        place_then_fill(false, NO_RESTRICTION);
+    }
+
+    #[test]
+    fun test_place_then_ioc_bid_ask() {
+        place_then_fill(true, IMMEDIATE_OR_CANCEL);
+    }
+
+    #[test]
+    fun test_place_then_ioc_ask_bid() {
+        place_then_fill(false, IMMEDIATE_OR_CANCEL);
     }
 
     /// Place normal ask order, then try to place immediate or cancel bid order
@@ -104,6 +114,7 @@ module deepbook::pool_tests {
     /// Note this function is work in progress
     fun place_then_fill(
         is_bid: bool,
+        order_type: u8,
     ) {
         let owner: address = ALICE;
         let mut test = begin(owner);
@@ -112,7 +123,6 @@ module deepbook::pool_tests {
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
         let price = 2 * FLOAT_SCALING;
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
@@ -122,7 +132,7 @@ module deepbook::pool_tests {
             owner,
             acct_id_alice,
             client_order_id,
-            order_type,
+            NO_RESTRICTION,
             price,
             quantity,
             is_bid,
@@ -132,7 +142,6 @@ module deepbook::pool_tests {
         );
 
         let client_order_id = 2;
-        let order_type = NO_RESTRICTION;
         let price = if (is_bid) {
             1 * FLOAT_SCALING
         } else {

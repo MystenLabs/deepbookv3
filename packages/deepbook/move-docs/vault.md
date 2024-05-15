@@ -229,7 +229,7 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> maker_fee = <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee();
     <b>let</b> stake_required = <a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required();
     <b>let</b> taker_fee = <b>if</b> (<a href="account_data.md#0x0_account_data">account_data</a>.active_stake() &gt;= stake_required && volume_in_deep &gt;= stake_required) {
-        <a href="math.md#0x0_math_div">math::div</a>(taker_fee, 2)
+        <a href="math.md#0x0_math_mul">math::mul</a>(taker_fee, 500_000_000)
     } <b>else</b> {
         taker_fee
     };
