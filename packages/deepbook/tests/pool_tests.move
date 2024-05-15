@@ -86,32 +86,32 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_place_then_fill_bid_ask() {
-        place_then_fill(true, NO_RESTRICTION);
+        place_then_fill(true, NO_RESTRICTION, FILLED);
     }
 
     #[test]
     fun test_place_then_fill_ask_bid() {
-        place_then_fill(false, NO_RESTRICTION);
+        place_then_fill(false, NO_RESTRICTION, FILLED);
     }
 
     #[test]
     fun test_place_then_ioc_bid_ask() {
-        place_then_fill(true, IMMEDIATE_OR_CANCEL);
+        place_then_fill(true, IMMEDIATE_OR_CANCEL, FILLED);
     }
 
     #[test]
     fun test_place_then_ioc_ask_bid() {
-        place_then_fill(false, IMMEDIATE_OR_CANCEL);
+        place_then_fill(false, IMMEDIATE_OR_CANCEL, FILLED);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     fun test_place_then_ioc_no_fill_bid_ask_order_removed_e() {
-        place_then_no_fill(true, IMMEDIATE_OR_CANCEL);
+        place_then_no_fill(true, IMMEDIATE_OR_CANCEL, CANCELED);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     fun test_place_then_ioc_no_fill_ask_bid_order_removed_e() {
-        place_then_no_fill(false, IMMEDIATE_OR_CANCEL);
+        place_then_no_fill(false, IMMEDIATE_OR_CANCEL, CANCELED);
     }
 
     /// Place normal ask order, then try to place immediate or cancel bid order
@@ -122,6 +122,7 @@ module deepbook::pool_tests {
     fun place_then_fill(
         is_bid: bool,
         order_type: u8,
+        expected_status: u8,
     ) {
         let owner: address = @0x1;
         let mut test = begin(owner);
@@ -174,7 +175,6 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let executed_quantity = 1 * FLOAT_SCALING;
         let cumulative_quote_quantity = 2 * FLOAT_SCALING;
-        let status = FILLED;
         let self_matching_prevention = false;
 
         verify_order_info(
@@ -186,7 +186,7 @@ module deepbook::pool_tests {
             cumulative_quote_quantity,
             paid_fees,
             fee_is_deep,
-            status,
+            expected_status,
             expire_timestamp,
             self_matching_prevention,
         );
@@ -196,6 +196,7 @@ module deepbook::pool_tests {
     fun place_then_no_fill(
         is_bid: bool,
         order_type: u8,
+        expected_status: u8,
     ) {
         let owner: address = @0x1;
         let mut test = begin(owner);
@@ -248,7 +249,6 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
-        let status = LIVE;
         let self_matching_prevention = false;
 
         verify_order_info(
@@ -260,7 +260,7 @@ module deepbook::pool_tests {
             cumulative_quote_quantity,
             paid_fees,
             fee_is_deep,
-            status,
+            expected_status,
             expire_timestamp,
             self_matching_prevention,
         );

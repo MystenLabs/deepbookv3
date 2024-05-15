@@ -28,6 +28,7 @@ module deepbook::order_info {
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
+    const CANCELED: u8 = 3;
 
     const EOrderInvalidPrice: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
@@ -440,6 +441,14 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
+    }
+
+    public(package) fun is_live(self: &mut OrderInfo): bool {
+        self.status == LIVE
+    }
+
+    public(package) fun set_cancelled(self: &mut OrderInfo) {
+        self.status = CANCELED;
     }
 
     fun emit_order_filled(
