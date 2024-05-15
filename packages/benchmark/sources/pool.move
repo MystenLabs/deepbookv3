@@ -1,16 +1,20 @@
 module benchmark::pool {
     use sui::linked_table::{LinkedTable, Self};
     use sui::table::{Table, Self};
-    use sui::event;
 
     use benchmark::critbit::{CritbitTree, Self};
     use benchmark::big_vector::{BigVector, Self};
 
     public struct Order has store, drop, copy {
+        account_id: ID,
         order_id: u128,
-        price: u64,
+        client_order_id: u64,
         quantity: u64,
-        owner: address,
+        unpaid_fees: u64,
+        fee_is_deep: bool,
+        status: u8,
+        expire_timestamp: u64,
+        self_match_prevention: bool,
     }
 
     public struct TickLevel has store {
@@ -44,31 +48,62 @@ module benchmark::pool {
         transfer::share_object(pool);
     }
 
+    fun new_order(
+        self: &mut Pool,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        ctx: &TxContext,
+    ): Order {
+        let order_id = if (is_bid) {
+            self.next_bid_order_id = self.next_bid_order_id - 1;
+            self.next_bid_order_id
+        } else {
+            self.next_ask_order_id = self.next_ask_order_id + 1;
+            self.next_ask_order_id
+        };
+        
+        Order {
+            account_id: object::id_from_address(ctx.sender()),
+            order_id: encode_order_id(is_bid, price, order_id),
+            client_order_id: order_id,
+            quantity,
+            unpaid_fees: 123456789,
+            fee_is_deep: false,
+            status: 0,
+            expire_timestamp: 123456789,
+            self_match_prevention: false,
+        }
+    }
+
+    fun encode_order_id(
+        is_bid: bool,
+        price: u64,
+        order_id: u64
+    ): u128 {
+        if (is_bid) {
+            ((price as u128) << 64) + (order_id as u128)
+        } else {
+            (1u128 << 127) + ((price as u128) << 64) + (order_id as u128)
+        }
+    }
+
     public fun place_limit_order_critbit(
-        pool: &mut Pool,
+        self: &mut Pool,
         price: u64,
         quantity: u64,
         is_bid: bool,
         ctx: &mut TxContext,
     ): u128 {
+        let order = self.new_order(price, quantity, is_bid, ctx);
+        let order_id = order.order_id;
         let owner = ctx.sender();
-        let order_id: u128;
+
         let open_orders: &mut CritbitTree<TickLevel>;
         if (is_bid) {
-            order_id = pool.next_bid_order_id as u128;
-            pool.next_bid_order_id = pool.next_bid_order_id + 1;
-            open_orders = &mut pool.bids_critbit;
+            open_orders = &mut self.bids_critbit;
         } else {
-            order_id = pool.next_ask_order_id as u128;
-            pool.next_ask_order_id = pool.next_ask_order_id + 1;
-            open_orders = &mut pool.asks_critbit;
-        };
-
-        let order = Order {
-            order_id: order_id,
-            price: price,
-            quantity: quantity,
-            owner: owner,
+            open_orders = &mut self.asks_critbit;
         };
 
         let (tick_exists, mut tick_index) = open_orders.find_leaf(price);
@@ -83,82 +118,6 @@ module benchmark::pool {
 
         let tick_level = open_orders.borrow_mut_leaf_by_index(tick_index);
         tick_level.open_orders.push_back(order_id, order);
-        event::emit(Order {
-            order_id,
-            price,
-            quantity,
-            owner: owner,
-        });
-        if (!pool.user_open_orders.contains(owner)) {
-            pool.user_open_orders.add(owner, linked_table::new(ctx));
-        };
-        pool.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
-
-        order_id
-    }
-
-    public fun cancel_first_ask_critbit(
-        self: &mut Pool,
-    ) {
-        let asks = &mut self.asks_critbit;
-        let (_, tick_index) = asks.min_leaf();
-        let tick_level = asks.borrow_mut_leaf_by_index(tick_index);
-        tick_level.open_orders.pop_front();
-    }
-
-    public fun cancel_first_bid_critbit(
-        self: &mut Pool,
-    ) {
-        let bids = &mut self.bids_critbit;
-        let (_, tick_index) = bids.max_leaf();
-        let tick_level = bids.borrow_mut_leaf_by_index(tick_index);
-        tick_level.open_orders.pop_back();
-    }
-
-    // fun destroy_empty_level(level: TickLevel) {
-    //     let TickLevel {
-    //         price: _,
-    //         open_orders: orders,
-    //     } = level;
-
-    //     orders.destroy_empty();
-    // }
-
-    public fun place_limit_order_bigvec(
-        self: &mut Pool,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        ctx: &mut TxContext,
-    ): u128 {
-        let owner = ctx.sender();
-        let order_id;
-        let open_orders: &mut BigVector<Order>;
-        if (is_bid) {
-            order_id = encode_order_id(price, self.next_bid_order_id);
-            self.next_bid_order_id = self.next_bid_order_id - 1;
-            open_orders = &mut self.bids_bigvec;
-        } else {
-            order_id = encode_order_id(price, self.next_ask_order_id);
-            self.next_ask_order_id = self.next_ask_order_id + 1;
-            open_orders = &mut self.asks_bigvec;
-        };
-
-        let order = Order {
-            order_id: order_id,
-            price: price,
-            quantity: quantity,
-            owner: owner,
-        };
-
-        open_orders.insert(order_id, order);
-
-        event::emit(Order {
-            order_id,
-            price,
-            quantity,
-            owner: owner,
-        });
         if (!self.user_open_orders.contains(owner)) {
             self.user_open_orders.add(owner, linked_table::new(ctx));
         };
@@ -167,27 +126,31 @@ module benchmark::pool {
         order_id
     }
 
-    public fun cancel_first_ask_bigvec(
-        self: &mut Pool,
-    ) {
-        let (ref, offset) = self.asks_bigvec.slice_following(0);
-        let ask = self.asks_bigvec.borrow_mut_ref_offset(ref, offset);
-        self.asks_bigvec.remove(ask.order_id);
-    }
-
-    public fun cancel_first_bid_bigvec(
-        self: &mut Pool,
-    ) {
-        let max_order_id = 1 << 128 - 1;
-        let (ref, offset) = self.bids_bigvec.slice_before(max_order_id);
-        let bid = self.bids_bigvec.borrow_mut_ref_offset(ref, offset);
-        self.bids_bigvec.remove(bid.order_id);
-    }
-
-    fun encode_order_id(
+    public fun place_limit_order_bigvec(
+        pool: &mut Pool,
         price: u64,
-        order_id: u64
+        quantity: u64,
+        is_bid: bool,
+        ctx: &mut TxContext,
     ): u128 {
-        ((price as u128) << 64) + (order_id as u128)
+        let order = pool.new_order(price, quantity, is_bid, ctx);
+        let order_id = order.order_id;
+        let owner = ctx.sender();
+
+        let open_orders: &mut BigVector<Order>;
+        if (is_bid) {
+            open_orders = &mut pool.bids_bigvec;
+        } else {
+            open_orders = &mut pool.asks_bigvec;
+        };
+
+        open_orders.insert(order_id, order);
+
+        if (!pool.user_open_orders.contains(owner)) {
+            pool.user_open_orders.add(owner, linked_table::new(ctx));
+        };
+        pool.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
+
+        order_id
     }
 }
