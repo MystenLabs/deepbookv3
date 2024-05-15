@@ -194,6 +194,8 @@ module deepbook::account {
         }
     }
 
+    /// Deletes an account.
+    /// This is used for direct interactions with the pool.
     public(package) fun delete(account: Account) {
         let Account {
             id,

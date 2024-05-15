@@ -82,80 +82,6 @@ module deepbook::order {
         }
     }
 
-    public(package) fun order_id(self: &Order): u128 {
-        self.order_id
-    }
-
-    public(package) fun client_order_id(self: &Order): u64 {
-        self.client_order_id
-    }
-
-    public(package) fun account_id(self: &Order): ID {
-        self.account_id
-    }
-
-    public(package) fun price(self: &Order): u64 {
-        let (_, price, _) = utils::decode_order_id(self.order_id);
-
-        price
-    }
-
-    public(package) fun is_bid(self: &Order): bool {
-        let (is_bid, _, _) = utils::decode_order_id(self.order_id);
-
-        is_bid
-    }
-
-    public(package) fun quantity(self: &Order): u64 {
-        self.quantity
-    }
-
-    public(package) fun unpaid_fees(self: &Order): u64 {
-        self.unpaid_fees
-    }
-
-    public(package) fun fee_is_deep(self: &Order): bool {
-        self.fee_is_deep
-    }
-
-    public(package) fun status(self: &Order): u8 {
-        self.status
-    }
-
-    public(package) fun expire_timestamp(self: &Order): u64 {
-        self.expire_timestamp
-    }
-
-    public(package) fun self_matching_prevention(self: &Order): bool {
-        self.self_matching_prevention
-    }
-
-    public(package) fun set_quantity(self: &mut Order, quantity: u64) {
-        self.quantity = quantity;
-    }
-
-    public(package) fun set_live(self: &mut Order) {
-        self.status = LIVE;
-    }
-
-    public(package) fun set_fill_status(self: &mut Order) {
-        if (self.quantity == 0) {
-            self.status = FILLED;
-        } else {
-            self.status = PARTIALLY_FILLED;
-        }
-    }
-
-    /// Update the order status to canceled.
-    public(package) fun set_canceled(self: &mut Order) {
-        self.status = CANCELED;
-    }
-
-    /// Update the order status to expired.
-    public(package) fun set_expired(self: &mut Order) {
-        self.status = EXPIRED;
-    }
-
     public(package) fun modify(
         self: &mut Order,
         new_quantity: u64,
@@ -205,6 +131,7 @@ module deepbook::order {
         (base_quantity, quote_quantity, deep_quantity)
     }
 
+    /// Calculate the amount of fees to be paid for a maker order already live.
     public(package) fun set_unpaid_fees(self: &mut Order, filled_quantity: u64) {
         let unpaid_fees = self.unpaid_fees;
         let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), self.quantity);
@@ -251,5 +178,79 @@ module deepbook::order {
             new_quantity: self.quantity,
             timestamp,
         });
+    }
+
+    public(package) fun set_quantity(self: &mut Order, quantity: u64) {
+        self.quantity = quantity;
+    }
+
+    public(package) fun set_live(self: &mut Order) {
+        self.status = LIVE;
+    }
+
+    public(package) fun set_fill_status(self: &mut Order) {
+        if (self.quantity == 0) {
+            self.status = FILLED;
+        } else {
+            self.status = PARTIALLY_FILLED;
+        }
+    }
+
+    /// Update the order status to canceled.
+    public(package) fun set_canceled(self: &mut Order) {
+        self.status = CANCELED;
+    }
+
+    /// Update the order status to expired.
+    public(package) fun set_expired(self: &mut Order) {
+        self.status = EXPIRED;
+    }
+
+    public(package) fun order_id(self: &Order): u128 {
+        self.order_id
+    }
+
+    public(package) fun client_order_id(self: &Order): u64 {
+        self.client_order_id
+    }
+
+    public(package) fun account_id(self: &Order): ID {
+        self.account_id
+    }
+
+    public(package) fun price(self: &Order): u64 {
+        let (_, price, _) = utils::decode_order_id(self.order_id);
+
+        price
+    }
+
+    public(package) fun is_bid(self: &Order): bool {
+        let (is_bid, _, _) = utils::decode_order_id(self.order_id);
+
+        is_bid
+    }
+
+    public(package) fun quantity(self: &Order): u64 {
+        self.quantity
+    }
+
+    public(package) fun unpaid_fees(self: &Order): u64 {
+        self.unpaid_fees
+    }
+
+    public(package) fun fee_is_deep(self: &Order): bool {
+        self.fee_is_deep
+    }
+
+    public(package) fun status(self: &Order): u8 {
+        self.status
+    }
+
+    public(package) fun expire_timestamp(self: &Order): u64 {
+        self.expire_timestamp
+    }
+
+    public(package) fun self_matching_prevention(self: &Order): bool {
+        self.self_matching_prevention
     }
 }

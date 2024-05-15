@@ -66,6 +66,9 @@ module deepbook::pool {
         min_size: u64,
     }
 
+    /// Create a new pool. The pool is registered in the registry.
+    /// Checks are performed to ensure the tick size, lot size, and min size are valid.
+    /// The creation fee is transferred to the treasury address.
     public fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -81,7 +84,6 @@ module deepbook::pool {
 
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
         registry.register_pool<BaseAsset, QuoteAsset>();
-        registry.register_pool<QuoteAsset, BaseAsset>();
 
         let pool_uid = object::new(ctx);
         let pool_id = pool_uid.to_inner();
@@ -111,6 +113,7 @@ module deepbook::pool {
         transfer::share_object(pool);
     }
 
+    /// Accessor to check if the pool is whitelisted.
     public fun whitelisted<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): bool {
@@ -231,6 +234,9 @@ module deepbook::pool {
         (base_out, quote_out, deep_out)
     }
 
+    /// Modifies an order given order_id and new_quantity.
+    /// New quantity must be less than the original quantity.
+    /// Order must not have already expired.
     public fun modify_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -268,6 +274,8 @@ module deepbook::pool {
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
+    /// Stake DEEP tokens to the pool. The account must have enough DEEP tokens.
+    /// The account's data is updated with the staked amount.
     public fun stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -279,6 +287,9 @@ module deepbook::pool {
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
     }
 
+    /// Unstake DEEP tokens from the pool. The account must have enough staked DEEP tokens.
+    /// The account's data is updated with the unstaked amount.
+    /// Balance is transferred to the account immediately.
     public fun unstake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -291,6 +302,11 @@ module deepbook::pool {
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
     }
 
+    /// Submit a proposal to change the taker fee, maker fee, and stake required.
+    /// The account must have enough staked DEEP tokens to participate.
+    /// Each account can only submit one proposal per epoch.
+    /// If the maximum proposal is reached, the proposal with the lowest vote is removed.
+    /// If the account has less voting power than the lowest voted proposal, the proposal is not added.
     public fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -305,6 +321,9 @@ module deepbook::pool {
         self.state.process_proposal(account.id(), taker_fee, maker_fee, stake_required, ctx);
     }
 
+    /// Vote on a proposal. The account must have enough staked DEEP tokens to participate.
+    /// Full voting power of the account is used.
+    /// Voting for a new proposal will remove the vote from the previous proposal.
     public fun vote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -317,6 +336,8 @@ module deepbook::pool {
         self.state.process_vote(account.id(), proposal_id, ctx);
     }
 
+    /// Claim the rewards for the account. The account must have rewards to claim.
+    /// The account's data is updated with the claimed rewards.
     public fun claim_rebates<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -330,6 +351,8 @@ module deepbook::pool {
 
     // GETTERS
 
+    /// Dry run to determine the amount out for a given base or quote amount.
+    /// Only one out of base or quote amount should be non-zero.
     public fun get_amount_out<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
@@ -338,12 +361,14 @@ module deepbook::pool {
         self.book.get_amount_out(base_amount, quote_amount)
     }
 
+    /// Returns the mid price of the pool.
     public fun mid_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): u64 {
         self.book.mid_price()
     }
 
+    /// Returns the order_id for all open order for the account in the pool.
     public fun account_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         account: ID,
@@ -351,6 +376,9 @@ module deepbook::pool {
         self.state.account(account).open_orders()
     }
 
+    /// Returns the (price_vec, quantity_vec) for the level2 order book.
+    /// The price_low and price_high are inclusive.
+    /// is_bid is true for bids and false for asks.
     public fun get_level2_range<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         price_low: u64,
@@ -360,6 +388,10 @@ module deepbook::pool {
         self.book.get_level2_range_and_ticks(price_low, price_high, MAX_U64, is_bid)
     }
 
+    /// Returns the (price_vec, quantity_vec) for the level2 order book.
+    /// The ticks are the number of ticks from best bid and best ask.
+    /// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
+    /// The price vectors are sorted in descending order for bids and ascending order for asks.
     public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
@@ -372,6 +404,7 @@ module deepbook::pool {
 
     // OPERATIONAL PUBLIC
 
+    /// Add a deep price point to the pool. The deep price is used to calculate the conversion rate.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         target_pool: &mut Pool<BaseAsset, QuoteAsset>,
         reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
@@ -388,6 +421,8 @@ module deepbook::pool {
 
     // OPERATIONAL OWNER
 
+    /// Set a pool as a stable pool. Stable pools have a lower fee.
+    /// Only Admin can set a pool as stable.
     public fun set_stable<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         _cap: &DeepBookAdminCap,
@@ -397,6 +432,8 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_stable(stable);
     }
 
+    /// Set a pool as a whitelist pool. Whitelist pools have zero fees.
+    /// Only Admin can set a pool as whitelist.
     public fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         _cap: &DeepBookAdminCap,

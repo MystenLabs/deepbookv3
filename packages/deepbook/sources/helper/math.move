@@ -31,7 +31,7 @@ module deepbook::math {
     }
 
     /// Divide two floating numbers.
-    /// This function will round down the result.
+    /// This function will round up the result.
     public(package) fun div_round_up(x: u64, y: u64): u64 {
         let (is_round_down, result) = div_internal(x, y);
         if (is_round_down) {
