@@ -156,6 +156,19 @@ module deepbook::pool_tests {
         );
     }
 
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_expired_order_removed_e(){
+        place_order_expire_timestamp_e(
+            true,
+            NO_RESTRICTION,
+            0,
+            0,
+            0,
+            LIVE,
+            math::mul(MAKER_FEE, DEEP_MULTIPLIER)
+        );
+    }
+
     /// Place normal ask order, then try to fill full order.
     /// Alice places first order, Bob places second order.
     fun place_then_fill(
@@ -387,9 +400,108 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    /// Trying to fill an order that's expired on the book should remove order
+    /// New order should be placed successfully
+    /// Old order no longer exists
+    fun place_order_expire_timestamp_e(
+        is_bid: bool,
+        order_type: u8,
+        expected_executed_quantity: u64,
+        expected_cumulative_quote_quantity: u64,
+        expected_paid_fees: u64,
+        expected_status: u8,
+        expected_unpaid_fees: u64,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+
+        let client_order_id = 1;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = 100;
+        let pay_with_deep = true;
+
+        let order_info_alice = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            NO_RESTRICTION,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let client_order_id = 2;
+        let price = if (is_bid) {
+            1 * FLOAT_SCALING
+        } else {
+            3 * FLOAT_SCALING
+        };
+        set_time(200, &mut test);
+        let expire_timestamp = MAX_U64;
+
+        let order_info_bob = place_order(
+            BOB,
+            acct_id_bob,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let fee_is_deep = true;
+        let self_matching_prevention = false;
+
+        verify_order_info(
+            &order_info_bob,
+            client_order_id,
+            price,
+            quantity,
+            expected_executed_quantity,
+            expected_cumulative_quote_quantity,
+            expected_paid_fees,
+            fee_is_deep,
+            expected_status,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        borrow_and_verify_book_order(
+            order_info_bob.order_id(),
+            !is_bid,
+            client_order_id,
+            quantity,
+            expected_unpaid_fees,
+            fee_is_deep,
+            expected_status,
+            expire_timestamp,
+            self_matching_prevention,
+            &mut test,
+        );
+
+        borrow_order_ok(
+            order_info_alice.order_id(),
+            !is_bid,
+            &mut test,
+        );
+        end(test);
+    }
+
     #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
     /// Trying to place an order that's expiring should fail
-    fun place_order_expire_timestamp_e() {
+    fun place_order_expired_order_skipped() {
         let owner: address = ALICE;
         let mut test = begin(owner);
         setup_test(owner, &mut test);
@@ -586,7 +698,7 @@ module deepbook::pool_tests {
         self_matching_prevention: bool,
         test: &mut Scenario,
     ) {
-        test.next_tx(ALICE);
+        test.next_tx(@0x1);
         let pool = test.take_shared<Pool<SUI, USDC>>();
         let order = borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         verify_book_order(
@@ -600,6 +712,17 @@ module deepbook::pool_tests {
             expire_timestamp,
             self_matching_prevention,
         );
+        return_shared(pool);
+    }
+
+    fun borrow_order_ok(
+        book_order_id: u128,
+        is_bid: bool,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(@0x1);
+        let pool = test.take_shared<Pool<SUI, USDC>>();
+        borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         return_shared(pool);
     }
 
