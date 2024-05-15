@@ -272,6 +272,10 @@ module deepbook::order_info {
         self.order_id = order_id;
     }
 
+    public(package) fun set_paid_fees(self: &mut OrderInfo, paid_fees: u64) {
+        self.paid_fees = paid_fees;
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.

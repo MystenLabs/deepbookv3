@@ -54,6 +54,7 @@ module deepbook::pool_tests {
     const LOT_SIZE: u64 = 1000;
     const MIN_SIZE: u64 = 10000;
     const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
+    const TAKER_DISCOUNT: u64 = 500_000_000;
 
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
@@ -92,7 +93,7 @@ module deepbook::pool_tests {
             1 * FLOAT_SCALING,
             1 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
-            0,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
             FILLED
         );
     }
@@ -105,7 +106,7 @@ module deepbook::pool_tests {
             1 * FLOAT_SCALING,
             1 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
-            0,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
             FILLED
         );
     }
@@ -118,7 +119,7 @@ module deepbook::pool_tests {
             1 * FLOAT_SCALING,
             1 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
-            0,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
             FILLED
         );
     }
@@ -131,7 +132,7 @@ module deepbook::pool_tests {
             1 * FLOAT_SCALING,
             1 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
-            0,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
             FILLED
         );
     }
@@ -307,7 +308,7 @@ module deepbook::pool_tests {
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
-        let client_order_id = 1;
+        let alice_client_order_id = 1;
         let alice_price = 2 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
         let pay_with_deep = true;
@@ -315,7 +316,7 @@ module deepbook::pool_tests {
         place_order(
             ALICE,
             acct_id_alice,
-            client_order_id,
+            alice_client_order_id,
             NO_RESTRICTION,
             alice_price,
             alice_quantity,
@@ -325,7 +326,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let client_order_id = 2;
+        let bob_client_order_id = 2;
         let bob_price = if (is_bid) {
             1 * FLOAT_SCALING
         } else {
@@ -336,7 +337,7 @@ module deepbook::pool_tests {
         let bob_order_info = place_order(
             BOB,
             acct_id_bob,
-            client_order_id,
+            bob_client_order_id,
             order_type,
             bob_price,
             bob_quantity,
@@ -346,16 +347,15 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
         let fee_is_deep = true;
         let self_matching_prevention = false;
 
         verify_order_info(
             &bob_order_info,
-            client_order_id,
+            bob_client_order_id,
             bob_price,
-            quantity,
+            bob_quantity,
             expected_executed_quantity,
             expected_cumulative_quote_quantity,
             expected_paid_fees,

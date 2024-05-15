@@ -155,7 +155,7 @@ module deepbook::pool {
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&order_info, self.state.account_mut(account.id(), ctx.epoch()));
+        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
