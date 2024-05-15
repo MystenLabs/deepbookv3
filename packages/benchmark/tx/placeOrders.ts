@@ -9,10 +9,10 @@ dotenv.config();
 
 let owner = "0x02031593be871e2a24b69895e134d51f98ff78aff49b28e7f498c3abba41305c"
 let coin = "0x638de21ba1c5076010eaa3f81198af0166e00682e0c96e04755a5395adc90779"
-let poolPackage = "0x8158ef74042ead33a95649d8845842f53d3b80111d7130d55e11c7f899b5c5fa"
-let poolObj = "0x64c00dae3df9460566e96c53e0b5515981b31d2b6b77af3852af138644e24900"
-let vecPackage = "0x51e541d9c17845560d1cac7f6ed1435619d69ce547a7a54bc00f7ee78d1b2790"
-let vec = "0x10626540277eb43f703b68ba4ff8cf367e5c853ceed28cc69a7508af523c284e"
+let poolPackage = "0x8a6a018f307b8aa910aee7cd000d4181ef87b2c3177157bae074e0f404128043"
+let poolObj = "0xc8a30046328e4dae99772b373df5ecf9670f684e30feccbf668d5595e50737b7"
+let vecPackage = "0x32f4cebc7345e7fd44896f44241b7d7501d87cab54b7f30b94254eedf3b6630f"
+let vec = "0x3b69d481d0c66d7ea50b039b0edb2d7aa48dc58eecbac9563ce0f5019cd3804b"
 const client = new SuiClient({ url: "https://suins-rpc.testnet.sui.io" });
 let keypair = Ed25519Keypair.deriveKeypair(process.env.ADMIN_PHRASE!)
 let totalComputationCost = 0;
@@ -69,7 +69,7 @@ const prepCoins = async () => {
         let futures: any[] = []
         for (let j = 0; j < numCoins; j++) {
             console.log(res[j])
-            futures.push(placeOrderCritbit(res[j]))
+            futures.push(tableTest(res[j]))
         }
 
         console.log('got all futures ' + i)
@@ -80,7 +80,7 @@ const prepCoins = async () => {
     }
 }
 
-const placeOrderCritbit = async (gasCoin: any) => {
+const placeOrdersCritbit = async (gasCoin: any) => {
     console.log(`Placing order`)
     let txb = new TransactionBlock();
     txb.setGasPayment([gasCoin])
@@ -92,11 +92,11 @@ const placeOrderCritbit = async (gasCoin: any) => {
             txb.object(poolObj),
             txb.pure(price),
             txb.pure(amount),
-            txb.pure(true)
+            txb.pure(false)
         ]
     })
     
-    return execute(txb)
+    return execute(txb, 'place_order_critbit.csv')
 }
 
 const placeOrdersBigVec = async (gasCoin: any) => {
@@ -114,7 +114,7 @@ const placeOrdersBigVec = async (gasCoin: any) => {
         ]
     })
 
-    return execute(txb)
+    return execute(txb, 'place_order_bigvec_4x250.csv')
 }
 
 const cancelFirstAskCritbit = async (gasCoin: any) => {
@@ -126,7 +126,7 @@ const cancelFirstAskCritbit = async (gasCoin: any) => {
         ]
     })
 
-    return execute(txb)
+    return execute(txb, 'cancel_first_ask_critbit.csv')
 }
 
 const cancelFirstAskBigVec = async () => {
@@ -138,7 +138,7 @@ const cancelFirstAskBigVec = async () => {
         ]
     })
 
-    execute(txb)
+    execute(txb, 'cancel_first_ask_bigvec.csv')
 }
 
 const vectorTest = async (gasCoin: any) => {
@@ -152,10 +152,24 @@ const vectorTest = async (gasCoin: any) => {
         ]
     })
 
-    return execute(txb)
+    return execute(txb, 'vector.csv')
 }
 
-const execute = async (txb: TransactionBlock) => {
+const tableTest = async (gasCoin: any) => {
+    let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    txb.moveCall({
+        target: `${vecPackage}::vector::remove_from_table`,
+        arguments: [
+            txb.object(vec),
+            txb.pure(iteration)
+        ]
+    })
+
+    return execute(txb, 'vector.csv')
+}
+
+const execute = async (txb: TransactionBlock, filename: string) => {
     await client.signAndExecuteTransactionBlock({
         transactionBlock: txb,
         signer: keypair,
@@ -171,8 +185,8 @@ const execute = async (txb: TransactionBlock) => {
             totalStorageRebate += +gas.storageRebate
             totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
 
-            let data = `${++iteration} ${totalStorageCost} ${totalStorageRebate} ${totalNonRefundableStorageFee} ${+gas.storageCost} ${+gas.storageRebate} ${+gas.nonRefundableStorageFee} \n`
-            appendFileSync('vec_prepend.txt', data)
+            let data = `${++iteration} ${+gas.computationCost} ${+gas.storageCost} ${+gas.storageRebate} ${+gas.nonRefundableStorageFee} \n`
+            appendFileSync(filename, data)
         }
     }).catch((err) => {
         console.log(err)

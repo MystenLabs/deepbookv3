@@ -24,6 +24,10 @@ module benchmark::vector {
         self.tbl.add(val, val);
     }
 
+    public fun remove_from_table(self: &mut Test, val: u64) {
+        self.tbl.remove(val);
+    }
+
     public fun push_back_vec(self: &mut Test, val: u64) {
         self.push_back_vec.push_back(val);
     }
