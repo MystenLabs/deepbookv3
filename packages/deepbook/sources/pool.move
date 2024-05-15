@@ -377,7 +377,7 @@ module deepbook::pool {
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
-    /// The price_low and price_high are inclusive.
+    /// The price_low and price_high are inclusive, all orders within the range are returned.
     /// is_bid is true for bids and false for asks.
     public fun get_level2_range<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
@@ -389,7 +389,7 @@ module deepbook::pool {
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
-    /// The ticks are the number of ticks from best bid and best ask.
+    /// Ticks are the maximum number of ticks to return starting from best bid and best ask.
     /// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
     /// The price vectors are sorted in descending order for bids and ascending order for asks.
     public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
