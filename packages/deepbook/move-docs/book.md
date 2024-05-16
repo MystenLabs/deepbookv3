@@ -216,6 +216,9 @@ If order is IOC or fully executed, it will not be injected.
     self.<a href="book.md#0x0_book_match_against_book">match_against_book</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
     <a href="order_info.md#0x0_order_info">order_info</a>.assert_post_only();
     <a href="order_info.md#0x0_order_info">order_info</a>.assert_fill_or_kill();
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() && <a href="order_info.md#0x0_order_info">order_info</a>.is_live()) {
+        <a href="order_info.md#0x0_order_info">order_info</a>.set_cancelled();
+    };
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() || <a href="order_info.md#0x0_order_info">order_info</a>.original_quantity() == <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()) {
         <b>return</b>
     };
@@ -290,6 +293,7 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
 ## Function `cancel_order`
 
+Cancels an order given order_id
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_cancel_order">cancel_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128): <a href="order.md#0x0_order_Order">order::Order</a>
@@ -319,6 +323,9 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
 ## Function `modify_order`
 
+Modifies an order given order_id and new_quantity.
+New quantity must be less than the original quantity.
+Order must not have already expired.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &<a href="order.md#0x0_order_Order">order::Order</a>)
@@ -381,6 +388,7 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
 ## Function `mid_price`
 
+Returns the mid price of the order book.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_mid_price">mid_price</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): u64
@@ -413,6 +421,9 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 
 ## Function `get_level2_range_and_ticks`
 
+Returns the best bids and asks.
+The number of ticks is the number of price levels to return.
+The price_low and price_high are the range of prices to return.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_get_level2_range_and_ticks">get_level2_range_and_ticks</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, price_low: u64, price_high: u64, ticks: u64, is_bid: bool): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;)

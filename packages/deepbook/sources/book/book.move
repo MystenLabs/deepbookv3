@@ -51,6 +51,9 @@ module deepbook::book {
         self.match_against_book(order_info, timestamp);
         order_info.assert_post_only();
         order_info.assert_fill_or_kill();
+        if (order_info.is_immediate_or_cancel() && order_info.is_live()) {
+            order_info.set_cancelled();
+        };
         if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
             return
         };
@@ -96,6 +99,7 @@ module deepbook::book {
         }
     }
 
+    /// Cancels an order given order_id
     public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         if (is_bid) {
@@ -105,6 +109,9 @@ module deepbook::book {
         }
     }
 
+    /// Modifies an order given order_id and new_quantity.
+    /// New quantity must be less than the original quantity.
+    /// Order must not have already expired.
     public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &Order) {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         let order = if (is_bid) {
@@ -127,6 +134,7 @@ module deepbook::book {
         self.lot_size
     }
 
+    /// Returns the mid price of the order book.
     public(package) fun mid_price(self: &Book): u64 {
         let (ask_ref, ask_offset) = self.asks.min_slice();
         let (bid_ref, bid_offset) = self.bids.max_slice();
@@ -139,6 +147,9 @@ module deepbook::book {
         math::div(ask_price + bid_price, 2)
     }
 
+    /// Returns the best bids and asks.
+    /// The number of ticks is the number of price levels to return.
+    /// The price_low and price_high are the range of prices to return.
     public(package) fun get_level2_range_and_ticks(
         self: &Book,
         price_low: u64,

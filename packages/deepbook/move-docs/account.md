@@ -696,6 +696,8 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
 ## Function `delete`
 
+Deletes an account.
+This is used for deleting temporary accounts for direct swap with pool.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_delete">delete</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">account::Account</a>)

@@ -66,6 +66,7 @@ module deepbook::deep_price {
         }
     }
 
+    /// Returns the conversion rate of DEEP per base token.
     public(package) fun conversion_rate(
         self: &DeepPrice,
     ): u64 {

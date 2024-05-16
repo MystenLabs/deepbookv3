@@ -194,6 +194,8 @@ module deepbook::account {
         }
     }
 
+    /// Deletes an account.
+    /// This is used for deleting temporary accounts for direct swap with pool.
     public(package) fun delete(account: Account) {
         let Account {
             id,

@@ -20,9 +20,17 @@ module deepbook::registry {
         quote: TypeName,
     }
 
+    /// Register a new pool in the registry.
+    /// Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
     public(package) fun register_pool<BaseAsset, QuoteAsset>(
         self: &mut Registry,
     ) {
+        let key = PoolKey {
+            base: type_name::get<QuoteAsset>(),
+            quote: type_name::get<BaseAsset>(),
+        };
+        assert!(!self.pools.contains(key), EPoolAlreadyExists);
+
         let key = PoolKey {
             base: type_name::get<BaseAsset>(),
             quote: type_name::get<QuoteAsset>(),
@@ -32,6 +40,7 @@ module deepbook::registry {
         self.pools.add(key, true);
     }
 
+    /// Create a new registry and share it.
     public(package) fun create_and_share(ctx: &mut TxContext) {
         let registry = Registry {
             id: object::new(ctx),

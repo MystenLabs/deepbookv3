@@ -72,7 +72,7 @@ module deepbook::vault {
     /// 3. Add to the account's settled and owed balances.
     public(package) fun settle_order<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>,
-        order_info: &OrderInfo,
+        order_info: &mut OrderInfo,
         account_data: &mut AccountData,
     ) {
         let base_to_deep = self.deep_price.conversion_rate();
@@ -92,6 +92,7 @@ module deepbook::vault {
         let remaining_quantity = order_info.remaining_quantity();
         let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
         let deep_in = math::mul(order_info.deep_per_base(), math::mul(executed_quantity, taker_fee));
+        order_info.set_paid_fees(deep_in);
 
         if (order_info.is_bid()) {
             account_data.add_settled_amounts(executed_quantity, 0, 0);

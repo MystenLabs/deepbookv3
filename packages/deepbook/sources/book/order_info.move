@@ -28,6 +28,7 @@ module deepbook::order_info {
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
+    const CANCELED: u8 = 3;
 
     const EOrderInvalidPrice: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
@@ -271,6 +272,10 @@ module deepbook::order_info {
         self.order_id = order_id;
     }
 
+    public(package) fun set_paid_fees(self: &mut OrderInfo, paid_fees: u64) {
+        self.paid_fees = paid_fees;
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
@@ -440,6 +445,14 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
+    }
+
+    public(package) fun is_live(self: &OrderInfo): bool {
+        self.status == LIVE
+    }
+
+    public(package) fun set_cancelled(self: &mut OrderInfo) {
+        self.status = CANCELED;
     }
 
     fun emit_order_filled(

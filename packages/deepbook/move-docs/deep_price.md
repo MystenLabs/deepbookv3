@@ -218,6 +218,7 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 
 ## Function `conversion_rate`
 
+Returns the conversion rate of DEEP per base token.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_conversion_rate">conversion_rate</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>): u64

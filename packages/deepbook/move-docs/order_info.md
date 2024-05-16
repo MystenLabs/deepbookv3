@@ -35,6 +35,7 @@ All order matching happens in this module.
 -  [Function `fills`](#0x0_order_info_fills)
 -  [Function `last_fill`](#0x0_order_info_last_fill)
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
+-  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `remaining_quantity`](#0x0_order_info_remaining_quantity)
@@ -49,6 +50,8 @@ All order matching happens in this module.
 -  [Function `crosses_price`](#0x0_order_info_crosses_price)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
+-  [Function `is_live`](#0x0_order_info_is_live)
+-  [Function `set_cancelled`](#0x0_order_info_set_cancelled)
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
@@ -572,6 +575,15 @@ It is used to update the state.
 <a name="@Constants_0"></a>
 
 ## Constants
+
+
+<a name="0x0_order_info_CANCELED"></a>
+
+
+
+<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>: u8 = 3;
+</code></pre>
+
 
 
 <a name="0x0_order_info_EOrderBelowMinimumSize"></a>
@@ -1264,6 +1276,30 @@ It is used to update the state.
 
 </details>
 
+<a name="0x0_order_info_set_paid_fees"></a>
+
+## Function `set_paid_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_set_paid_fees">set_paid_fees</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, paid_fees: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_set_paid_fees">set_paid_fees</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, paid_fees: u64) {
+    self.paid_fees = paid_fees;
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_info_to_order"></a>
 
 ## Function `to_order`
@@ -1708,6 +1744,54 @@ Funds for an expired order are returned to the maker as settled.
         price: self.price,
         expire_timestamp: self.expire_timestamp,
     });
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_is_live"></a>
+
+## Function `is_live`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_is_live">is_live</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_is_live">is_live</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
+    self.status == <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_set_cancelled"></a>
+
+## Function `set_cancelled`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_set_cancelled">set_cancelled</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_set_cancelled">set_cancelled</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
+    self.status = <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>;
 }
 </code></pre>
 
