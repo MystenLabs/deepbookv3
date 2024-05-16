@@ -46,21 +46,11 @@ module deepbook::book {
         timestamp: u64
     ) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
-        let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
-        order_info.set_order_id(order_id);
-        self.match_against_book(order_info, timestamp);
-        order_info.assert_post_only();
-        order_info.assert_fill_or_kill();
-        if (order_info.is_immediate_or_cancel() && order_info.is_live()) {
-            order_info.set_cancelled();
-        };
-        if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
-            return
-        };
+        order_info.set_order_id(self.get_order_id(order_info.is_bid()));
 
-        if (order_info.remaining_quantity() > 0) {
-            self.inject_limit_order(order_info, order_info.deep_per_base());
-        };
+        self.match_against_book(order_info, timestamp);
+        if (order_info.assert_order_type()) return;
+        self.inject_limit_order(order_info);
     }
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
@@ -77,7 +67,7 @@ module deepbook::book {
         while (!ref.is_null() && amount_in_left > 0) {
             let order = &book_side.borrow_slice(ref)[offset];
             let cur_price = order.price();
-            let cur_quantity = order.quantity();
+            let cur_quantity = order.available_quantity();
 
             if (is_bid) {
                 let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
@@ -102,17 +92,21 @@ module deepbook::book {
     /// Cancels an order given order_id
     public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
-        if (is_bid) {
+        let order = if (is_bid) {
             self.bids.remove(order_id)
         } else {
             self.asks.remove(order_id)
-        }
+        };
+
+        order.set_canceled();
+
+        order
     }
 
     /// Modifies an order given order_id and new_quantity.
     /// New quantity must be less than the original quantity.
     /// Order must not have already expired.
-    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &Order) {
+    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (&Order, u64) {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         let order = if (is_bid) {
             self.bids.borrow_mut(order_id)
@@ -120,14 +114,10 @@ module deepbook::book {
             self.asks.borrow_mut(order_id)
         };
 
-        let (base, quote, deep) = order.modify(
-            new_quantity,
-            self.min_size,
-            self.lot_size,
-            timestamp,
-        );
+        let modify_quantity = order.available_quantity() - new_quantity;
+        order.modify(new_quantity, self.min_size, self.lot_size, timestamp);
 
-        (base, quote, deep, order)
+        (order, modify_quantity)
     }
 
     public(package) fun lot_size(self: &Book): u64 {
@@ -178,7 +168,7 @@ module deepbook::book {
             if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
             if (cur_price == 0) cur_price = order_price;
 
-            let order_quantity = order.quantity();
+            let order_quantity = order.available_quantity();
             if (order_price != cur_price) {
                 price_vec.push_back(cur_price);
                 quantity_vec.push_back(cur_quantity);
@@ -222,9 +212,9 @@ module deepbook::book {
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
 
-            let (order_id, _, expired, complete) = order_info.last_fill().fill_status();
-            if (expired || complete) {
-                book_side.remove(order_id);
+            let last_fill = order_info.last_fill();
+            if (last_fill.expired() || last_fill.completed()) {
+                book_side.remove(last_fill.order_id());
             };
         };
     }
@@ -243,9 +233,8 @@ module deepbook::book {
     fun inject_limit_order(
         self: &mut Book,
         order_info: &OrderInfo,
-        deep_per_base: u64,
     ) {
-        let order = order_info.to_order(deep_per_base);
+        let order = order_info.to_order();
         if (order_info.is_bid()) {
             self.bids.insert(order_info.order_id(), order);
         } else {

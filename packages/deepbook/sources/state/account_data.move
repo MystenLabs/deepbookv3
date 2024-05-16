@@ -1,6 +1,12 @@
 module deepbook::account_data {
     use sui::vec_set::{Self, VecSet};
 
+    use deepbook::{
+        fill::Fill,
+        order::Order,
+        math,
+    };
+
     public struct Balances has store, copy, drop {
         base: u64,
         quote: u64,
@@ -46,24 +52,66 @@ module deepbook::account_data {
         }
     }
 
+    public(package) fun process_maker_fill(
+        self: &mut AccountData,
+        fill: &Fill,
+        maker_fee: u64,
+    ) {
+        let (base, quote, deep) = fill.calculate_maker_settled_amounts(maker_fee);
+        self.settled_balances.base = self.settled_balances.base + base;
+        self.settled_balances.quote = self.settled_balances.quote + quote;
+        self.settled_balances.deep = self.settled_balances.deep + deep;
+
+        if (!fill.expired()) {
+            self.maker_volume = self.maker_volume + fill.base_quantity();
+        };
+
+        if (fill.expired() || fill.completed()) {
+            self.open_orders.remove(&fill.order_id());
+        }
+    }
+
+    public(package) fun process_taker_fill(
+        self: &mut AccountData,
+        fill: &Fill,
+        taker_fee: u64,
+        deep_per_base: u64,
+        stake_required: u64,
+    ) {
+        if (fill.expired()) return;
+
+        let (base, quote, mut deep) = fill.calculate_taker_owed_amounts(taker_fee, deep_per_base);
+        if (self.active_stake >= stake_required && self.taker_volume >= stake_required) {
+            deep = math::mul(deep, 500_000_000)
+        };
+
+        self.owed_balances.base = self.owed_balances.base + base;
+        self.owed_balances.quote = self.owed_balances.quote + quote;
+        self.owed_balances.deep = self.owed_balances.deep + deep;
+        self.taker_volume = self.taker_volume + fill.base_quantity();
+    }
+
+    public(package) fun process_modify(
+        self: &mut AccountData,
+        order: &Order,
+        modify_quantity: u64,
+        maker_fee: u64,
+        remove: bool,
+    ) {
+        let (base, quote, deep) = order.cancel_amounts(modify_quantity, maker_fee);
+        self.owed_balances.base = self.owed_balances.base + base;
+        self.owed_balances.quote = self.owed_balances.quote + quote;
+        self.owed_balances.deep = self.owed_balances.deep + deep;
+
+        if (remove) {
+            self.open_orders.remove(&order.order_id());
+        }
+    }
+
     public(package) fun active_stake(
         self: &AccountData,
     ): u64 {
         self.active_stake
-    }
-
-    public(package) fun increase_maker_volume(
-        self: &mut AccountData,
-        volume: u64,
-    ) {
-        self.maker_volume = self.maker_volume + volume;
-    }
-
-    public(package) fun increase_taker_volume(
-        self: &mut AccountData,
-        volume: u64,
-    ) {
-        self.taker_volume = self.taker_volume + volume;
     }
 
     public(package) fun taker_volume(
@@ -86,28 +134,6 @@ module deepbook::account_data {
         self.voted_proposal = proposal;
 
         prev_proposal
-    }
-
-    public(package) fun add_settled_amounts(
-        self: &mut AccountData,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        self.settled_balances.base = self.settled_balances.base + base;
-        self.settled_balances.quote = self.settled_balances.quote + quote;
-        self.settled_balances.deep = self.settled_balances.deep + deep;
-    }
-
-    public(package) fun add_owed_amounts(
-        self: &mut AccountData,
-        base: u64,
-        quote: u64,
-        deep: u64,
-    ) {
-        self.owed_balances.base = self.owed_balances.base + base;
-        self.owed_balances.quote = self.owed_balances.quote + quote;
-        self.owed_balances.deep = self.owed_balances.deep + deep;
     }
 
     /// Settle the account balances.
@@ -150,7 +176,6 @@ module deepbook::account_data {
         self.unclaimed_rebates = self.unclaimed_rebates + rebates;
     }
 
-    //
     public(package) fun claim_rebates(
         self: &mut AccountData,
     ) {
@@ -163,13 +188,6 @@ module deepbook::account_data {
         order_id: u128,
     ) {
         self.open_orders.insert(order_id);
-    }
-
-    public(package) fun remove_order(
-        self: &mut AccountData,
-        order_id: u128,
-    ) {
-        self.open_orders.remove(&order_id)
     }
 
     public(package) fun add_stake(

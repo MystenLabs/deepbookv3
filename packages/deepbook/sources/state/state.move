@@ -40,69 +40,66 @@ module deepbook::state {
         order_info: &OrderInfo,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
+        let taker = order_info.account_id();
+        self.update_account(taker, ctx.epoch());
+
+        let stake_required = self.governance.trade_params().stake_required();
+        let taker_fee = self.governance.trade_params().taker_fee();
+        let deep_per_base = order_info.deep_per_base();
+
         let fills = order_info.fills();
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &fills[i];
-            let (order_id, maker, expired, completed) = fill.fill_status();
-            let (base, quote, deep) = fill.settled_quantities();
-            let volume = fill.volume();
+            let maker = fill.maker_account_id();
             self.update_account(maker, ctx.epoch());
 
-            let account_data = &mut self.accounts[maker];
-            account_data.add_settled_amounts(base, quote, deep);
-            account_data.increase_maker_volume(volume);
-            if (expired || completed) {
-                account_data.remove_order(order_id);
-            };
+            let maker_fee = fill.maker_epoch();
+            self.accounts[maker].process_maker_fill(fill, maker_fee);
+            self.accounts[taker].process_taker_fill(fill, taker_fee, deep_per_base, stake_required);
 
-            self.history.add_volume(volume, account_data.active_stake(), account_data.maker_volume() == volume);
+            if (!fill.expired()) {
+                self.history.add_volume(fill.base_quantity(), &self.accounts[maker]);
+            };
 
             i = i + 1;
         };
 
-        self.update_account(order_info.account_id(), ctx.epoch());
-        let account_data = &mut self.accounts[order_info.account_id()];
-        account_data.add_order(order_info.order_id());
-        account_data.increase_taker_volume(order_info.executed_quantity());
+        if (order_info.remaining_quantity() > 0) {
+            self.accounts[taker].add_order(order_info.order_id());
+        };
     }
 
     /// Update account settled balances and volumes.
     /// Remove order from account orders.
     public(package) fun process_cancel(
         self: &mut State,
-        order: &mut Order,
-        order_id: u128,
+        order: &Order,
         account_id: ID,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
-        order.set_canceled();
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
-        let account_data = &mut self.accounts[account_id];
-        let cancel_quantity = order.quantity();
-        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(
-            cancel_quantity,
-            false,
-        );
-        account_data.remove_order(order_id);
-        account_data.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+        let maker_fee = self.history.historic_maker_fee(order.epoch());
+        self.accounts[account_id].process_modify(order, order.available_quantity(), maker_fee, true);
     }
 
     public(package) fun process_modify(
         self: &mut State,
-        account_id: ID,
-        base_quantity: u64,
-        quote_quantity: u64,
-        deep_quantity: u64,
+        order: &Order,
+        modify_quantity: u64,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
-        self.update_account(account_id, ctx.epoch());
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
+        self.update_account(order.account_id(), ctx.epoch());
 
-        self.accounts[account_id].add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+        let maker_fee = self.history.historic_maker_fee(order.epoch());
+        self.accounts[order.account_id()].process_modify(order, modify_quantity, maker_fee, false);
     }
 
     public(package) fun process_stake(
@@ -111,8 +108,8 @@ module deepbook::state {
         new_stake: u64,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
@@ -124,7 +121,8 @@ module deepbook::state {
         account_id: ID,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.governance.update(ctx);
         self.update_account(account_id, ctx.epoch());
 
@@ -142,8 +140,8 @@ module deepbook::state {
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let stake = self.accounts[account_id].active_stake();
@@ -159,8 +157,8 @@ module deepbook::state {
         proposal_id: ID,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];

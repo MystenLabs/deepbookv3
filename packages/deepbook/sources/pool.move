@@ -137,11 +137,11 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let trade_params = self.state.governance().trade_params();
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
             account.id(),
+            ctx.epoch(),
             client_order_id,
             proof.trader(),
             order_type,
@@ -149,13 +149,10 @@ module deepbook::pool {
             quantity,
             self.state.deep_price().conversion_rate(),
             is_bid,
-            pay_with_deep,
             expire_timestamp,
-            trade_params,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
@@ -246,9 +243,9 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        let (order, modify_quantity) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_modify(account.id(), base, quote, deep, ctx);
+        self.state.process_modify(order, modify_quantity, ctx);
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
@@ -265,13 +262,15 @@ module deepbook::pool {
         order_id: u128,
         clock: &Clock,
         ctx: &TxContext,
-    ) {
-        let mut order = self.book.cancel_order(order_id);
+    ): Order {
+        let order = self.book.cancel_order(order_id);
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_cancel(&mut order, order_id, account.id(), ctx);
+        self.state.process_cancel(&order, account.id(), ctx);
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
+
+        order
     }
 
     /// Stake DEEP tokens to the pool. The account must have enough DEEP tokens.

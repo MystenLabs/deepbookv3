@@ -7,8 +7,9 @@ module deepbook::order_info {
     use sui::event;
     use deepbook::{
         math,
-        trade_params::TradeParams,
-        order::{Self, Order}
+        utils,
+        order::{Self, Order},
+        fill::{Self, Fill},
     };
 
     const MIN_PRICE: u64 = 1;
@@ -47,6 +48,8 @@ module deepbook::order_info {
         pool_id: ID,
         // ID of the order within the pool
         order_id: u128,
+        // Epoch for this order
+        epoch: u64,
         // ID of the account the order uses
         account_id: ID,
         // ID of the order defined by client
@@ -67,16 +70,8 @@ module deepbook::order_info {
         expire_timestamp: u64,
         // Quantity executed so far
         executed_quantity: u64,
-        // Cumulative quote quantity executed so far
-        cumulative_quote_quantity: u64,
         // Any partial fills
         fills: vector<Fill>,
-        // Whether the fee is in DEEP terms
-        fee_is_deep: bool,
-        // Fees paid so far in base/quote/DEEP terms
-        paid_fees: u64,
-        // Maker fee when injecting order
-        trade_params: TradeParams,
         // Status of the order
         status: u8,
         // Reserved field for prevent self_matching
@@ -134,30 +129,10 @@ module deepbook::order_info {
         expire_timestamp: u64,
     }
 
-    /// Fill struct represents the results of a match between two orders.
-    /// It is used to update the state.
-    public struct Fill has store, drop, copy {
-        // ID of the maker order
-        order_id: u128,
-        // account_id of the maker order
-        account_id: ID,
-        // Whether the maker order is expired
-        expired: bool,
-        // Whether the maker order is fully filled
-        complete: bool,
-        // Quantity filled
-        volume: u64,
-        // Quantity settled in base asset terms for maker
-        settled_base: u64,
-        // Quantity settled in quote asset terms for maker
-        settled_quote: u64,
-        // Quantity settled in DEEP for maker
-        settled_deep: u64,
-    }
-
     public(package) fun new(
         pool_id: ID,
         account_id: ID,
+        epoch: u64,
         client_order_id: u64,
         trader: address,
         order_type: u8,
@@ -165,13 +140,12 @@ module deepbook::order_info {
         quantity: u64,
         deep_per_base: u64,
         is_bid: bool,
-        fee_is_deep: bool,
         expire_timestamp: u64,
-        trade_params: TradeParams,
     ): OrderInfo {
         OrderInfo {
             pool_id,
             order_id: 0,
+            epoch,
             account_id,
             client_order_id,
             trader,
@@ -182,11 +156,7 @@ module deepbook::order_info {
             deep_per_base,
             expire_timestamp,
             executed_quantity: 0,
-            cumulative_quote_quantity: 0,
             fills: vector[],
-            fee_is_deep,
-            paid_fees: 0,
-            trade_params,
             status: LIVE,
             self_matching_prevention: false,
         }
@@ -232,22 +202,6 @@ module deepbook::order_info {
         self.deep_per_base
     }
 
-    public fun cumulative_quote_quantity(self: &OrderInfo): u64 {
-        self.cumulative_quote_quantity
-    }
-
-    public fun paid_fees(self: &OrderInfo): u64 {
-        self.paid_fees
-    }
-
-    public fun trade_params(self: &OrderInfo): TradeParams {
-        self.trade_params
-    }
-
-    public fun fee_is_deep(self: &OrderInfo): bool {
-        self.fee_is_deep
-    }
-
     public fun status(self: &OrderInfo): u8 {
         self.status
     }
@@ -268,12 +222,9 @@ module deepbook::order_info {
         &self.fills[self.fills.length() - 1]
     }
 
-    public(package) fun set_order_id(self: &mut OrderInfo, order_id: u128) {
+    public(package) fun set_order_id(self: &mut OrderInfo, order_id: u64) {
+        let order_id = utils::encode_order_id(self.is_bid, self.price, order_id);
         self.order_id = order_id;
-    }
-
-    public(package) fun set_paid_fees(self: &mut OrderInfo, paid_fees: u64) {
-        self.paid_fees = paid_fees;
     }
 
     /// OrderInfo is converted to an Order before being injected into the order book.
@@ -281,16 +232,14 @@ module deepbook::order_info {
     /// information required to match orders.
     public(package) fun to_order(
         self: &OrderInfo,
-        deep_per_base: u64,
     ): Order {
-        let unpaid_fees = math::mul(deep_per_base, math::mul(self.remaining_quantity(), self.trade_params().maker_fee()));
         order::new(
             self.order_id,
+            self.epoch,
             self.account_id,
             self.client_order_id,
             self.remaining_quantity(),
-            unpaid_fees,
-            self.fee_is_deep,
+            self.deep_per_base,
             self.status,
             self.expire_timestamp,
             self.self_matching_prevention,
@@ -318,46 +267,24 @@ module deepbook::order_info {
         self.original_quantity - self.executed_quantity
     }
 
-    /// Asserts that the order doesn't have any fills.
-    public(package) fun assert_post_only(self: &OrderInfo) {
+    public(package) fun assert_order_type(self: &mut OrderInfo): bool {
         if (self.order_type == POST_ONLY)
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
-    }
-
-    /// Asserts that the order is fully filled.
-    public(package) fun assert_fill_or_kill(self: &OrderInfo) {
         if (self.order_type == FILL_OR_KILL)
             assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled);
-    }
+        if (self.order_type == IMMEDIATE_OR_CANCEL) {
+            self.status = CANCELED;
 
-    /// Checks whether this is an immediate or cancel type of order.
-    public(package) fun is_immediate_or_cancel(self: &OrderInfo): bool {
-        self.order_type == IMMEDIATE_OR_CANCEL
-    }
+            return true;
+        };
+        if (self.remaining_quantity() == 0) return true;
 
-    /// Returns the fill or kill constant.
-    public(package) fun fill_or_kill(): u8 {
-        FILL_OR_KILL
+        false
     }
 
     /// Returns the immediate or cancel constant.
     public(package) fun immediate_or_cancel(): u8 {
         IMMEDIATE_OR_CANCEL
-    }
-
-    /// Returns the result of the fill and the maker id & account id.
-    public(package) fun fill_status(fill: &Fill): (u128, ID, bool, bool) {
-        (fill.order_id, fill.account_id, fill.expired, fill.complete)
-    }
-
-    /// Returns the settled quantities for the fill.
-    public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
-        (fill.settled_base, fill.settled_quote, fill.settled_deep)
-    }
-
-    /// Returns the volume of the fill.
-    public(package) fun volume(fill: &Fill): u64 {
-        fill.volume
     }
 
     /// Returns true if two opposite orders are overlapping in price.
@@ -378,38 +305,37 @@ module deepbook::order_info {
         timestamp: u64,
     ): bool {
         if (!self.crosses_price(maker)) return false;
-        let maker_quantity = maker.quantity();
-        if (maker.expire_timestamp() < timestamp) {
-            maker.set_expired();
-            let cancel_quantity = maker_quantity;
-            let (base, quote, deep) = maker.cancel_amounts(
-                cancel_quantity,
+
+        let maker_order_id = maker.order_id();
+        let maker_account_id = maker.account_id();
+        let available_quantity = maker.available_quantity();
+        let maker_deep_per_base = maker.deep_per_base();
+        let price = maker.price();
+        let maker_epoch = maker.epoch();
+
+        if (maker.expired(timestamp)) {
+            self.fills.push_back(fill::new_fill(
+                maker_order_id,
+                maker_account_id,
+                true,
                 false,
-            );
-            self.fills.push_back(Fill {
-                order_id: maker.order_id(),
-                account_id: maker.account_id(),
-                expired: true,
-                complete: false,
-                volume: 0,
-                settled_base: base,
-                settled_quote: quote,
-                settled_deep: deep,
-            });
+                available_quantity,
+                maker_epoch,
+                maker_deep_per_base,
+                self.is_bid,
+                price,
+            ));
 
             return true
         };
 
-        let price = maker.price();
-        let filled_quantity = math::min(self.remaining_quantity(), maker_quantity);
+        let filled_quantity = math::min(self.remaining_quantity(), available_quantity);
+        maker.fill_quantity(filled_quantity);
+
         let quote_quantity = math::mul(filled_quantity, price);
-        maker.set_unpaid_fees(filled_quantity);
-        maker.set_quantity(maker_quantity - filled_quantity);
         self.executed_quantity = self.executed_quantity + filled_quantity;
-        self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
         self.status = PARTIALLY_FILLED;
         if (self.remaining_quantity() == 0) self.status = FILLED;
-        maker.set_fill_status();
 
         self.emit_order_filled(
             maker,
@@ -419,16 +345,17 @@ module deepbook::order_info {
             timestamp
         );
 
-        self.fills.push_back(Fill {
-            order_id: maker.order_id(),
-            account_id: maker.account_id(),
-            expired: false,
-            complete: maker.quantity() == 0,
-            volume: filled_quantity,
-            settled_base: if (self.is_bid) filled_quantity else 0,
-            settled_quote: if (self.is_bid) 0 else quote_quantity,
-            settled_deep: 0,
-        });
+        self.fills.push_back(fill::new_fill(
+            maker_order_id,
+            maker_account_id,
+            false,
+            maker.available_quantity() == 0,
+            filled_quantity,
+            maker_epoch,
+            maker_deep_per_base,
+            self.is_bid,
+            price,
+        ));
 
         true
     }
@@ -445,14 +372,6 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
-    }
-
-    public(package) fun is_live(self: &OrderInfo): bool {
-        self.status == LIVE
-    }
-
-    public(package) fun set_cancelled(self: &mut OrderInfo) {
-        self.status = CANCELED;
     }
 
     fun emit_order_filled(

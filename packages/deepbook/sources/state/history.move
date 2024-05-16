@@ -1,6 +1,11 @@
 module deepbook::history {
     use sui::table::{Self, Table};
 
+    use deepbook::{
+        account_data::AccountData,
+        trade_params::{Self, TradeParams},
+    };
+
     const EHistoricVolumesNotFound: u64 = 1;
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
@@ -8,8 +13,7 @@ module deepbook::history {
         total_volume: u64,
         total_staked_volume: u64,
         total_fees_collected: u64,
-        stake_required: u64,
-        accounts_with_rebates: u64,
+        trade_params: TradeParams,
     }
 
     public struct History has store {
@@ -26,8 +30,7 @@ module deepbook::history {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            stake_required: 0,
-            accounts_with_rebates: 0,
+            trade_params: trade_params::new(0, 0, 0),
         };
         History {
             epoch: ctx.epoch(),
@@ -42,13 +45,19 @@ module deepbook::history {
     public(package) fun update(
         self: &mut History,
         ctx: &TxContext,
+        trade_params: TradeParams,
     ) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
-        if (self.volumes.accounts_with_rebates > 0) {
-            self.historic_volumes.add(self.epoch, self.volumes);
-        };
+
+        self.historic_volumes.add(self.epoch, self.volumes);
         self.epoch = epoch;
+        self.volumes = Volumes {
+            total_volume: 0,
+            total_staked_volume: 0,
+            total_fees_collected: 0,
+            trade_params,
+        };
     }
 
     /// Given the epoch's volume data and the account's volume data,
@@ -61,14 +70,9 @@ module deepbook::history {
     ): u64 {
         assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[epoch];
-        if (volumes.stake_required > account_stake) return 0;
+        if (volumes.trade_params.stake_required() > account_stake) return 0;
 
         // TODO: calculate and add to burn balance
-
-        volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
-        if (volumes.accounts_with_rebates == 0) {
-            self.historic_volumes.remove(epoch);
-        };
 
         0
     }
@@ -78,17 +82,54 @@ module deepbook::history {
     public(package) fun add_volume(
         self: &mut History,
         maker_volume: u64,
-        account_stake: u64,
-        first_volume_by_account: bool,
+        account_data: &AccountData,
     ) {
-        if (maker_volume == 0) return;
+        let volumes = &mut self.volumes;
+        volumes.total_volume = volumes.total_volume + maker_volume;
+        if (account_data.active_stake() > volumes.trade_params.stake_required()) {
+            volumes.total_fees_collected = volumes.total_fees_collected + maker_volume;
+        }
+    }
 
-        self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-        if (account_stake > self.volumes.stake_required) {
-            self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
-            if (first_volume_by_account) {
-                self.volumes.accounts_with_rebates = self.volumes.accounts_with_rebates + 1;
-            }
-        };
+    public(package) fun historic_maker_fee(
+        self: &History,
+        epoch: u64,
+    ): u64 {
+        self.historic_volumes[epoch].trade_params().maker_fee()
+    }
+
+    #[test_only]
+    public fun volumes(self: &History): &Volumes {
+        &self.volumes
+    }
+
+    #[test_only]
+    public fun historic_volumes(self: &History): &Table<u64, Volumes> {
+        &self.historic_volumes
+    }
+
+    #[test_only]
+    public fun balance_to_burn(self: &History): u64 {
+        self.balance_to_burn
+    }
+
+    #[test_only]
+    public fun total_volume(volumes: &Volumes): u64 {
+        volumes.total_volume
+    }
+
+    #[test_only]
+    public fun total_staked_volume(volumes: &Volumes): u64 {
+        volumes.total_staked_volume
+    }
+
+    #[test_only]
+    public fun total_fees_collected(volumes: &Volumes): u64 {
+        volumes.total_fees_collected
+    }
+
+    #[test_only]
+    public fun trade_params(volumes: &Volumes): TradeParams {
+        volumes.trade_params
     }
 }
