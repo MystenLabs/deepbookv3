@@ -9,6 +9,7 @@
 -  [Struct `AccountData`](#0x0_account_data_AccountData)
 -  [Function `empty`](#0x0_account_data_empty)
 -  [Function `active_stake`](#0x0_account_data_active_stake)
+-  [Function `process_maker_fill`](#0x0_account_data_process_maker_fill)
 -  [Function `increase_maker_volume`](#0x0_account_data_increase_maker_volume)
 -  [Function `increase_taker_volume`](#0x0_account_data_increase_taker_volume)
 -  [Function `taker_volume`](#0x0_account_data_taker_volume)
@@ -28,7 +29,8 @@
 -  [Function `reset`](#0x0_account_data_reset)
 
 
-<pre><code><b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
+<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set">0x2::vec_set</a>;
 </code></pre>
@@ -220,6 +222,41 @@ Account data that is updated every epoch.
     self: &<a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
 ): u64 {
     self.active_stake
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_data_process_maker_fill"></a>
+
+## Function `process_maker_fill`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_process_maker_fill">process_maker_fill</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>, <a href="fill.md#0x0_fill">fill</a>: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_process_maker_fill">process_maker_fill</a>(
+    self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
+    <a href="fill.md#0x0_fill">fill</a>: &Fill,
+) {
+    self.settled_balances.base = self.settled_balances.base + <a href="fill.md#0x0_fill">fill</a>.settled_base();
+    self.settled_balances.quote = self.settled_balances.quote + <a href="fill.md#0x0_fill">fill</a>.settled_quote();
+    self.settled_balances.deep = self.settled_balances.deep + <a href="fill.md#0x0_fill">fill</a>.settled_deep();
+    <b>if</b> (!<a href="fill.md#0x0_fill">fill</a>.expired()) {
+        self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.volume();
+    };
+    <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
+        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.order_id());
+    }
 }
 </code></pre>
 

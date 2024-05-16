@@ -49,18 +49,8 @@ module deepbook::book {
         let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
         order_info.set_order_id(order_id);
         self.match_against_book(order_info, timestamp);
-        order_info.assert_post_only();
-        order_info.assert_fill_or_kill();
-        if (order_info.is_immediate_or_cancel() && order_info.is_live()) {
-            order_info.set_cancelled();
-        };
-        if (order_info.is_immediate_or_cancel() || order_info.original_quantity() == order_info.executed_quantity()) {
-            return
-        };
-
-        if (order_info.remaining_quantity() > 0) {
-            self.inject_limit_order(order_info, order_info.deep_per_base());
-        };
+        if (order_info.assert_execution()) return;
+        self.inject_limit_order(order_info, order_info.deep_per_base());
     }
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
@@ -222,9 +212,9 @@ module deepbook::book {
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
 
-            let (order_id, _, expired, complete) = order_info.last_fill().fill_status();
-            if (expired || complete) {
-                book_side.remove(order_id);
+            let fill = order_info.last_fill();
+            if (fill.expired() || fill.completed()) {
+                book_side.remove(fill.order_id());
             };
         };
     }

@@ -23,11 +23,11 @@
 
 
 <pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
-<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -214,18 +214,8 @@ If order is IOC or fully executed, it will not be injected.
     <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid(), <a href="order_info.md#0x0_order_info">order_info</a>.price(), self.<a href="book.md#0x0_book_get_order_id">get_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()));
     <a href="order_info.md#0x0_order_info">order_info</a>.set_order_id(order_id);
     self.<a href="book.md#0x0_book_match_against_book">match_against_book</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
-    <a href="order_info.md#0x0_order_info">order_info</a>.assert_post_only();
-    <a href="order_info.md#0x0_order_info">order_info</a>.assert_fill_or_kill();
-    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() && <a href="order_info.md#0x0_order_info">order_info</a>.is_live()) {
-        <a href="order_info.md#0x0_order_info">order_info</a>.set_cancelled();
-    };
-    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel() || <a href="order_info.md#0x0_order_info">order_info</a>.original_quantity() == <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()) {
-        <b>return</b>
-    };
-
-    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
-        self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base());
-    };
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.assert_execution()) <b>return</b>;
+    self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base());
 }
 </code></pre>
 
@@ -567,9 +557,9 @@ Mutates the order and the maker order as necessary.
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
 
-        <b>let</b> (order_id, _, expired, complete) = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill().fill_status();
-        <b>if</b> (expired || complete) {
-            book_side.remove(order_id);
+        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill();
+        <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
+            book_side.remove(<a href="fill.md#0x0_fill">fill</a>.order_id());
         };
     };
 }

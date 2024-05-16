@@ -8,7 +8,8 @@ module deepbook::order_info {
     use deepbook::{
         math,
         trade_params::TradeParams,
-        order::{Self, Order}
+        order::{Self, Order},
+        fill::{Self, Fill},
     };
 
     const MIN_PRICE: u64 = 1;
@@ -132,27 +133,6 @@ module deepbook::order_info {
         is_bid: bool,
         placed_quantity: u64,
         expire_timestamp: u64,
-    }
-
-    /// Fill struct represents the results of a match between two orders.
-    /// It is used to update the state.
-    public struct Fill has store, drop, copy {
-        // ID of the maker order
-        order_id: u128,
-        // account_id of the maker order
-        account_id: ID,
-        // Whether the maker order is expired
-        expired: bool,
-        // Whether the maker order is fully filled
-        complete: bool,
-        // Quantity filled
-        volume: u64,
-        // Quantity settled in base asset terms for maker
-        settled_base: u64,
-        // Quantity settled in quote asset terms for maker
-        settled_quote: u64,
-        // Quantity settled in DEEP for maker
-        settled_deep: u64,
     }
 
     public(package) fun new(
@@ -313,6 +293,25 @@ module deepbook::order_info {
         assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
     }
 
+    /// Assert order types after partial fill against the order book.
+    public(package) fun assert_execution(self: &mut OrderInfo): bool {
+        if (self.order_type == POST_ONLY)
+            assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
+        if (self.order_type == FILL_OR_KILL)
+            assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled);
+        if (self.order_type == IMMEDIATE_OR_CANCEL) {
+            if (self.remaining_quantity() > 0) {
+                self.status = CANCELED;
+            } else {
+                self.status = FILLED;
+            };
+
+            return true
+        };
+        
+        false
+    }
+
     /// Returns the remaining quantity for the order.
     public(package) fun remaining_quantity(self: &OrderInfo): u64 {
         self.original_quantity - self.executed_quantity
@@ -345,21 +344,6 @@ module deepbook::order_info {
         IMMEDIATE_OR_CANCEL
     }
 
-    /// Returns the result of the fill and the maker id & account id.
-    public(package) fun fill_status(fill: &Fill): (u128, ID, bool, bool) {
-        (fill.order_id, fill.account_id, fill.expired, fill.complete)
-    }
-
-    /// Returns the settled quantities for the fill.
-    public(package) fun settled_quantities(fill: &Fill): (u64, u64, u64) {
-        (fill.settled_base, fill.settled_quote, fill.settled_deep)
-    }
-
-    /// Returns the volume of the fill.
-    public(package) fun volume(fill: &Fill): u64 {
-        fill.volume
-    }
-
     /// Returns true if two opposite orders are overlapping in price.
     public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
         let maker_price = order.price();
@@ -386,16 +370,16 @@ module deepbook::order_info {
                 cancel_quantity,
                 false,
             );
-            self.fills.push_back(Fill {
-                order_id: maker.order_id(),
-                account_id: maker.account_id(),
-                expired: true,
-                complete: false,
-                volume: 0,
-                settled_base: base,
-                settled_quote: quote,
-                settled_deep: deep,
-            });
+            self.fills.push_back(fill::new(
+                maker.order_id(),
+                maker.account_id(),
+                true,
+                false,
+                0,
+                base,
+                quote,
+                deep,
+            ));
 
             return true
         };
@@ -419,16 +403,16 @@ module deepbook::order_info {
             timestamp
         );
 
-        self.fills.push_back(Fill {
-            order_id: maker.order_id(),
-            account_id: maker.account_id(),
-            expired: false,
-            complete: maker.quantity() == 0,
-            volume: filled_quantity,
-            settled_base: if (self.is_bid) filled_quantity else 0,
-            settled_quote: if (self.is_bid) 0 else quote_quantity,
-            settled_deep: 0,
-        });
+        self.fills.push_back(fill::new(
+            maker.order_id(),
+            maker.account_id(),
+            false,
+            false,
+            filled_quantity,
+            if (self.is_bid) filled_quantity else 0,
+            if (self.is_bid) 0 else quote_quantity,
+            0,
+        ));
 
         true
     }

@@ -12,7 +12,6 @@ All order matching happens in this module.
 -  [Struct `OrderCanceled`](#0x0_order_info_OrderCanceled)
 -  [Struct `OrderModified`](#0x0_order_info_OrderModified)
 -  [Struct `OrderPlaced`](#0x0_order_info_OrderPlaced)
--  [Struct `Fill`](#0x0_order_info_Fill)
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_order_info_new)
 -  [Function `account_id`](#0x0_order_info_account_id)
@@ -38,15 +37,13 @@ All order matching happens in this module.
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
+-  [Function `assert_execution`](#0x0_order_info_assert_execution)
 -  [Function `remaining_quantity`](#0x0_order_info_remaining_quantity)
 -  [Function `assert_post_only`](#0x0_order_info_assert_post_only)
 -  [Function `assert_fill_or_kill`](#0x0_order_info_assert_fill_or_kill)
 -  [Function `is_immediate_or_cancel`](#0x0_order_info_is_immediate_or_cancel)
 -  [Function `fill_or_kill`](#0x0_order_info_fill_or_kill)
 -  [Function `immediate_or_cancel`](#0x0_order_info_immediate_or_cancel)
--  [Function `fill_status`](#0x0_order_info_fill_status)
--  [Function `settled_quantities`](#0x0_order_info_settled_quantities)
--  [Function `volume`](#0x0_order_info_volume)
 -  [Function `crosses_price`](#0x0_order_info_crosses_price)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
@@ -55,7 +52,8 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
-<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
@@ -163,7 +161,7 @@ It is returned at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>&gt;</code>
+<code>fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="fill.md#0x0_fill_Fill">fill::Fill</a>&gt;</code>
 </dt>
 <dd>
 
@@ -492,77 +490,6 @@ Emitted when a maker order is injected into the order book.
 </dd>
 <dt>
 <code>expire_timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_order_info_Fill"></a>
-
-## Struct `Fill`
-
-Fill struct represents the results of a match between two orders.
-It is used to update the state.
-
-
-<pre><code><b>struct</b> <a href="order_info.md#0x0_order_info_Fill">Fill</a> <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>order_id: u128</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>expired: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>complete: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>volume: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>settled_base: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>settled_quote: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>settled_deep: u64</code>
 </dt>
 <dd>
 
@@ -1210,7 +1137,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_fills">fills</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_fills">fills</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="fill.md#0x0_fill_Fill">fill::Fill</a>&gt;
 </code></pre>
 
 
@@ -1219,7 +1146,7 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_fills">fills</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="order_info.md#0x0_order_info_Fill">Fill</a>&gt; {
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_fills">fills</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;Fill&gt; {
     self.fills
 }
 </code></pre>
@@ -1234,7 +1161,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -1243,7 +1170,7 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): &<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): &Fill {
     &self.fills[self.fills.length() - 1]
 }
 </code></pre>
@@ -1370,6 +1297,45 @@ Validates that the initial order created meets the pool requirements.
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.original_quantity % lot_size == 0, <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.expire_timestamp &gt;= timestamp, <a href="order_info.md#0x0_order_info_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type &gt;= <a href="order_info.md#0x0_order_info_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_order_type">order_type</a> &lt;= <a href="order_info.md#0x0_order_info_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order_info.md#0x0_order_info_EInvalidOrderType">EInvalidOrderType</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_assert_execution"></a>
+
+## Function `assert_execution`
+
+Assert order types after partial fill against the order book.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_execution">assert_execution</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_execution">assert_execution</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
+    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>)
+        <b>assert</b>!(self.executed_quantity == 0, <a href="order_info.md#0x0_order_info_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>);
+    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>)
+        <b>assert</b>!(self.executed_quantity == self.original_quantity, <a href="order_info.md#0x0_order_info_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>);
+    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>) {
+        <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() &gt; 0) {
+            self.status = <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>;
+        } <b>else</b> {
+            self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
+        };
+
+        <b>return</b> <b>true</b>
+    };
+
+    <b>false</b>
 }
 </code></pre>
 
@@ -1529,81 +1495,6 @@ Returns the immediate or cancel constant.
 
 </details>
 
-<a name="0x0_order_info_fill_status"></a>
-
-## Function `fill_status`
-
-Returns the result of the fill and the maker id & account id.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): (u128, <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, bool, bool)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_status">fill_status</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): (u128, ID, bool, bool) {
-    (fill.order_id, fill.account_id, fill.expired, fill.complete)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_settled_quantities"></a>
-
-## Function `settled_quantities`
-
-Returns the settled quantities for the fill.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_settled_quantities">settled_quantities</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_settled_quantities">settled_quantities</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): (u64, u64, u64) {
-    (fill.settled_base, fill.settled_quote, fill.settled_deep)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_volume"></a>
-
-## Function `volume`
-
-Returns the volume of the fill.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_volume">volume</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">order_info::Fill</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_volume">volume</a>(fill: &<a href="order_info.md#0x0_order_info_Fill">Fill</a>): u64 {
-    fill.volume
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_order_info_crosses_price"></a>
 
 ## Function `crosses_price`
@@ -1665,16 +1556,16 @@ Funds for an expired order are returned to the maker as settled.
             cancel_quantity,
             <b>false</b>,
         );
-        self.fills.push_back(<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
-            order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-            account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
-            expired: <b>true</b>,
-            complete: <b>false</b>,
-            volume: 0,
-            settled_base: base,
-            settled_quote: quote,
-            settled_deep: deep,
-        });
+        self.fills.push_back(<a href="fill.md#0x0_fill_new">fill::new</a>(
+            maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
+            maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
+            <b>true</b>,
+            <b>false</b>,
+            0,
+            base,
+            quote,
+            deep,
+        ));
 
         <b>return</b> <b>true</b>
     };
@@ -1698,16 +1589,16 @@ Funds for an expired order are returned to the maker as settled.
         timestamp
     );
 
-    self.fills.push_back(<a href="order_info.md#0x0_order_info_Fill">Fill</a> {
-        order_id: maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-        account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
-        expired: <b>false</b>,
-        complete: maker.quantity() == 0,
-        volume: filled_quantity,
-        settled_base: <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0,
-        settled_quote: <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity,
-        settled_deep: 0,
-    });
+    self.fills.push_back(<a href="fill.md#0x0_fill_new">fill::new</a>(
+        maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
+        maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
+        <b>false</b>,
+        <b>false</b>,
+        filled_quantity,
+        <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0,
+        <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity,
+        0,
+    ));
 
     <b>true</b>
 }

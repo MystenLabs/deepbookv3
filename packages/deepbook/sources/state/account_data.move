@@ -1,5 +1,6 @@
 module deepbook::account_data {
     use sui::vec_set::{Self, VecSet};
+    use deepbook::fill::Fill;
 
     public struct Balances has store, copy, drop {
         base: u64,
@@ -50,6 +51,21 @@ module deepbook::account_data {
         self: &AccountData,
     ): u64 {
         self.active_stake
+    }
+
+    public(package) fun process_maker_fill(
+        self: &mut AccountData,
+        fill: &Fill,
+    ) {
+        self.settled_balances.base = self.settled_balances.base + fill.settled_base();
+        self.settled_balances.quote = self.settled_balances.quote + fill.settled_quote();
+        self.settled_balances.deep = self.settled_balances.deep + fill.settled_deep();
+        if (!fill.expired()) {
+            self.maker_volume = self.maker_volume + fill.volume();
+        };
+        if (fill.expired() || fill.completed()) {
+            self.open_orders.remove(&fill.order_id());
+        }
     }
 
     public(package) fun increase_maker_volume(
