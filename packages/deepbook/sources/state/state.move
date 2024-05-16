@@ -5,7 +5,6 @@ module deepbook::state {
 
     use deepbook::{
         history::{Self, History},
-        order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
         deep_price::{Self, DeepPrice},
@@ -70,36 +69,6 @@ module deepbook::state {
         if (order_info.remaining_quantity() > 0) {
             self.accounts[taker].add_order(order_info.order_id());
         };
-    }
-
-    /// Update account settled balances and volumes.
-    /// Remove order from account orders.
-    public(package) fun process_cancel(
-        self: &mut State,
-        order: &Order,
-        account_id: ID,
-        ctx: &TxContext,
-    ) {
-        self.governance.update(ctx);
-        self.history.update(ctx, self.governance.trade_params());
-        self.update_account(account_id, ctx.epoch());
-
-        let maker_fee = self.history.historic_maker_fee(order.epoch());
-        self.accounts[account_id].process_modify(order, order.available_quantity(), maker_fee, true);
-    }
-
-    public(package) fun process_modify(
-        self: &mut State,
-        order: &Order,
-        modify_quantity: u64,
-        ctx: &TxContext,
-    ) {
-        self.governance.update(ctx);
-        self.history.update(ctx, self.governance.trade_params());
-        self.update_account(order.account_id(), ctx.epoch());
-
-        let maker_fee = self.history.historic_maker_fee(order.epoch());
-        self.accounts[order.account_id()].process_modify(order, modify_quantity, maker_fee, false);
     }
 
     public(package) fun process_stake(
@@ -184,6 +153,12 @@ module deepbook::state {
         &self.governance
     }
 
+    public(package) fun history(
+        self: &State,
+    ): &History {
+        &self.history
+    }
+
     public(package) fun governance_mut(
         self: &mut State,
         ctx: &TxContext,
@@ -203,9 +178,11 @@ module deepbook::state {
     public(package) fun account_mut(
         self: &mut State,
         account_id: ID,
-        epoch: u64,
+        ctx: &TxContext,
     ): &mut AccountData {
-        self.update_account(account_id, epoch);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
+        self.update_account(account_id, ctx.epoch());
 
         &mut self.accounts[account_id]
     }

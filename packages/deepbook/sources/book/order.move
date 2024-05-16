@@ -5,7 +5,9 @@
 /// All order matching happens in this module.
 module deepbook::order {
     use sui::event;
-    use deepbook::{math, utils};
+    use deepbook::{math, utils,
+        fill::{Self, Fill},
+    };
 
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
@@ -171,7 +173,7 @@ module deepbook::order {
     public(package) fun deep_per_base(self: &Order): u64 {
         self.deep_per_base
     }
-    
+
     public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
         self: &Order,
         pool_id: ID,

@@ -306,6 +306,15 @@ module deepbook::order_info {
     ): bool {
         if (!self.crosses_price(maker)) return false;
 
+        if (!maker.expired(timestamp)) {
+            let filled_quantity = math::min(self.remaining_quantity(), maker.available_quantity());
+            let quote_quantity = math::mul(filled_quantity, maker.price());
+            self.executed_quantity = self.executed_quantity + filled_quantity;
+            self.status = PARTIALLY_FILLED;
+            if (self.remaining_quantity() == 0) self.status = FILLED;
+            self.emit_order_filled(maker, maker.price(), filled_quantity, quote_quantity, timestamp);
+        };
+
         let maker_order_id = maker.order_id();
         let maker_account_id = maker.account_id();
         let available_quantity = maker.available_quantity();
