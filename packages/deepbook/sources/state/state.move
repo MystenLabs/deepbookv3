@@ -45,18 +45,12 @@ module deepbook::state {
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &fills[i];
-            let (order_id, maker, expired, completed) = fill.fill_status();
-            let (base, quote, deep) = fill.settled_quantities();
-            let volume = fill.volume();
+            let maker = fill.account_id();
             self.update_account(maker, ctx.epoch());
-
             let account_data = &mut self.accounts[maker];
-            account_data.add_settled_amounts(base, quote, deep);
-            account_data.increase_maker_volume(volume);
-            if (expired || completed) {
-                account_data.remove_order(order_id);
-            };
+            account_data.process_maker_fill(fill);
 
+            let volume = fill.volume();
             self.history.add_volume(volume, account_data.active_stake(), account_data.maker_volume() == volume);
 
             i = i + 1;

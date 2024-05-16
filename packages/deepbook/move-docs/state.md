@@ -26,6 +26,7 @@
 
 <pre><code><b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
@@ -162,19 +163,13 @@ Update taker settled balances and volumes.
     <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
     <b>let</b> <b>mut</b> i = 0;
     <b>while</b> (i &lt; fills.length()) {
-        <b>let</b> fill = &fills[i];
-        <b>let</b> (order_id, maker, expired, completed) = fill.fill_status();
-        <b>let</b> (base, quote, deep) = fill.settled_quantities();
-        <b>let</b> volume = fill.volume();
+        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = &fills[i];
+        <b>let</b> maker = <a href="fill.md#0x0_fill">fill</a>.account_id();
         self.<a href="state.md#0x0_state_update_account">update_account</a>(maker, ctx.epoch());
-
         <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = &<b>mut</b> self.accounts[maker];
-        <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(base, quote, deep);
-        <a href="account_data.md#0x0_account_data">account_data</a>.increase_maker_volume(volume);
-        <b>if</b> (expired || completed) {
-            <a href="account_data.md#0x0_account_data">account_data</a>.remove_order(order_id);
-        };
+        <a href="account_data.md#0x0_account_data">account_data</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
 
+        <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.volume();
         self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account_data.md#0x0_account_data">account_data</a>.active_stake(), <a href="account_data.md#0x0_account_data">account_data</a>.maker_volume() == volume);
 
         i = i + 1;
