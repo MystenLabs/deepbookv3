@@ -54,6 +54,7 @@ This function will round down the result.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_mul">mul</a>(x: u64, y: u64): u64 {
     <b>let</b> (_, result) = <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x, y);
+
     result
 }
 </code></pre>
@@ -81,11 +82,8 @@ This function will round up the result.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_mul_round_up">mul_round_up</a>(x: u64, y: u64): u64 {
     <b>let</b> (is_round_down, result) = <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x, y);
-    <b>if</b> (is_round_down) {
-        result + 1
-    } <b>else</b> {
-        result
-    }
+
+    result + is_round_down
 }
 </code></pre>
 
@@ -112,6 +110,7 @@ This function will round down the result.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_div">div</a>(x: u64, y: u64): u64 {
     <b>let</b> (_, result) = <a href="math.md#0x0_math_div_internal">div_internal</a>(x, y);
+
     result
 }
 </code></pre>
@@ -139,11 +138,8 @@ This function will round up the result.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_div_round_up">div_round_up</a>(x: u64, y: u64): u64 {
     <b>let</b> (is_round_down, result) = <a href="math.md#0x0_math_div_internal">div_internal</a>(x, y);
-    <b>if</b> (is_round_down) {
-        result + 1
-    } <b>else</b> {
-        result
-    }
+
+    result + is_round_down
 }
 </code></pre>
 
@@ -213,7 +209,7 @@ This function will round up the result.
 
 
 
-<pre><code><b>fun</b> <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x: u64, y: u64): (bool, u64)
+<pre><code><b>fun</b> <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x: u64, y: u64): (u64, u64)
 </code></pre>
 
 
@@ -222,12 +218,12 @@ This function will round up the result.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x: u64, y: u64): (bool, u64) {
+<pre><code><b>fun</b> <a href="math.md#0x0_math_mul_internal">mul_internal</a>(x: u64, y: u64): (u64, u64) {
     <b>let</b> x = x <b>as</b> u128;
     <b>let</b> y = y <b>as</b> u128;
-    <b>let</b> <b>mut</b> is_round_down = <b>true</b>;
-    <b>if</b> ((x * y) % <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> == 0) is_round_down = <b>false</b>;
-    (is_round_down, (x * y / <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a>) <b>as</b> u64)
+    <b>let</b> round = <b>if</b>((x * y) % <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> == 0) 0 <b>else</b> 1;
+
+    (round, (x * y / <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a>) <b>as</b> u64)
 }
 </code></pre>
 
@@ -241,7 +237,7 @@ This function will round up the result.
 
 
 
-<pre><code><b>fun</b> <a href="math.md#0x0_math_div_internal">div_internal</a>(x: u64, y: u64): (bool, u64)
+<pre><code><b>fun</b> <a href="math.md#0x0_math_div_internal">div_internal</a>(x: u64, y: u64): (u64, u64)
 </code></pre>
 
 
@@ -250,12 +246,12 @@ This function will round up the result.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="math.md#0x0_math_div_internal">div_internal</a>(x: u64, y: u64): (bool, u64) {
+<pre><code><b>fun</b> <a href="math.md#0x0_math_div_internal">div_internal</a>(x: u64, y: u64): (u64, u64) {
     <b>let</b> x = x <b>as</b> u128;
     <b>let</b> y = y <b>as</b> u128;
-    <b>let</b> <b>mut</b> is_round_down = <b>true</b>;
-    <b>if</b> ((x * <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> % y) == 0) is_round_down = <b>false</b>;
-    (is_round_down, (x * <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> / y) <b>as</b> u64)
+    <b>let</b> round = <b>if</b> ((x * <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> % y) == 0) 0 <b>else</b> 1;
+
+    (round, (x * <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a> / y) <b>as</b> u64)
 }
 </code></pre>
 
