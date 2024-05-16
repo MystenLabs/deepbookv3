@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::fill {
+    use deepbook::balances::Balances;
+
     /// Fill struct represents the results of a match between two orders.
     /// It is used to update the state.
     public struct Fill has store, drop, copy {
@@ -15,12 +17,8 @@ module deepbook::fill {
         completed: bool,
         // Quantity filled
         volume: u64,
-        // Quantity settled in base asset terms for maker
-        settled_base: u64,
-        // Quantity settled in quote asset terms for maker
-        settled_quote: u64,
-        // Quantity settled in DEEP for maker
-        settled_deep: u64,
+        // Quantities settled for maker
+        settled_balances: Balances,
     }
 
     public(package) fun new(
@@ -29,9 +27,7 @@ module deepbook::fill {
         expired: bool,
         completed: bool,
         volume: u64,
-        settled_base: u64,
-        settled_quote: u64,
-        settled_deep: u64,
+        settled_balances: Balances,
     ): Fill {
         Fill {
             order_id,
@@ -39,9 +35,7 @@ module deepbook::fill {
             expired,
             completed,
             volume,
-            settled_base,
-            settled_quote,
-            settled_deep,
+            settled_balances,
         }
     }
 
@@ -65,15 +59,7 @@ module deepbook::fill {
         self.volume
     }
 
-    public(package) fun settled_base(self: &Fill): u64 {
-        self.settled_base
-    }
-
-    public(package) fun settled_quote(self: &Fill): u64 {
-        self.settled_quote
-    }
-
-    public(package) fun settled_deep(self: &Fill): u64 {
-        self.settled_deep
+    public(package) fun settled_balances(self: &Fill): &Balances {
+        &self.settled_balances
     }
 }

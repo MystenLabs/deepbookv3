@@ -246,9 +246,9 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let (base, quote, deep, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        let (balances, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_modify(account.id(), base, quote, deep, ctx);
+        self.state.process_modify(account.id(), &balances, ctx);
         self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());

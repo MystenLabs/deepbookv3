@@ -5,7 +5,11 @@
 /// All order matching happens in this module.
 module deepbook::order {
     use sui::event;
-    use deepbook::{math, utils};
+    use deepbook::{
+        math,
+        utils,
+        balances::{Self, Balances},
+    };
 
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
@@ -88,16 +92,15 @@ module deepbook::order {
         min_size: u64,
         lot_size: u64,
         timestamp: u64,
-    ): (u64, u64, u64) {
+    ): Balances {
         assert!(new_quantity > 0 && new_quantity < self.quantity, EInvalidNewQuantity);
         assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(timestamp < self.expire_timestamp(), EOrderExpired);
         let cancel_amount = self.quantity - new_quantity;
-        let (base, quote, deep) = self.cancel_amounts(cancel_amount, true);
         self.quantity = new_quantity;
 
-        (base, quote, deep)
+        self.cancel_amounts(cancel_amount, true)
     }
 
     /// Amounts to settle for a cancelled or modified order. Modifies the order in place.
@@ -109,7 +112,7 @@ module deepbook::order {
         self: &mut Order,
         cancel_quantity: u64,
         modify_order: bool,
-    ): (u64, u64, u64) {
+    ): Balances {
         let is_bid = self.is_bid();
         let price = self.price();
         let mut base_quantity = if (is_bid) 0 else cancel_quantity;
@@ -128,7 +131,7 @@ module deepbook::order {
             self.unpaid_fees = self.unpaid_fees - fee_refund;
         };
 
-        (base_quantity, quote_quantity, deep_quantity)
+        balances::new(base_quantity, quote_quantity, deep_quantity)
     }
 
     /// Calculate the amount of fees to be paid for a maker order already live.

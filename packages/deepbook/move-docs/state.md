@@ -25,6 +25,7 @@
 
 
 <pre><code><b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
+<b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
@@ -216,12 +217,12 @@ Remove order from account orders.
 
     <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = &<b>mut</b> self.accounts[account_id];
     <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
-    <b>let</b> (base_quantity, quote_quantity, deep_quantity) = <a href="order.md#0x0_order">order</a>.cancel_amounts(
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="order.md#0x0_order">order</a>.cancel_amounts(
         cancel_quantity,
         <b>false</b>,
     );
     <a href="account_data.md#0x0_account_data">account_data</a>.remove_order(order_id);
-    <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+    <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(<a href="balances.md#0x0_balances">balances</a>);
 }
 </code></pre>
 
@@ -235,7 +236,7 @@ Remove order from account orders.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, base_quantity: u64, quote_quantity: u64, deep_quantity: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, <a href="balances.md#0x0_balances">balances</a>: &<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -247,15 +248,13 @@ Remove order from account orders.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     account_id: ID,
-    base_quantity: u64,
-    quote_quantity: u64,
-    deep_quantity: u64,
+    <a href="balances.md#0x0_balances">balances</a>: &Balances,
     ctx: &TxContext,
 ) {
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
-    self.accounts[account_id].add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+    self.accounts[account_id].add_settled_amounts(*<a href="balances.md#0x0_balances">balances</a>);
 }
 </code></pre>
 

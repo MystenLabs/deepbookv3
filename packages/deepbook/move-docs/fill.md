@@ -12,12 +12,11 @@
 -  [Function `expired`](#0x0_fill_expired)
 -  [Function `completed`](#0x0_fill_completed)
 -  [Function `volume`](#0x0_fill_volume)
--  [Function `settled_base`](#0x0_fill_settled_base)
--  [Function `settled_quote`](#0x0_fill_settled_quote)
--  [Function `settled_deep`](#0x0_fill_settled_deep)
+-  [Function `settled_balances`](#0x0_fill_settled_balances)
 
 
-<pre><code><b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
 
 
@@ -71,19 +70,7 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>settled_base: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>settled_quote: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>settled_deep: u64</code>
+<code>settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
@@ -99,7 +86,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, settled_base: u64, settled_quote: u64, settled_deep: u64): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -114,9 +101,7 @@ It is used to update the state.
     expired: bool,
     completed: bool,
     volume: u64,
-    settled_base: u64,
-    settled_quote: u64,
-    settled_deep: u64,
+    settled_balances: Balances,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
         order_id,
@@ -124,9 +109,7 @@ It is used to update the state.
         expired,
         completed,
         volume,
-        settled_base,
-        settled_quote,
-        settled_deep,
+        settled_balances,
     }
 }
 </code></pre>
@@ -255,13 +238,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_settled_base"></a>
+<a name="0x0_fill_settled_balances"></a>
 
-## Function `settled_base`
+## Function `settled_balances`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_settled_base">settled_base</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_settled_balances">settled_balances</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): &<a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -270,56 +253,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_settled_base">settled_base</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.settled_base
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_fill_settled_quote"></a>
-
-## Function `settled_quote`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_settled_quote">settled_quote</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_settled_quote">settled_quote</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.settled_quote
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_fill_settled_deep"></a>
-
-## Function `settled_deep`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_settled_deep">settled_deep</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_settled_deep">settled_deep</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.settled_deep
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_settled_balances">settled_balances</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): &Balances {
+    &self.settled_balances
 }
 </code></pre>
 

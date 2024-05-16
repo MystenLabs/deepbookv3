@@ -37,6 +37,7 @@ TODO: No authorization checks are implemented;
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
+<b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
@@ -636,9 +637,9 @@ Order must not have already expired.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
-    <b>let</b> (base, quote, deep, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <b>let</b> (<a href="balances.md#0x0_balances">balances</a>, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), base, quote, deep, ctx);
+    self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), &<a href="balances.md#0x0_balances">balances</a>, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());

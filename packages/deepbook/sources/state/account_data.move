@@ -1,12 +1,9 @@
 module deepbook::account_data {
     use sui::vec_set::{Self, VecSet};
-    use deepbook::fill::Fill;
-
-    public struct Balances has store, copy, drop {
-        base: u64,
-        quote: u64,
-        deep: u64,
-    }
+    use deepbook::{
+        fill::Fill,
+        balances::{Self, Balances},
+    };
 
     /// Account data that is updated every epoch.
     public struct AccountData has store, copy, drop {
@@ -34,16 +31,8 @@ module deepbook::account_data {
             inactive_stake: 0,
             voted_proposal: option::none(),
             unclaimed_rebates: 0,
-            settled_balances: Balances {
-                base: 0,
-                quote: 0,
-                deep: 0,
-            },
-            owed_balances: Balances {
-                base: 0,
-                quote: 0,
-                deep: 0,
-            },
+            settled_balances: balances::empty(),
+            owed_balances: balances::empty(),
         }
     }
 
@@ -57,9 +46,7 @@ module deepbook::account_data {
         self: &mut AccountData,
         fill: &Fill,
     ) {
-        self.settled_balances.base = self.settled_balances.base + fill.settled_base();
-        self.settled_balances.quote = self.settled_balances.quote + fill.settled_quote();
-        self.settled_balances.deep = self.settled_balances.deep + fill.settled_deep();
+        self.settled_balances.add_balances(*fill.settled_balances());
         if (!fill.expired()) {
             self.maker_volume = self.maker_volume + fill.volume();
         };
@@ -106,35 +93,27 @@ module deepbook::account_data {
 
     public(package) fun add_settled_amounts(
         self: &mut AccountData,
-        base: u64,
-        quote: u64,
-        deep: u64,
+        balances: Balances,
     ) {
-        self.settled_balances.base = self.settled_balances.base + base;
-        self.settled_balances.quote = self.settled_balances.quote + quote;
-        self.settled_balances.deep = self.settled_balances.deep + deep;
+        self.settled_balances.add_balances(balances);
     }
 
     public(package) fun add_owed_amounts(
         self: &mut AccountData,
-        base: u64,
-        quote: u64,
-        deep: u64,
+        balances: Balances,
     ) {
-        self.owed_balances.base = self.owed_balances.base + base;
-        self.owed_balances.quote = self.owed_balances.quote + quote;
-        self.owed_balances.deep = self.owed_balances.deep + deep;
+        self.owed_balances.add_balances(balances);
     }
 
     /// Settle the account balances.
     /// Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
     public(package) fun settle(
         self: &mut AccountData,
-    ): (u64, u64, u64, u64, u64, u64) {
-        let (base_out, quote_out, deep_out) = self.settled_balances.reset();
-        let (base_in, quote_in, deep_in) = self.owed_balances.reset();
+    ): (Balances, Balances) {
+        let settled = self.settled_balances.reset();
+        let owed = self.owed_balances.reset();
 
-        (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
+        (settled, owed)
     }
 
     /// Update the account data for the new epoch.
@@ -170,7 +149,7 @@ module deepbook::account_data {
     public(package) fun claim_rebates(
         self: &mut AccountData,
     ) {
-        self.settled_balances.deep = self.settled_balances.deep + self.unclaimed_rebates;
+        self.settled_balances.add_deep(self.unclaimed_rebates);
         self.unclaimed_rebates = 0;
     }
 
@@ -194,7 +173,7 @@ module deepbook::account_data {
     ): (u64, u64) {
         let stake_before = self.active_stake + self.inactive_stake;
         self.inactive_stake = self.inactive_stake + stake;
-        self.owed_balances.deep = self.owed_balances.deep + stake;
+        self.owed_balances.add_deep(stake);
 
         (stake_before, stake_before + self.inactive_stake)
     }
@@ -207,7 +186,7 @@ module deepbook::account_data {
         self.active_stake = 0;
         self.inactive_stake = 0;
         self.voted_proposal = option::none();
-        self.settled_balances.deep = self.settled_balances.deep + stake_before;
+        self.settled_balances.add_deep(stake_before);
 
         (stake_before, voted_proposal)
     }
@@ -216,16 +195,5 @@ module deepbook::account_data {
         self: &AccountData,
     ): VecSet<u128> {
         self.open_orders
-    }
-
-    fun reset(balances: &mut Balances): (u64, u64, u64) {
-        let base = balances.base;
-        let quote = balances.quote;
-        let deep = balances.deep;
-        balances.base = 0;
-        balances.quote = 0;
-        balances.deep = 0;
-
-        (base, quote, deep)
     }
 }

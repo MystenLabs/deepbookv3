@@ -9,6 +9,7 @@ module deepbook::vault {
         deep_price::{Self, DeepPrice},
         account_data::AccountData,
         order_info::OrderInfo,
+        balances::Self,
     };
 
     const EIneligibleTargetPool: u64 = 1;
@@ -38,29 +39,29 @@ module deepbook::vault {
         account: &mut Account,
         proof: &TradeProof,
     ) {
-        let (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = account_data.settle();
-        if (base_out > base_in) {
-            let balance = self.base_balance.split(base_out - base_in);
+        let (balances_out, balances_in) = account_data.settle();
+        if (balances_out.base() > balances_in.base()) {
+            let balance = self.base_balance.split(balances_out.base() - balances_in.base());
             account.deposit_with_proof(proof, balance);
         };
-        if (quote_out > quote_in) {
-            let balance = self.quote_balance.split(quote_out - quote_in);
+        if (balances_out.quote() > balances_in.quote()) {
+            let balance = self.quote_balance.split(balances_out.quote() - balances_in.quote());
             account.deposit_with_proof(proof, balance);
         };
-        if (deep_out > deep_in) {
-            let balance = self.deep_balance.split(deep_out - deep_in);
+        if (balances_out.deep() > balances_in.deep()) {
+            let balance = self.deep_balance.split(balances_out.deep() - balances_in.deep());
             account.deposit_with_proof(proof, balance);
         };
-        if (base_in > base_out) {
-            let balance = account.withdraw_with_proof(proof, base_in - base_out, false);
+        if (balances_in.base() > balances_out.base()) {
+            let balance = account.withdraw_with_proof(proof, balances_in.base() - balances_out.base(), false);
             self.base_balance.join(balance);
         };
-        if (quote_in > quote_out) {
-            let balance = account.withdraw_with_proof(proof, quote_in - quote_out, false);
+        if (balances_in.quote() > balances_out.quote()) {
+            let balance = account.withdraw_with_proof(proof, balances_in.quote() - balances_out.quote(), false);
             self.quote_balance.join(balance);
         };
-        if (deep_in > deep_out) {
-            let balance = account.withdraw_with_proof(proof, deep_in - deep_out, false);
+        if (balances_in.deep() > balances_out.deep()) {
+            let balance = account.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
             self.deep_balance.join(balance);
         };
     }
@@ -94,22 +95,29 @@ module deepbook::vault {
         let deep_in = math::mul(order_info.deep_per_base(), math::mul(executed_quantity, taker_fee));
         order_info.set_paid_fees(deep_in);
 
+        let settled_balances;
+        let owed_balances;
+
         if (order_info.is_bid()) {
-            account_data.add_settled_amounts(executed_quantity, 0, 0);
-            account_data.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
+            settled_balances = balances::new(executed_quantity, 0, 0);
+            owed_balances = balances::new(0, cumulative_quote_quantity, deep_in);
         } else {
-            account_data.add_settled_amounts(0, cumulative_quote_quantity, 0);
-            account_data.add_owed_amounts(executed_quantity, 0, deep_in);
+            settled_balances = balances::new(0, cumulative_quote_quantity, 0);
+            owed_balances = balances::new(executed_quantity, 0, deep_in);
         };
+
+        account_data.add_settled_amounts(settled_balances);
+        account_data.add_owed_amounts(owed_balances);
 
         // Maker Part of Settling Order
         if (remaining_quantity > 0 && !order_info.is_immediate_or_cancel()) {
             let deep_in = math::mul(order_info.deep_per_base(), math::mul(remaining_quantity, maker_fee));
-            if (order_info.is_bid()) {
-                account_data.add_owed_amounts(0, math::mul(remaining_quantity, order_info.price()), deep_in);
+            let owed_balances = if (order_info.is_bid()) {
+                balances::new(0, math::mul(remaining_quantity, order_info.price()), deep_in)
             } else {
-                account_data.add_owed_amounts(remaining_quantity, 0, deep_in);
+                balances::new(remaining_quantity, 0, deep_in)
             };
+            account_data.add_owed_amounts(owed_balances);
         };
     }
 

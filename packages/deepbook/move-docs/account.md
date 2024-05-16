@@ -76,7 +76,7 @@ A shared object that is passed into pools for placing orders.
 
 </dd>
 <dt>
-<code>balances: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
+<code><a href="balances.md#0x0_balances">balances</a>: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
 </dt>
 <dd>
 
@@ -285,7 +285,7 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
     <a href="account.md#0x0_account_Account">Account</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
         owner: ctx.sender(),
-        balances: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
+        <a href="balances.md#0x0_balances">balances</a>: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
         allow_listed: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
     }
 }
@@ -337,10 +337,10 @@ Returns the balance of a Coin in an account.
 
 <pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>if</b> (!<a href="account.md#0x0_account">account</a>.balances.contains(key)) {
+    <b>if</b> (!<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
         0
     } <b>else</b> {
-        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="account.md#0x0_account">account</a>.balances[key];
+        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
         acc_balance.value()
     }
 }
@@ -637,11 +637,11 @@ Deposit funds to an account. Pool will call this to deposit funds.
 
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
 
-    <b>if</b> (<a href="account.md#0x0_account">account</a>.balances.contains(key)) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.balances[key];
+    <b>if</b> (<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
         <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>.join(to_deposit);
     } <b>else</b> {
-        <a href="account.md#0x0_account">account</a>.balances.add(key, to_deposit);
+        <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.add(key, to_deposit);
     }
 }
 </code></pre>
@@ -675,8 +675,8 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
     <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
 
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.balances.contains(key), <a href="account.md#0x0_account_ENoBalance">ENoBalance</a>);
-    <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.balances[key];
+    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key), <a href="account.md#0x0_account_ENoBalance">ENoBalance</a>);
+    <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
     <b>let</b> value = acc_balance.value();
 
     <b>if</b> (!withdraw_all) {
@@ -713,12 +713,12 @@ This is used for deleting temporary accounts for direct swap with pool.
     <b>let</b> <a href="account.md#0x0_account_Account">Account</a> {
         id,
         owner: _,
-        balances,
+        <a href="balances.md#0x0_balances">balances</a>,
         allow_listed: _,
     } = <a href="account.md#0x0_account">account</a>;
 
     id.<a href="account.md#0x0_account_delete">delete</a>();
-    balances.destroy_empty();
+    <a href="balances.md#0x0_balances">balances</a>.destroy_empty();
 }
 </code></pre>
 

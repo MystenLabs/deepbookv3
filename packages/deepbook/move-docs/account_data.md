@@ -5,7 +5,6 @@
 
 
 
--  [Struct `Balances`](#0x0_account_data_Balances)
 -  [Struct `AccountData`](#0x0_account_data_AccountData)
 -  [Function `empty`](#0x0_account_data_empty)
 -  [Function `active_stake`](#0x0_account_data_active_stake)
@@ -26,55 +25,16 @@
 -  [Function `add_stake`](#0x0_account_data_add_stake)
 -  [Function `remove_stake`](#0x0_account_data_remove_stake)
 -  [Function `open_orders`](#0x0_account_data_open_orders)
--  [Function `reset`](#0x0_account_data_reset)
 
 
-<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set">0x2::vec_set</a>;
 </code></pre>
 
 
-
-<a name="0x0_account_data_Balances"></a>
-
-## Struct `Balances`
-
-
-
-<pre><code><b>struct</b> <a href="account_data.md#0x0_account_data_Balances">Balances</a> <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>base: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>quote: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>deep: u64</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
 
 <a name="0x0_account_data_AccountData"></a>
 
@@ -142,13 +102,13 @@ Account data that is updated every epoch.
 
 </dd>
 <dt>
-<code>settled_balances: <a href="account_data.md#0x0_account_data_Balances">account_data::Balances</a></code>
+<code>settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>owed_balances: <a href="account_data.md#0x0_account_data_Balances">account_data::Balances</a></code>
+<code>owed_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
@@ -185,16 +145,8 @@ Account data that is updated every epoch.
         inactive_stake: 0,
         voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
         unclaimed_rebates: 0,
-        settled_balances: <a href="account_data.md#0x0_account_data_Balances">Balances</a> {
-            base: 0,
-            quote: 0,
-            deep: 0,
-        },
-        owed_balances: <a href="account_data.md#0x0_account_data_Balances">Balances</a> {
-            base: 0,
-            quote: 0,
-            deep: 0,
-        },
+        settled_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
+        owed_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
     }
 }
 </code></pre>
@@ -248,9 +200,7 @@ Account data that is updated every epoch.
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
     <a href="fill.md#0x0_fill">fill</a>: &Fill,
 ) {
-    self.settled_balances.base = self.settled_balances.base + <a href="fill.md#0x0_fill">fill</a>.settled_base();
-    self.settled_balances.quote = self.settled_balances.quote + <a href="fill.md#0x0_fill">fill</a>.settled_quote();
-    self.settled_balances.deep = self.settled_balances.deep + <a href="fill.md#0x0_fill">fill</a>.settled_deep();
+    self.settled_balances.add_balances(*<a href="fill.md#0x0_fill">fill</a>.settled_balances());
     <b>if</b> (!<a href="fill.md#0x0_fill">fill</a>.expired()) {
         self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.volume();
     };
@@ -406,7 +356,7 @@ Account data that is updated every epoch.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_add_settled_amounts">add_settled_amounts</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>, base: u64, quote: u64, deep: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_add_settled_amounts">add_settled_amounts</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>, <a href="balances.md#0x0_balances">balances</a>: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -417,13 +367,9 @@ Account data that is updated every epoch.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_add_settled_amounts">add_settled_amounts</a>(
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
-    base: u64,
-    quote: u64,
-    deep: u64,
+    <a href="balances.md#0x0_balances">balances</a>: Balances,
 ) {
-    self.settled_balances.base = self.settled_balances.base + base;
-    self.settled_balances.quote = self.settled_balances.quote + quote;
-    self.settled_balances.deep = self.settled_balances.deep + deep;
+    self.settled_balances.add_balances(<a href="balances.md#0x0_balances">balances</a>);
 }
 </code></pre>
 
@@ -437,7 +383,7 @@ Account data that is updated every epoch.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_add_owed_amounts">add_owed_amounts</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>, base: u64, quote: u64, deep: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_add_owed_amounts">add_owed_amounts</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>, <a href="balances.md#0x0_balances">balances</a>: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -448,13 +394,9 @@ Account data that is updated every epoch.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_add_owed_amounts">add_owed_amounts</a>(
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
-    base: u64,
-    quote: u64,
-    deep: u64,
+    <a href="balances.md#0x0_balances">balances</a>: Balances,
 ) {
-    self.owed_balances.base = self.owed_balances.base + base;
-    self.owed_balances.quote = self.owed_balances.quote + quote;
-    self.owed_balances.deep = self.owed_balances.deep + deep;
+    self.owed_balances.add_balances(<a href="balances.md#0x0_balances">balances</a>);
 }
 </code></pre>
 
@@ -470,7 +412,7 @@ Settle the account balances.
 Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_settle">settle</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>): (u64, u64, u64, u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_settle">settle</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -481,11 +423,11 @@ Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_settle">settle</a>(
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
-): (u64, u64, u64, u64, u64, u64) {
-    <b>let</b> (base_out, quote_out, deep_out) = self.settled_balances.<a href="account_data.md#0x0_account_data_reset">reset</a>();
-    <b>let</b> (base_in, quote_in, deep_in) = self.owed_balances.<a href="account_data.md#0x0_account_data_reset">reset</a>();
+): (Balances, Balances) {
+    <b>let</b> settled = self.settled_balances.reset();
+    <b>let</b> owed = self.owed_balances.reset();
 
-    (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
+    (settled, owed)
 }
 </code></pre>
 
@@ -580,7 +522,7 @@ Returns the previous epoch, maker volume, and active stake.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_claim_rebates">claim_rebates</a>(
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
 ) {
-    self.settled_balances.deep = self.settled_balances.deep + self.unclaimed_rebates;
+    self.settled_balances.add_deep(self.unclaimed_rebates);
     self.unclaimed_rebates = 0;
 }
 </code></pre>
@@ -664,7 +606,7 @@ Returns the previous epoch, maker volume, and active stake.
 ): (u64, u64) {
     <b>let</b> stake_before = self.active_stake + self.inactive_stake;
     self.inactive_stake = self.inactive_stake + stake;
-    self.owed_balances.deep = self.owed_balances.deep + stake;
+    self.owed_balances.add_deep(stake);
 
     (stake_before, stake_before + self.inactive_stake)
 }
@@ -697,7 +639,7 @@ Returns the previous epoch, maker volume, and active stake.
     self.active_stake = 0;
     self.inactive_stake = 0;
     self.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
-    self.settled_balances.deep = self.settled_balances.deep + stake_before;
+    self.settled_balances.add_deep(stake_before);
 
     (stake_before, voted_proposal)
 }
@@ -726,37 +668,6 @@ Returns the previous epoch, maker volume, and active stake.
     self: &<a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
 ): VecSet&lt;u128&gt; {
     self.open_orders
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_data_reset"></a>
-
-## Function `reset`
-
-
-
-<pre><code><b>fun</b> <a href="account_data.md#0x0_account_data_reset">reset</a>(balances: &<b>mut</b> <a href="account_data.md#0x0_account_data_Balances">account_data::Balances</a>): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>fun</b> <a href="account_data.md#0x0_account_data_reset">reset</a>(balances: &<b>mut</b> <a href="account_data.md#0x0_account_data_Balances">Balances</a>): (u64, u64, u64) {
-    <b>let</b> base = balances.base;
-    <b>let</b> quote = balances.quote;
-    <b>let</b> deep = balances.deep;
-    balances.base = 0;
-    balances.quote = 0;
-    balances.deep = 0;
-
-    (base, quote, deep)
 }
 </code></pre>
 
