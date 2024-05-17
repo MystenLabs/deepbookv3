@@ -16,6 +16,7 @@
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
+<b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
@@ -163,29 +164,29 @@ Transfer any settled amounts for the account.
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,
 ) {
-    <b>let</b> (base_out, quote_out, deep_out, base_in, quote_in, deep_in) = <a href="account_data.md#0x0_account_data">account_data</a>.settle();
-    <b>if</b> (base_out &gt; base_in) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.base_balance.split(base_out - base_in);
+    <b>let</b> (balances_out, balances_in) = <a href="account_data.md#0x0_account_data">account_data</a>.settle();
+    <b>if</b> (balances_out.base() &gt; balances_in.base()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.base_balance.split(balances_out.base() - balances_in.base());
         <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (quote_out &gt; quote_in) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.quote_balance.split(quote_out - quote_in);
+    <b>if</b> (balances_out.quote() &gt; balances_in.quote()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.quote_balance.split(balances_out.quote() - balances_in.quote());
         <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (deep_out &gt; deep_in) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.deep_balance.split(deep_out - deep_in);
+    <b>if</b> (balances_out.deep() &gt; balances_in.deep()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.deep_balance.split(balances_out.deep() - balances_in.deep());
         <a href="account.md#0x0_account">account</a>.deposit_with_proof(proof, <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (base_in &gt; base_out) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, base_in - base_out, <b>false</b>);
+    <b>if</b> (balances_in.base() &gt; balances_out.base()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, balances_in.base() - balances_out.base(), <b>false</b>);
         self.base_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (quote_in &gt; quote_out) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, quote_in - quote_out, <b>false</b>);
+    <b>if</b> (balances_in.quote() &gt; balances_out.quote()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, balances_in.quote() - balances_out.quote(), <b>false</b>);
         self.quote_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (deep_in &gt; deep_out) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, deep_in - deep_out, <b>false</b>);
+    <b>if</b> (balances_in.deep() &gt; balances_out.deep()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="account.md#0x0_account">account</a>.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), <b>false</b>);
         self.deep_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
 }
@@ -239,22 +240,29 @@ and the remaining quantity is the only quantity left to be injected into the ord
     <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(<a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base(), <a href="math.md#0x0_math_mul">math::mul</a>(executed_quantity, taker_fee));
     <a href="order_info.md#0x0_order_info">order_info</a>.set_paid_fees(deep_in);
 
+    <b>let</b> settled_balances;
+    <b>let</b> owed_balances;
+
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
-        <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(executed_quantity, 0, 0);
-        <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(0, cumulative_quote_quantity, deep_in);
+        settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(executed_quantity, 0, 0);
+        owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, cumulative_quote_quantity, deep_in);
     } <b>else</b> {
-        <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(0, cumulative_quote_quantity, 0);
-        <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(executed_quantity, 0, deep_in);
+        settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, cumulative_quote_quantity, 0);
+        owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(executed_quantity, 0, deep_in);
     };
+
+    <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(settled_balances);
+    <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(owed_balances);
 
     // Maker Part of Settling Order
     <b>if</b> (remaining_quantity &gt; 0 && !<a href="order_info.md#0x0_order_info">order_info</a>.is_immediate_or_cancel()) {
         <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(<a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base(), <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee));
-        <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
-            <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, <a href="order_info.md#0x0_order_info">order_info</a>.price()), deep_in);
+        <b>let</b> owed_balances = <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
+            <a href="balances.md#0x0_balances_new">balances::new</a>(0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, <a href="order_info.md#0x0_order_info">order_info</a>.price()), deep_in)
         } <b>else</b> {
-            <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(remaining_quantity, 0, deep_in);
+            <a href="balances.md#0x0_balances_new">balances::new</a>(remaining_quantity, 0, deep_in)
         };
+        <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(owed_balances);
     };
 }
 </code></pre>

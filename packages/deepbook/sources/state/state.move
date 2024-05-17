@@ -10,6 +10,7 @@ module deepbook::state {
         governance::{Self, Governance},
         deep_price::{Self, DeepPrice},
         account_data::{Self, AccountData},
+        balances::Balances,
     };
 
     const ENotEnoughStake: u64 = 2;
@@ -77,26 +78,24 @@ module deepbook::state {
 
         let account_data = &mut self.accounts[account_id];
         let cancel_quantity = order.quantity();
-        let (base_quantity, quote_quantity, deep_quantity) = order.cancel_amounts(
+        let balances = order.cancel_amounts(
             cancel_quantity,
             false,
         );
         account_data.remove_order(order_id);
-        account_data.add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+        account_data.add_settled_amounts(balances);
     }
 
     public(package) fun process_modify(
         self: &mut State,
         account_id: ID,
-        base_quantity: u64,
-        quote_quantity: u64,
-        deep_quantity: u64,
+        balances: &Balances,
         ctx: &TxContext,
     ) {
         self.history.update(ctx);
         self.update_account(account_id, ctx.epoch());
 
-        self.accounts[account_id].add_settled_amounts(base_quantity, quote_quantity, deep_quantity);
+        self.accounts[account_id].add_settled_amounts(*balances);
     }
 
     public(package) fun process_stake(

@@ -52,7 +52,8 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
-<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
@@ -1552,7 +1553,7 @@ Funds for an expired order are returned to the maker as settled.
     <b>if</b> (maker.<a href="order_info.md#0x0_order_info_expire_timestamp">expire_timestamp</a>() &lt; timestamp) {
         maker.set_expired();
         <b>let</b> cancel_quantity = maker_quantity;
-        <b>let</b> (base, quote, deep) = maker.cancel_amounts(
+        <b>let</b> <a href="balances.md#0x0_balances">balances</a> = maker.cancel_amounts(
             cancel_quantity,
             <b>false</b>,
         );
@@ -1562,9 +1563,7 @@ Funds for an expired order are returned to the maker as settled.
             <b>true</b>,
             <b>false</b>,
             0,
-            base,
-            quote,
-            deep,
+            <a href="balances.md#0x0_balances">balances</a>,
         ));
 
         <b>return</b> <b>true</b>
@@ -1589,15 +1588,16 @@ Funds for an expired order are returned to the maker as settled.
         timestamp
     );
 
+    <b>let</b> base = <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0;
+    <b>let</b> quote = <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity;
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(base, quote, 0);
     self.fills.push_back(<a href="fill.md#0x0_fill_new">fill::new</a>(
         maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
         maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
         <b>false</b>,
         <b>false</b>,
         filled_quantity,
-        <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0,
-        <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity,
-        0,
+        <a href="balances.md#0x0_balances">balances</a>,
     ));
 
     <b>true</b>

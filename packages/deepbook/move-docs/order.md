@@ -35,7 +35,8 @@ All order matching happens in this module.
 -  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
 
 
-<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
@@ -408,7 +409,7 @@ initialize the order struct.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -423,16 +424,15 @@ initialize the order struct.
     min_size: u64,
     lot_size: u64,
     timestamp: u64,
-): (u64, u64, u64) {
+): Balances {
     <b>assert</b>!(new_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
     <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
     <b>let</b> cancel_amount = self.quantity - new_quantity;
-    <b>let</b> (base, quote, deep) = self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>true</b>);
     self.quantity = new_quantity;
 
-    (base, quote, deep)
+    self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>true</b>)
 }
 </code></pre>
 
@@ -451,7 +451,7 @@ Modify_order is a flag to indicate whether the order should be modified.
 Unpaid_fees is always in deep asset terms.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): (u64, u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, cancel_quantity: u64, modify_order: bool): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -464,7 +464,7 @@ Unpaid_fees is always in deep asset terms.
     self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     cancel_quantity: u64,
     modify_order: bool,
-): (u64, u64, u64) {
+): Balances {
     <b>let</b> is_bid = self.<a href="order.md#0x0_order_is_bid">is_bid</a>();
     <b>let</b> price = self.<a href="order.md#0x0_order_price">price</a>();
     <b>let</b> <b>mut</b> base_quantity = <b>if</b> (is_bid) 0 <b>else</b> cancel_quantity;
@@ -483,7 +483,7 @@ Unpaid_fees is always in deep asset terms.
         self.unpaid_fees = self.unpaid_fees - fee_refund;
     };
 
-    (base_quantity, quote_quantity, deep_quantity)
+    <a href="balances.md#0x0_balances_new">balances::new</a>(base_quantity, quote_quantity, deep_quantity)
 }
 </code></pre>
 

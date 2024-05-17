@@ -10,6 +10,7 @@ module deepbook::order_info {
         trade_params::TradeParams,
         order::{Self, Order},
         fill::{Self, Fill},
+        balances::Self,
     };
 
     const MIN_PRICE: u64 = 1;
@@ -366,7 +367,7 @@ module deepbook::order_info {
         if (maker.expire_timestamp() < timestamp) {
             maker.set_expired();
             let cancel_quantity = maker_quantity;
-            let (base, quote, deep) = maker.cancel_amounts(
+            let balances = maker.cancel_amounts(
                 cancel_quantity,
                 false,
             );
@@ -376,9 +377,7 @@ module deepbook::order_info {
                 true,
                 false,
                 0,
-                base,
-                quote,
-                deep,
+                balances,
             ));
 
             return true
@@ -402,16 +401,17 @@ module deepbook::order_info {
             quote_quantity,
             timestamp
         );
-
+        
+        let base = if (self.is_bid) filled_quantity else 0;
+        let quote = if (self.is_bid) 0 else quote_quantity;
+        let balances = balances::new(base, quote, 0);
         self.fills.push_back(fill::new(
             maker.order_id(),
             maker.account_id(),
             false,
             false,
             filled_quantity,
-            if (self.is_bid) filled_quantity else 0,
-            if (self.is_bid) 0 else quote_quantity,
-            0,
+            balances,
         ));
 
         true

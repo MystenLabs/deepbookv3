@@ -5,6 +5,7 @@ module deepbook::book {
         math,
         order::Order,
         order_info::OrderInfo,
+        balances::Balances,
     };
 
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
@@ -102,7 +103,7 @@ module deepbook::book {
     /// Modifies an order given order_id and new_quantity.
     /// New quantity must be less than the original quantity.
     /// Order must not have already expired.
-    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &Order) {
+    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (Balances, &Order) {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         let order = if (is_bid) {
             self.bids.borrow_mut(order_id)
@@ -110,14 +111,14 @@ module deepbook::book {
             self.asks.borrow_mut(order_id)
         };
 
-        let (base, quote, deep) = order.modify(
+        let balances = order.modify(
             new_quantity,
             self.min_size,
             self.lot_size,
             timestamp,
         );
 
-        (base, quote, deep, order)
+        (balances, order)
     }
 
     public(package) fun lot_size(self: &Book): u64 {

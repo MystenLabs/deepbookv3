@@ -22,7 +22,8 @@
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
 
 
-<pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
@@ -318,7 +319,7 @@ New quantity must be less than the original quantity.
 Order must not have already expired.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &<a href="order.md#0x0_order_Order">order::Order</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, &<a href="order.md#0x0_order_Order">order::Order</a>)
 </code></pre>
 
 
@@ -327,7 +328,7 @@ Order must not have already expired.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, u64, u64, &Order) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (Balances, &Order) {
     <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
     <b>let</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (is_bid) {
         self.bids.borrow_mut(order_id)
@@ -335,14 +336,14 @@ Order must not have already expired.
         self.asks.borrow_mut(order_id)
     };
 
-    <b>let</b> (base, quote, deep) = <a href="order.md#0x0_order">order</a>.modify(
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="order.md#0x0_order">order</a>.modify(
         new_quantity,
         self.min_size,
         self.lot_size,
         timestamp,
     );
 
-    (base, quote, deep, <a href="order.md#0x0_order">order</a>)
+    (<a href="balances.md#0x0_balances">balances</a>, <a href="order.md#0x0_order">order</a>)
 }
 </code></pre>
 
