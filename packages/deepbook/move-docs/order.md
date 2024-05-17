@@ -12,16 +12,13 @@ All order matching happens in this module.
 -  [Struct `OrderModified`](#0x0_order_OrderModified)
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_order_new)
+-  [Function `generate_fill`](#0x0_order_generate_fill)
 -  [Function `modify`](#0x0_order_modify)
 -  [Function `cancel_amounts`](#0x0_order_cancel_amounts)
--  [Function `set_unpaid_fees`](#0x0_order_set_unpaid_fees)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
 -  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
--  [Function `set_quantity`](#0x0_order_set_quantity)
 -  [Function `set_live`](#0x0_order_set_live)
--  [Function `set_fill_status`](#0x0_order_set_fill_status)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
--  [Function `set_expired`](#0x0_order_set_expired)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
 -  [Function `account_id`](#0x0_order_account_id)
@@ -36,6 +33,7 @@ All order matching happens in this module.
 
 
 <pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
@@ -403,6 +401,67 @@ initialize the order struct.
 
 </details>
 
+<a name="0x0_order_generate_fill"></a>
+
+## Function `generate_fill`
+
+Generate a fill for the resting order given the timestamp,
+quantity and whether the order is a bid.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_generate_fill">generate_fill</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64, quantity: u64, is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_generate_fill">generate_fill</a>(
+    self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
+    timestamp: u64,
+    quantity: u64,
+    is_bid: bool,
+): Fill {
+    <b>let</b> <b>mut</b> volume = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
+    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(volume, self.<a href="order.md#0x0_order_price">price</a>());
+    <b>let</b> base = <b>if</b> (is_bid) volume <b>else</b> 0;
+    <b>let</b> quote = <b>if</b> (is_bid) 0 <b>else</b> quote_quantity;
+
+    <b>let</b> order_id = self.order_id;
+    <b>let</b> account_id = self.account_id;
+    <b>let</b> expired = self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp;
+    <b>let</b> <b>mut</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(base, quote, 0);
+
+    <b>if</b> (expired) {
+        self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
+        <b>let</b> cancel_amount = self.quantity;
+        <a href="balances.md#0x0_balances">balances</a> = self.<a href="order.md#0x0_order_cancel_amounts">cancel_amounts</a>(cancel_amount, <b>false</b>);
+        volume = 0;
+    } <b>else</b> {
+        <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(volume, self.unpaid_fees), self.quantity);
+        self.unpaid_fees = self.unpaid_fees - maker_fees;
+        self.quantity = self.quantity - volume;
+        self.status = <b>if</b> (self.quantity == 0) <a href="order.md#0x0_order_FILLED">FILLED</a> <b>else</b> <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
+    };
+
+    <a href="fill.md#0x0_fill_new">fill::new</a>(
+        order_id,
+        account_id,
+        expired,
+        self.quantity == 0,
+        volume,
+        quote_quantity,
+        <a href="balances.md#0x0_balances">balances</a>,
+    )
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_modify"></a>
 
 ## Function `modify`
@@ -484,33 +543,6 @@ Unpaid_fees is always in deep asset terms.
     };
 
     <a href="balances.md#0x0_balances_new">balances::new</a>(base_quantity, quote_quantity, deep_quantity)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_unpaid_fees"></a>
-
-## Function `set_unpaid_fees`
-
-Calculate the amount of fees to be paid for a maker order already live.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, filled_quantity: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_unpaid_fees">set_unpaid_fees</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, filled_quantity: u64) {
-    <b>let</b> unpaid_fees = self.unpaid_fees;
-    <b>let</b> maker_fees = <a href="math.md#0x0_math_div">math::div</a>(<a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, unpaid_fees), self.quantity);
-    self.unpaid_fees = unpaid_fees - maker_fees;
 }
 </code></pre>
 
@@ -600,30 +632,6 @@ Calculate the amount of fees to be paid for a maker order already live.
 
 </details>
 
-<a name="0x0_order_set_quantity"></a>
-
-## Function `set_quantity`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, quantity: u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_quantity">set_quantity</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>, quantity: u64) {
-    self.quantity = quantity;
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_order_set_live"></a>
 
 ## Function `set_live`
@@ -641,34 +649,6 @@ Calculate the amount of fees to be paid for a maker order already live.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
     self.status = <a href="order.md#0x0_order_LIVE">LIVE</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_fill_status"></a>
-
-## Function `set_fill_status`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_fill_status">set_fill_status</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    <b>if</b> (self.quantity == 0) {
-        self.status = <a href="order.md#0x0_order_FILLED">FILLED</a>;
-    } <b>else</b> {
-        self.status = <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
-    }
 }
 </code></pre>
 
@@ -694,31 +674,6 @@ Update the order status to canceled.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
     self.status = <a href="order.md#0x0_order_CANCELED">CANCELED</a>;
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_set_expired"></a>
-
-## Function `set_expired`
-
-Update the order status to expired.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_expired">set_expired</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
 }
 </code></pre>
 
