@@ -149,6 +149,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
+        self_matching_prevention: bool,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -169,7 +170,7 @@ module deepbook::order_info {
             paid_fees: 0,
             trade_params,
             status: LIVE,
-            self_matching_prevention: false,
+            self_matching_prevention,
         }
     }
 
@@ -309,7 +310,7 @@ module deepbook::order_info {
 
             return true
         };
-        
+
         false
     }
 
@@ -401,7 +402,7 @@ module deepbook::order_info {
             quote_quantity,
             timestamp
         );
-        
+
         let base = if (self.is_bid) filled_quantity else 0;
         let quote = if (self.is_bid) 0 else quote_quantity;
         let balances = balances::new(base, quote, 0);

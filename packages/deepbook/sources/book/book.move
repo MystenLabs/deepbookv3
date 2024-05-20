@@ -210,8 +210,15 @@ module deepbook::book {
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-            if (!order_info.match_maker(maker_order, timestamp)) break;
+            let is_self_order = order_info.self_matching_prevention() && maker_order.account_id() == order_info.account_id();
+            let match_successful = if (!is_self_order) {
+                order_info.match_maker(maker_order, timestamp)
+            } else {
+                false
+            };
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
+            if (is_self_order) continue;
+            if (!match_successful) break;
 
             let fill = order_info.last_fill();
             if (fill.expired() || fill.completed()) {

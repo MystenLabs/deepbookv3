@@ -134,6 +134,7 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
+        self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
@@ -152,6 +153,7 @@ module deepbook::pool {
             pay_with_deep,
             expire_timestamp,
             trade_params,
+            self_matching_prevention,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);
@@ -174,6 +176,7 @@ module deepbook::pool {
         is_bid: bool,
         pay_with_deep: bool,
         clock: &Clock,
+        self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
         self.place_limit_order(
@@ -187,6 +190,7 @@ module deepbook::pool {
             pay_with_deep,
             clock.timestamp_ms(),
             clock,
+            self_matching_prevention,
             ctx,
         )
     }
@@ -223,7 +227,17 @@ module deepbook::pool {
         temp_account.deposit(deep_in, ctx);
         let proof = temp_account.generate_proof_as_owner(ctx);
 
-        self.place_market_order(&mut temp_account, &proof, 0, base_quantity, is_bid, pay_with_deep, clock, ctx);
+        self.place_market_order(
+            &mut temp_account,
+            &proof,
+            0,
+            base_quantity,
+            is_bid,
+            pay_with_deep,
+            clock,
+            false,
+            ctx
+        );
 
         let base_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
         let quote_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);

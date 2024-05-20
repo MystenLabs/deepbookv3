@@ -1013,6 +1013,7 @@ module deepbook::pool_tests {
                 pay_with_deep,
                 expire_timestamp,
                 &clock,
+                false,
                 test.ctx()
             );
             return_shared(pool);
