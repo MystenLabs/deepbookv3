@@ -211,6 +211,7 @@ module deepbook::pool_tests {
             true,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
         end(test);
@@ -242,6 +243,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp, // no expiration
+            false,
             &mut test,
         ).order_id();
         cancel_order(
@@ -286,6 +288,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
         end(test);
@@ -357,6 +360,107 @@ module deepbook::pool_tests {
         );
     }
 
+    #[test]
+    fun test_self_matching_prevention_bid() {
+        test_self_matching_prevention(true);
+    }
+
+    #[test]
+    fun test_self_matching_prevention_ask() {
+        test_self_matching_prevention(false);
+    }
+
+    /// Alice places a bid order, Alice then places an ask order with self_matching_prevention
+    /// Order should not be filled. Both bid and ask order at the same price should exist
+    fun test_self_matching_prevention(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let bid_client_order_id = 1;
+        let ask_client_order_id = 2;
+        let order_type = NO_RESTRICTION;
+        let price = 2 * FLOAT_SCALING;
+        let quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let pay_with_deep = true;
+        let self_matching_prevention = true;
+        let fee_is_deep = true;
+
+        let order_info_1 = place_order(
+            ALICE,
+            acct_id_alice,
+            bid_client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            self_matching_prevention,
+            &mut test,
+        );
+
+        let order_info_2 = place_order(
+            ALICE,
+            acct_id_alice,
+            ask_client_order_id,
+            order_type,
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            self_matching_prevention,
+            &mut test,
+        );
+
+        verify_order_info(
+            &order_info_1,
+            bid_client_order_id,
+            price,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            LIVE,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        verify_order_info(
+            &order_info_2,
+            ask_client_order_id,
+            price,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            LIVE,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        borrow_order_ok(
+            order_info_1.order_id(),
+            is_bid,
+            &mut test,
+        );
+
+        borrow_order_ok(
+            order_info_2.order_id(),
+            !is_bid,
+            &mut test,
+        );
+
+        end(test);
+    }
+
     fun place_with_price_quantity(
         price: u64,
         quantity: u64,
@@ -381,6 +485,7 @@ module deepbook::pool_tests {
             true,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
         end(test);
@@ -416,6 +521,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -433,6 +539,7 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -494,6 +601,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -515,6 +623,7 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -570,6 +679,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -590,6 +700,7 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -657,6 +768,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -693,6 +805,7 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -771,6 +884,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -836,6 +950,7 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
+            false,
             &mut test,
         );
 
@@ -990,6 +1105,7 @@ module deepbook::pool_tests {
         is_bid: bool,
         pay_with_deep: bool,
         expire_timestamp: u64,
+        self_matching_prevention: bool,
         test: &mut Scenario,
     ): OrderInfo {
         test.next_tx(trader);
@@ -1013,7 +1129,7 @@ module deepbook::pool_tests {
                 pay_with_deep,
                 expire_timestamp,
                 &clock,
-                false,
+                self_matching_prevention,
                 test.ctx()
             );
             return_shared(pool);
