@@ -291,6 +291,108 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    #[test]
+    fun test_partial_fill_order_bid() {
+        test_partial_fill_order(
+            true,
+            NO_RESTRICTION,
+            1 * FLOAT_SCALING,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
+            PARTIALLY_FILLED
+        );
+    }
+
+    #[test]
+    fun test_partial_fill_order_ask() {
+        test_partial_fill_order(
+            false,
+            NO_RESTRICTION,
+            1 * FLOAT_SCALING,
+            1 * FLOAT_SCALING,
+            2 * FLOAT_SCALING,
+            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
+            PARTIALLY_FILLED
+        );
+    }
+
+    fun test_partial_fill_order(
+        is_bid: bool,
+        order_type: u8,
+        alice_quantity: u64,
+        expected_executed_quantity: u64,
+        expected_cumulative_quote_quantity: u64,
+        expected_paid_fees: u64,
+        expected_status: u8,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+
+        let alice_client_order_id = 1;
+        let alice_price = 2 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let pay_with_deep = true;
+
+        place_order(
+            ALICE,
+            acct_id_alice,
+            alice_client_order_id,
+            NO_RESTRICTION,
+            alice_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let bob_client_order_id = 2;
+        let bob_price = 2 * FLOAT_SCALING;
+        let bob_quantity = 2 * FLOAT_SCALING;
+
+        let bob_order_info = place_order(
+            BOB,
+            acct_id_bob,
+            bob_client_order_id,
+            order_type,
+            bob_price,
+            bob_quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let fee_is_deep = true;
+        let self_matching_prevention = false;
+
+        verify_order_info(
+            &bob_order_info,
+            bob_client_order_id,
+            bob_price,
+            bob_quantity,
+            expected_executed_quantity,
+            expected_cumulative_quote_quantity,
+            expected_paid_fees,
+            fee_is_deep,
+            expected_status,
+            expire_timestamp,
+            self_matching_prevention,
+        );
+
+        borrow_order_ok(
+            bob_order_info.order_id(),
+            !is_bid,
+            &mut test,
+        );
+
+        end(test);
+    }
+
     /// Place normal ask order, then try to fill full order.
     /// Alice places first order, Bob places second order.
     fun place_then_fill(
