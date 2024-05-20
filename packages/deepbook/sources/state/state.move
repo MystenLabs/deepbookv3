@@ -38,9 +38,9 @@ module deepbook::state {
     /// Update taker settled balances and volumes.
     public(package) fun process_create(
         self: &mut State,
-        order_info: &OrderInfo,
+        order_info: &mut OrderInfo,
         ctx: &TxContext,
-    ) {
+    ): (Balances, Balances) {
         self.history.update(ctx);
         let fills = order_info.fills();
         let mut i = 0;
@@ -59,8 +59,15 @@ module deepbook::state {
 
         self.update_account(order_info.account_id(), ctx.epoch());
         let account_data = &mut self.accounts[order_info.account_id()];
+        let account_volume = account_data.taker_volume() + account_data.maker_volume();
+        let account_stake = account_data.active_stake();
+        let (settled, owed) = order_info.calculate_maker_taker_fees(account_volume, account_stake);
         account_data.add_order(order_info.order_id());
         account_data.increase_taker_volume(order_info.executed_quantity());
+        account_data.add_settled_amounts(settled);
+        account_data.add_owed_amounts(owed);
+
+        account_data.settle()
     }
 
     /// Update account settled balances and volumes.
@@ -71,7 +78,7 @@ module deepbook::state {
         order_id: u128,
         account_id: ID,
         ctx: &TxContext,
-    ) {
+    ): (Balances, Balances) {
         self.history.update(ctx);
         order.set_canceled();
         self.update_account(account_id, ctx.epoch());
@@ -84,6 +91,8 @@ module deepbook::state {
         );
         account_data.remove_order(order_id);
         account_data.add_settled_amounts(balances);
+
+        account_data.settle()
     }
 
     public(package) fun process_modify(
@@ -91,11 +100,12 @@ module deepbook::state {
         account_id: ID,
         balances: &Balances,
         ctx: &TxContext,
-    ) {
+    ): (Balances, Balances) {
         self.history.update(ctx);
         self.update_account(account_id, ctx.epoch());
-
         self.accounts[account_id].add_settled_amounts(*balances);
+
+        self.accounts[account_id].settle()
     }
 
     public(package) fun process_stake(
@@ -103,20 +113,22 @@ module deepbook::state {
         account_id: ID,
         new_stake: u64,
         ctx: &TxContext,
-    ) {
+    ): (Balances, Balances) {
         self.history.update(ctx);
         self.governance.update(ctx);
         self.update_account(account_id, ctx.epoch());
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
         self.governance.adjust_voting_power(stake_before, stake_after);
+
+        self.accounts[account_id].settle()
     }
 
     public(package) fun process_unstake(
         self: &mut State,
         account_id: ID,
         ctx: &TxContext,
-    ) {
+    ): (Balances, Balances) {
         self.history.update(ctx);
         self.governance.update(ctx);
         self.update_account(account_id, ctx.epoch());
@@ -125,6 +137,8 @@ module deepbook::state {
         let (total_stake, voted_proposal) = account_data.remove_stake();
         self.governance.adjust_voting_power(total_stake, 0);
         self.governance.adjust_vote(voted_proposal, option::none(), total_stake);
+
+        account_data.settle()
     }
 
     public(package) fun process_proposal(

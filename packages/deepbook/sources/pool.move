@@ -154,9 +154,9 @@ module deepbook::pool {
             trade_params,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
-        self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_create(&mut order_info, ctx);
+        // self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
+        self.vault.settle_account(settled, owed, account, proof);
 
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
@@ -248,8 +248,8 @@ module deepbook::pool {
     ) {
         let (balances, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_modify(account.id(), &balances, ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_modify(account.id(), &balances, ctx);
+        self.vault.settle_account(settled, owed, account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -268,8 +268,8 @@ module deepbook::pool {
     ) {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_cancel(&mut order, order_id, account.id(), ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_cancel(&mut order, order_id, account.id(), ctx);
+        self.vault.settle_account(settled, owed, account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -283,8 +283,8 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ) {
-        self.state.process_stake(account.id(), amount, ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_stake(account.id(), amount, ctx);
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     /// Unstake DEEP tokens from the pool. The account must have enough staked DEEP tokens.
@@ -298,8 +298,8 @@ module deepbook::pool {
     ) {
         account.validate_proof(proof);
 
-        self.state.process_unstake(account.id(), ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_unstake(account.id(), ctx);
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     /// Submit a proposal to change the taker fee, maker fee, and stake required.
@@ -345,8 +345,8 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let account_data = self.state.account_mut(account.id(), ctx.epoch());
-        account_data.claim_rebates();
-        self.vault.settle_account(account_data, account, proof);
+        let (settled, owed) = account_data.claim_rebates();
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     // GETTERS

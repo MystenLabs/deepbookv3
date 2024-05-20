@@ -7,9 +7,7 @@ module deepbook::vault {
         math,
         account::{Account, TradeProof},
         deep_price::{Self, DeepPrice},
-        account_data::AccountData,
-        order_info::OrderInfo,
-        balances::Self,
+        balances::Balances,
     };
 
     const EIneligibleTargetPool: u64 = 1;
@@ -35,11 +33,11 @@ module deepbook::vault {
     /// Transfer any settled amounts for the account.
     public(package) fun settle_account<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
-        account_data: &mut AccountData,
+        balances_out: Balances,
+        balances_in: Balances,
         account: &mut Account,
         proof: &TradeProof,
     ) {
-        let (balances_out, balances_in) = account_data.settle();
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
             account.deposit_with_proof(proof, balance);
@@ -63,61 +61,6 @@ module deepbook::vault {
         if (balances_in.deep() > balances_out.deep()) {
             let balance = account.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
             self.deep_balance.join(balance);
-        };
-    }
-
-    /// Given an order, settle its balances. Up until this point, any partial fills have been executed
-    /// and the remaining quantity is the only quantity left to be injected into the order book.
-    /// 1. Calculate the maker and taker fee for this account.
-    /// 2. Calculate the total fees for the maker and taker portion of the order.
-    /// 3. Add to the account's settled and owed balances.
-    public(package) fun settle_order<BaseAsset, QuoteAsset>(
-        self: &Vault<BaseAsset, QuoteAsset>,
-        order_info: &mut OrderInfo,
-        account_data: &mut AccountData,
-    ) {
-        let base_to_deep = self.deep_price.conversion_rate();
-        let total_volume = account_data.taker_volume() + account_data.maker_volume();
-        let volume_in_deep = math::mul(total_volume, base_to_deep);
-        let trade_params = order_info.trade_params();
-        let taker_fee = trade_params.taker_fee();
-        let maker_fee = trade_params.maker_fee();
-        let stake_required = trade_params.stake_required();
-        let taker_fee = if (account_data.active_stake() >= stake_required && volume_in_deep >= stake_required) {
-            math::mul(taker_fee, 500_000_000)
-        } else {
-            taker_fee
-        };
-
-        let executed_quantity = order_info.executed_quantity();
-        let remaining_quantity = order_info.remaining_quantity();
-        let cumulative_quote_quantity = order_info.cumulative_quote_quantity();
-        let deep_in = math::mul(order_info.deep_per_base(), math::mul(executed_quantity, taker_fee));
-        order_info.set_paid_fees(deep_in);
-
-        let settled_balances;
-        let owed_balances;
-
-        if (order_info.is_bid()) {
-            settled_balances = balances::new(executed_quantity, 0, 0);
-            owed_balances = balances::new(0, cumulative_quote_quantity, deep_in);
-        } else {
-            settled_balances = balances::new(0, cumulative_quote_quantity, 0);
-            owed_balances = balances::new(executed_quantity, 0, deep_in);
-        };
-
-        account_data.add_settled_amounts(settled_balances);
-        account_data.add_owed_amounts(owed_balances);
-
-        // Maker Part of Settling Order
-        if (remaining_quantity > 0 && !order_info.is_immediate_or_cancel()) {
-            let deep_in = math::mul(order_info.deep_per_base(), math::mul(remaining_quantity, maker_fee));
-            let owed_balances = if (order_info.is_bid()) {
-                balances::new(0, math::mul(remaining_quantity, order_info.price()), deep_in)
-            } else {
-                balances::new(remaining_quantity, 0, deep_in)
-            };
-            account_data.add_owed_amounts(owed_balances);
         };
     }
 
