@@ -16,7 +16,6 @@ module deepbook::pool {
     };
 
     use deepbook::{
-        math,
         account::{Self, Account, TradeProof},
         order_info::{Self, OrderInfo},
         book::{Self, Book},
@@ -206,8 +205,6 @@ module deepbook::pool {
             (base_quantity, _) = self.get_amount_out(0, quote_quantity);
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
-        let base_to_deep = self.state.deep_price().conversion_rate();
-        let taker_fee = self.state.governance().trade_params().taker_fee();
 
         let mut temp_account = account::new(ctx);
         temp_account.deposit(base_in, ctx);
