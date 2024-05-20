@@ -120,8 +120,6 @@ module deepbook::pool {
         self.state.governance().whitelisted()
     }
 
-    /// Place a limit order. Quantity is in base asset terms.
-    /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -134,6 +132,41 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
+        self_matching_prevention: bool,
+        ctx: &TxContext,
+    ): OrderInfo {
+        self.place_limit_order_int(
+            account,
+            proof,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            clock,
+            false,
+            self_matching_prevention,
+            ctx,
+        )
+    }
+
+    /// Place a limit order. Quantity is in base asset terms.
+    /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
+    fun place_limit_order_int<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        client_order_id: u64,
+        order_type: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        expire_timestamp: u64,
+        clock: &Clock,
+        is_market_order: bool,
         self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
@@ -153,6 +186,7 @@ module deepbook::pool {
             pay_with_deep,
             expire_timestamp,
             trade_params,
+            is_market_order,
             self_matching_prevention,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
@@ -172,6 +206,7 @@ module deepbook::pool {
         account: &mut Account,
         proof: &TradeProof,
         client_order_id: u64,
+        order_type: u8,
         quantity: u64,
         is_bid: bool,
         pay_with_deep: bool,
@@ -179,17 +214,18 @@ module deepbook::pool {
         self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
-        self.place_limit_order(
+        self.place_limit_order_int(
             account,
             proof,
             client_order_id,
-            order_info::immediate_or_cancel(),
+            order_type,
             if (is_bid) MAX_PRICE else MIN_PRICE,
             quantity,
             is_bid,
             pay_with_deep,
             clock.timestamp_ms(),
             clock,
+            true,
             self_matching_prevention,
             ctx,
         )
@@ -201,6 +237,7 @@ module deepbook::pool {
         base_in: Coin<BaseAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
+        client_order_id: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -230,7 +267,8 @@ module deepbook::pool {
         self.place_market_order(
             &mut temp_account,
             &proof,
-            0,
+            client_order_id,
+            order_info::immediate_or_cancel(),
             base_quantity,
             is_bid,
             pay_with_deep,

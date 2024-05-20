@@ -39,6 +39,7 @@ module deepbook::order_info {
     const EInvalidOrderType: u64 = 4;
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
+    const EMarketOrderCannotBePostOnly: u64 = 7;
 
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
@@ -81,6 +82,8 @@ module deepbook::order_info {
         trade_params: TradeParams,
         // Status of the order
         status: u8,
+        // Is a market_order
+        is_market_order: bool,
         // Reserved field for prevent self_matching
         self_matching_prevention: bool,
     }
@@ -149,6 +152,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
+        is_market_order: bool,
         self_matching_prevention: bool,
     ): OrderInfo {
         OrderInfo {
@@ -170,6 +174,7 @@ module deepbook::order_info {
             paid_fees: 0,
             trade_params,
             status: LIVE,
+            is_market_order,
             self_matching_prevention,
         }
     }
@@ -246,6 +251,10 @@ module deepbook::order_info {
         self.fills
     }
 
+    public(package) fun is_market_order(self: &OrderInfo): bool {
+        self.is_market_order
+    }
+
     public(package) fun last_fill(self: &OrderInfo): &Fill {
         &self.fills[self.fills.length() - 1]
     }
@@ -286,12 +295,16 @@ module deepbook::order_info {
         lot_size: u64,
         timestamp: u64,
     ) {
-        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
-        assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
         assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
         assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
+        if (order_info.is_market_order) {
+            assert!(order_info.order_type != POST_ONLY, EMarketOrderCannotBePostOnly);
+            return
+        };
+        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
+        assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
     }
 
     /// Assert order types after partial fill against the order book.

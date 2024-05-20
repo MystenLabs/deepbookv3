@@ -12,6 +12,7 @@ module deepbook::pool_tests {
             return_shared,
         },
         balance::Self,
+        coin::Coin,
         sui::SUI,
         coin::mint_for_testing,
         test_utils,
@@ -368,6 +369,72 @@ module deepbook::pool_tests {
     #[test]
     fun test_self_matching_prevention_ask() {
         test_self_matching_prevention(false);
+    }
+
+    #[test]
+    fun test_swap_exact_amount_bid() {
+        test_swap_exact_amount(true);
+    }
+
+    /// Alice places a bid order, Bob places a swap_exact_amount order
+    /// Make sure the assets returned to Bob are correct
+    fun test_swap_exact_amount(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let alice_client_order_id = 1;
+        let alice_price = 2 * FLOAT_SCALING;
+        let alice_quantity = 1 * FLOAT_SCALING;
+        let expire_timestamp = MAX_U64;
+        let pay_with_deep = true;
+
+        place_order(
+            ALICE,
+            acct_id_alice,
+            alice_client_order_id,
+            NO_RESTRICTION,
+            alice_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            false,
+            &mut test,
+        );
+
+        let base_in = if (is_bid) {
+            1 * FLOAT_SCALING
+        } else {
+            0
+        };
+        let quote_in = if (is_bid) {
+            0
+        } else {
+            2 * FLOAT_SCALING
+        };
+        let deep_in = math::mul(DEEP_MULTIPLIER, TAKER_FEE);
+
+        let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
+            BOB,
+            base_in,
+            quote_in,
+            deep_in,
+            &mut test,
+        );
+
+        assert!(base_out.value() == 0, EOrderInfoMismatch);
+        assert!(quote_out.value() == 2 * FLOAT_SCALING, EOrderInfoMismatch);
+        assert!(deep_out.value() == 0, EOrderInfoMismatch);
+
+        base_out.burn_for_testing();
+        quote_out.burn_for_testing();
+        deep_out.burn_for_testing();
+
+        end(test);
     }
 
     /// Alice places a bid order, Alice then places an ask order with self_matching_prevention
@@ -1131,6 +1198,37 @@ module deepbook::pool_tests {
             return_shared(account);
 
             order_info
+        }
+    }
+
+    /// Place swap exact amount order
+    fun place_swap_exact_amount_order(
+        trader: address,
+        base_in: u64,
+        quote_in: u64,
+        deep_in: u64,
+        test: &mut Scenario,
+    ): (Coin<SUI>, Coin<USDC>, Coin<DEEP>) {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let client_order_id = 1;
+
+            // Place order in pool
+            let (base_out, quote_out, deep_out) =
+                pool.swap_exact_amount<SUI, USDC>(
+                    mint_for_testing<SUI>(base_in, test.ctx()),
+                    mint_for_testing<USDC>(quote_in, test.ctx()),
+                    mint_for_testing<DEEP>(deep_in, test.ctx()),
+                    client_order_id,
+                    &clock,
+                    test.ctx()
+                );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_out)
         }
     }
 
