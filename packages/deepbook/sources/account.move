@@ -9,7 +9,7 @@
 module deepbook::account {
     use sui::{
         bag::{Self, Bag},
-        balance::Balance,
+        balance::{Self, Balance},
         coin::Coin,
     };
 
@@ -182,16 +182,20 @@ module deepbook::account {
         account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
-        assert!(account.balances.contains(key), ENoBalance);
-        let acc_balance: &mut Balance<T> = &mut account.balances[key];
-        let value = acc_balance.value();
-
-        if (!withdraw_all) {
-            assert!(value >= amount, EAccountBalanceTooLow);
-            acc_balance.split(amount)
+        if (!account.balances.contains(key)) {
+            balance::zero()
         } else {
-            acc_balance.split(value)
+            let acc_balance: &mut Balance<T> = &mut account.balances[key];
+            let value = acc_balance.value();
+
+            if (!withdraw_all && value != amount) {
+                assert!(value >= amount, EAccountBalanceTooLow);
+                acc_balance.split(amount)
+            } else {
+                account.balances.remove(BalanceKey<T> {})
+            }
         }
+
     }
 
     /// Deletes an account.

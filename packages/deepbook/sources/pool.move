@@ -36,8 +36,7 @@ module deepbook::pool {
     const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
-    const ENotEnoughDeep: u64 = 10;
-    const EInvalidOrderAccount: u64 = 11;
+    const EInvalidOrderAccount: u64 = 10;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -120,6 +119,8 @@ module deepbook::pool {
         self.state.governance().whitelisted()
     }
 
+    /// Place a limit order. Quantity is in base asset terms.
+    /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
@@ -150,53 +151,6 @@ module deepbook::pool {
             self_matching_prevention,
             ctx,
         )
-    }
-
-    /// Place a limit order. Quantity is in base asset terms.
-    /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
-    fun place_limit_order_int<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        account: &mut Account,
-        proof: &TradeProof,
-        client_order_id: u64,
-        order_type: u8,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        pay_with_deep: bool,
-        expire_timestamp: u64,
-        clock: &Clock,
-        is_market_order: bool,
-        self_matching_prevention: bool,
-        ctx: &TxContext,
-    ): OrderInfo {
-        assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let trade_params = self.state.governance().trade_params();
-
-        let mut order_info = order_info::new(
-            self.id.to_inner(),
-            account.id(),
-            client_order_id,
-            proof.trader(),
-            order_type,
-            price,
-            quantity,
-            self.state.deep_price().conversion_rate(),
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            trade_params,
-            is_market_order,
-            self_matching_prevention,
-        );
-        self.book.create_order(&mut order_info, clock.timestamp_ms());
-        self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
-
-        if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
-
-        order_info
     }
 
     /// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
@@ -254,9 +208,6 @@ module deepbook::pool {
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
         let base_to_deep = self.state.deep_price().conversion_rate();
         let taker_fee = self.state.governance().trade_params().taker_fee();
-        let deep_required = math::mul(base_quantity, base_to_deep);
-        let deep_required = math::mul(deep_required, taker_fee);
-        assert!(deep_in.value() >= deep_required, ENotEnoughDeep);
 
         let mut temp_account = account::new(ctx);
         temp_account.deposit(base_in, ctx);
@@ -277,9 +228,9 @@ module deepbook::pool {
             ctx
         );
 
-        let base_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
-        let quote_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
-        let deep_out = temp_account.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
+        let base_out = temp_account.withdraw_with_proof<BaseAsset>(&proof, 0, true).into_coin(ctx);
+        let quote_out = temp_account.withdraw_with_proof<QuoteAsset>(&proof, 0, true).into_coin(ctx);
+        let deep_out = temp_account.withdraw_with_proof<DEEP>(&proof, 0, true).into_coin(ctx);
 
         temp_account.delete();
 
@@ -510,5 +461,50 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
     ): &BigVector<Order> {
         self.book.asks()
+    }
+
+    fun place_limit_order_int<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        account: &mut Account,
+        proof: &TradeProof,
+        client_order_id: u64,
+        order_type: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        expire_timestamp: u64,
+        clock: &Clock,
+        is_market_order: bool,
+        self_matching_prevention: bool,
+        ctx: &TxContext,
+    ): OrderInfo {
+        assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
+        let trade_params = self.state.governance().trade_params();
+
+        let mut order_info = order_info::new(
+            self.id.to_inner(),
+            account.id(),
+            client_order_id,
+            proof.trader(),
+            order_type,
+            price,
+            quantity,
+            self.state.deep_price().conversion_rate(),
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            trade_params,
+            is_market_order,
+            self_matching_prevention,
+        );
+        self.book.create_order(&mut order_info, clock.timestamp_ms());
+        self.state.process_create(&order_info, ctx);
+        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
+        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+
+        if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
+
+        order_info
     }
 }

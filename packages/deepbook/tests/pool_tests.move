@@ -372,8 +372,13 @@ module deepbook::pool_tests {
     }
 
     #[test]
-    fun test_swap_exact_amount_bid() {
+    fun test_swap_exact_amount_bid_ask() {
         test_swap_exact_amount(true);
+    }
+
+    #[test]
+    fun test_swap_exact_amount_ask_bid() {
+        test_swap_exact_amount(false);
     }
 
     /// Alice places a bid order, Bob places a swap_exact_amount order
@@ -416,7 +421,7 @@ module deepbook::pool_tests {
         } else {
             2 * FLOAT_SCALING
         };
-        let deep_in = math::mul(DEEP_MULTIPLIER, TAKER_FEE);
+        let deep_in = math::mul(TAKER_DISCOUNT, math::mul(DEEP_MULTIPLIER, TAKER_FEE));
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
             BOB,
@@ -426,8 +431,14 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        assert!(base_out.value() == 0, EOrderInfoMismatch);
-        assert!(quote_out.value() == 2 * FLOAT_SCALING, EOrderInfoMismatch);
+        if (is_bid) {
+            assert!(base_out.value() == 0, EOrderInfoMismatch);
+            assert!(quote_out.value() == 2 * FLOAT_SCALING, EOrderInfoMismatch);
+        } else {
+            assert!(base_out.value() == 1 * FLOAT_SCALING, EOrderInfoMismatch);
+            assert!(quote_out.value() == 0, EOrderInfoMismatch);
+        };
+
         assert!(deep_out.value() == 0, EOrderInfoMismatch);
 
         base_out.burn_for_testing();
