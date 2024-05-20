@@ -835,7 +835,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
             &mut test,
         );
 
@@ -911,7 +910,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             status,
             expire_timestamp,
-            self_matching_prevention,
             &mut test,
         );
         end(test);
@@ -1014,7 +1012,6 @@ module deepbook::pool_tests {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
@@ -1029,7 +1026,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             status,
             expire_timestamp,
-            self_matching_prevention,
         );
         return_shared(pool);
     }
@@ -1056,7 +1052,6 @@ module deepbook::pool_tests {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
     ) {
         assert!(order.order_id() == book_order_id, EBookOrderMismatch);
         assert!(order.client_order_id() == client_order_id, EBookOrderMismatch);
@@ -1065,7 +1060,6 @@ module deepbook::pool_tests {
         assert!(order.fee_is_deep() == fee_is_deep, EBookOrderMismatch);
         assert!(order.status() == status, EBookOrderMismatch);
         assert!(order.expire_timestamp() == expire_timestamp, EBookOrderMismatch);
-        assert!(order.self_matching_prevention() == self_matching_prevention, EBookOrderMismatch);
     }
 
     /// Internal function to borrow orderbook

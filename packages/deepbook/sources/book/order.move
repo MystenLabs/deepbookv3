@@ -32,7 +32,6 @@ module deepbook::order {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
     }
 
     /// Emitted when a maker order is canceled.
@@ -71,7 +70,6 @@ module deepbook::order {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
     ): Order {
         Order {
             order_id,
@@ -82,7 +80,6 @@ module deepbook::order {
             fee_is_deep,
             status,
             expire_timestamp,
-            self_matching_prevention,
         }
     }
 
@@ -251,9 +248,5 @@ module deepbook::order {
 
     public(package) fun expire_timestamp(self: &Order): u64 {
         self.expire_timestamp
-    }
-
-    public(package) fun self_matching_prevention(self: &Order): bool {
-        self.self_matching_prevention
     }
 }

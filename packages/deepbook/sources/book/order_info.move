@@ -275,7 +275,6 @@ module deepbook::order_info {
             self.fee_is_deep,
             self.status,
             self.expire_timestamp,
-            self.self_matching_prevention,
         )
     }
 
