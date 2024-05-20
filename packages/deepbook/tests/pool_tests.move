@@ -293,7 +293,7 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_partial_fill_order_bid() {
-        test_partial_fill_order(
+        partial_fill_order(
             true,
             NO_RESTRICTION,
             1 * FLOAT_SCALING,
@@ -306,7 +306,7 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_partial_fill_order_ask() {
-        test_partial_fill_order(
+        partial_fill_order(
             false,
             NO_RESTRICTION,
             1 * FLOAT_SCALING,
@@ -317,7 +317,76 @@ module deepbook::pool_tests {
         );
     }
 
-    fun test_partial_fill_order(
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderBelowMinimumSize)]
+    fun test_invalid_order_quantity_e() {
+        place_with_price_quantity(
+            2 * FLOAT_SCALING,
+            0
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidLotSize)]
+    fun test_invalid_lot_size_e() {
+        place_with_price_quantity(
+            2 * FLOAT_SCALING,
+            1_000_000_100,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
+    fun test_invalid_tick_size_e() {
+        place_with_price_quantity(
+            2_000_000_100,
+            1 * FLOAT_SCALING,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
+    fun test_price_above_max_e() {
+        place_with_price_quantity(
+            MAX_U64,
+            1 * FLOAT_SCALING,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
+    fun test_price_below_min_e() {
+        place_with_price_quantity(
+            0,
+            1 * FLOAT_SCALING,
+        );
+    }
+
+    fun place_with_price_quantity(
+        price: u64,
+        quantity: u64,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id = 1;
+        let order_type = NO_RESTRICTION;
+        let expire_timestamp = MAX_U64;
+        let pay_with_deep = true;
+
+        place_order(
+            ALICE,
+            acct_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            true,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        end(test);
+    }
+
+    fun partial_fill_order(
         is_bid: bool,
         order_type: u8,
         alice_quantity: u64,
