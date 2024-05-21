@@ -38,6 +38,7 @@ module deepbook::order_info {
     const EInvalidOrderType: u64 = 4;
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
+    const EMarketOrderCannotBePostOnly: u64 = 7;
 
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
@@ -80,8 +81,8 @@ module deepbook::order_info {
         trade_params: TradeParams,
         // Status of the order
         status: u8,
-        // Reserved field for prevent self_matching
-        self_matching_prevention: bool,
+        // Is a market_order
+        market_order: bool,
     }
 
     /// Emitted when a maker order is filled.
@@ -143,11 +144,12 @@ module deepbook::order_info {
         order_type: u8,
         price: u64,
         quantity: u64,
-        deep_per_base: u64,
         is_bid: bool,
         fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
+        deep_per_base: u64,
+        market_order: bool,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -168,7 +170,7 @@ module deepbook::order_info {
             paid_fees: 0,
             trade_params,
             status: LIVE,
-            self_matching_prevention: false,
+            market_order,
         }
     }
 
@@ -236,12 +238,12 @@ module deepbook::order_info {
         self.expire_timestamp
     }
 
-    public fun self_matching_prevention(self: &OrderInfo): bool {
-        self.self_matching_prevention
-    }
-
     public fun fills(self: &OrderInfo): vector<Fill> {
         self.fills
+    }
+
+    public(package) fun market_order(self: &OrderInfo): bool {
+        self.market_order
     }
 
     public(package) fun last_fill(self: &OrderInfo): &Fill {
@@ -277,7 +279,6 @@ module deepbook::order_info {
             self.fee_is_deep,
             self.status,
             self.expire_timestamp,
-            self.self_matching_prevention,
         )
     }
 
@@ -289,12 +290,16 @@ module deepbook::order_info {
         lot_size: u64,
         timestamp: u64,
     ) {
-        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
-        assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
         assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
         assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
+        if (order_info.market_order) {
+            assert!(order_info.order_type != POST_ONLY, EMarketOrderCannotBePostOnly);
+            return
+        };
+        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
+        assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
     }
 
     /// Assert order types after partial fill against the order book.
@@ -312,7 +317,7 @@ module deepbook::order_info {
 
             return true
         };
-        
+
         false
     }
 
