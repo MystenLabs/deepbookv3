@@ -33,7 +33,7 @@ TODO: No authorization checks are implemented;
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
--  [Function `place_limit_order_int`](#0x0_pool_place_limit_order_int)
+-  [Function `place_order_int`](#0x0_pool_place_order_int)
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
@@ -459,7 +459,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     self_matching_prevention: bool,
     ctx: &TxContext,
 ): OrderInfo {
-    self.<a href="pool.md#0x0_pool_place_limit_order_int">place_limit_order_int</a>(
+    self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
         <a href="account.md#0x0_account">account</a>,
         proof,
         client_order_id,
@@ -511,7 +511,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
     self_matching_prevention: bool,
     ctx: &TxContext,
 ): OrderInfo {
-    self.<a href="pool.md#0x0_pool_place_limit_order_int">place_limit_order_int</a>(
+    self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
         <a href="account.md#0x0_account">account</a>,
         proof,
         client_order_id,
@@ -1163,13 +1163,13 @@ Only Admin can set a pool as whitelist.
 
 </details>
 
-<a name="0x0_pool_place_limit_order_int"></a>
+<a name="0x0_pool_place_order_int"></a>
 
-## Function `place_limit_order_int`
+## Function `place_order_int`
 
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_limit_order_int">place_limit_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, self_matching_prevention: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, self_matching_prevention: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -1178,7 +1178,7 @@ Only Admin can set a pool as whitelist.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_limit_order_int">place_limit_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
     proof: &TradeProof,

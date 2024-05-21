@@ -135,7 +135,7 @@ module deepbook::pool {
         self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
-        self.place_limit_order_int(
+        self.place_order_int(
             account,
             proof,
             client_order_id,
@@ -167,7 +167,7 @@ module deepbook::pool {
         self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
-        self.place_limit_order_int(
+        self.place_order_int(
             account,
             proof,
             client_order_id,
@@ -460,7 +460,7 @@ module deepbook::pool {
         self.book.asks()
     }
 
-    fun place_limit_order_int<BaseAsset, QuoteAsset>(
+    fun place_order_int<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         account: &mut Account,
         proof: &TradeProof,
