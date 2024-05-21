@@ -1,6 +1,10 @@
 module deepbook::history {
     use sui::table::{Self, Table};
 
+    /// Constants
+    const EPOCHS_FOR_PHASE_OUT: u64 = 28;
+
+    /// Error codes
     const EHistoricVolumesNotFound: u64 = 1;
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
@@ -10,6 +14,7 @@ module deepbook::history {
         total_fees_collected: u64,
         stake_required: u64,
         accounts_with_rebates: u64,
+        historic_median: u64,
     }
 
     public struct History has store {
@@ -28,6 +33,7 @@ module deepbook::history {
             total_fees_collected: 0,
             stake_required: 0,
             accounts_with_rebates: 0,
+            historic_median: 0,
         };
         History {
             epoch: ctx.epoch(),
@@ -72,6 +78,21 @@ module deepbook::history {
 
         0
     }
+
+    // /// returns and updates historic_median
+    // public(package) fun historic_median(
+    //     self: &History,
+    // ): u64 {
+    //     let historic_len = self.historic_volumes.length();
+    //     // For first epoch, no phase out
+    //     if (historic_len == 0) {
+    //         return 0;
+    //     };
+
+    //     let mut i = 0;
+    //     let mut sum = 0;
+
+    // }
 
     /// Add volume to the current epoch's volume data.
     /// Increments the total volume and total staked volume.
