@@ -472,7 +472,7 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
-        is_market_order: bool,
+        market_order: bool,
         self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
@@ -492,7 +492,7 @@ module deepbook::pool {
             pay_with_deep,
             expire_timestamp,
             trade_params,
-            is_market_order,
+            market_order,
             self_matching_prevention,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());

@@ -361,12 +361,12 @@ module deepbook::pool_tests {
         );
     }
 
-    #[test]
+    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
     fun test_self_matching_prevention_bid() {
         test_self_matching_prevention(true);
     }
 
-    #[test]
+    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
     fun test_self_matching_prevention_ask() {
         test_self_matching_prevention(false);
     }
@@ -461,7 +461,12 @@ module deepbook::pool_tests {
         let bid_client_order_id = 1;
         let ask_client_order_id = 2;
         let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
+        let price_1 = 2 * FLOAT_SCALING;
+        let price_2 = if (is_bid) {
+            1 * FLOAT_SCALING
+        } else {
+            3 * FLOAT_SCALING
+        };
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
         let pay_with_deep = true;
@@ -473,23 +478,9 @@ module deepbook::pool_tests {
             acct_id_alice,
             bid_client_order_id,
             order_type,
-            price,
+            price_1,
             quantity,
             is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            self_matching_prevention,
-            &mut test,
-        );
-
-        let order_info_2 = place_order(
-            ALICE,
-            acct_id_alice,
-            ask_client_order_id,
-            order_type,
-            price,
-            quantity,
-            !is_bid,
             pay_with_deep,
             expire_timestamp,
             self_matching_prevention,
@@ -499,7 +490,7 @@ module deepbook::pool_tests {
         verify_order_info(
             &order_info_1,
             bid_client_order_id,
-            price,
+            price_1,
             quantity,
             0,
             0,
@@ -510,29 +501,17 @@ module deepbook::pool_tests {
             self_matching_prevention,
         );
 
-        verify_order_info(
-            &order_info_2,
+        place_order(
+            ALICE,
+            acct_id_alice,
             ask_client_order_id,
-            price,
+            order_type,
+            price_2,
             quantity,
-            0,
-            0,
-            0,
-            fee_is_deep,
-            LIVE,
+            !is_bid,
+            pay_with_deep,
             expire_timestamp,
             self_matching_prevention,
-        );
-
-        borrow_order_ok(
-            order_info_1.order_id(),
-            is_bid,
-            &mut test,
-        );
-
-        borrow_order_ok(
-            order_info_2.order_id(),
-            !is_bid,
             &mut test,
         );
 

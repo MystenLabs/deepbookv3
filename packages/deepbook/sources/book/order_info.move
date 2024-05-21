@@ -82,7 +82,7 @@ module deepbook::order_info {
         // Status of the order
         status: u8,
         // Is a market_order
-        is_market_order: bool,
+        market_order: bool,
         // Reserved field for prevent self_matching
         self_matching_prevention: bool,
     }
@@ -151,7 +151,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
-        is_market_order: bool,
+        market_order: bool,
         self_matching_prevention: bool,
     ): OrderInfo {
         OrderInfo {
@@ -173,7 +173,7 @@ module deepbook::order_info {
             paid_fees: 0,
             trade_params,
             status: LIVE,
-            is_market_order,
+            market_order,
             self_matching_prevention,
         }
     }
@@ -250,8 +250,8 @@ module deepbook::order_info {
         self.fills
     }
 
-    public(package) fun is_market_order(self: &OrderInfo): bool {
-        self.is_market_order
+    public(package) fun market_order(self: &OrderInfo): bool {
+        self.market_order
     }
 
     public(package) fun last_fill(self: &OrderInfo): &Fill {
@@ -302,7 +302,7 @@ module deepbook::order_info {
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
         assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
-        if (order_info.is_market_order) {
+        if (order_info.market_order) {
             assert!(order_info.order_type != POST_ONLY, EMarketOrderCannotBePostOnly);
             return
         };

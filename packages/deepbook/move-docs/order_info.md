@@ -32,7 +32,7 @@ All order matching happens in this module.
 -  [Function `expire_timestamp`](#0x0_order_info_expire_timestamp)
 -  [Function `self_matching_prevention`](#0x0_order_info_self_matching_prevention)
 -  [Function `fills`](#0x0_order_info_fills)
--  [Function `is_market_order`](#0x0_order_info_is_market_order)
+-  [Function `market_order`](#0x0_order_info_market_order)
 -  [Function `last_fill`](#0x0_order_info_last_fill)
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
@@ -193,7 +193,7 @@ It is returned at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>is_market_order: bool</code>
+<code>market_order: bool</code>
 </dt>
 <dd>
 
@@ -689,7 +689,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, deep_per_base: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, is_market_order: bool, self_matching_prevention: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, deep_per_base: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, market_order: bool, self_matching_prevention: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -711,7 +711,7 @@ Emitted when a maker order is injected into the order book.
     fee_is_deep: bool,
     expire_timestamp: u64,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
-    is_market_order: bool,
+    market_order: bool,
     self_matching_prevention: bool,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
@@ -733,7 +733,7 @@ Emitted when a maker order is injected into the order book.
         paid_fees: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
-        is_market_order,
+        market_order,
         self_matching_prevention,
     }
 }
@@ -1175,13 +1175,13 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_is_market_order"></a>
+<a name="0x0_order_info_market_order"></a>
 
-## Function `is_market_order`
+## Function `market_order`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_is_market_order">is_market_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_market_order">market_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
 </code></pre>
 
 
@@ -1190,8 +1190,8 @@ Emitted when a maker order is injected into the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_is_market_order">is_market_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
-    self.is_market_order
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_market_order">market_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
+    self.market_order
 }
 </code></pre>
 
@@ -1362,7 +1362,7 @@ Validates that the initial order created meets the pool requirements.
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.original_quantity % lot_size == 0, <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.expire_timestamp &gt;= timestamp, <a href="order_info.md#0x0_order_info_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type &gt;= <a href="order_info.md#0x0_order_info_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_order_type">order_type</a> &lt;= <a href="order_info.md#0x0_order_info_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order_info.md#0x0_order_info_EInvalidOrderType">EInvalidOrderType</a>);
-    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_market_order) {
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.market_order) {
         <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type != <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>, <a href="order_info.md#0x0_order_info_EMarketOrderCannotBePostOnly">EMarketOrderCannotBePostOnly</a>);
         <b>return</b>
     };

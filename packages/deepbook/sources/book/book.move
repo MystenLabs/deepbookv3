@@ -15,6 +15,7 @@ module deepbook::book {
     const EEmptyOrderbook: u64 = 2;
     const EInvalidPriceRange: u64 = 3;
     const EInvalidTicks: u64 = 4;
+    const ESelfMatching: u64 = 5;
 
     public struct Book has store {
         tick_size: u64,
@@ -210,15 +211,9 @@ module deepbook::book {
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-            let is_self_order = order_info.self_matching_prevention() && maker_order.account_id() == order_info.account_id();
-            let match_successful = if (!is_self_order) {
-                order_info.match_maker(maker_order, timestamp)
-            } else {
-                false
-            };
+            assert!(!(order_info.self_matching_prevention() && maker_order.account_id() == order_info.account_id()), ESelfMatching);
+            if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
-            if (is_self_order) continue;
-            if (!match_successful) break;
 
             let fill = order_info.last_fill();
             if (fill.expired() || fill.completed()) {

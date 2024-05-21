@@ -139,6 +139,15 @@
 
 
 
+<a name="0x0_book_ESelfMatching"></a>
+
+
+
+<pre><code><b>const</b> <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>: u64 = 5;
+</code></pre>
+
+
+
 <a name="0x0_book_START_ASK_ORDER_ID"></a>
 
 
@@ -556,15 +565,9 @@ Mutates the order and the maker order as necessary.
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
-        <b>let</b> is_self_order = <a href="order_info.md#0x0_order_info">order_info</a>.self_matching_prevention() && maker_order.account_id() == <a href="order_info.md#0x0_order_info">order_info</a>.account_id();
-        <b>let</b> match_successful = <b>if</b> (!is_self_order) {
-            <a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)
-        } <b>else</b> {
-            <b>false</b>
-        };
+        <b>assert</b>!(!(<a href="order_info.md#0x0_order_info">order_info</a>.self_matching_prevention() && maker_order.account_id() == <a href="order_info.md#0x0_order_info">order_info</a>.account_id()), <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>);
+        <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
-        <b>if</b> (is_self_order) <b>continue</b>;
-        <b>if</b> (!match_successful) <b>break</b>;
 
         <b>let</b> <a href="fill.md#0x0_fill">fill</a> = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill();
         <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
