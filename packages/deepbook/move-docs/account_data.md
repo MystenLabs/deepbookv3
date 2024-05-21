@@ -200,7 +200,8 @@ Account data that is updated every epoch.
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
     <a href="fill.md#0x0_fill">fill</a>: &Fill,
 ) {
-    self.settled_balances.add_balances(*<a href="fill.md#0x0_fill">fill</a>.settled_balances());
+    <b>let</b> settled_balances = <a href="fill.md#0x0_fill">fill</a>.get_settled_maker_quantities();
+    self.settled_balances.add_balances(settled_balances);
     <b>if</b> (!<a href="fill.md#0x0_fill">fill</a>.expired()) {
         self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.volume();
     };

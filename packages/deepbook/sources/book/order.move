@@ -8,7 +8,6 @@ module deepbook::order {
     use deepbook::{
         math,
         utils,
-        balances::{Self, Balances},
         fill::{Self, Fill},
     };
 
@@ -29,8 +28,9 @@ module deepbook::order {
         order_id: u128,
         client_order_id: u64,
         quantity: u64,
-        unpaid_fees: u64,
-        fee_is_deep: bool,
+        filled_quantity: u64,
+        deep_per_base: u64,
+        epoch: u64,
         status: u8,
         expire_timestamp: u64,
     }
@@ -67,8 +67,8 @@ module deepbook::order {
         account_id: ID,
         client_order_id: u64,
         quantity: u64,
-        unpaid_fees: u64,
-        fee_is_deep: bool,
+        deep_per_base: u64,
+        epoch: u64,
         status: u8,
         expire_timestamp: u64,
     ): Order {
@@ -77,8 +77,9 @@ module deepbook::order {
             account_id,
             client_order_id,
             quantity,
-            unpaid_fees,
-            fee_is_deep,
+            filled_quantity: 0,
+            deep_per_base,
+            epoch,
             status,
             expire_timestamp,
         }
@@ -92,36 +93,28 @@ module deepbook::order {
         quantity: u64,
         is_bid: bool,
     ): Fill {
-        let mut volume = math::min(self.quantity, quantity);
+        let volume = math::min(self.quantity, quantity);
         let quote_quantity = math::mul(volume, self.price());
-        let base = if (is_bid) volume else 0;
-        let quote = if (is_bid) 0 else quote_quantity;
 
         let order_id = self.order_id;
         let account_id = self.account_id;
         let expired = self.expire_timestamp < timestamp;
-        let mut balances = balances::new(base, quote, 0);
 
         if (expired) {
             self.status = EXPIRED;
-            let cancel_amount = self.quantity;
-            balances = self.cancel_amounts(cancel_amount, false);
-            volume = 0;
         } else {
-            let maker_fees = math::div(math::mul(volume, self.unpaid_fees), self.quantity);
-            self.unpaid_fees = self.unpaid_fees - maker_fees;
-            self.quantity = self.quantity - volume;
-            self.status = if (self.quantity == 0) FILLED else PARTIALLY_FILLED;
+            self.filled_quantity = self.filled_quantity + volume;
+            self.status = if (self.quantity == self.filled_quantity) FILLED else PARTIALLY_FILLED;
         };
         
         fill::new(
             order_id,
             account_id,
             expired,
-            self.quantity == 0,
+            self.quantity == self.filled_quantity,
             volume,
             quote_quantity,
-            balances,
+            is_bid,
         )
     }
 
@@ -131,46 +124,14 @@ module deepbook::order {
         min_size: u64,
         lot_size: u64,
         timestamp: u64,
-    ): Balances {
-        assert!(new_quantity > 0 && new_quantity < self.quantity, EInvalidNewQuantity);
+    ) {
+        let cancel_quantity = self.quantity - new_quantity;
+        assert!(cancel_quantity > 0 && new_quantity < self.quantity, EInvalidNewQuantity);
         assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(timestamp < self.expire_timestamp(), EOrderExpired);
-        let cancel_amount = self.quantity - new_quantity;
-        self.quantity = new_quantity;
 
-        self.cancel_amounts(cancel_amount, true)
-    }
-
-    /// Amounts to settle for a cancelled or modified order. Modifies the order in place.
-    /// Returns the base, quote and deep quantities to settle.
-    /// Cancel quantity used to calculate the quantity outputs.
-    /// Modify_order is a flag to indicate whether the order should be modified.
-    /// Unpaid_fees is always in deep asset terms.
-    public(package) fun cancel_amounts(
-        self: &mut Order,
-        cancel_quantity: u64,
-        modify_order: bool,
-    ): Balances {
-        let is_bid = self.is_bid();
-        let price = self.price();
-        let mut base_quantity = if (is_bid) 0 else cancel_quantity;
-        let mut quote_quantity = if (is_bid) math::mul(cancel_quantity, price) else 0;
-        let fee_refund = math::div(math::mul(self.unpaid_fees, cancel_quantity), self.quantity);
-        let deep_quantity = if (self.fee_is_deep) {
-            fee_refund
-        } else {
-            if (is_bid) quote_quantity = quote_quantity + fee_refund
-            else base_quantity = base_quantity + fee_refund;
-            0
-        };
-
-        if (modify_order) {
-            self.quantity = self.quantity - cancel_quantity;
-            self.unpaid_fees = self.unpaid_fees - fee_refund;
-        };
-
-        balances::new(base_quantity, quote_quantity, deep_quantity)
+        self.filled_quantity = self.filled_quantity + cancel_quantity;
     }
 
     public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
@@ -252,12 +213,16 @@ module deepbook::order {
         self.quantity
     }
 
-    public(package) fun unpaid_fees(self: &Order): u64 {
-        self.unpaid_fees
+    public(package) fun filled_quantity(self: &Order): u64 {
+        self.filled_quantity
     }
 
-    public(package) fun fee_is_deep(self: &Order): bool {
-        self.fee_is_deep
+    public(package) fun deep_per_base(self: &Order): u64 {
+        self.deep_per_base
+    }
+
+    public(package) fun epoch(self: &Order): u64 {
+        self.epoch
     }
 
     public(package) fun status(self: &Order): u8 {

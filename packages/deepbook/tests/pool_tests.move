@@ -171,7 +171,6 @@ module deepbook::pool_tests {
             0,
             0,
             LIVE,
-            math::mul(MAKER_FEE, DEEP_MULTIPLIER)
         );
     }
 
@@ -184,7 +183,6 @@ module deepbook::pool_tests {
             0,
             0,
             LIVE,
-            math::mul(MAKER_FEE, DEEP_MULTIPLIER)
         );
     }
 
@@ -778,7 +776,6 @@ module deepbook::pool_tests {
         expected_cumulative_quote_quantity: u64,
         expected_paid_fees: u64,
         expected_status: u8,
-        expected_unpaid_fees: u64,
     ) {
         let owner: address = @0x1;
         let mut test = begin(owner);
@@ -862,8 +859,9 @@ module deepbook::pool_tests {
             !is_bid,
             client_order_id,
             quantity,
-            expected_unpaid_fees,
-            fee_is_deep,
+            expected_executed_quantity,
+            order_info_bob.deep_per_base(),
+            test.ctx().epoch(),
             expected_status,
             expire_timestamp,
             &mut test,
@@ -898,8 +896,6 @@ module deepbook::pool_tests {
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
         let paid_fees = 0;
-        let total_fees = math::mul(MAKER_FEE, math::mul(DEEP_MULTIPLIER, quantity));
-        let unpaid_fees = total_fees - paid_fees;
         let fee_is_deep = true;
         let pay_with_deep = true;
 
@@ -934,8 +930,9 @@ module deepbook::pool_tests {
             is_bid,
             client_order_id,
             quantity,
-            unpaid_fees,
-            fee_is_deep,
+            executed_quantity,
+            order_info.deep_per_base(),
+            test.ctx().epoch(),
             status,
             expire_timestamp,
             &mut test,
@@ -1031,8 +1028,9 @@ module deepbook::pool_tests {
         is_bid: bool,
         client_order_id: u64,
         quantity: u64,
-        unpaid_fees: u64,
-        fee_is_deep: bool,
+        filled_quantity: u64,
+        deep_per_base: u64,
+        epoch: u64,
         status: u8,
         expire_timestamp: u64,
         test: &mut Scenario,
@@ -1045,8 +1043,9 @@ module deepbook::pool_tests {
             book_order_id,
             client_order_id,
             quantity,
-            unpaid_fees,
-            fee_is_deep,
+            filled_quantity,
+            deep_per_base,
+            epoch,
             status,
             expire_timestamp,
         );
@@ -1071,16 +1070,18 @@ module deepbook::pool_tests {
         book_order_id: u128,
         client_order_id: u64,
         quantity: u64,
-        unpaid_fees: u64,
-        fee_is_deep: bool,
+        filled_quantity: u64,
+        deep_per_base: u64,
+        epoch: u64,
         status: u8,
         expire_timestamp: u64,
     ) {
         assert!(order.order_id() == book_order_id, EBookOrderMismatch);
         assert!(order.client_order_id() == client_order_id, EBookOrderMismatch);
         assert!(order.quantity() == quantity, EBookOrderMismatch);
-        assert!(order.unpaid_fees() == unpaid_fees, EBookOrderMismatch);
-        assert!(order.fee_is_deep() == fee_is_deep, EBookOrderMismatch);
+        assert!(order.filled_quantity() == filled_quantity, EBookOrderMismatch);
+        assert!(order.deep_per_base() == deep_per_base, EBookOrderMismatch);
+        assert!(order.epoch() == epoch, EBookOrderMismatch);
         assert!(order.status() == status, EBookOrderMismatch);
         assert!(order.expire_timestamp() == expire_timestamp, EBookOrderMismatch);
     }

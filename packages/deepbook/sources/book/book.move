@@ -5,7 +5,6 @@ module deepbook::book {
         math,
         order::Order,
         order_info::OrderInfo,
-        balances::Balances,
     };
 
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
@@ -45,14 +44,15 @@ module deepbook::book {
     public(package) fun create_order(
         self: &mut Book,
         order_info: &mut OrderInfo,
-        timestamp: u64
+        timestamp: u64,
+        ctx: &TxContext,
     ) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
         let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
         order_info.set_order_id(order_id);
         self.match_against_book(order_info, timestamp);
         if (order_info.assert_execution()) return;
-        self.inject_limit_order(order_info, order_info.deep_per_base());
+        self.inject_limit_order(order_info, order_info.deep_per_base(), ctx);
     }
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
@@ -104,7 +104,7 @@ module deepbook::book {
     /// Modifies an order given order_id and new_quantity.
     /// New quantity must be less than the original quantity.
     /// Order must not have already expired.
-    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (Balances, &Order) {
+    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &Order) {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         let order = if (is_bid) {
             self.bids.borrow_mut(order_id)
@@ -112,14 +112,16 @@ module deepbook::book {
             self.asks.borrow_mut(order_id)
         };
 
-        let balances = order.modify(
+        let cancel_quantity = order.quantity() - new_quantity;
+
+        order.modify(
             new_quantity,
             self.min_size,
             self.lot_size,
             timestamp,
         );
 
-        (balances, order)
+        (cancel_quantity, order)
     }
 
     public(package) fun lot_size(self: &Book): u64 {
@@ -237,8 +239,9 @@ module deepbook::book {
         self: &mut Book,
         order_info: &OrderInfo,
         deep_per_base: u64,
+        ctx: &TxContext,
     ) {
-        let order = order_info.to_order(deep_per_base);
+        let order = order_info.to_order(deep_per_base, ctx);
         if (order_info.is_bid()) {
             self.bids.insert(order_info.order_id(), order);
         } else {

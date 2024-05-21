@@ -46,7 +46,8 @@ module deepbook::account_data {
         self: &mut AccountData,
         fill: &Fill,
     ) {
-        self.settled_balances.add_balances(*fill.settled_balances());
+        let settled_balances = fill.get_settled_maker_quantities();
+        self.settled_balances.add_balances(settled_balances);
         if (!fill.expired()) {
             self.maker_volume = self.maker_volume + fill.volume();
         };
