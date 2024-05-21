@@ -413,6 +413,18 @@ module deepbook::pool {
         target_pool.vault.add_deep_price_point(deep_price, pool_price, deep_base_type, deep_quote_type, clock.timestamp_ms());
     }
 
+    /// Burns DEEP tokens from the pool. Amount to burn is within history
+    public fun burn_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+    ) {
+        let history = self.state.history();
+        let balance_to_burn = history.balance_to_burn();
+        history.reset_balance_to_burn();
+        assert!(balance_to_burn > 0, EInvalidAmountIn);
+         // TODO: burn deep balance
+        // let deep_balance = self.vault.withdraw_deep(balance_to_burn);
+    }
+
     // OPERATIONAL OWNER
 
     /// Set a pool as a stable pool. Stable pools have a lower fee.

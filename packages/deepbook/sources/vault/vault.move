@@ -157,4 +157,12 @@ module deepbook::vault {
 
         self.deep_price.add_price_point(deep_per_base, timestamp)
     }
+
+    /// Withdraws the deep balance from the vault.
+    public(package) fun withdraw_deep<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        amount: u64,
+    ): Balance<DEEP> {
+        self.deep_balance.split(amount)
+    }
 }

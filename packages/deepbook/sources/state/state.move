@@ -205,6 +205,12 @@ module deepbook::state {
         &mut self.accounts[account_id]
     }
 
+    public(package) fun history(
+        self: &mut State,
+    ): &mut History {
+        &mut self.history
+    }
+
     fun update_account(
         self: &mut State,
         account_id: ID,

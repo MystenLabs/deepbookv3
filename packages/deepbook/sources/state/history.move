@@ -7,7 +7,7 @@ module deepbook::history {
     const DEEP_LOT_SIZE: u64 = 100_000; // TODO: update, currently 0.0001
 
     /// Error codes
-    const EHistoricVolumesNotFound: u64 = 1;
+    const EHistoricVolumesNotFound: u64 = 0;
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {
@@ -75,7 +75,6 @@ module deepbook::history {
         let maker_rebate_percentage = 500_000_000; // 50%, update this
         let maker_volume_proportion = math::mul(maker_volume, volumes.total_staked_volume);
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
-        // TODO: round this to nearest deep lot size
         let mut maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         maker_rebate = maker_rebate - maker_rebate % DEEP_LOT_SIZE;
         let maker_burn = maker_fee_proportion - maker_rebate;
@@ -131,11 +130,15 @@ module deepbook::history {
         };
     }
 
-    /// Burn the amount of deep tokens in the pool
-    public(package) fun burn(
+    public(package) fun balance_to_burn(
+        self: &History,
+    ): u64 {
+        self.balance_to_burn
+    }
+
+    public(package) fun reset_balance_to_burn(
         self: &mut History,
-        burn_amount: u64,
     ) {
-        // burns the amount of deep tokens in the pool
+        self.balance_to_burn = 0
     }
 }
