@@ -9,6 +9,7 @@ module deepbook::order {
         math,
         utils,
         balances::{Self, Balances},
+        fill::{Self, Fill},
     };
 
     const LIVE: u8 = 0;
@@ -86,6 +87,47 @@ module deepbook::order {
         }
     }
 
+    /// Generate a fill for the resting order given the timestamp,
+    /// quantity and whether the order is a bid.
+    public(package) fun generate_fill(
+        self: &mut Order,
+        timestamp: u64,
+        quantity: u64,
+        is_bid: bool,
+    ): Fill {
+        let mut volume = math::min(self.quantity, quantity);
+        let quote_quantity = math::mul(volume, self.price());
+        let base = if (is_bid) volume else 0;
+        let quote = if (is_bid) 0 else quote_quantity;
+
+        let order_id = self.order_id;
+        let account_id = self.account_id;
+        let expired = self.expire_timestamp < timestamp;
+        let mut balances = balances::new(base, quote, 0);
+
+        if (expired) {
+            self.status = EXPIRED;
+            let cancel_amount = self.quantity;
+            balances = self.cancel_amounts(cancel_amount, false);
+            volume = 0;
+        } else {
+            let maker_fees = math::div(math::mul(volume, self.unpaid_fees), self.quantity);
+            self.unpaid_fees = self.unpaid_fees - maker_fees;
+            self.quantity = self.quantity - volume;
+            self.status = if (self.quantity == 0) FILLED else PARTIALLY_FILLED;
+        };
+        
+        fill::new(
+            order_id,
+            account_id,
+            expired,
+            self.quantity == 0,
+            volume,
+            quote_quantity,
+            balances,
+        )
+    }
+
     public(package) fun modify(
         self: &mut Order,
         new_quantity: u64,
@@ -134,13 +176,6 @@ module deepbook::order {
         balances::new(base_quantity, quote_quantity, deep_quantity)
     }
 
-    /// Calculate the amount of fees to be paid for a maker order already live.
-    public(package) fun set_unpaid_fees(self: &mut Order, filled_quantity: u64) {
-        let unpaid_fees = self.unpaid_fees;
-        let maker_fees = math::div(math::mul(filled_quantity, unpaid_fees), self.quantity);
-        self.unpaid_fees = unpaid_fees - maker_fees;
-    }
-
     public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
         self: &Order,
         pool_id: ID,
@@ -183,30 +218,13 @@ module deepbook::order {
         });
     }
 
-    public(package) fun set_quantity(self: &mut Order, quantity: u64) {
-        self.quantity = quantity;
-    }
-
     public(package) fun set_live(self: &mut Order) {
         self.status = LIVE;
-    }
-
-    public(package) fun set_fill_status(self: &mut Order) {
-        if (self.quantity == 0) {
-            self.status = FILLED;
-        } else {
-            self.status = PARTIALLY_FILLED;
-        }
     }
 
     /// Update the order status to canceled.
     public(package) fun set_canceled(self: &mut Order) {
         self.status = CANCELED;
-    }
-
-    /// Update the order status to expired.
-    public(package) fun set_expired(self: &mut Order) {
-        self.status = EXPIRED;
     }
 
     public(package) fun order_id(self: &Order): u128 {

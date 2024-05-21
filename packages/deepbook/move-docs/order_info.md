@@ -35,6 +35,7 @@ All order matching happens in this module.
 -  [Function `last_fill`](#0x0_order_info_last_fill)
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
+-  [Function `add_fill`](#0x0_order_info_add_fill)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
@@ -52,8 +53,7 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
-<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
-<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
@@ -1228,6 +1228,30 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
+<a name="0x0_order_info_add_fill"></a>
+
+## Function `add_fill`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_add_fill">add_fill</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="fill.md#0x0_fill">fill</a>: <a href="fill.md#0x0_fill_Fill">fill::Fill</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_add_fill">add_fill</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="fill.md#0x0_fill">fill</a>: Fill) {
+    self.fills.push_back(<a href="fill.md#0x0_fill">fill</a>);
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_info_to_order"></a>
 
 ## Function `to_order`
@@ -1529,9 +1553,9 @@ Returns true if two opposite orders are overlapping in price.
 
 ## Function `match_maker`
 
-Matches an OrderInfo with an Order from the book. Returns a Fill.
-If the book order is expired, it returns a Fill with the expired flag set to true.
-Funds for an expired order are returned to the maker as settled.
+Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
+If the book order is expired, the Fill will have the expired flag set to true.
+Funds for the match or an expired order are returned to the maker as settled.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_match_maker">match_maker</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, maker: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64): bool
@@ -1549,56 +1573,23 @@ Funds for an expired order are returned to the maker as settled.
     timestamp: u64,
 ): bool {
     <b>if</b> (!self.<a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(maker)) <b>return</b> <b>false</b>;
-    <b>let</b> maker_quantity = maker.quantity();
-    <b>if</b> (maker.<a href="order_info.md#0x0_order_info_expire_timestamp">expire_timestamp</a>() &lt; timestamp) {
-        maker.set_expired();
-        <b>let</b> cancel_quantity = maker_quantity;
-        <b>let</b> <a href="balances.md#0x0_balances">balances</a> = maker.cancel_amounts(
-            cancel_quantity,
-            <b>false</b>,
-        );
-        self.fills.push_back(<a href="fill.md#0x0_fill_new">fill::new</a>(
-            maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-            maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
-            <b>true</b>,
-            <b>false</b>,
-            0,
-            <a href="balances.md#0x0_balances">balances</a>,
-        ));
 
-        <b>return</b> <b>true</b>
-    };
+    <b>let</b> <a href="fill.md#0x0_fill">fill</a> = maker.generate_fill(timestamp, self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.is_bid);
+    self.fills.push_back(<a href="fill.md#0x0_fill">fill</a>);
+    <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired()) <b>return</b> <b>true</b>;
 
-    <b>let</b> price = maker.<a href="order_info.md#0x0_order_info_price">price</a>();
-    <b>let</b> filled_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), maker_quantity);
-    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(filled_quantity, price);
-    maker.set_unpaid_fees(filled_quantity);
-    maker.set_quantity(maker_quantity - filled_quantity);
-    self.executed_quantity = self.executed_quantity + filled_quantity;
-    self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
+    self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.volume();
+    self.cumulative_quote_quantity = self.cumulative_quote_quantity + <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
     self.status = <a href="order_info.md#0x0_order_info_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
-    maker.set_fill_status();
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
-        price,
-        filled_quantity,
-        quote_quantity,
+        maker.<a href="order_info.md#0x0_order_info_price">price</a>(),
+        <a href="fill.md#0x0_fill">fill</a>.volume(),
+        <a href="fill.md#0x0_fill">fill</a>.quote_quantity(),
         timestamp
     );
-
-    <b>let</b> base = <b>if</b> (self.is_bid) filled_quantity <b>else</b> 0;
-    <b>let</b> quote = <b>if</b> (self.is_bid) 0 <b>else</b> quote_quantity;
-    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(base, quote, 0);
-    self.fills.push_back(<a href="fill.md#0x0_fill_new">fill::new</a>(
-        maker.<a href="order_info.md#0x0_order_info_order_id">order_id</a>(),
-        maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
-        <b>false</b>,
-        <b>false</b>,
-        filled_quantity,
-        <a href="balances.md#0x0_balances">balances</a>,
-    ));
 
     <b>true</b>
 }
