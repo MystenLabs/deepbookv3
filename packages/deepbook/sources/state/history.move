@@ -4,6 +4,7 @@ module deepbook::history {
 
     /// Constants
     const EPOCHS_FOR_PHASE_OUT: u64 = 28;
+    const DEEP_LOT_SIZE: u64 = 100_000; // TODO: update, currently 0.0001
 
     /// Error codes
     const EHistoricVolumesNotFound: u64 = 1;
@@ -60,25 +61,33 @@ module deepbook::history {
     }
 
     /// Given the epoch's volume data and the account's volume data,
-    /// calculate the rebate and burn amounts.
+    /// calculate and returns rebate amount and burn amount
     public(package) fun calculate_rebate_amount(
         self: &mut History,
         prev_epoch: u64,
-        _maker_volume: u64,
+        maker_volume: u64,
         account_stake: u64,
     ): u64 {
         assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[prev_epoch];
-        if (volumes.stake_required > account_stake) return 0;
+        if (account_stake < volumes.stake_required) return 0;
 
-        // TODO: calculate and add to burn balance
+        let maker_rebate_percentage = 500_000_000; // 50%, update this
+        let maker_volume_proportion = math::mul(maker_volume, volumes.total_staked_volume);
+        let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
+        // TODO: round this to nearest deep lot size
+        let mut maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
+        maker_rebate = maker_rebate - maker_rebate % DEEP_LOT_SIZE;
+        let maker_burn = maker_fee_proportion - maker_rebate;
+
+        self.balance_to_burn = self.balance_to_burn + maker_burn;
 
         volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
         if (volumes.accounts_with_rebates == 0) {
             self.historic_volumes.remove(prev_epoch);
         };
 
-        0
+        maker_rebate
     }
 
     /// Updates the historic_median for past 28 epochs
@@ -120,5 +129,13 @@ module deepbook::history {
                 self.volumes.accounts_with_rebates = self.volumes.accounts_with_rebates + 1;
             }
         };
+    }
+
+    /// Burn the amount of deep tokens in the pool
+    public(package) fun burn(
+        self: &mut History,
+        burn_amount: u64,
+    ) {
+        // burns the amount of deep tokens in the pool
     }
 }

@@ -64,8 +64,6 @@ module deepbook::math {
         };
 
         let sorted_v = quick_sort(v);
-
-        // return the median of sorted vector sorted_v
         if (n % 2 == 0) {
             mul((sorted_v[n / 2 - 1] + sorted_v[n / 2]), FLOAT_SCALING / 2)
         } else {
@@ -73,7 +71,7 @@ module deepbook::math {
         }
     }
 
-    public fun quick_sort(mut data: vector<u64>): vector<u64> {
+    fun quick_sort(mut data: vector<u64>): vector<u64> {
         if (data.length() <= 1) {
             return data
         };
@@ -117,8 +115,8 @@ module deepbook::math {
         (round, (x * FLOAT_SCALING_U128 / y) as u64)
     }
 
-    /// Test median function
     #[test]
+    /// Test median function
     fun test_median() {
         let v = vector<u64>[
             1 * FLOAT_SCALING,
