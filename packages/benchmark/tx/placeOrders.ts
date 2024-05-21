@@ -9,10 +9,13 @@ dotenv.config();
 
 let owner = "0x02031593be871e2a24b69895e134d51f98ff78aff49b28e7f498c3abba41305c"
 let coin = "0x638de21ba1c5076010eaa3f81198af0166e00682e0c96e04755a5395adc90779"
-let poolPackage = "0x8a6a018f307b8aa910aee7cd000d4181ef87b2c3177157bae074e0f404128043"
-let poolObj = "0xc8a30046328e4dae99772b373df5ecf9670f684e30feccbf668d5595e50737b7"
-let vecPackage = "0x32f4cebc7345e7fd44896f44241b7d7501d87cab54b7f30b94254eedf3b6630f"
-let vec = "0x3b69d481d0c66d7ea50b039b0edb2d7aa48dc58eecbac9563ce0f5019cd3804b"
+let poolPackage = "0x60047925bda4bae0592d6310dd8eedaa29083132b482b285feb1305864dc8032"
+let poolObj = "0x0b3e1bd77f92224c4640095c7582c2ad94fe2f29af7c9f3528fc8dacaf28da78"
+let vecPackage = "0xcb0928a4f21db696ebd88f8449d64b0a756a69af16511cc3997a7ca39660e74e"
+let vec = "0xeca6a498d0a8a2aaeed93cd4f78e80f74995663cbfac3fbd3fdf598bcc0dd18f"
+
+let orders: number[] = [];
+
 const client = new SuiClient({ url: "https://suins-rpc.testnet.sui.io" });
 let keypair = Ed25519Keypair.deriveKeypair(process.env.ADMIN_PHRASE!)
 let totalComputationCost = 0;
@@ -61,15 +64,19 @@ const prepareCoinObjects = async (toAddress: string, chunks: number, baseCoinId:
 
 // return array of addresses
 const prepCoins = async () => {
-    let numCoins = 1;
-    let numIters = 1;
+    let numCoins = 50;
+    let numIters = 20;
     let coinAmount = 20_000_000;
     for (let i = 0; i < numIters; i++) {
         let res = await prepareCoinObjects(owner, numCoins, coin, coinAmount) as any[]
         let futures: any[] = []
         for (let j = 0; j < numCoins; j++) {
             console.log(res[j])
-            futures.push(tableTest(res[j]))
+            if (randomInt(0, 100) % 2 == 0 || orders.length < 100) {
+                futures.push(placeOrdersBigVec(res[j]))
+            } else {
+                futures.push(cancelOrderBigVec(res[j]))
+            }
         }
 
         console.log('got all futures ' + i)
@@ -102,8 +109,10 @@ const placeOrdersCritbit = async (gasCoin: any) => {
 const placeOrdersBigVec = async (gasCoin: any) => {
     let txb = new TransactionBlock();
     txb.setGasPayment([gasCoin])
+    txb.setGasBudget(20_000_000)
     let price = randomInt(1, 1000000000)
     let amount = randomInt(1, 1000000000)
+    orders.push(++iteration)
     txb.moveCall({
         target: `${poolPackage}::pool::place_limit_order_bigvec`,
         arguments: [
@@ -114,7 +123,30 @@ const placeOrdersBigVec = async (gasCoin: any) => {
         ]
     })
 
-    return execute(txb, 'place_order_bigvec_4x250.csv')
+    return execute(txb, 'place_order_bigvec_16x16cancel.csv')
+}
+
+const cancelOrderBigVec = async (gasCoin: any) => {
+    let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    txb.setGasBudget(20_000_000)
+    let idx = randomInt(0, orders.length - 90)
+    let orderId = orders[idx];
+    let last = orders.pop()!
+    orders[idx] = last
+
+    // let price = randomInt(1, 1000000000)
+    // let amount = randomInt(1, 1000000000)
+    // orders.push(iteration)
+    txb.moveCall({
+        target: `${poolPackage}::pool::cancel_order_bigvec`,
+        arguments: [
+            txb.object(poolObj),
+            txb.pure(orderId),
+        ]
+    })
+
+    return execute(txb, 'place_order_bigvec_16x16cancel.csv')
 }
 
 const cancelFirstAskCritbit = async (gasCoin: any) => {
@@ -169,6 +201,21 @@ const tableTest = async (gasCoin: any) => {
     return execute(txb, 'vector.csv')
 }
 
+const offsiteTest = async (gasCoin: any) => {
+    let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    txb.setGasBudget(20_000_000)
+    txb.moveCall({
+        target: `${vecPackage}::vector::remove_from_table`,
+        arguments: [
+            txb.object(vec),
+            txb.pure(iteration)
+        ]
+    })
+
+    return execute(txb, 'offsite.csv')
+}
+
 const execute = async (txb: TransactionBlock, filename: string) => {
     await client.signAndExecuteTransactionBlock({
         transactionBlock: txb,
@@ -178,14 +225,15 @@ const execute = async (txb: TransactionBlock, filename: string) => {
             showEffects: true
         }
     }).then((res) => {
+        let success = res.effects?.status?.status;
         let gas = res.effects?.gasUsed;
-        if (gas) {
+        if (success == 'success' && gas) {
             totalComputationCost += +gas.computationCost
             totalStorageCost += +gas.storageCost
             totalStorageRebate += +gas.storageRebate
             totalNonRefundableStorageFee += +gas.nonRefundableStorageFee
 
-            let data = `${++iteration} ${+gas.computationCost} ${+gas.storageCost} ${+gas.storageRebate} ${+gas.nonRefundableStorageFee} \n`
+            let data = `${iteration} ${+gas.computationCost} ${+gas.storageCost} ${+gas.storageRebate} ${+gas.nonRefundableStorageFee} \n`
             appendFileSync(filename, data)
         }
     }).catch((err) => {

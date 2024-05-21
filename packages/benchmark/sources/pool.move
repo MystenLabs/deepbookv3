@@ -38,8 +38,8 @@ module benchmark::pool {
             id: object::new(ctx),
             bids_critbit: critbit::new(ctx),
             asks_critbit: critbit::new(ctx),
-            bids_bigvec: big_vector::empty(4, 16, ctx),
-            asks_bigvec: big_vector::empty(4, 16, ctx),
+            bids_bigvec: big_vector::empty(16, 16, ctx),
+            asks_bigvec: big_vector::empty(16, 16, ctx),
             next_bid_order_id: 1000000,
             next_ask_order_id: 0,
             user_open_orders: table::new(ctx),
@@ -47,7 +47,8 @@ module benchmark::pool {
 
         transfer::share_object(pool);
     }
-
+    
+#[allow(unused_variable)]
     fun new_order(
         self: &mut Pool,
         price: u64,
@@ -65,7 +66,7 @@ module benchmark::pool {
         
         Order {
             account_id: object::id_from_address(ctx.sender()),
-            order_id: encode_order_id(is_bid, price, order_id),
+            order_id: order_id as u128,
             client_order_id: order_id,
             quantity,
             unpaid_fees: 123456789,
@@ -73,18 +74,6 @@ module benchmark::pool {
             status: 0,
             expire_timestamp: 123456789,
             self_match_prevention: false,
-        }
-    }
-
-    fun encode_order_id(
-        is_bid: bool,
-        price: u64,
-        order_id: u64
-    ): u128 {
-        if (is_bid) {
-            ((price as u128) << 64) + (order_id as u128)
-        } else {
-            (1u128 << 127) + ((price as u128) << 64) + (order_id as u128)
         }
     }
 
@@ -152,5 +141,12 @@ module benchmark::pool {
         pool.user_open_orders.borrow_mut(owner).push_back(order_id, order_id);
 
         order_id
+    }
+
+    public fun cancel_order_bigvec(
+        pool: &mut Pool,
+        order_id: u64,
+    ) {
+        pool.asks_bigvec.remove(order_id as u128);
     }
 }
