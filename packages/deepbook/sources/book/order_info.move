@@ -261,19 +261,13 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
-    public(package) fun calculate_maker_taker_fees(
+    public(package) fun calculate_taker_maker_fees(
         self: &mut OrderInfo,
         account_volume: u64,
         account_active_stake: u64,
     ): (Balances, Balances) {
         let volume_in_deep = math::mul(account_volume, self.deep_per_base);
-        let trade_params = self.trade_params();
-        let stake_required = trade_params.stake_required();
-        let taker_fee = if (account_active_stake >= stake_required && volume_in_deep >= stake_required) {
-            math::mul(trade_params.taker_fee(), 500_000_000)
-        } else {
-            trade_params.taker_fee()
-        };
+        let taker_fee = self.trade_params().taker_fee_for_user(account_active_stake, volume_in_deep);
         
         let deep_in = math::mul(
             self.deep_per_base,
@@ -281,29 +275,30 @@ module deepbook::order_info {
         );
         self.paid_fees = deep_in;
 
-        let settled_balances;
-        let mut owed_balances;
+        let mut settled_balances = balances::new(0, 0, 0);
+        let mut owed_balances = balances::new(0, 0, 0);
+        owed_balances.add_deep(deep_in);
 
         if (self.is_bid) {
-            settled_balances = balances::new(self.executed_quantity, 0, 0);
-            owed_balances = balances::new(0, self.cumulative_quote_quantity, deep_in);
+            settled_balances.add_base(self.executed_quantity);
+            owed_balances.add_quote(self.cumulative_quote_quantity);
         } else {
-            settled_balances = balances::new(0, self.cumulative_quote_quantity, 0);
-            owed_balances = balances::new(self.executed_quantity, 0, deep_in);
+            settled_balances.add_quote(self.cumulative_quote_quantity);
+            owed_balances.add_base(self.executed_quantity);
         };
-        let remaining_quantity = self.remaining_quantity();
 
+        let remaining_quantity = self.remaining_quantity();
         if (remaining_quantity > 0 && !self.is_immediate_or_cancel()) {
             let deep_in = math::mul(
                 self.deep_per_base,
-                math::mul(remaining_quantity, trade_params.maker_fee())
+                math::mul(remaining_quantity, self.trade_params().maker_fee())
             );
-            let owed_balances2 = if (self.is_bid) {
-                balances::new(0, math::mul(remaining_quantity, self.price()), deep_in)
+            owed_balances.add_deep(deep_in);
+            if (self.is_bid) {
+                owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
             } else {
-                balances::new(remaining_quantity, 0, deep_in)
+                owed_balances.add_base(remaining_quantity);
             };
-            owed_balances.add_balances(owed_balances2);
         };
 
         (settled_balances, owed_balances)

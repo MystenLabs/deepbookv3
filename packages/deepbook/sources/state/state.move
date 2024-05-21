@@ -59,15 +59,17 @@ module deepbook::state {
 
         self.update_account(order_info.account_id(), ctx.epoch());
         let account_data = &mut self.accounts[order_info.account_id()];
-        let account_volume = account_data.taker_volume() + account_data.maker_volume();
-        let account_stake = account_data.active_stake();
-        let (settled, owed) = order_info.calculate_maker_taker_fees(account_volume, account_stake);
         account_data.add_order(order_info.order_id());
         account_data.increase_taker_volume(order_info.executed_quantity());
-        account_data.add_settled_amounts(settled);
-        account_data.add_owed_amounts(owed);
 
-        account_data.settle()
+        let account_volume = account_data.taker_volume() + account_data.maker_volume();
+        let account_stake = account_data.active_stake();
+        let (mut settled, mut owed) = order_info.calculate_taker_maker_fees(account_volume, account_stake);
+        let (old_settled, old_owed) = account_data.settle();
+        settled.add_balances(old_settled);
+        owed.add_balances(old_owed);
+
+        (settled, owed)
     }
 
     /// Update account settled balances and volumes.

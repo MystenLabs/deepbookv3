@@ -178,15 +178,17 @@ Update taker settled balances and volumes.
 
     self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.account_id(), ctx.epoch());
     <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.account_id()];
-    <b>let</b> account_volume = <a href="account_data.md#0x0_account_data">account_data</a>.taker_volume() + <a href="account_data.md#0x0_account_data">account_data</a>.maker_volume();
-    <b>let</b> account_stake = <a href="account_data.md#0x0_account_data">account_data</a>.active_stake();
-    <b>let</b> (settled, owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_maker_taker_fees(account_volume, account_stake);
     <a href="account_data.md#0x0_account_data">account_data</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
     <a href="account_data.md#0x0_account_data">account_data</a>.increase_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
-    <a href="account_data.md#0x0_account_data">account_data</a>.add_settled_amounts(settled);
-    <a href="account_data.md#0x0_account_data">account_data</a>.add_owed_amounts(owed);
 
-    <a href="account_data.md#0x0_account_data">account_data</a>.settle()
+    <b>let</b> account_volume = <a href="account_data.md#0x0_account_data">account_data</a>.taker_volume() + <a href="account_data.md#0x0_account_data">account_data</a>.maker_volume();
+    <b>let</b> account_stake = <a href="account_data.md#0x0_account_data">account_data</a>.active_stake();
+    <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_taker_maker_fees(account_volume, account_stake);
+    <b>let</b> (old_settled, old_owed) = <a href="account_data.md#0x0_account_data">account_data</a>.settle();
+    settled.add_balances(old_settled);
+    owed.add_balances(old_owed);
+
+    (settled, owed)
 }
 </code></pre>
 
