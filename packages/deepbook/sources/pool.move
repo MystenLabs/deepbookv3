@@ -186,7 +186,6 @@ module deepbook::pool {
         base_in: Coin<BaseAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
-        client_order_id: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -211,7 +210,7 @@ module deepbook::pool {
         self.place_market_order(
             &mut temp_account,
             &proof,
-            client_order_id,
+            0,
             order_info::immediate_or_cancel(),
             base_quantity,
             is_bid,

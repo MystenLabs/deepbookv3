@@ -1167,7 +1167,6 @@ module deepbook::pool_tests {
         {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
             let clock = test.take_shared<Clock>();
-            let client_order_id = 1;
 
             // Place order in pool
             let (base_out, quote_out, deep_out) =
@@ -1175,7 +1174,6 @@ module deepbook::pool_tests {
                     mint_for_testing<SUI>(base_in, test.ctx()),
                     mint_for_testing<USDC>(quote_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
-                    client_order_id,
                     &clock,
                     test.ctx()
                 );
