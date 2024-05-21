@@ -128,15 +128,25 @@ module deepbook::account {
     }
 
     /// Withdraw funds from an account. Only owner can call this directly.
+    /// If withdraw_all is true, amount is ignored and full balance withdrawn.
+    /// If withdraw_all is false, withdraw_amount will be withdrawn.
     public fun withdraw<T>(
         account: &mut Account,
-        amount: u64,
-        withdraw_all: bool,
+        withdraw_amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
         let proof = generate_proof_as_owner(account, ctx);
 
-        account.withdraw_with_proof(&proof, amount, withdraw_all).into_coin(ctx)
+        account.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx)
+    }
+
+    public fun withdraw_all<T>(
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ): Coin<T> {
+        let proof = generate_proof_as_owner(account, ctx);
+
+        account.withdraw_with_proof(&proof, 0, true).into_coin(ctx)
     }
 
     public fun validate_proof(account: &Account, proof: &TradeProof) {
@@ -175,26 +185,29 @@ module deepbook::account {
     public(package) fun withdraw_with_proof<T>(
         account: &mut Account,
         proof: &TradeProof,
-        amount: u64,
+        withdraw_amount: u64,
         withdraw_all: bool,
     ): Balance<T> {
         account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
-        if (!account.balances.contains(key)) {
-            balance::zero()
+        let key_exists = account.balances.contains(key);
+        if (withdraw_all) {
+            if (key_exists) {
+                account.balances.remove(BalanceKey<T> {})
+            } else {
+                balance::zero()
+            }
         } else {
             let acc_balance: &mut Balance<T> = &mut account.balances[key];
-            let value = acc_balance.value();
-
-            if (!withdraw_all && value != amount) {
-                assert!(value >= amount, EAccountBalanceTooLow);
-                acc_balance.split(amount)
-            } else {
+            let acc_value = acc_balance.value();
+            assert!(key_exists && acc_value >= withdraw_amount && withdraw_amount > 0, EAccountBalanceTooLow);
+            if (withdraw_amount == acc_value) {
                 account.balances.remove(BalanceKey<T> {})
+            } else {
+                acc_balance.split(withdraw_amount)
             }
         }
-
     }
 
     /// Deletes an account.

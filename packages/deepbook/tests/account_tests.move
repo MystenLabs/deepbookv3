@@ -212,7 +212,6 @@ module deepbook::account_tests {
 
             let coin = account.withdraw<SUI>(
                 50,
-                false,
                 test.ctx()
             );
             let balance = account.balance<SUI>();
@@ -239,9 +238,7 @@ module deepbook::account_tests {
             let balance = account.balance<SUI>();
             assert!(balance == 100, 0);
 
-            let coin = account.withdraw<SUI>(
-                0,
-                true,
+            let coin = account.withdraw_all<SUI>(
                 test.ctx()
             );
             let balance = account.balance<SUI>();
@@ -270,7 +267,6 @@ module deepbook::account_tests {
 
             let _coin = account.withdraw<SUI>(
                 200,
-                false,
                 test.ctx()
             );
         };
