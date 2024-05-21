@@ -1,5 +1,6 @@
 module deepbook::history {
     use sui::table::{Self, Table};
+    use deepbook::math;
 
     /// Constants
     const EPOCHS_FOR_PHASE_OUT: u64 = 28;
@@ -55,44 +56,52 @@ module deepbook::history {
             self.historic_volumes.add(self.epoch, self.volumes);
         };
         self.epoch = epoch;
+        self.update_historic_median();
     }
 
     /// Given the epoch's volume data and the account's volume data,
     /// calculate the rebate and burn amounts.
     public(package) fun calculate_rebate_amount(
         self: &mut History,
-        epoch: u64,
+        prev_epoch: u64,
         _maker_volume: u64,
         account_stake: u64,
     ): u64 {
-        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
-        let volumes = &mut self.historic_volumes[epoch];
+        assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
+        let volumes = &mut self.historic_volumes[prev_epoch];
         if (volumes.stake_required > account_stake) return 0;
 
         // TODO: calculate and add to burn balance
 
         volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
         if (volumes.accounts_with_rebates == 0) {
-            self.historic_volumes.remove(epoch);
+            self.historic_volumes.remove(prev_epoch);
         };
 
         0
     }
 
-    // /// returns and updates historic_median
-    // public(package) fun historic_median(
-    //     self: &History,
-    // ): u64 {
-    //     let historic_len = self.historic_volumes.length();
-    //     // For first epoch, no phase out
-    //     if (historic_len == 0) {
-    //         return 0;
-    //     };
+    /// returns and updates historic_median
+    public(package) fun update_historic_median(
+        self: &History,
+    ): u64 {
+        let mut median_vec = vector<u64>[];
+        let mut i = if (self.epoch > EPOCHS_FOR_PHASE_OUT) {
+            self.epoch - EPOCHS_FOR_PHASE_OUT
+        } else {
+            0
+        };
+        while (i < self.epoch) {
+            if (self.historic_volumes.contains(i)) {
+                median_vec.push_back(self.historic_volumes[i].total_volume);
+            } else {
+                median_vec.push_back(0);
+            };
+            i = i + 1;
+        };
 
-    //     let mut i = 0;
-    //     let mut sum = 0;
-
-    // }
+        math::median(median_vec)
+    }
 
     /// Add volume to the current epoch's volume data.
     /// Increments the total volume and total staked volume.
