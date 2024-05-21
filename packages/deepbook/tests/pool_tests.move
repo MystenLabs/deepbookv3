@@ -212,7 +212,6 @@ module deepbook::pool_tests {
             true,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
         end(test);
@@ -244,7 +243,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp, // no expiration
-            false,
             &mut test,
         ).order_id();
         cancel_order(
@@ -289,7 +287,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
         end(test);
@@ -362,13 +359,13 @@ module deepbook::pool_tests {
     }
 
     #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_prevention_bid() {
-        test_self_matching_prevention(true);
+    fun test_self_matching_bid() {
+        test_self_matching(true);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_prevention_ask() {
-        test_self_matching_prevention(false);
+    fun test_self_matching_ask() {
+        test_self_matching(false);
     }
 
     #[test]
@@ -407,7 +404,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -448,9 +444,9 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Alice places a bid order, Alice then places an ask order with self_matching_prevention
-    /// Order should not be filled. Both bid and ask order at the same price should exist
-    fun test_self_matching_prevention(
+    /// Alice places a bid/ask order, Alice then places an ask/bid order that crosses with that order
+    /// Order should be rejected.
+    fun test_self_matching(
         is_bid: bool,
     ) {
         let owner: address = @0x1;
@@ -470,7 +466,6 @@ module deepbook::pool_tests {
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
         let pay_with_deep = true;
-        let self_matching_prevention = true;
         let fee_is_deep = true;
 
         let order_info_1 = place_order(
@@ -483,7 +478,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            self_matching_prevention,
             &mut test,
         );
 
@@ -498,7 +492,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             LIVE,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         place_order(
@@ -511,7 +504,6 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
-            self_matching_prevention,
             &mut test,
         );
 
@@ -542,7 +534,6 @@ module deepbook::pool_tests {
             true,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
         end(test);
@@ -578,7 +569,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -596,12 +586,10 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
         let fee_is_deep = true;
-        let self_matching_prevention = false;
 
         verify_order_info(
             &bob_order_info,
@@ -614,7 +602,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         borrow_order_ok(
@@ -658,7 +645,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -680,13 +666,11 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
         let expire_timestamp = MAX_U64;
         let fee_is_deep = true;
-        let self_matching_prevention = false;
 
         verify_order_info(
             &bob_order_info,
@@ -699,7 +683,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
         );
         end(test);
     }
@@ -736,7 +719,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -757,14 +739,12 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
         let quantity = 1 * FLOAT_SCALING;
         let expire_timestamp = MAX_U64;
         let fee_is_deep = true;
-        let self_matching_prevention = false;
 
         verify_order_info(
             &order_info,
@@ -777,7 +757,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         cancel_order(
@@ -813,7 +792,6 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let fee_is_deep = true;
         let expire_timestamp = 100;
-        let self_matching_prevention = false;
 
         let order_info_alice = place_order(
             ALICE,
@@ -825,7 +803,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -841,7 +818,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         let client_order_id = 2;
@@ -862,7 +838,6 @@ module deepbook::pool_tests {
             !is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -880,7 +855,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             expected_status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         borrow_and_verify_book_order(
@@ -921,7 +895,6 @@ module deepbook::pool_tests {
 
         // variables expected from OrderInfo and Order
         let status = LIVE;
-        let self_matching_prevention = false;
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
         let paid_fees = 0;
@@ -940,7 +913,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -955,7 +927,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         borrow_and_verify_book_order(
@@ -993,7 +964,6 @@ module deepbook::pool_tests {
         let paid_fees = 0;
         let fee_is_deep = true;
         let status = LIVE;
-        let self_matching_prevention = false;
 
         let order_info = place_order(
             ALICE,
@@ -1005,7 +975,6 @@ module deepbook::pool_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            false,
             &mut test,
         );
 
@@ -1020,7 +989,6 @@ module deepbook::pool_tests {
             fee_is_deep,
             status,
             expire_timestamp,
-            self_matching_prevention,
         );
 
         cancel_order(
@@ -1045,7 +1013,6 @@ module deepbook::pool_tests {
         fee_is_deep: bool,
         status: u8,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
     ) {
         assert!(order_info.client_order_id() == client_order_id, EOrderInfoMismatch);
         assert!(order_info.price() == price, EOrderInfoMismatch);
@@ -1056,7 +1023,6 @@ module deepbook::pool_tests {
         assert!(order_info.fee_is_deep() == fee_is_deep, EOrderInfoMismatch);
         assert!(order_info.status() == status, EOrderInfoMismatch);
         assert!(order_info.expire_timestamp() == expire_timestamp, EOrderInfoMismatch);
-        assert!(order_info.self_matching_prevention() == self_matching_prevention, EOrderInfoMismatch);
     }
 
     /// Helper, borrow orderbook and verify an order.
@@ -1156,7 +1122,6 @@ module deepbook::pool_tests {
         is_bid: bool,
         pay_with_deep: bool,
         expire_timestamp: u64,
-        self_matching_prevention: bool,
         test: &mut Scenario,
     ): OrderInfo {
         test.next_tx(trader);
@@ -1180,7 +1145,6 @@ module deepbook::pool_tests {
                 pay_with_deep,
                 expire_timestamp,
                 &clock,
-                self_matching_prevention,
                 test.ctx()
             );
             return_shared(pool);

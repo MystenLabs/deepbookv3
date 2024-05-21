@@ -211,7 +211,7 @@ module deepbook::book {
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-            assert!(!(order_info.self_matching_prevention() && maker_order.account_id() == order_info.account_id()), ESelfMatching);
+            assert!(!(maker_order.account_id() == order_info.account_id()), ESelfMatching);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
 

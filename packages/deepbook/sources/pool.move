@@ -132,7 +132,6 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
-        self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
         self.place_order_int(
@@ -147,7 +146,6 @@ module deepbook::pool {
             expire_timestamp,
             clock,
             false,
-            self_matching_prevention,
             ctx,
         )
     }
@@ -164,7 +162,6 @@ module deepbook::pool {
         is_bid: bool,
         pay_with_deep: bool,
         clock: &Clock,
-        self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
         self.place_order_int(
@@ -179,7 +176,6 @@ module deepbook::pool {
             clock.timestamp_ms(),
             clock,
             true,
-            self_matching_prevention,
             ctx,
         )
     }
@@ -221,7 +217,6 @@ module deepbook::pool {
             is_bid,
             pay_with_deep,
             clock,
-            false,
             ctx
         );
 
@@ -473,7 +468,6 @@ module deepbook::pool {
         expire_timestamp: u64,
         clock: &Clock,
         market_order: bool,
-        self_matching_prevention: bool,
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
@@ -493,7 +487,6 @@ module deepbook::pool {
             expire_timestamp,
             trade_params,
             market_order,
-            self_matching_prevention,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         self.state.process_create(&order_info, ctx);

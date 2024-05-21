@@ -83,8 +83,6 @@ module deepbook::order_info {
         status: u8,
         // Is a market_order
         market_order: bool,
-        // Reserved field for prevent self_matching
-        self_matching_prevention: bool,
     }
 
     /// Emitted when a maker order is filled.
@@ -152,7 +150,6 @@ module deepbook::order_info {
         expire_timestamp: u64,
         trade_params: TradeParams,
         market_order: bool,
-        self_matching_prevention: bool,
     ): OrderInfo {
         OrderInfo {
             pool_id,
@@ -174,7 +171,6 @@ module deepbook::order_info {
             trade_params,
             status: LIVE,
             market_order,
-            self_matching_prevention,
         }
     }
 
@@ -240,10 +236,6 @@ module deepbook::order_info {
 
     public fun expire_timestamp(self: &OrderInfo): u64 {
         self.expire_timestamp
-    }
-
-    public fun self_matching_prevention(self: &OrderInfo): bool {
-        self.self_matching_prevention
     }
 
     public fun fills(self: &OrderInfo): vector<Fill> {
