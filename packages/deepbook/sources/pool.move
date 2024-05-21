@@ -472,6 +472,7 @@ module deepbook::pool {
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
         let trade_params = self.state.governance().trade_params();
+        let deep_per_base = self.state.deep_price().conversion_rate();
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -481,11 +482,11 @@ module deepbook::pool {
             order_type,
             price,
             quantity,
-            self.state.deep_price().conversion_rate(),
             is_bid,
             pay_with_deep,
             expire_timestamp,
             trade_params,
+            deep_per_base,
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());

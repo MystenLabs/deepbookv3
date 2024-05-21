@@ -144,11 +144,11 @@ module deepbook::order_info {
         order_type: u8,
         price: u64,
         quantity: u64,
-        deep_per_base: u64,
         is_bid: bool,
         fee_is_deep: bool,
         expire_timestamp: u64,
         trade_params: TradeParams,
+        deep_per_base: u64,
         market_order: bool,
     ): OrderInfo {
         OrderInfo {
