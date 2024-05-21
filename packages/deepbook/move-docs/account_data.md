@@ -510,7 +510,7 @@ Returns the previous epoch, maker volume, and active stake.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_claim_rebates">claim_rebates</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account_data.md#0x0_account_data_claim_rebates">claim_rebates</a>(self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">account_data::AccountData</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -521,9 +521,11 @@ Returns the previous epoch, maker volume, and active stake.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account_data.md#0x0_account_data_claim_rebates">claim_rebates</a>(
     self: &<b>mut</b> <a href="account_data.md#0x0_account_data_AccountData">AccountData</a>,
-) {
+): (Balances, Balances) {
     self.settled_balances.add_deep(self.unclaimed_rebates);
     self.unclaimed_rebates = 0;
+
+    self.<a href="account_data.md#0x0_account_data_settle">settle</a>()
 }
 </code></pre>
 

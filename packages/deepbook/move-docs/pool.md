@@ -626,8 +626,8 @@ Order must not have already expired.
 ) {
     <b>let</b> (<a href="balances.md#0x0_balances">balances</a>, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), &<a href="balances.md#0x0_balances">balances</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), &<a href="balances.md#0x0_balances">balances</a>, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -666,8 +666,8 @@ Order canceled event is emitted.
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.id(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -701,8 +701,8 @@ The account's data is updated with the staked amount.
     amount: u64,
     ctx: &TxContext,
 ) {
-    self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="account.md#0x0_account">account</a>.id(), amount, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="account.md#0x0_account">account</a>.id(), amount, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -736,8 +736,8 @@ Balance is transferred to the account immediately.
 ) {
     <a href="account.md#0x0_account">account</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="account.md#0x0_account">account</a>.id(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="account.md#0x0_account">account</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -843,8 +843,8 @@ The account's data is updated with the claimed rewards.
     ctx: &TxContext,
 ) {
     <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch());
-    <a href="account_data.md#0x0_account_data">account_data</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(<a href="account_data.md#0x0_account_data">account_data</a>, <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = <a href="account_data.md#0x0_account_data">account_data</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 }
 </code></pre>
 
@@ -1207,9 +1207,8 @@ Only Admin can set a pool as whitelist.
         market_order,
     );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    self.<a href="state.md#0x0_state">state</a>.process_create(&<a href="order_info.md#0x0_order_info">order_info</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()));
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch()), <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_create(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
 

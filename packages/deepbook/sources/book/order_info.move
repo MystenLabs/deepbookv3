@@ -10,6 +10,7 @@ module deepbook::order_info {
         trade_params::TradeParams,
         order::{Self, Order},
         fill::Fill,
+        balances::{Self, Balances},
     };
 
     const MIN_PRICE: u64 = 1;
@@ -260,6 +261,49 @@ module deepbook::order_info {
 
     public(package) fun add_fill(self: &mut OrderInfo, fill: Fill) {
         self.fills.push_back(fill);
+    }
+
+    public(package) fun calculate_taker_maker_fees(
+        self: &mut OrderInfo,
+        account_volume: u64,
+        account_active_stake: u64,
+    ): (Balances, Balances) {
+        let volume_in_deep = math::mul(account_volume, self.deep_per_base);
+        let taker_fee = self.trade_params().taker_fee_for_user(account_active_stake, volume_in_deep);
+        
+        let deep_in = math::mul(
+            self.deep_per_base,
+            math::mul(self.executed_quantity, taker_fee)
+        );
+        self.paid_fees = deep_in;
+
+        let mut settled_balances = balances::new(0, 0, 0);
+        let mut owed_balances = balances::new(0, 0, 0);
+        owed_balances.add_deep(deep_in);
+
+        if (self.is_bid) {
+            settled_balances.add_base(self.executed_quantity);
+            owed_balances.add_quote(self.cumulative_quote_quantity);
+        } else {
+            settled_balances.add_quote(self.cumulative_quote_quantity);
+            owed_balances.add_base(self.executed_quantity);
+        };
+
+        let remaining_quantity = self.remaining_quantity();
+        if (remaining_quantity > 0 && !self.is_immediate_or_cancel()) {
+            let deep_in = math::mul(
+                self.deep_per_base,
+                math::mul(remaining_quantity, self.trade_params().maker_fee())
+            );
+            owed_balances.add_deep(deep_in);
+            if (self.is_bid) {
+                owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
+            } else {
+                owed_balances.add_base(remaining_quantity);
+            };
+        };
+
+        (settled_balances, owed_balances)
     }
 
     /// OrderInfo is converted to an Order before being injected into the order book.
