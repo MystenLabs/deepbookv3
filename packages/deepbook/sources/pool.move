@@ -245,9 +245,9 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let (balances, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        let (cancel_quantity, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        let (settled, owed) = self.state.process_modify(account.id(), &balances, ctx);
+        let (settled, owed) = self.state.process_modify(account.id(), cancel_quantity, order, ctx);
         self.vault.settle_account(settled, owed, account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
@@ -500,7 +500,6 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let trade_params = self.state.governance().trade_params();
         let deep_per_base = self.deep_price.conversion_rate();
 
         let mut order_info = order_info::new(
@@ -513,15 +512,14 @@ module deepbook::pool {
             quantity,
             is_bid,
             pay_with_deep,
+            ctx.epoch(),
             expire_timestamp,
-            trade_params,
             deep_per_base,
             market_order,
         );
-        self.book.create_order(&mut order_info, clock.timestamp_ms());
+        self.book.create_order(&mut order_info, clock.timestamp_ms(), ctx);
         let (settled, owed) = self.state.process_create(&mut order_info, ctx);
         self.vault.settle_account(settled, owed, account, proof);
-
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
         order_info

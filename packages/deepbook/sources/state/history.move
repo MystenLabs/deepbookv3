@@ -1,7 +1,7 @@
 module deepbook::history {
     use sui::table::{Self, Table};
 
-    use deepbook::trade_params::{Self, TradeParams};
+    use deepbook::trade_params::TradeParams;
 
     const EHistoricVolumesNotFound: u64 = 1;
 
@@ -22,19 +22,23 @@ module deepbook::history {
 
     public(package) fun empty(
         ctx: &mut TxContext,
+        trade_params: TradeParams,
     ): History {
         let volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            trade_params: trade_params::new(0, 0, 0),
+            trade_params,
         };
-        History {
+        let mut history = History {
             epoch: ctx.epoch(),
             volumes,
             historic_volumes: table::new(ctx),
             balance_to_burn: 0,
-        }
+        };
+        history.historic_volumes.add(ctx.epoch(), volumes);
+
+        history
     }
 
     /// Update the epoch if it has changed.
@@ -87,5 +91,14 @@ module deepbook::history {
         if (account_stake > self.volumes.trade_params.stake_required()) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
         };
+    }
+
+    public(package) fun historic_maker_fee(
+        self: &History,
+        epoch: u64,
+    ): u64 {
+        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
+
+        self.historic_volumes[epoch].trade_params.maker_fee()
     }
 }

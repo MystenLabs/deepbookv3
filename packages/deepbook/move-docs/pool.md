@@ -43,6 +43,7 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="registry.md#0x0_registry">0x0::registry</a>;
@@ -127,6 +128,12 @@ DeepBookAdminCap is used to call admin functions.
 </dd>
 <dt>
 <code><a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code><a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a></code>
 </dt>
 <dd>
 
@@ -248,6 +255,15 @@ DeepBookAdminCap is used to call admin functions.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>: u64 = 8;
+</code></pre>
+
+
+
+<a name="0x0_pool_EIneligibleTargetPool"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>: u64 = 11;
 </code></pre>
 
 
@@ -375,6 +391,7 @@ The creation fee is transferred to the treasury address.
         <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
         <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
     };
 
     <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
@@ -624,9 +641,9 @@ Order must not have already expired.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
-    <b>let</b> (<a href="balances.md#0x0_balances">balances</a>, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <b>let</b> (cancel_quantity, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), &<a href="balances.md#0x0_balances">balances</a>, ctx);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), cancel_quantity, <a href="order.md#0x0_order">order</a>, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
@@ -1007,7 +1024,8 @@ The price vectors are sorted in descending order for bids and ascending order fo
 
 ## Function `add_deep_price_point`
 
-Add a deep price point to the pool. The deep price is used to calculate the conversion rate.
+Adds a price point along with a timestamp to the deep price.
+Allows for the calculation of deep price per base asset.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset&gt;(target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;DEEPBaseAsset, DEEPQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
@@ -1029,8 +1047,32 @@ Add a deep price point to the pool. The deep price is used to calculate the conv
     <b>let</b> pool_price = target_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>();
     <b>let</b> deep_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEPBaseAsset&gt;();
     <b>let</b> deep_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEPQuoteAsset&gt;();
+    <b>let</b> base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
+    <b>let</b> timestamp = <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms();
+    <b>if</b> (base_type == deep_type) {
+        <b>return</b> target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(1, timestamp)
+    };
+    <b>if</b> (quote_type == deep_type) {
+        <b>return</b> target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(pool_price, timestamp)
+    };
 
-    target_pool.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price, deep_base_type, deep_quote_type, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <b>assert</b>!((base_type == deep_base_type || base_type == deep_quote_type) ||
+            (quote_type == deep_base_type || quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+    <b>assert</b>!(!(base_type == deep_base_type && quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+
+    <b>let</b> deep_per_base = <b>if</b> (base_type == deep_base_type) {
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>
+    } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
+        <a href="math.md#0x0_math_div">math::div</a>(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+    } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
+        <a href="math.md#0x0_math_mul">math::mul</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+    } <b>else</b> {
+        <a href="math.md#0x0_math_div">math::div</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+    };
+
+    target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_base, timestamp)
 }
 </code></pre>
 
@@ -1188,8 +1230,7 @@ Only Admin can set a pool as whitelist.
     ctx: &TxContext,
 ): OrderInfo {
     <b>assert</b>!(pay_with_deep || self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EFeeTypeNotSupported">EFeeTypeNotSupported</a>);
-    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
-    <b>let</b> deep_per_base = self.<a href="state.md#0x0_state">state</a>.<a href="deep_price.md#0x0_deep_price">deep_price</a>().conversion_rate();
+    <b>let</b> deep_per_base = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
 
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
@@ -1201,15 +1242,14 @@ Only Admin can set a pool as whitelist.
         quantity,
         is_bid,
         pay_with_deep,
+        ctx.epoch(),
         expire_timestamp,
-        <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         deep_per_base,
         market_order,
     );
-    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(), ctx);
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_create(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
-
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
 
     <a href="order_info.md#0x0_order_info">order_info</a>
