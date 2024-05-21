@@ -24,6 +24,7 @@ a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Gener
 -  [Function `generate_proof_as_trader`](#0x0_account_generate_proof_as_trader)
 -  [Function `deposit`](#0x0_account_deposit)
 -  [Function `withdraw`](#0x0_account_withdraw)
+-  [Function `withdraw_all`](#0x0_account_withdraw_all)
 -  [Function `validate_proof`](#0x0_account_validate_proof)
 -  [Function `owner`](#0x0_account_owner)
 -  [Function `id`](#0x0_account_id)
@@ -234,16 +235,7 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 
 
-<pre><code><b>const</b> <a href="account.md#0x0_account_EMaxTradeCapsReached">EMaxTradeCapsReached</a>: u64 = 5;
-</code></pre>
-
-
-
-<a name="0x0_account_ENoBalance"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_ENoBalance">ENoBalance</a>: u64 = 4;
+<pre><code><b>const</b> <a href="account.md#0x0_account_EMaxTradeCapsReached">EMaxTradeCapsReached</a>: u64 = 4;
 </code></pre>
 
 
@@ -252,7 +244,7 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 
 
-<pre><code><b>const</b> <a href="account.md#0x0_account_ETradeCapNotInList">ETradeCapNotInList</a>: u64 = 6;
+<pre><code><b>const</b> <a href="account.md#0x0_account_ETradeCapNotInList">ETradeCapNotInList</a>: u64 = 5;
 </code></pre>
 
 
@@ -511,9 +503,11 @@ Deposit funds to an account. Only owner can call this directly.
 ## Function `withdraw`
 
 Withdraw funds from an account. Only owner can call this directly.
+If withdraw_all is true, amount is ignored and full balance withdrawn.
+If withdraw_all is false, withdraw_amount will be withdrawn.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw">withdraw</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, amount: u64, withdraw_all: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw">withdraw</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, withdraw_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
 </code></pre>
 
 
@@ -524,13 +518,41 @@ Withdraw funds from an account. Only owner can call this directly.
 
 <pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw">withdraw</a>&lt;T&gt;(
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    amount: u64,
-    withdraw_all: bool,
+    withdraw_amount: u64,
     ctx: &<b>mut</b> TxContext,
 ): Coin&lt;T&gt; {
     <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
 
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, amount, withdraw_all).into_coin(ctx)
+    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, withdraw_amount, <b>false</b>).into_coin(ctx)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_withdraw_all"></a>
+
+## Function `withdraw_all`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw_all">withdraw_all</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw_all">withdraw_all</a>&lt;T&gt;(
+    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    ctx: &<b>mut</b> TxContext,
+): Coin&lt;T&gt; {
+    <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
+
+    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, 0, <b>true</b>).into_coin(ctx)
 }
 </code></pre>
 
@@ -657,7 +679,7 @@ Deposit funds to an account. Pool will call this to deposit funds.
 Withdraw funds from an account. Pool will call this to withdraw funds.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, withdraw_all: bool): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, withdraw_amount: u64, withdraw_all: bool): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
 </code></pre>
 
 
@@ -669,21 +691,28 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(
     <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
     proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
-    amount: u64,
+    withdraw_amount: u64,
     withdraw_all: bool,
 ): Balance&lt;T&gt; {
     <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
 
     <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key), <a href="account.md#0x0_account_ENoBalance">ENoBalance</a>);
-    <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
-    <b>let</b> value = acc_balance.value();
-
-    <b>if</b> (!withdraw_all) {
-        <b>assert</b>!(value &gt;= amount, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
-        acc_balance.split(amount)
+    <b>let</b> key_exists = <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key);
+    <b>if</b> (withdraw_all) {
+        <b>if</b> (key_exists) {
+            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(<a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {})
+        } <b>else</b> {
+            <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>()
+        }
     } <b>else</b> {
-        acc_balance.split(value)
+        <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
+        <b>let</b> acc_value = acc_balance.value();
+        <b>assert</b>!(key_exists && acc_value &gt;= withdraw_amount && withdraw_amount &gt; 0, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
+        <b>if</b> (withdraw_amount == acc_value) {
+            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(<a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {})
+        } <b>else</b> {
+            acc_balance.split(withdraw_amount)
+        }
     }
 }
 </code></pre>

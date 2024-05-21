@@ -29,6 +29,7 @@
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
+<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -555,8 +556,15 @@ Mutates the order and the maker order as necessary.
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
-        <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
+        <b>let</b> is_self_order = <a href="order_info.md#0x0_order_info">order_info</a>.self_matching_prevention() && maker_order.account_id() == <a href="order_info.md#0x0_order_info">order_info</a>.account_id();
+        <b>let</b> match_successful = <b>if</b> (!is_self_order) {
+            <a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)
+        } <b>else</b> {
+            <b>false</b>
+        };
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
+        <b>if</b> (is_self_order) <b>continue</b>;
+        <b>if</b> (!match_successful) <b>break</b>;
 
         <b>let</b> <a href="fill.md#0x0_fill">fill</a> = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill();
         <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {

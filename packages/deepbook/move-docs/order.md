@@ -29,7 +29,6 @@ All order matching happens in this module.
 -  [Function `fee_is_deep`](#0x0_order_fee_is_deep)
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
--  [Function `self_matching_prevention`](#0x0_order_self_matching_prevention)
 
 
 <pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
@@ -103,12 +102,6 @@ Order struct represents the order in the order book. It is optimized for space.
 </dd>
 <dt>
 <code>expire_timestamp: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>self_matching_prevention: bool</code>
 </dt>
 <dd>
 
@@ -363,7 +356,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64, self_matching_prevention: bool): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, unpaid_fees: u64, fee_is_deep: bool, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -381,7 +374,6 @@ initialize the order struct.
     fee_is_deep: bool,
     status: u8,
     expire_timestamp: u64,
-    self_matching_prevention: bool,
 ): <a href="order.md#0x0_order_Order">Order</a> {
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id,
@@ -392,7 +384,6 @@ initialize the order struct.
         fee_is_deep,
         status,
         expire_timestamp,
-        self_matching_prevention,
     }
 }
 </code></pre>
@@ -918,30 +909,6 @@ Update the order status to canceled.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
     self.expire_timestamp
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_self_matching_prevention"></a>
-
-## Function `self_matching_prevention`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): bool {
-    self.self_matching_prevention
 }
 </code></pre>
 
