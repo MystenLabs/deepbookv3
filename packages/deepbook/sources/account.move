@@ -201,7 +201,7 @@ module deepbook::account {
         } else {
             let acc_balance: &mut Balance<T> = &mut account.balances[key];
             let acc_value = acc_balance.value();
-            assert!(key_exists && acc_value >= withdraw_amount && withdraw_amount > 0, EAccountBalanceTooLow);
+            assert!(key_exists && acc_value >= withdraw_amount, EAccountBalanceTooLow);
             if (withdraw_amount == acc_value) {
                 account.balances.remove(key)
             } else {
