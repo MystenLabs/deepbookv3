@@ -433,7 +433,7 @@ module deepbook::pool {
         let deep_per_base = if (base_type == deep_base_type) {
             deep_price
         } else if (base_type == deep_quote_type) {
-            math::div(1, deep_price)
+            math::div(1_000_000_000, deep_price)
         } else if (quote_type == deep_base_type) {
             math::mul(deep_price, pool_price)
         } else {

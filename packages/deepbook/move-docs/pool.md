@@ -1065,7 +1065,7 @@ Allows for the calculation of deep price per base asset.
     <b>let</b> deep_per_base = <b>if</b> (base_type == deep_base_type) {
         <a href="deep_price.md#0x0_deep_price">deep_price</a>
     } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
-        <a href="math.md#0x0_math_div">math::div</a>(1, <a href="deep_price.md#0x0_deep_price">deep_price</a>)
+        <a href="math.md#0x0_math_div">math::div</a>(1_000_000_000, <a href="deep_price.md#0x0_deep_price">deep_price</a>)
     } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
         <a href="math.md#0x0_math_mul">math::mul</a>(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
     } <b>else</b> {
