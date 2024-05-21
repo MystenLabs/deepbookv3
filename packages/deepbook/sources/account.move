@@ -194,7 +194,7 @@ module deepbook::account {
         let key_exists = account.balances.contains(key);
         if (withdraw_all) {
             if (key_exists) {
-                account.balances.remove(BalanceKey<T> {})
+                account.balances.remove(key)
             } else {
                 balance::zero()
             }
@@ -203,7 +203,7 @@ module deepbook::account {
             let acc_value = acc_balance.value();
             assert!(key_exists && acc_value >= withdraw_amount && withdraw_amount > 0, EAccountBalanceTooLow);
             if (withdraw_amount == acc_value) {
-                account.balances.remove(BalanceKey<T> {})
+                account.balances.remove(key)
             } else {
                 acc_balance.split(withdraw_amount)
             }

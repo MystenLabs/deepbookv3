@@ -700,7 +700,7 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
     <b>let</b> key_exists = <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key);
     <b>if</b> (withdraw_all) {
         <b>if</b> (key_exists) {
-            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(<a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {})
+            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(key)
         } <b>else</b> {
             <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>()
         }
@@ -709,7 +709,7 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
         <b>let</b> acc_value = acc_balance.value();
         <b>assert</b>!(key_exists && acc_value &gt;= withdraw_amount && withdraw_amount &gt; 0, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
         <b>if</b> (withdraw_amount == acc_value) {
-            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(<a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {})
+            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(key)
         } <b>else</b> {
             acc_balance.split(withdraw_amount)
         }
