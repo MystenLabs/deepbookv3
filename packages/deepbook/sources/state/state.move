@@ -8,7 +8,6 @@ module deepbook::state {
         order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
-        deep_price::{Self, DeepPrice},
         account_data::{Self, AccountData},
         balances::Balances,
     };
@@ -21,7 +20,6 @@ module deepbook::state {
         accounts: Table<ID, AccountData>,
         history: History,
         governance: Governance,
-        deep_price: DeepPrice,
     }
 
     public(package) fun empty(ctx: &mut TxContext): State {
@@ -29,7 +27,6 @@ module deepbook::state {
             history: history::empty(ctx),
             governance: governance::empty(ctx),
             accounts: table::new(ctx),
-            deep_price: deep_price::empty(),
         }
     }
 
@@ -181,12 +178,6 @@ module deepbook::state {
             option::some(proposal_id),
             account_data.active_stake(),
         );
-    }
-
-    public(package) fun deep_price(
-        self: &State,
-    ): &DeepPrice {
-        &self.deep_price
     }
 
     public(package) fun governance(
