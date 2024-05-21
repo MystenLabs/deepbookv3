@@ -30,7 +30,6 @@ All order matching happens in this module.
 -  [Function `fee_is_deep`](#0x0_order_info_fee_is_deep)
 -  [Function `status`](#0x0_order_info_status)
 -  [Function `expire_timestamp`](#0x0_order_info_expire_timestamp)
--  [Function `self_matching_prevention`](#0x0_order_info_self_matching_prevention)
 -  [Function `fills`](#0x0_order_info_fills)
 -  [Function `market_order`](#0x0_order_info_market_order)
 -  [Function `last_fill`](#0x0_order_info_last_fill)
@@ -194,12 +193,6 @@ It is returned at the end of the order lifecycle.
 </dd>
 <dt>
 <code>market_order: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>self_matching_prevention: bool</code>
 </dt>
 <dd>
 
@@ -689,7 +682,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, deep_per_base: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, market_order: bool, self_matching_prevention: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, deep_per_base: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -712,7 +705,6 @@ Emitted when a maker order is injected into the order book.
     expire_timestamp: u64,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
     market_order: bool,
-    self_matching_prevention: bool,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
         pool_id,
@@ -734,7 +726,6 @@ Emitted when a maker order is injected into the order book.
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
         market_order,
-        self_matching_prevention,
     }
 }
 </code></pre>
@@ -1120,30 +1111,6 @@ Emitted when a maker order is injected into the order book.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_expire_timestamp">expire_timestamp</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
     self.expire_timestamp
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_self_matching_prevention"></a>
-
-## Function `self_matching_prevention`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_self_matching_prevention">self_matching_prevention</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
-    self.self_matching_prevention
 }
 </code></pre>
 

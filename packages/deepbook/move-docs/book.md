@@ -565,7 +565,7 @@ Mutates the order and the maker order as necessary.
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
-        <b>assert</b>!(!(<a href="order_info.md#0x0_order_info">order_info</a>.self_matching_prevention() && maker_order.account_id() == <a href="order_info.md#0x0_order_info">order_info</a>.account_id()), <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>);
+        <b>assert</b>!(!(maker_order.account_id() == <a href="order_info.md#0x0_order_info">order_info</a>.account_id()), <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>);
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
 
