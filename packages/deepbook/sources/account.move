@@ -9,7 +9,7 @@
 module deepbook::account {
     use sui::{
         bag::{Self, Bag},
-        balance::Balance,
+        balance::{Self, Balance},
         coin::Coin,
     };
 
@@ -17,9 +17,8 @@ module deepbook::account {
     const EInvalidTrader: u64 = 1;
     const EInvalidProof: u64 = 2;
     const EAccountBalanceTooLow: u64 = 3;
-    const ENoBalance: u64 = 4;
-    const EMaxTradeCapsReached: u64 = 5;
-    const ETradeCapNotInList: u64 = 6;
+    const EMaxTradeCapsReached: u64 = 4;
+    const ETradeCapNotInList: u64 = 5;
 
     const MAX_TRADE_CAPS: u64 = 1000;
 
@@ -129,15 +128,25 @@ module deepbook::account {
     }
 
     /// Withdraw funds from an account. Only owner can call this directly.
+    /// If withdraw_all is true, amount is ignored and full balance withdrawn.
+    /// If withdraw_all is false, withdraw_amount will be withdrawn.
     public fun withdraw<T>(
         account: &mut Account,
-        amount: u64,
-        withdraw_all: bool,
+        withdraw_amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
         let proof = generate_proof_as_owner(account, ctx);
 
-        account.withdraw_with_proof(&proof, amount, withdraw_all).into_coin(ctx)
+        account.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx)
+    }
+
+    public fun withdraw_all<T>(
+        account: &mut Account,
+        ctx: &mut TxContext,
+    ): Coin<T> {
+        let proof = generate_proof_as_owner(account, ctx);
+
+        account.withdraw_with_proof(&proof, 0, true).into_coin(ctx)
     }
 
     public fun validate_proof(account: &Account, proof: &TradeProof) {
@@ -176,21 +185,29 @@ module deepbook::account {
     public(package) fun withdraw_with_proof<T>(
         account: &mut Account,
         proof: &TradeProof,
-        amount: u64,
+        withdraw_amount: u64,
         withdraw_all: bool,
     ): Balance<T> {
         account.validate_proof(proof);
 
         let key = BalanceKey<T> {};
-        assert!(account.balances.contains(key), ENoBalance);
-        let acc_balance: &mut Balance<T> = &mut account.balances[key];
-        let value = acc_balance.value();
-
-        if (!withdraw_all) {
-            assert!(value >= amount, EAccountBalanceTooLow);
-            acc_balance.split(amount)
+        let key_exists = account.balances.contains(key);
+        if (withdraw_all) {
+            if (key_exists) {
+                account.balances.remove(key)
+            } else {
+                balance::zero()
+            }
         } else {
-            acc_balance.split(value)
+            assert!(key_exists, EAccountBalanceTooLow);
+            let acc_balance: &mut Balance<T> = &mut account.balances[key];
+            let acc_value = acc_balance.value();
+            assert!(acc_value >= withdraw_amount, EAccountBalanceTooLow);
+            if (withdraw_amount == acc_value) {
+                account.balances.remove(key)
+            } else {
+                acc_balance.split(withdraw_amount)
+            }
         }
     }
 

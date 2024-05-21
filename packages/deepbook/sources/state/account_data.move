@@ -145,7 +145,6 @@ module deepbook::account_data {
         self.unclaimed_rebates = self.unclaimed_rebates + rebates;
     }
 
-    //
     public(package) fun claim_rebates(
         self: &mut AccountData,
     ): (Balances, Balances) {

@@ -29,6 +29,7 @@
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
+<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -134,6 +135,15 @@
 
 
 <pre><code><b>const</b> <a href="book.md#0x0_book_EInvalidTicks">EInvalidTicks</a>: u64 = 4;
+</code></pre>
+
+
+
+<a name="0x0_book_ESelfMatching"></a>
+
+
+
+<pre><code><b>const</b> <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>: u64 = 5;
 </code></pre>
 
 
@@ -555,6 +565,7 @@ Mutates the order and the maker order as necessary.
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
+        <b>assert</b>!(maker_order.account_id() != <a href="order_info.md#0x0_order_info">order_info</a>.account_id(), <a href="book.md#0x0_book_ESelfMatching">ESelfMatching</a>);
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
 
