@@ -4,6 +4,8 @@ module deepbook::history {
 
     /// Constants
     const EPOCHS_FOR_PHASE_OUT: u64 = 28;
+    const FLOAT_SCALING: u64 = 1_000_000_000;
+    const MAX_U64: u64 = ((1u128) << 64 - 1) as u64;
     const DEEP_LOT_SIZE: u64 = 100_000; // TODO: update, currently 0.0001
 
     /// Error codes
@@ -35,7 +37,7 @@ module deepbook::history {
             total_fees_collected: 0,
             stake_required: 0,
             accounts_with_rebates: 0,
-            historic_median: 0,
+            historic_median: MAX_U64,
         };
         History {
             epoch: ctx.epoch(),
@@ -72,7 +74,8 @@ module deepbook::history {
         let volumes = &mut self.historic_volumes[prev_epoch];
         if (account_stake < volumes.stake_required) return 0;
 
-        let maker_rebate_percentage = 500_000_000; // 50%, update this
+        let other_maker_liquidity = volumes.total_volume - maker_volume;
+        let maker_rebate_percentage = FLOAT_SCALING - math::div(other_maker_liquidity, volumes.historic_median);
         let maker_volume_proportion = math::mul(maker_volume, volumes.total_staked_volume);
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
         let mut maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
@@ -82,9 +85,7 @@ module deepbook::history {
         self.balance_to_burn = self.balance_to_burn + maker_burn;
 
         volumes.accounts_with_rebates = volumes.accounts_with_rebates - 1;
-        if (volumes.accounts_with_rebates == 0) {
-            self.historic_volumes.remove(prev_epoch);
-        };
+        // TODO: can only cleanup epoch if it's at least 28 epochs old
 
         maker_rebate
     }
