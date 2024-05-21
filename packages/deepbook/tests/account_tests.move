@@ -254,30 +254,6 @@ module deepbook::account_tests {
         end(test);
     }
 
-    #[test, expected_failure(abort_code = account::ENoBalance)]
-    fun test_withdraw_no_balance_e() {
-        let mut test = begin(@0xF);
-        let alice = @0xA;
-        test.next_tx(alice);
-        {
-            let mut account = account::new(test.ctx());
-            account.deposit(
-                mint_for_testing<SUI>(100, test.ctx()),
-                test.ctx()
-            );
-            let balance = account.balance<SUI>();
-            assert!(balance == 100, 0);
-
-            let _coin = account.withdraw<DEEP>(
-                100,
-                false,
-                test.ctx()
-            );
-        };
-
-        abort 0
-    }
-
     #[test, expected_failure(abort_code = account::EAccountBalanceTooLow)]
     fun test_withdraw_balance_too_low_e() {
         let mut test = begin(@0xF);

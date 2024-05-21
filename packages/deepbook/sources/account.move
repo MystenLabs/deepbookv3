@@ -17,9 +17,8 @@ module deepbook::account {
     const EInvalidTrader: u64 = 1;
     const EInvalidProof: u64 = 2;
     const EAccountBalanceTooLow: u64 = 3;
-    const ENoBalance: u64 = 4;
-    const EMaxTradeCapsReached: u64 = 5;
-    const ETradeCapNotInList: u64 = 6;
+    const EMaxTradeCapsReached: u64 = 4;
+    const ETradeCapNotInList: u64 = 5;
 
     const MAX_TRADE_CAPS: u64 = 1000;
 
