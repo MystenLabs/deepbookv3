@@ -81,10 +81,10 @@ module deepbook::history {
         0
     }
 
-    /// returns and updates historic_median
+    /// Updates the historic_median for past 28 epochs
     public(package) fun update_historic_median(
-        self: &History,
-    ): u64 {
+        self: &mut History,
+    ) {
         let mut median_vec = vector<u64>[];
         let mut i = if (self.epoch > EPOCHS_FOR_PHASE_OUT) {
             self.epoch - EPOCHS_FOR_PHASE_OUT
@@ -100,7 +100,7 @@ module deepbook::history {
             i = i + 1;
         };
 
-        math::median(median_vec)
+        self.volumes.historic_median = math::median(median_vec);
     }
 
     /// Add volume to the current epoch's volume data.
