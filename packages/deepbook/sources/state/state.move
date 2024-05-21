@@ -38,7 +38,8 @@ module deepbook::state {
         order_info: &mut OrderInfo,
         ctx: &TxContext,
     ): (Balances, Balances) {
-        self.history.update(ctx);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         let fills = order_info.fills();
         let mut i = 0;
         while (i < fills.length()) {
@@ -49,7 +50,7 @@ module deepbook::state {
             account_data.process_maker_fill(fill);
 
             let volume = fill.volume();
-            self.history.add_volume(volume, account_data.active_stake(), account_data.maker_volume() == volume);
+            self.history.add_volume(volume, account_data.active_stake());
 
             i = i + 1;
         };
@@ -78,7 +79,8 @@ module deepbook::state {
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
-        self.history.update(ctx);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         order.set_canceled();
         self.update_account(account_id, ctx.epoch());
 
@@ -100,7 +102,8 @@ module deepbook::state {
         balances: &Balances,
         ctx: &TxContext,
     ): (Balances, Balances) {
-        self.history.update(ctx);
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
         self.accounts[account_id].add_settled_amounts(*balances);
 
@@ -113,8 +116,8 @@ module deepbook::state {
         new_stake: u64,
         ctx: &TxContext,
     ): (Balances, Balances) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
@@ -128,8 +131,8 @@ module deepbook::state {
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];
@@ -148,8 +151,8 @@ module deepbook::state {
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let stake = self.accounts[account_id].active_stake();
@@ -165,8 +168,8 @@ module deepbook::state {
         proposal_id: ID,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];
