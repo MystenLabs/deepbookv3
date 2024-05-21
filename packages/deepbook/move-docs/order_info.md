@@ -36,6 +36,7 @@ All order matching happens in this module.
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `add_fill`](#0x0_order_info_add_fill)
+-  [Function `calculate_maker_taker_fees`](#0x0_order_info_calculate_maker_taker_fees)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
@@ -53,7 +54,8 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
-<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
@@ -1245,6 +1247,74 @@ Emitted when a maker order is injected into the order book.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_add_fill">add_fill</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="fill.md#0x0_fill">fill</a>: Fill) {
     self.fills.push_back(<a href="fill.md#0x0_fill">fill</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_calculate_maker_taker_fees"></a>
+
+## Function `calculate_maker_taker_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_maker_taker_fees">calculate_maker_taker_fees</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, account_volume: u64, account_active_stake: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_maker_taker_fees">calculate_maker_taker_fees</a>(
+    self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
+    account_volume: u64,
+    account_active_stake: u64,
+): (Balances, Balances) {
+    <b>let</b> volume_in_deep = <a href="math.md#0x0_math_mul">math::mul</a>(account_volume, self.deep_per_base);
+    <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> stake_required = <a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required();
+    <b>let</b> taker_fee = <b>if</b> (account_active_stake &gt;= stake_required && volume_in_deep &gt;= stake_required) {
+        <a href="math.md#0x0_math_mul">math::mul</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee(), 500_000_000)
+    } <b>else</b> {
+        <a href="trade_params.md#0x0_trade_params">trade_params</a>.taker_fee()
+    };
+
+    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+        self.deep_per_base,
+        <a href="math.md#0x0_math_mul">math::mul</a>(self.executed_quantity, taker_fee)
+    );
+    self.paid_fees = deep_in;
+
+    <b>let</b> settled_balances;
+    <b>let</b> <b>mut</b> owed_balances;
+
+    <b>if</b> (self.is_bid) {
+        settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(self.executed_quantity, 0, 0);
+        owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, self.cumulative_quote_quantity, deep_in);
+    } <b>else</b> {
+        settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, self.cumulative_quote_quantity, 0);
+        owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(self.executed_quantity, 0, deep_in);
+    };
+    <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
+
+    <b>if</b> (remaining_quantity &gt; 0 && !self.<a href="order_info.md#0x0_order_info_is_immediate_or_cancel">is_immediate_or_cancel</a>()) {
+        <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+            self.deep_per_base,
+            <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, <a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee())
+        );
+        <b>let</b> owed_balances2 = <b>if</b> (self.is_bid) {
+            <a href="balances.md#0x0_balances_new">balances::new</a>(0, <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()), deep_in)
+        } <b>else</b> {
+            <a href="balances.md#0x0_balances_new">balances::new</a>(remaining_quantity, 0, deep_in)
+        };
+        owed_balances.add_balances(owed_balances2);
+    };
+
+    (settled_balances, owed_balances)
 }
 </code></pre>
 
