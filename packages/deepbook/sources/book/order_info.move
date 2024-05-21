@@ -9,8 +9,7 @@ module deepbook::order_info {
         math,
         trade_params::TradeParams,
         order::{Self, Order},
-        fill::{Self, Fill},
-        balances::Self,
+        fill::Fill,
     };
 
     const MIN_PRICE: u64 = 1;
@@ -267,6 +266,10 @@ module deepbook::order_info {
         self.paid_fees = paid_fees;
     }
 
+    public(package) fun add_fill(self: &mut OrderInfo, fill: Fill) {
+        self.fills.push_back(fill);
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
@@ -367,65 +370,32 @@ module deepbook::order_info {
         !self.is_bid && self.price <= maker_price)
     }
 
-    /// Matches an OrderInfo with an Order from the book. Returns a Fill.
-    /// If the book order is expired, it returns a Fill with the expired flag set to true.
-    /// Funds for an expired order are returned to the maker as settled.
+    /// Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
+    /// If the book order is expired, the Fill will have the expired flag set to true.
+    /// Funds for the match or an expired order are returned to the maker as settled.
     public(package) fun match_maker(
         self: &mut OrderInfo,
         maker: &mut Order,
         timestamp: u64,
     ): bool {
         if (!self.crosses_price(maker)) return false;
-        let maker_quantity = maker.quantity();
-        if (maker.expire_timestamp() < timestamp) {
-            maker.set_expired();
-            let cancel_quantity = maker_quantity;
-            let balances = maker.cancel_amounts(
-                cancel_quantity,
-                false,
-            );
-            self.fills.push_back(fill::new(
-                maker.order_id(),
-                maker.account_id(),
-                true,
-                false,
-                0,
-                balances,
-            ));
 
-            return true
-        };
+        let fill = maker.generate_fill(timestamp, self.remaining_quantity(), self.is_bid);
+        self.fills.push_back(fill);
+        if (fill.expired()) return true;
 
-        let price = maker.price();
-        let filled_quantity = math::min(self.remaining_quantity(), maker_quantity);
-        let quote_quantity = math::mul(filled_quantity, price);
-        maker.set_unpaid_fees(filled_quantity);
-        maker.set_quantity(maker_quantity - filled_quantity);
-        self.executed_quantity = self.executed_quantity + filled_quantity;
-        self.cumulative_quote_quantity = self.cumulative_quote_quantity + quote_quantity;
+        self.executed_quantity = self.executed_quantity + fill.volume();
+        self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
         self.status = PARTIALLY_FILLED;
         if (self.remaining_quantity() == 0) self.status = FILLED;
-        maker.set_fill_status();
 
         self.emit_order_filled(
             maker,
-            price,
-            filled_quantity,
-            quote_quantity,
+            maker.price(),
+            fill.volume(),
+            fill.quote_quantity(),
             timestamp
         );
-
-        let base = if (self.is_bid) filled_quantity else 0;
-        let quote = if (self.is_bid) 0 else quote_quantity;
-        let balances = balances::new(base, quote, 0);
-        self.fills.push_back(fill::new(
-            maker.order_id(),
-            maker.account_id(),
-            false,
-            false,
-            filled_quantity,
-            balances,
-        ));
 
         true
     }

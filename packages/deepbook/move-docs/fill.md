@@ -12,6 +12,7 @@
 -  [Function `expired`](#0x0_fill_expired)
 -  [Function `completed`](#0x0_fill_completed)
 -  [Function `volume`](#0x0_fill_volume)
+-  [Function `quote_quantity`](#0x0_fill_quote_quantity)
 -  [Function `settled_balances`](#0x0_fill_settled_balances)
 
 
@@ -70,6 +71,12 @@ It is used to update the state.
 
 </dd>
 <dt>
+<code>quote_quantity: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
@@ -86,7 +93,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, quote_quantity: u64, settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -101,6 +108,7 @@ It is used to update the state.
     expired: bool,
     completed: bool,
     volume: u64,
+    quote_quantity: u64,
     settled_balances: Balances,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
@@ -109,6 +117,7 @@ It is used to update the state.
         expired,
         completed,
         volume,
+        quote_quantity,
         settled_balances,
     }
 }
@@ -231,6 +240,30 @@ It is used to update the state.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_volume">volume</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
     self.volume
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_fill_quote_quantity"></a>
+
+## Function `quote_quantity`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_quote_quantity">quote_quantity</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_quote_quantity">quote_quantity</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
+    self.quote_quantity
 }
 </code></pre>
 

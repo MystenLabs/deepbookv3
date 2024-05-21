@@ -17,6 +17,8 @@ module deepbook::fill {
         completed: bool,
         // Quantity filled
         volume: u64,
+        // Volume * price
+        quote_quantity: u64,
         // Quantities settled for maker
         settled_balances: Balances,
     }
@@ -27,6 +29,7 @@ module deepbook::fill {
         expired: bool,
         completed: bool,
         volume: u64,
+        quote_quantity: u64,
         settled_balances: Balances,
     ): Fill {
         Fill {
@@ -35,6 +38,7 @@ module deepbook::fill {
             expired,
             completed,
             volume,
+            quote_quantity,
             settled_balances,
         }
     }
@@ -57,6 +61,10 @@ module deepbook::fill {
 
     public(package) fun volume(self: &Fill): u64 {
         self.volume
+    }
+
+    public(package) fun quote_quantity(self: &Fill): u64 {
+        self.quote_quantity
     }
 
     public(package) fun settled_balances(self: &Fill): &Balances {
