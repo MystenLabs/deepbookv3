@@ -241,6 +241,7 @@ If there are accounts with rebates, add the current epoch's volume data to the h
     self.epoch = epoch;
     self.<a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>);
     self.<a href="history.md#0x0_history_update_historic_median">update_historic_median</a>();
+    self.historic_volumes.add(self.epoch, self.volumes);
 }
 </code></pre>
 

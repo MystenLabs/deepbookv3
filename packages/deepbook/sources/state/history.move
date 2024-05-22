@@ -66,6 +66,7 @@ module deepbook::history {
         self.epoch = epoch;
         self.reset_volumes(trade_params);
         self.update_historic_median();
+        self.historic_volumes.add(self.epoch, self.volumes);
     }
 
     public(package) fun reset_volumes(
