@@ -138,15 +138,6 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 
 
-<a name="0x0_history_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="history.md#0x0_history_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
-</code></pre>
-
-
-
 <a name="0x0_history_DEEP_LOT_SIZE"></a>
 
 
@@ -199,7 +190,7 @@ Constants
         total_volume: 0,
         total_staked_volume: 0,
         total_fees_collected: 0,
-        historic_median: <a href="history.md#0x0_history_MAX_U64">MAX_U64</a>,
+        historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
     <b>let</b> <b>mut</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_History">History</a> {
@@ -280,7 +271,7 @@ If there are accounts with rebates, add the current epoch's volume data to the h
         total_volume: 0,
         total_staked_volume: 0,
         total_fees_collected: 0,
-        historic_median: <a href="history.md#0x0_history_MAX_U64">MAX_U64</a>,
+        historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
 }
@@ -318,7 +309,11 @@ calculate and returns rebate amount, updates the burn amount
     <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> 0;
 
     <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
-    <b>let</b> maker_rebate_percentage = <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a> - <a href="math.md#0x0_math_min">math::min</a>(<a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>, <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median));
+    <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
+        <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a> - <a href="math.md#0x0_math_min">math::min</a>(<a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>, <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median))
+    } <b>else</b> {
+        0
+    };
     <b>let</b> maker_volume_proportion = <a href="math.md#0x0_math_div">math::div</a>(maker_volume, volumes.total_staked_volume);
     <b>let</b> maker_fee_proportion = <a href="math.md#0x0_math_mul">math::mul</a>(maker_volume_proportion, volumes.total_fees_collected);
     <b>let</b> <b>mut</b> maker_rebate = <a href="math.md#0x0_math_mul">math::mul</a>(maker_rebate_percentage, maker_fee_proportion);
@@ -364,7 +359,7 @@ Updates the historic_median for past 28 epochs
         <b>if</b> (self.historic_volumes.contains(i)) {
             median_vec.push_back(self.historic_volumes[i].total_volume);
         } <b>else</b> {
-            median_vec.push_back(<a href="history.md#0x0_history_MAX_U64">MAX_U64</a>);
+            median_vec.push_back(0);
         };
         i = i + 1;
     };

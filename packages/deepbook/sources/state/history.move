@@ -5,7 +5,6 @@ module deepbook::history {
     /// Constants
     const EPOCHS_FOR_PHASE_OUT: u64 = 28;
     const FLOAT_SCALING: u64 = 1_000_000_000;
-    const MAX_U64: u64 = ((1u128) << 64 - 1) as u64;
     const DEEP_LOT_SIZE: u64 = 1_000; // TODO: update, currently 0.000001
 
     /// Error codes
@@ -36,7 +35,7 @@ module deepbook::history {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            historic_median: MAX_U64,
+            historic_median: 0,
             trade_params,
         };
         let mut history = History {
@@ -77,7 +76,7 @@ module deepbook::history {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            historic_median: MAX_U64,
+            historic_median: 0,
             trade_params,
         };
     }
@@ -95,7 +94,11 @@ module deepbook::history {
         if (volumes.trade_params.stake_required() > account_stake) return 0;
 
         let other_maker_liquidity = volumes.total_volume - maker_volume;
-        let maker_rebate_percentage = FLOAT_SCALING - math::min(FLOAT_SCALING, math::div(other_maker_liquidity, volumes.historic_median));
+        let maker_rebate_percentage = if (volumes.historic_median > 0) {
+            FLOAT_SCALING - math::min(FLOAT_SCALING, math::div(other_maker_liquidity, volumes.historic_median))
+        } else {
+            0
+        };
         let maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
         let mut maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
@@ -121,7 +124,7 @@ module deepbook::history {
             if (self.historic_volumes.contains(i)) {
                 median_vec.push_back(self.historic_volumes[i].total_volume);
             } else {
-                median_vec.push_back(MAX_U64);
+                median_vec.push_back(0);
             };
             i = i + 1;
         };
