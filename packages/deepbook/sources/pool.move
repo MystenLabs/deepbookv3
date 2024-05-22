@@ -469,10 +469,11 @@ module deepbook::pool {
         whitelist: bool,
         ctx: &TxContext,
     ) {
-        let base = type_name::get<BaseAsset>();
-        let quote = type_name::get<QuoteAsset>();
-        let deep_type = type_name::get<DEEP>();
-        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+        // TODO: remove comment out section after testing
+        // let base = type_name::get<BaseAsset>();
+        // let quote = type_name::get<QuoteAsset>();
+        // let deep_type = type_name::get<DEEP>();
+        // assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
