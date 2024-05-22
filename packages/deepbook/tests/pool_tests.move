@@ -21,7 +21,7 @@ module deepbook::pool_tests {
     use deepbook::{
         pool::{Self, Pool},
         vault::DEEP,
-        account::{Self, Account},
+        balance_manager::{Self, BalanceManager},
         order::{Order},
         order_info::OrderInfo,
         big_vector::BigVector,
@@ -1129,14 +1129,14 @@ module deepbook::pool_tests {
         {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
             let clock = test.take_shared<Clock>();
-            let mut account = test.take_shared_by_id<Account>(acct_id);
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
 
-            // Get Proof from Account
-            let proof = account.generate_proof_as_owner(test.ctx());
+            // Get Proof from BalanceManager
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
             let order_info = pool.place_limit_order<SUI, USDC>(
-                &mut account,
+                &mut balance_manager,
                 &proof,
                 client_order_id,
                 order_type,
@@ -1150,7 +1150,7 @@ module deepbook::pool_tests {
             );
             return_shared(pool);
             return_shared(clock);
-            return_shared(account);
+            return_shared(balance_manager);
 
             order_info
         }
@@ -1196,11 +1196,11 @@ module deepbook::pool_tests {
         {
             let mut pool = test.take_shared<Pool<SUI, USDC>>();
             let clock = test.take_shared<Clock>();
-            let mut account = test.take_shared_by_id<Account>(acct_id);
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
 
-            let proof = account.generate_proof_as_owner(test.ctx());
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
             pool.cancel_order<SUI, USDC>(
-                &mut account,
+                &mut balance_manager,
                 &proof,
                 order_id,
                 &clock,
@@ -1208,7 +1208,7 @@ module deepbook::pool_tests {
             );
             return_shared(pool);
             return_shared(clock);
-            return_shared(account);
+            return_shared(balance_manager);
         }
     }
 
@@ -1259,11 +1259,11 @@ module deepbook::pool_tests {
     }
 
     fun deposit_into_account<T>(
-        account: &mut Account,
+        balance_manager: &mut BalanceManager,
         amount: u64,
         test: &mut Scenario,
     ) {
-        account.deposit(
+        balance_manager.deposit(
             mint_for_testing<T>(amount, test.ctx()),
             test.ctx()
         );
@@ -1276,7 +1276,7 @@ module deepbook::pool_tests {
         let amount_to_deposit = 1000000 * FLOAT_SCALING;
         test.next_tx(sender);
         {
-            let mut acct = account::new(test.ctx());
+            let mut acct = balance_manager::new(test.ctx());
             deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
             deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
             deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);

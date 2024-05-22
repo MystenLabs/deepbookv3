@@ -20,7 +20,7 @@ All order matching happens in this module.
 -  [Function `set_canceled`](#0x0_order_set_canceled)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
--  [Function `account_id`](#0x0_order_account_id)
+-  [Function `balance_manager_id`](#0x0_order_balance_manager_id)
 -  [Function `price`](#0x0_order_price)
 -  [Function `is_bid`](#0x0_order_is_bid)
 -  [Function `quantity`](#0x0_order_quantity)
@@ -58,7 +58,7 @@ Order struct represents the order in the order book. It is optimized for space.
 
 <dl>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -134,7 +134,7 @@ Emitted when a maker order is canceled.
 
 <dl>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -210,7 +210,7 @@ Emitted when a maker order is modified.
 
 <dl>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -361,7 +361,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -372,7 +372,7 @@ initialize the order struct.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(
     order_id: u128,
-    account_id: ID,
+    balance_manager_id: ID,
     client_order_id: u64,
     quantity: u64,
     deep_per_base: u64,
@@ -382,7 +382,7 @@ initialize the order struct.
 ): <a href="order.md#0x0_order_Order">Order</a> {
     <a href="order.md#0x0_order_Order">Order</a> {
         order_id,
-        account_id,
+        balance_manager_id,
         client_order_id,
         quantity,
         filled_quantity: 0,
@@ -425,7 +425,7 @@ quantity and whether the order is a bid.
     <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(volume, self.<a href="order.md#0x0_order_price">price</a>());
 
     <b>let</b> order_id = self.order_id;
-    <b>let</b> account_id = self.account_id;
+    <b>let</b> balance_manager_id = self.balance_manager_id;
     <b>let</b> expired = self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp;
 
     <b>if</b> (expired) {
@@ -437,7 +437,7 @@ quantity and whether the order is a bid.
 
     <a href="fill.md#0x0_fill_new">fill::new</a>(
         order_id,
-        account_id,
+        balance_manager_id,
         expired,
         self.quantity == self.filled_quantity,
         volume,
@@ -513,7 +513,7 @@ quantity and whether the order is a bid.
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order.md#0x0_order_OrderCanceled">OrderCanceled</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         order_id: self.order_id,
-        account_id: self.account_id,
+        balance_manager_id: self.balance_manager_id,
         client_order_id: self.client_order_id,
         is_bid,
         trader,
@@ -555,7 +555,7 @@ quantity and whether the order is a bid.
         order_id: self.order_id,
         pool_id,
         client_order_id: self.client_order_id,
-        account_id: self.account_id,
+        balance_manager_id: self.balance_manager_id,
         trader,
         price,
         is_bid,
@@ -666,13 +666,13 @@ Update the order status to canceled.
 
 </details>
 
-<a name="0x0_order_account_id"></a>
+<a name="0x0_order_balance_manager_id"></a>
 
-## Function `account_id`
+## Function `balance_manager_id`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_balance_manager_id">balance_manager_id</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -681,8 +681,8 @@ Update the order status to canceled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_account_id">account_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): ID {
-    self.account_id
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_balance_manager_id">balance_manager_id</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): ID {
+    self.balance_manager_id
 }
 </code></pre>
 

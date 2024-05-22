@@ -3,58 +3,47 @@
 
 # Module `0x0::account`
 
-The Account is a shared object that holds all of the balances for different assets. A combination of <code><a href="account.md#0x0_account_Account">Account</a></code> and
-<code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> are passed into a pool to perform trades. A <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> can be generated in two ways: by the
-owner directly, or by any <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner. The owner can generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> without the risk of
-equivocation. The <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owner, due to it being an owned object, risks equivocation when generating
-a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>. Generally, a high frequency trading engine will trade as the default owner.
 
 
--  [Resource `Account`](#0x0_account_Account)
--  [Struct `BalanceKey`](#0x0_account_BalanceKey)
--  [Resource `TradeCap`](#0x0_account_TradeCap)
--  [Struct `TradeProof`](#0x0_account_TradeProof)
--  [Constants](#@Constants_0)
--  [Function `new`](#0x0_account_new)
--  [Function `share`](#0x0_account_share)
--  [Function `balance`](#0x0_account_balance)
--  [Function `mint_trade_cap`](#0x0_account_mint_trade_cap)
--  [Function `revoke_trade_cap`](#0x0_account_revoke_trade_cap)
--  [Function `generate_proof_as_owner`](#0x0_account_generate_proof_as_owner)
--  [Function `generate_proof_as_trader`](#0x0_account_generate_proof_as_trader)
--  [Function `deposit`](#0x0_account_deposit)
--  [Function `withdraw`](#0x0_account_withdraw)
--  [Function `withdraw_all`](#0x0_account_withdraw_all)
--  [Function `validate_proof`](#0x0_account_validate_proof)
--  [Function `owner`](#0x0_account_owner)
--  [Function `id`](#0x0_account_id)
--  [Function `deposit_with_proof`](#0x0_account_deposit_with_proof)
--  [Function `withdraw_with_proof`](#0x0_account_withdraw_with_proof)
--  [Function `delete`](#0x0_account_delete)
--  [Function `trader`](#0x0_account_trader)
--  [Function `validate_owner`](#0x0_account_validate_owner)
--  [Function `validate_trader`](#0x0_account_validate_trader)
+-  [Struct `Account`](#0x0_account_Account)
+-  [Function `empty`](#0x0_account_empty)
+-  [Function `active_stake`](#0x0_account_active_stake)
+-  [Function `process_maker_fill`](#0x0_account_process_maker_fill)
+-  [Function `increase_maker_volume`](#0x0_account_increase_maker_volume)
+-  [Function `increase_taker_volume`](#0x0_account_increase_taker_volume)
+-  [Function `taker_volume`](#0x0_account_taker_volume)
+-  [Function `maker_volume`](#0x0_account_maker_volume)
+-  [Function `set_voted_proposal`](#0x0_account_set_voted_proposal)
+-  [Function `add_settled_amounts`](#0x0_account_add_settled_amounts)
+-  [Function `add_owed_amounts`](#0x0_account_add_owed_amounts)
+-  [Function `settle`](#0x0_account_settle)
+-  [Function `update`](#0x0_account_update)
+-  [Function `add_rebates`](#0x0_account_add_rebates)
+-  [Function `claim_rebates`](#0x0_account_claim_rebates)
+-  [Function `add_order`](#0x0_account_add_order)
+-  [Function `remove_order`](#0x0_account_remove_order)
+-  [Function `add_stake`](#0x0_account_add_stake)
+-  [Function `remove_stake`](#0x0_account_remove_stake)
+-  [Function `open_orders`](#0x0_account_open_orders)
 
 
-<pre><code><b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
-<b>use</b> <a href="dependencies/sui-framework/bag.md#0x2_bag">0x2::bag</a>;
-<b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
-<b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
-<b>use</b> <a href="dependencies/sui-framework/transfer.md#0x2_transfer">0x2::transfer</a>;
-<b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
+<b>use</b> <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set">0x2::vec_set</a>;
 </code></pre>
 
 
 
 <a name="0x0_account_Account"></a>
 
-## Resource `Account`
+## Struct `Account`
 
-A shared object that is passed into pools for placing orders.
+Account data that is updated every epoch.
 
 
-<pre><code><b>struct</b> <a href="account.md#0x0_account_Account">Account</a> <b>has</b> key
+<pre><code><b>struct</b> <a href="account.md#0x0_account_Account">Account</a> <b>has</b> <b>copy</b>, drop, store
 </code></pre>
 
 
@@ -65,25 +54,61 @@ A shared object that is passed into pools for placing orders.
 
 <dl>
 <dt>
-<code>id: <a href="dependencies/sui-framework/object.md#0x2_object_UID">object::UID</a></code>
+<code>epoch: u64</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>owner: <b>address</b></code>
+<code>open_orders: <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code><a href="balances.md#0x0_balances">balances</a>: <a href="dependencies/sui-framework/bag.md#0x2_bag_Bag">bag::Bag</a></code>
+<code>taker_volume: u64</code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>allow_listed: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;</code>
+<code>maker_volume: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>active_stake: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>inactive_stake: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>unclaimed_rebates: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>settled_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>owed_balances: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
@@ -93,178 +118,13 @@ A shared object that is passed into pools for placing orders.
 
 </details>
 
-<a name="0x0_account_BalanceKey"></a>
+<a name="0x0_account_empty"></a>
 
-## Struct `BalanceKey`
+## Function `empty`
 
-Balance identifier.
 
 
-<pre><code><b>struct</b> <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; <b>has</b> <b>copy</b>, drop, store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>dummy_field: bool</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_account_TradeCap"></a>
-
-## Resource `TradeCap`
-
-Owners of a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> need to get a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> to trade across pools in a single PTB (drops after).
-
-
-<pre><code><b>struct</b> <a href="account.md#0x0_account_TradeCap">TradeCap</a> <b>has</b> store, key
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>id: <a href="dependencies/sui-framework/object.md#0x2_object_UID">object::UID</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="0x0_account_TradeProof"></a>
-
-## Struct `TradeProof`
-
-Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> owners can generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code>.
-<code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> is used to validate the account when trading on DeepBook.
-
-
-<pre><code><b>struct</b> <a href="account.md#0x0_account_TradeProof">TradeProof</a> <b>has</b> drop
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>trader: <b>address</b></code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
-
-<a name="@Constants_0"></a>
-
-## Constants
-
-
-<a name="0x0_account_EAccountBalanceTooLow"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>: u64 = 3;
-</code></pre>
-
-
-
-<a name="0x0_account_EInvalidOwner"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_EInvalidOwner">EInvalidOwner</a>: u64 = 0;
-</code></pre>
-
-
-
-<a name="0x0_account_EInvalidProof"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_EInvalidProof">EInvalidProof</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_account_EInvalidTrader"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_EInvalidTrader">EInvalidTrader</a>: u64 = 1;
-</code></pre>
-
-
-
-<a name="0x0_account_EMaxTradeCapsReached"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_EMaxTradeCapsReached">EMaxTradeCapsReached</a>: u64 = 4;
-</code></pre>
-
-
-
-<a name="0x0_account_ETradeCapNotInList"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_ETradeCapNotInList">ETradeCapNotInList</a>: u64 = 5;
-</code></pre>
-
-
-
-<a name="0x0_account_MAX_TRADE_CAPS"></a>
-
-
-
-<pre><code><b>const</b> <a href="account.md#0x0_account_MAX_TRADE_CAPS">MAX_TRADE_CAPS</a>: u64 = 1000;
-</code></pre>
-
-
-
-<a name="0x0_account_new"></a>
-
-## Function `new`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_new">new</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="account.md#0x0_account_Account">account::Account</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_empty">empty</a>(epoch: u64): <a href="account.md#0x0_account_Account">account::Account</a>
 </code></pre>
 
 
@@ -273,12 +133,20 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_new">new</a>(ctx: &<b>mut</b> TxContext): <a href="account.md#0x0_account_Account">Account</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_empty">empty</a>(
+    epoch: u64,
+): <a href="account.md#0x0_account_Account">Account</a> {
     <a href="account.md#0x0_account_Account">Account</a> {
-        id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
-        owner: ctx.sender(),
-        <a href="balances.md#0x0_balances">balances</a>: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
-        allow_listed: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
+        epoch,
+        open_orders: <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_empty">vec_set::empty</a>(),
+        taker_volume: 0,
+        maker_volume: 0,
+        active_stake: 0,
+        inactive_stake: 0,
+        voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
+        unclaimed_rebates: 0,
+        settled_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
+        owed_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
     }
 }
 </code></pre>
@@ -287,13 +155,13 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 </details>
 
-<a name="0x0_account_share"></a>
+<a name="0x0_account_active_stake"></a>
 
-## Function `share`
+## Function `active_stake`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_share">share</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">account::Account</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_active_stake">active_stake</a>(self: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
 </code></pre>
 
 
@@ -302,8 +170,10 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_share">share</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">Account</a>) {
-    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="account.md#0x0_account">account</a>);
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_active_stake">active_stake</a>(
+    self: &<a href="account.md#0x0_account_Account">Account</a>,
+): u64 {
+    self.active_stake
 }
 </code></pre>
 
@@ -311,14 +181,13 @@ Account owner and <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></
 
 </details>
 
-<a name="0x0_account_balance"></a>
+<a name="0x0_account_process_maker_fill"></a>
 
-## Function `balance`
-
-Returns the balance of a Coin in an account.
+## Function `process_maker_fill`
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_process_maker_fill">process_maker_fill</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, <a href="fill.md#0x0_fill">fill</a>: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>)
 </code></pre>
 
 
@@ -327,170 +196,18 @@ Returns the balance of a Coin in an account.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
-    <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>if</b> (!<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
-        0
-    } <b>else</b> {
-        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
-        acc_balance.value()
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_mint_trade_cap"></a>
-
-## Function `mint_trade_cap`
-
-Mint a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code>, only owner can mint a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code>.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_mint_trade_cap">mint_trade_cap</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="account.md#0x0_account_TradeCap">account::TradeCap</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_mint_trade_cap">mint_trade_cap</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, ctx: &<b>mut</b> TxContext): <a href="account.md#0x0_account_TradeCap">TradeCap</a> {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_owner">validate_owner</a>(ctx);
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.allow_listed.length() &lt; <a href="account.md#0x0_account_MAX_TRADE_CAPS">MAX_TRADE_CAPS</a>, <a href="account.md#0x0_account_EMaxTradeCapsReached">EMaxTradeCapsReached</a>);
-
-    <b>let</b> id = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
-    <a href="account.md#0x0_account">account</a>.allow_listed.push_back(id.to_inner());
-
-    <a href="account.md#0x0_account_TradeCap">TradeCap</a> {
-        id,
-        account_id: <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>),
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_revoke_trade_cap"></a>
-
-## Function `revoke_trade_cap`
-
-Revoke a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code>. Only the owner can revoke a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code>.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_revoke_trade_cap">revoke_trade_cap</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, trade_cap_id: &<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_revoke_trade_cap">revoke_trade_cap</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, trade_cap_id: &ID, ctx: &TxContext) {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_owner">validate_owner</a>(ctx);
-
-    <b>let</b> (exists, idx) = <a href="account.md#0x0_account">account</a>.allow_listed.index_of(trade_cap_id);
-    <b>assert</b>!(exists, <a href="account.md#0x0_account_ETradeCapNotInList">ETradeCapNotInList</a>);
-    <a href="account.md#0x0_account">account</a>.allow_listed.swap_remove(idx);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_generate_proof_as_owner"></a>
-
-## Function `generate_proof_as_owner`
-
-Generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> by the owner. The owner does not require a capability
-and can generate TradeProofs without the risk of equivocation.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="account.md#0x0_account_TradeProof">account::TradeProof</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, ctx: &TxContext): <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_owner">validate_owner</a>(ctx);
-
-    <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
-        account_id: <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>),
-        trader: ctx.sender(),
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_generate_proof_as_trader"></a>
-
-## Function `generate_proof_as_trader`
-
-Generate a <code><a href="account.md#0x0_account_TradeProof">TradeProof</a></code> with a <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code>.
-Risk of equivocation since <code><a href="account.md#0x0_account_TradeCap">TradeCap</a></code> is an owned object.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">account::TradeCap</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="account.md#0x0_account_TradeProof">account::TradeProof</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_generate_proof_as_trader">generate_proof_as_trader</a>(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">TradeCap</a>, ctx: &TxContext): <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_trader">validate_trader</a>(trade_cap);
-
-    <a href="account.md#0x0_account_TradeProof">TradeProof</a> {
-        account_id: <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>),
-        trader: ctx.sender(),
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_deposit"></a>
-
-## Function `deposit`
-
-Deposit funds to an account. Only owner can call this directly.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_deposit">deposit</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_deposit">deposit</a>&lt;T&gt;(
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>: Coin&lt;T&gt;,
-    ctx: &<b>mut</b> TxContext,
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_process_maker_fill">process_maker_fill</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    <a href="fill.md#0x0_fill">fill</a>: &Fill,
 ) {
-    <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
-
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>(&proof, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>.into_balance());
+    <b>let</b> settled_balances = <a href="fill.md#0x0_fill">fill</a>.get_settled_maker_quantities();
+    self.settled_balances.add_balances(settled_balances);
+    <b>if</b> (!<a href="fill.md#0x0_fill">fill</a>.expired()) {
+        self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.volume();
+    };
+    <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
+        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.order_id());
+    }
 }
 </code></pre>
 
@@ -498,16 +215,13 @@ Deposit funds to an account. Only owner can call this directly.
 
 </details>
 
-<a name="0x0_account_withdraw"></a>
+<a name="0x0_account_increase_maker_volume"></a>
 
-## Function `withdraw`
-
-Withdraw funds from an account. Only owner can call this directly.
-If withdraw_all is true, amount is ignored and full balance withdrawn.
-If withdraw_all is false, withdraw_amount will be withdrawn.
+## Function `increase_maker_volume`
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw">withdraw</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, withdraw_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_increase_maker_volume">increase_maker_volume</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, volume: u64)
 </code></pre>
 
 
@@ -516,155 +230,11 @@ If withdraw_all is false, withdraw_amount will be withdrawn.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw">withdraw</a>&lt;T&gt;(
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    withdraw_amount: u64,
-    ctx: &<b>mut</b> TxContext,
-): Coin&lt;T&gt; {
-    <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
-
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, withdraw_amount, <b>false</b>).into_coin(ctx)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_withdraw_all"></a>
-
-## Function `withdraw_all`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw_all">withdraw_all</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_withdraw_all">withdraw_all</a>&lt;T&gt;(
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    ctx: &<b>mut</b> TxContext,
-): Coin&lt;T&gt; {
-    <b>let</b> proof = <a href="account.md#0x0_account_generate_proof_as_owner">generate_proof_as_owner</a>(<a href="account.md#0x0_account">account</a>, ctx);
-
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>(&proof, 0, <b>true</b>).into_coin(ctx)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_validate_proof"></a>
-
-## Function `validate_proof`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_validate_proof">validate_proof</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_validate_proof">validate_proof</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>) {
-    <b>assert</b>!(<a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(<a href="account.md#0x0_account">account</a>) == proof.account_id, <a href="account.md#0x0_account_EInvalidProof">EInvalidProof</a>);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_owner"></a>
-
-## Function `owner`
-
-Returns the owner of the account.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_owner">owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): <b>address</b>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_owner">owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): <b>address</b> {
-    <a href="account.md#0x0_account">account</a>.owner
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_id"></a>
-
-## Function `id`
-
-Returns the owner of the account.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="account.md#0x0_account_id">id</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>): ID {
-    <a href="account.md#0x0_account">account</a>.id.to_inner()
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_account_deposit_with_proof"></a>
-
-## Function `deposit_with_proof`
-
-Deposit funds to an account. Pool will call this to deposit funds.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, to_deposit: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_deposit_with_proof">deposit_with_proof</a>&lt;T&gt;(
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
-    to_deposit: Balance&lt;T&gt;,
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_increase_maker_volume">increase_maker_volume</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    volume: u64,
 ) {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
-
-    <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-
-    <b>if</b> (<a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
-        <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>.join(to_deposit);
-    } <b>else</b> {
-        <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.add(key, to_deposit);
-    }
+    self.maker_volume = self.maker_volume + volume;
 }
 </code></pre>
 
@@ -672,14 +242,13 @@ Deposit funds to an account. Pool will call this to deposit funds.
 
 </details>
 
-<a name="0x0_account_withdraw_with_proof"></a>
+<a name="0x0_account_increase_taker_volume"></a>
 
-## Function `withdraw_with_proof`
-
-Withdraw funds from an account. Pool will call this to withdraw funds.
+## Function `increase_taker_volume`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(<a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, withdraw_amount: u64, withdraw_all: bool): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_increase_taker_volume">increase_taker_volume</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, volume: u64)
 </code></pre>
 
 
@@ -688,33 +257,11 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_withdraw_with_proof">withdraw_with_proof</a>&lt;T&gt;(
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>,
-    withdraw_amount: u64,
-    withdraw_all: bool,
-): Balance&lt;T&gt; {
-    <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_validate_proof">validate_proof</a>(proof);
-
-    <b>let</b> key = <a href="account.md#0x0_account_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>let</b> key_exists = <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key);
-    <b>if</b> (withdraw_all) {
-        <b>if</b> (key_exists) {
-            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(key)
-        } <b>else</b> {
-            <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>()
-        }
-    } <b>else</b> {
-        <b>assert</b>!(key_exists, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
-        <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>[key];
-        <b>let</b> acc_value = acc_balance.value();
-        <b>assert</b>!(acc_value &gt;= withdraw_amount, <a href="account.md#0x0_account_EAccountBalanceTooLow">EAccountBalanceTooLow</a>);
-        <b>if</b> (withdraw_amount == acc_value) {
-            <a href="account.md#0x0_account">account</a>.<a href="balances.md#0x0_balances">balances</a>.remove(key)
-        } <b>else</b> {
-            acc_balance.split(withdraw_amount)
-        }
-    }
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_increase_taker_volume">increase_taker_volume</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    volume: u64,
+) {
+    self.taker_volume = self.taker_volume + volume;
 }
 </code></pre>
 
@@ -722,15 +269,13 @@ Withdraw funds from an account. Pool will call this to withdraw funds.
 
 </details>
 
-<a name="0x0_account_delete"></a>
+<a name="0x0_account_taker_volume"></a>
 
-## Function `delete`
-
-Deletes an account.
-This is used for deleting temporary accounts for direct swap with pool.
+## Function `taker_volume`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_delete">delete</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">account::Account</a>)
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_taker_volume">taker_volume</a>(self: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
 </code></pre>
 
 
@@ -739,16 +284,10 @@ This is used for deleting temporary accounts for direct swap with pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_delete">delete</a>(<a href="account.md#0x0_account">account</a>: <a href="account.md#0x0_account_Account">Account</a>) {
-    <b>let</b> <a href="account.md#0x0_account_Account">Account</a> {
-        id,
-        owner: _,
-        <a href="balances.md#0x0_balances">balances</a>,
-        allow_listed: _,
-    } = <a href="account.md#0x0_account">account</a>;
-
-    id.<a href="account.md#0x0_account_delete">delete</a>();
-    <a href="balances.md#0x0_balances">balances</a>.destroy_empty();
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_taker_volume">taker_volume</a>(
+    self: &<a href="account.md#0x0_account_Account">Account</a>,
+): u64 {
+    self.taker_volume
 }
 </code></pre>
 
@@ -756,13 +295,13 @@ This is used for deleting temporary accounts for direct swap with pool.
 
 </details>
 
-<a name="0x0_account_trader"></a>
+<a name="0x0_account_maker_volume"></a>
 
-## Function `trader`
+## Function `maker_volume`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>): <b>address</b>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_maker_volume">maker_volume</a>(self: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
 </code></pre>
 
 
@@ -771,8 +310,10 @@ This is used for deleting temporary accounts for direct swap with pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_trader">trader</a>(trade_proof: &<a href="account.md#0x0_account_TradeProof">TradeProof</a>): <b>address</b> {
-    trade_proof.trader
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_maker_volume">maker_volume</a>(
+    self: &<a href="account.md#0x0_account_Account">Account</a>,
+): u64 {
+    self.maker_volume
 }
 </code></pre>
 
@@ -780,13 +321,13 @@ This is used for deleting temporary accounts for direct swap with pool.
 
 </details>
 
-<a name="0x0_account_validate_owner"></a>
+<a name="0x0_account_set_voted_proposal"></a>
 
-## Function `validate_owner`
+## Function `set_voted_proposal`
 
 
 
-<pre><code><b>fun</b> <a href="account.md#0x0_account_validate_owner">validate_owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_set_voted_proposal">set_voted_proposal</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;): <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;
 </code></pre>
 
 
@@ -795,8 +336,14 @@ This is used for deleting temporary accounts for direct swap with pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="account.md#0x0_account_validate_owner">validate_owner</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>, ctx: &TxContext) {
-    <b>assert</b>!(ctx.sender() == <a href="account.md#0x0_account">account</a>.<a href="account.md#0x0_account_owner">owner</a>(), <a href="account.md#0x0_account_EInvalidOwner">EInvalidOwner</a>);
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_set_voted_proposal">set_voted_proposal</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    proposal: Option&lt;ID&gt;
+): Option&lt;ID&gt; {
+    <b>let</b> prev_proposal = self.voted_proposal;
+    self.voted_proposal = proposal;
+
+    prev_proposal
 }
 </code></pre>
 
@@ -804,13 +351,13 @@ This is used for deleting temporary accounts for direct swap with pool.
 
 </details>
 
-<a name="0x0_account_validate_trader"></a>
+<a name="0x0_account_add_settled_amounts"></a>
 
-## Function `validate_trader`
+## Function `add_settled_amounts`
 
 
 
-<pre><code><b>fun</b> <a href="account.md#0x0_account_validate_trader">validate_trader</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">account::Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">account::TradeCap</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_settled_amounts">add_settled_amounts</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, <a href="balances.md#0x0_balances">balances</a>: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -819,8 +366,311 @@ This is used for deleting temporary accounts for direct swap with pool.
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="account.md#0x0_account_validate_trader">validate_trader</a>(<a href="account.md#0x0_account">account</a>: &<a href="account.md#0x0_account_Account">Account</a>, trade_cap: &<a href="account.md#0x0_account_TradeCap">TradeCap</a>) {
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.allow_listed.contains(<a href="dependencies/sui-framework/object.md#0x2_object_borrow_id">object::borrow_id</a>(trade_cap)), <a href="account.md#0x0_account_EInvalidTrader">EInvalidTrader</a>);
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_settled_amounts">add_settled_amounts</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    <a href="balances.md#0x0_balances">balances</a>: Balances,
+) {
+    self.settled_balances.add_balances(<a href="balances.md#0x0_balances">balances</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_add_owed_amounts"></a>
+
+## Function `add_owed_amounts`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_owed_amounts">add_owed_amounts</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, <a href="balances.md#0x0_balances">balances</a>: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_owed_amounts">add_owed_amounts</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    <a href="balances.md#0x0_balances">balances</a>: Balances,
+) {
+    self.owed_balances.add_balances(<a href="balances.md#0x0_balances">balances</a>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_settle"></a>
+
+## Function `settle`
+
+Settle the account balances.
+Returns (base_out, quote_out, deep_out, base_in, quote_in, deep_in)
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_settle">settle</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_settle">settle</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+): (Balances, Balances) {
+    <b>let</b> settled = self.settled_balances.reset();
+    <b>let</b> owed = self.owed_balances.reset();
+
+    (settled, owed)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_update"></a>
+
+## Function `update`
+
+Update the account data for the new epoch.
+Returns the previous epoch, maker volume, and active stake.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, epoch: u64): (u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <b>update</b>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    epoch: u64,
+): (u64, u64, u64) {
+    <b>if</b> (self.epoch == epoch) <b>return</b> (0, 0, 0);
+
+    <b>let</b> prev_epoch = self.epoch;
+    <b>let</b> maker_volume = self.maker_volume;
+    <b>let</b> active_stake = self.active_stake;
+
+    self.epoch = epoch;
+    self.maker_volume = 0;
+    self.taker_volume = 0;
+    self.active_stake = self.active_stake + self.inactive_stake;
+    self.inactive_stake = 0;
+    self.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+
+    (prev_epoch, maker_volume, active_stake)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_add_rebates"></a>
+
+## Function `add_rebates`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_rebates">add_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, rebates: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_rebates">add_rebates</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    rebates: u64,
+) {
+    self.unclaimed_rebates = self.unclaimed_rebates + rebates;
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_claim_rebates"></a>
+
+## Function `claim_rebates`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+): (Balances, Balances) {
+    self.settled_balances.add_deep(self.unclaimed_rebates);
+    self.unclaimed_rebates = 0;
+
+    self.<a href="account.md#0x0_account_settle">settle</a>()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_add_order"></a>
+
+## Function `add_order`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_order">add_order</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, order_id: u128)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_order">add_order</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    order_id: u128,
+) {
+    self.open_orders.insert(order_id);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_remove_order"></a>
+
+## Function `remove_order`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_remove_order">remove_order</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, order_id: u128)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_remove_order">remove_order</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    order_id: u128,
+) {
+    self.open_orders.remove(&order_id)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_add_stake"></a>
+
+## Function `add_stake`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_stake">add_stake</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, stake: u64): (u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_stake">add_stake</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+    stake: u64,
+): (u64, u64) {
+    <b>let</b> stake_before = self.active_stake + self.inactive_stake;
+    self.inactive_stake = self.inactive_stake + stake;
+    self.owed_balances.add_deep(stake);
+
+    (stake_before, stake_before + self.inactive_stake)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_remove_stake"></a>
+
+## Function `remove_stake`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_remove_stake">remove_stake</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (u64, <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;<a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_remove_stake">remove_stake</a>(
+    self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
+): (u64, Option&lt;ID&gt;) {
+    <b>let</b> stake_before = self.active_stake + self.inactive_stake;
+    <b>let</b> voted_proposal = self.voted_proposal;
+    self.active_stake = 0;
+    self.inactive_stake = 0;
+    self.voted_proposal = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>();
+    self.settled_balances.add_deep(stake_before);
+
+    (stake_before, voted_proposal)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_open_orders"></a>
+
+## Function `open_orders`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_open_orders">open_orders</a>(self: &<a href="account.md#0x0_account_Account">account::Account</a>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_open_orders">open_orders</a>(
+    self: &<a href="account.md#0x0_account_Account">Account</a>,
+): VecSet&lt;u128&gt; {
+    self.open_orders
 }
 </code></pre>
 

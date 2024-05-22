@@ -50,7 +50,7 @@ module deepbook::order_info {
         // ID of the order within the pool
         order_id: u128,
         // ID of the account the order uses
-        account_id: ID,
+        balance_manager_id: ID,
         // ID of the order defined by client
         client_order_id: u64,
         // Trader of the order
@@ -95,8 +95,8 @@ module deepbook::order_info {
         taker_is_bid: bool,
         base_quantity: u64,
         quote_quantity: u64,
-        maker_account_id: ID,
-        taker_account_id: ID,
+        maker_balance_manager_id: ID,
+        taker_balance_manager_id: ID,
         timestamp: u64,
     }
 
@@ -124,7 +124,7 @@ module deepbook::order_info {
 
     /// Emitted when a maker order is injected into the order book.
     public struct OrderPlaced has copy, store, drop {
-        account_id: ID,
+        balance_manager_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
@@ -137,7 +137,7 @@ module deepbook::order_info {
 
     public(package) fun new(
         pool_id: ID,
-        account_id: ID,
+        balance_manager_id: ID,
         client_order_id: u64,
         trader: address,
         order_type: u8,
@@ -153,7 +153,7 @@ module deepbook::order_info {
         OrderInfo {
             pool_id,
             order_id: 0,
-            account_id,
+            balance_manager_id,
             client_order_id,
             trader,
             order_type,
@@ -173,8 +173,8 @@ module deepbook::order_info {
         }
     }
 
-    public fun account_id(self: &OrderInfo): ID {
-        self.account_id
+    public fun balance_manager_id(self: &OrderInfo): ID {
+        self.balance_manager_id
     }
 
     public fun pool_id(self: &OrderInfo): ID {
@@ -311,7 +311,7 @@ module deepbook::order_info {
     ): Order {
         order::new(
             self.order_id,
-            self.account_id,
+            self.balance_manager_id,
             self.client_order_id,
             self.remaining_quantity(),
             deep_per_base,
@@ -433,7 +433,7 @@ module deepbook::order_info {
 
     public(package) fun emit_order_placed(self: &OrderInfo) {
         event::emit(OrderPlaced {
-            account_id: self.account_id,
+            balance_manager_id: self.balance_manager_id,
             pool_id: self.pool_id,
             order_id: self.order_id,
             client_order_id: self.client_order_id,
@@ -470,8 +470,8 @@ module deepbook::order_info {
             base_quantity: filled_quantity,
             quote_quantity: quote_quantity,
             price,
-            maker_account_id: maker.account_id(),
-            taker_account_id: self.account_id,
+            maker_balance_manager_id: maker.balance_manager_id(),
+            taker_balance_manager_id: self.balance_manager_id,
             taker_is_bid: self.is_bid,
             timestamp,
         });
