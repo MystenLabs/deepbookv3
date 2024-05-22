@@ -4,7 +4,6 @@
 # Module `0x0::pool`
 
 Public-facing interface for the package.
-TODO: No authorization checks are implemented;
 
 
 -  [Resource `DeepBookAdminCap`](#0x0_pool_DeepBookAdminCap)
@@ -29,6 +28,7 @@ TODO: No authorization checks are implemented;
 -  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
+-  [Function `burn_deep`](#0x0_pool_burn_deep)
 -  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
 -  [Function `bids`](#0x0_pool_bids)
@@ -43,6 +43,7 @@ TODO: No authorization checks are implemented;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
+<b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
@@ -452,7 +453,7 @@ Place a limit order. Quantity is in base asset terms.
 For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -473,7 +474,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     pay_with_deep: bool,
     expire_timestamp: u64,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ): OrderInfo {
     self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
         <a href="account.md#0x0_account">account</a>,
@@ -504,7 +505,7 @@ Place a market order. Quantity is in base asset terms. Calls place_limit_order w
 a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -523,7 +524,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
     is_bid: bool,
     pay_with_deep: bool,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
-    ctx: &TxContext,
+    ctx: &<b>mut</b> TxContext,
 ): OrderInfo {
     self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
         <a href="account.md#0x0_account">account</a>,
@@ -1073,6 +1074,38 @@ Allows for the calculation of deep price per base asset.
     };
 
     target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_base, timestamp)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_burn_deep"></a>
+
+## Function `burn_deep`
+
+Burns DEEP tokens from the pool. Amount to burn is within history
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+) {
+    <b>let</b> <a href="history.md#0x0_history">history</a> = self.<a href="state.md#0x0_state">state</a>.<a href="history.md#0x0_history">history</a>();
+    <b>let</b> balance_to_burn = <a href="history.md#0x0_history">history</a>.balance_to_burn();
+    <a href="history.md#0x0_history">history</a>.reset_balance_to_burn();
+    <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
+     // TODO: burn deep <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>
+    // <b>let</b> deep_balance = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep(balance_to_burn);
 }
 </code></pre>
 

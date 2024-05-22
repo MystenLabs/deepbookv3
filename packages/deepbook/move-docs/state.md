@@ -19,6 +19,7 @@
 -  [Function `governance_mut`](#0x0_state_governance_mut)
 -  [Function `account`](#0x0_state_account)
 -  [Function `account_mut`](#0x0_state_account_mut)
+-  [Function `history`](#0x0_state_history)
 -  [Function `update_account`](#0x0_state_update_account)
 -  [Function `add_new_account`](#0x0_state_add_new_account)
 
@@ -120,7 +121,7 @@
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_empty">empty</a>(ctx: &<b>mut</b> TxContext): <a href="state.md#0x0_state_State">State</a> {
     <b>let</b> <a href="governance.md#0x0_governance">governance</a> = <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx);
     <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>();
-    <b>let</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_empty">history::empty</a>(ctx, <a href="trade_params.md#0x0_trade_params">trade_params</a>);
+    <b>let</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_empty">history::empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>, ctx);
 
     <a href="state.md#0x0_state_State">State</a> {
         <a href="history.md#0x0_history">history</a>,
@@ -158,7 +159,7 @@ Update taker settled balances and volumes.
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
     <b>let</b> <b>mut</b> i = 0;
     <b>while</b> (i &lt; fills.length()) {
@@ -221,7 +222,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
@@ -267,7 +268,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
@@ -308,7 +309,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
     <b>let</b> (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
@@ -343,7 +344,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
     <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = &<b>mut</b> self.accounts[account_id];
@@ -383,7 +384,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
     <b>let</b> stake = self.accounts[account_id].active_stake();
@@ -420,7 +421,7 @@ Remove order from account orders.
     ctx: &TxContext,
 ) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
-    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(ctx, self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>());
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
 
     <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = &<b>mut</b> self.accounts[account_id];
@@ -544,6 +545,32 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, epoch);
 
     &<b>mut</b> self.accounts[account_id]
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_history"></a>
+
+## Function `history`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history">history</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>): &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history">history</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+): &<b>mut</b> History {
+    &<b>mut</b> self.<a href="history.md#0x0_history">history</a>
 }
 </code></pre>
 
