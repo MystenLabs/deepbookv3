@@ -5,7 +5,6 @@ module deepbook::history {
     /// Constants
     const EPOCHS_FOR_PHASE_OUT: u64 = 28;
     const FLOAT_SCALING: u64 = 1_000_000_000;
-    const DEEP_LOT_SIZE: u64 = 1_000; // TODO: update, currently 0.000001
 
     /// Error codes
     const EHistoricVolumesNotFound: u64 = 0;
@@ -102,8 +101,7 @@ module deepbook::history {
         };
         let maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
-        let mut maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
-        maker_rebate = maker_rebate - maker_rebate % DEEP_LOT_SIZE;
+        let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;
 
         self.balance_to_burn = self.balance_to_burn + maker_burn;

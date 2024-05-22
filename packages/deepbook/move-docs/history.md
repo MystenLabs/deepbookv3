@@ -138,15 +138,6 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 
 
-<a name="0x0_history_DEEP_LOT_SIZE"></a>
-
-
-
-<pre><code><b>const</b> <a href="history.md#0x0_history_DEEP_LOT_SIZE">DEEP_LOT_SIZE</a>: u64 = 1000;
-</code></pre>
-
-
-
 <a name="0x0_history_EHistoricVolumesNotFound"></a>
 
 Error codes
@@ -317,8 +308,7 @@ calculate and returns rebate amount, updates the burn amount
     };
     <b>let</b> maker_volume_proportion = <a href="math.md#0x0_math_div">math::div</a>(maker_volume, volumes.total_staked_volume);
     <b>let</b> maker_fee_proportion = <a href="math.md#0x0_math_mul">math::mul</a>(maker_volume_proportion, volumes.total_fees_collected);
-    <b>let</b> <b>mut</b> maker_rebate = <a href="math.md#0x0_math_mul">math::mul</a>(maker_rebate_percentage, maker_fee_proportion);
-    maker_rebate = maker_rebate - maker_rebate % <a href="history.md#0x0_history_DEEP_LOT_SIZE">DEEP_LOT_SIZE</a>;
+    <b>let</b> maker_rebate = <a href="math.md#0x0_math_mul">math::mul</a>(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
