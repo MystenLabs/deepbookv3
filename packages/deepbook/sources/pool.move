@@ -32,7 +32,7 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EInvalidAmountIn: u64 = 6;
-    const EIneligibleWhitelist: u64 = 7;
+    // const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderBalanceManager: u64 = 10;
