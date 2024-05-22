@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Public-facing interface for the package.
-/// TODO: No authorization checks are implemented;
 module deepbook::pool {
     use std::type_name;
 
@@ -132,7 +131,7 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ): OrderInfo {
         self.place_order_int(
             account,
@@ -162,7 +161,7 @@ module deepbook::pool {
         is_bid: bool,
         pay_with_deep: bool,
         clock: &Clock,
-        ctx: &TxContext,
+        ctx: &mut TxContext,
     ): OrderInfo {
         self.place_order_int(
             account,
