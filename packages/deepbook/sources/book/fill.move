@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::fill {
-    use deepbook::balances::Balances;
-
+    use deepbook::balances::{Self, Balances};
     /// Fill struct represents the results of a match between two orders.
     /// It is used to update the state.
     public struct Fill has store, drop, copy {
@@ -17,10 +16,10 @@ module deepbook::fill {
         completed: bool,
         // Quantity filled
         volume: u64,
-        // Volume * price
+        // Quantity of quote currency filled
         quote_quantity: u64,
-        // Quantities settled for maker
-        settled_balances: Balances,
+        // Whether the taker is bid
+        taker_is_bid: bool,
     }
 
     public(package) fun new(
@@ -30,7 +29,7 @@ module deepbook::fill {
         completed: bool,
         volume: u64,
         quote_quantity: u64,
-        settled_balances: Balances,
+        taker_is_bid: bool,
     ): Fill {
         Fill {
             order_id,
@@ -39,7 +38,7 @@ module deepbook::fill {
             completed,
             volume,
             quote_quantity,
-            settled_balances,
+            taker_is_bid,
         }
     }
 
@@ -62,12 +61,34 @@ module deepbook::fill {
     public(package) fun volume(self: &Fill): u64 {
         self.volume
     }
-
-    public(package) fun quote_quantity(self: &Fill): u64 {
-        self.quote_quantity
+    
+    public(package) fun taker_is_bid(self: &Fill): bool {
+        self.taker_is_bid
     }
 
-    public(package) fun settled_balances(self: &Fill): &Balances {
-        &self.settled_balances
+    public(package) fun quote_quantity(self: &Fill): u64 {
+        if (self.expired) {
+            0
+        } else {
+            self.quote_quantity
+        }
+    }
+
+    public(package) fun get_settled_maker_quantities(self: &Fill): Balances {
+        let (base, quote) = if (self.expired) {
+            if (self.taker_is_bid) {
+                (self.volume, 0)
+            } else {
+                (0, self.quote_quantity)
+            }
+        } else {
+            if (self.taker_is_bid) {
+                (0, self.quote_quantity)
+            } else {
+                (self.volume, 0)
+            }
+        };
+
+        balances::new(base, quote, 0)
     }
 }

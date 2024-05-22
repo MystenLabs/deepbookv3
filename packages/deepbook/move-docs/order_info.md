@@ -26,7 +26,7 @@ All order matching happens in this module.
 -  [Function `deep_per_base`](#0x0_order_info_deep_per_base)
 -  [Function `cumulative_quote_quantity`](#0x0_order_info_cumulative_quote_quantity)
 -  [Function `paid_fees`](#0x0_order_info_paid_fees)
--  [Function `trade_params`](#0x0_order_info_trade_params)
+-  [Function `epoch`](#0x0_order_info_epoch)
 -  [Function `fee_is_deep`](#0x0_order_info_fee_is_deep)
 -  [Function `status`](#0x0_order_info_status)
 -  [Function `expire_timestamp`](#0x0_order_info_expire_timestamp)
@@ -36,6 +36,7 @@ All order matching happens in this module.
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `add_fill`](#0x0_order_info_add_fill)
+-  [Function `calculate_taker_maker_fees`](#0x0_order_info_calculate_taker_maker_fees)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
@@ -53,12 +54,13 @@ All order matching happens in this module.
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
-<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
-<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
+<b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
 
@@ -180,7 +182,7 @@ It is returned at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code><a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a></code>
+<code>epoch: u64</code>
 </dt>
 <dd>
 
@@ -682,7 +684,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, expire_timestamp: u64, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -701,8 +703,8 @@ Emitted when a maker order is injected into the order book.
     quantity: u64,
     is_bid: bool,
     fee_is_deep: bool,
+    epoch: u64,
     expire_timestamp: u64,
-    <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
     deep_per_base: u64,
     market_order: bool,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
@@ -722,8 +724,8 @@ Emitted when a maker order is injected into the order book.
         cumulative_quote_quantity: 0,
         fills: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         fee_is_deep,
+        epoch,
         paid_fees: 0,
-        <a href="trade_params.md#0x0_trade_params">trade_params</a>,
         status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
         market_order,
     }
@@ -1022,13 +1024,13 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_trade_params"></a>
+<a name="0x0_order_info_epoch"></a>
 
-## Function `trade_params`
+## Function `epoch`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="trade_params.md#0x0_trade_params">trade_params</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_epoch">epoch</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): u64
 </code></pre>
 
 
@@ -1037,8 +1039,8 @@ Emitted when a maker order is injected into the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="trade_params.md#0x0_trade_params">trade_params</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): TradeParams {
-    self.<a href="trade_params.md#0x0_trade_params">trade_params</a>
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_epoch">epoch</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
+    self.epoch
 }
 </code></pre>
 
@@ -1262,6 +1264,66 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
+<a name="0x0_order_info_calculate_taker_maker_fees"></a>
+
+## Function `calculate_taker_maker_fees`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_taker_maker_fees">calculate_taker_maker_fees</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, taker_fee: u64, maker_fee: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_taker_maker_fees">calculate_taker_maker_fees</a>(
+    self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
+    taker_fee: u64,
+    maker_fee: u64,
+): (Balances, Balances) {
+    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+        self.deep_per_base,
+        <a href="math.md#0x0_math_mul">math::mul</a>(self.executed_quantity, taker_fee)
+    );
+    self.paid_fees = deep_in;
+
+    <b>let</b> <b>mut</b> settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, 0);
+    <b>let</b> <b>mut</b> owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, 0);
+    owed_balances.add_deep(deep_in);
+
+    <b>if</b> (self.is_bid) {
+        settled_balances.add_base(self.executed_quantity);
+        owed_balances.add_quote(self.cumulative_quote_quantity);
+    } <b>else</b> {
+        settled_balances.add_quote(self.cumulative_quote_quantity);
+        owed_balances.add_base(self.executed_quantity);
+    };
+
+    <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
+    <b>if</b> (remaining_quantity &gt; 0 && !self.<a href="order_info.md#0x0_order_info_is_immediate_or_cancel">is_immediate_or_cancel</a>()) {
+        <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+            self.deep_per_base,
+            <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee)
+        );
+        owed_balances.add_deep(deep_in);
+        <b>if</b> (self.is_bid) {
+            owed_balances.add_quote(<a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));
+        } <b>else</b> {
+            owed_balances.add_base(remaining_quantity);
+        };
+    };
+
+    (settled_balances, owed_balances)
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_order_info_to_order"></a>
 
 ## Function `to_order`
@@ -1271,7 +1333,7 @@ This is done to save space in the order book. Order contains the minimum
 information required to match orders.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1283,15 +1345,15 @@ information required to match orders.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(
     self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
     deep_per_base: u64,
+    ctx: &TxContext,
 ): Order {
-    <b>let</b> unpaid_fees = <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, <a href="math.md#0x0_math_mul">math::mul</a>(self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee()));
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.account_id,
         self.client_order_id,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
-        unpaid_fees,
-        self.fee_is_deep,
+        deep_per_base,
+        ctx.<a href="order_info.md#0x0_order_info_epoch">epoch</a>(),
         self.status,
         self.expire_timestamp,
     )

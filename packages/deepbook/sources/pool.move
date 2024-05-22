@@ -15,11 +15,13 @@ module deepbook::pool {
     };
 
     use deepbook::{
+        math,
         account::{Self, Account, TradeProof},
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, DEEP},
+        deep_price::{Self, DeepPrice},
         registry::Registry,
         big_vector::BigVector,
         order::Order,
@@ -35,6 +37,7 @@ module deepbook::pool {
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderAccount: u64 = 10;
+    const EIneligibleTargetPool: u64 = 11;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const MIN_PRICE: u64 = 1;
@@ -52,6 +55,7 @@ module deepbook::pool {
         book: Book,
         state: State,
         vault: Vault<BaseAsset, QuoteAsset>,
+        deep_price: DeepPrice,
     }
 
     public struct PoolCreated<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
@@ -90,6 +94,7 @@ module deepbook::pool {
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(ctx),
             vault: vault::empty(),
+            deep_price: deep_price::empty(),
         };
 
         let params = pool.state.governance().trade_params();
@@ -239,10 +244,10 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let (balances, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
+        let (cancel_quantity, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_modify(account.id(), &balances, ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_modify(account.id(), cancel_quantity, order, ctx);
+        self.vault.settle_account(settled, owed, account, proof);
 
         order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -261,8 +266,8 @@ module deepbook::pool {
     ) {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.account_id() == account.id(), EInvalidOrderAccount);
-        self.state.process_cancel(&mut order, order_id, account.id(), ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_cancel(&mut order, order_id, account.id(), ctx);
+        self.vault.settle_account(settled, owed, account, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
@@ -276,8 +281,8 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ) {
-        self.state.process_stake(account.id(), amount, ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_stake(account.id(), amount, ctx);
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     /// Unstake DEEP tokens from the pool. The account must have enough staked DEEP tokens.
@@ -291,8 +296,8 @@ module deepbook::pool {
     ) {
         account.validate_proof(proof);
 
-        self.state.process_unstake(account.id(), ctx);
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
+        let (settled, owed) = self.state.process_unstake(account.id(), ctx);
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     /// Submit a proposal to change the taker fee, maker fee, and stake required.
@@ -338,8 +343,8 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let account_data = self.state.account_mut(account.id(), ctx.epoch());
-        account_data.claim_rebates();
-        self.vault.settle_account(account_data, account, proof);
+        let (settled, owed) = account_data.claim_rebates();
+        self.vault.settle_account(settled, owed, account, proof);
     }
 
     // GETTERS
@@ -397,7 +402,8 @@ module deepbook::pool {
 
     // OPERATIONAL PUBLIC
 
-    /// Add a deep price point to the pool. The deep price is used to calculate the conversion rate.
+    /// Adds a price point along with a timestamp to the deep price.
+    /// Allows for the calculation of deep price per base asset.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
         target_pool: &mut Pool<BaseAsset, QuoteAsset>,
         reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
@@ -408,8 +414,32 @@ module deepbook::pool {
         let pool_price = target_pool.mid_price();
         let deep_base_type = type_name::get<DEEPBaseAsset>();
         let deep_quote_type = type_name::get<DEEPQuoteAsset>();
+        let base_type = type_name::get<BaseAsset>();
+        let quote_type = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        let timestamp = clock.timestamp_ms();
+        if (base_type == deep_type) {
+            return target_pool.deep_price.add_price_point(1, timestamp)
+        };
+        if (quote_type == deep_type) {
+            return target_pool.deep_price.add_price_point(pool_price, timestamp)
+        };
 
-        target_pool.vault.add_deep_price_point(deep_price, pool_price, deep_base_type, deep_quote_type, clock.timestamp_ms());
+        assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
+                (quote_type == deep_base_type || quote_type == deep_quote_type), EIneligibleTargetPool);
+        assert!(!(base_type == deep_base_type && quote_type == deep_quote_type), EIneligibleTargetPool);
+
+        let deep_per_base = if (base_type == deep_base_type) {
+            deep_price
+        } else if (base_type == deep_quote_type) {
+            math::div(1_000_000_000, deep_price)
+        } else if (quote_type == deep_base_type) {
+            math::mul(deep_price, pool_price)
+        } else {
+            math::div(deep_price, pool_price)
+        };
+
+        target_pool.deep_price.add_price_point(deep_per_base, timestamp)
     }
 
     /// Burns DEEP tokens from the pool. Amount to burn is within history
@@ -481,8 +511,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let trade_params = self.state.governance().trade_params();
-        let deep_per_base = self.state.deep_price().conversion_rate();
+        let deep_per_base = self.deep_price.conversion_rate();
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -494,16 +523,14 @@ module deepbook::pool {
             quantity,
             is_bid,
             pay_with_deep,
+            ctx.epoch(),
             expire_timestamp,
-            trade_params,
             deep_per_base,
             market_order,
         );
-        self.book.create_order(&mut order_info, clock.timestamp_ms());
-        self.state.process_create(&order_info, ctx);
-        self.vault.settle_order(&mut order_info, self.state.account_mut(account.id(), ctx.epoch()));
-        self.vault.settle_account(self.state.account_mut(account.id(), ctx.epoch()), account, proof);
-
+        self.book.create_order(&mut order_info, clock.timestamp_ms(), ctx);
+        let (settled, owed) = self.state.process_create(&mut order_info, ctx);
+        self.vault.settle_account(settled, owed, account, proof);
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
         order_info

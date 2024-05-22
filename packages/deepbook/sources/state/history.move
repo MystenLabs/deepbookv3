@@ -10,15 +10,15 @@ module deepbook::history {
 
     /// Error codes
     const EHistoricVolumesNotFound: u64 = 0;
+    use deepbook::trade_params::TradeParams;
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {
         total_volume: u64,
         total_staked_volume: u64,
         total_fees_collected: u64,
-        stake_required: u64,
-        accounts_with_rebates: u64,
         historic_median: u64,
+        trade_params: TradeParams,
     }
 
     public struct History has store {
@@ -30,21 +30,24 @@ module deepbook::history {
 
     public(package) fun empty(
         ctx: &mut TxContext,
+        trade_params: TradeParams,
     ): History {
         let volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            stake_required: 0,
-            accounts_with_rebates: 0,
             historic_median: MAX_U64,
+            trade_params,
         };
-        History {
+        let mut history = History {
             epoch: ctx.epoch(),
             volumes,
             historic_volumes: table::new(ctx),
             balance_to_burn: 0,
-        }
+        };
+        history.historic_volumes.add(ctx.epoch(), volumes);
+
+        history
     }
 
     /// Update the epoch if it has changed.
@@ -52,12 +55,12 @@ module deepbook::history {
     public(package) fun update(
         self: &mut History,
         ctx: &TxContext,
+        trade_params: TradeParams,
     ) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
-        if (self.volumes.accounts_with_rebates > 0) {
-            self.historic_volumes.add(self.epoch, self.volumes);
-        };
+        self.historic_volumes.add(self.epoch, self.volumes);
+
         self.epoch = epoch;
         self.reset_volumes();
         self.update_historic_median();
@@ -70,9 +73,8 @@ module deepbook::history {
             total_volume: 0,
             total_staked_volume: 0,
             total_fees_collected: 0,
-            stake_required: 0,
-            accounts_with_rebates: 0,
             historic_median: 0,
+            trade_params,
         };
     }
 
@@ -86,7 +88,7 @@ module deepbook::history {
     ): u64 {
         assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[prev_epoch];
-        if (account_stake < volumes.stake_required) return 0;
+        if (volumes.trade_params.stake_required() > account_stake) return 0;
 
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = FLOAT_SCALING - math::min(FLOAT_SCALING, math::div(other_maker_liquidity, volumes.historic_median));
@@ -130,16 +132,12 @@ module deepbook::history {
         self: &mut History,
         maker_volume: u64,
         account_stake: u64,
-        first_volume_by_account: bool,
     ) {
         if (maker_volume == 0) return;
 
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-        if (account_stake > self.volumes.stake_required) {
+        if (account_stake > self.volumes.trade_params.stake_required()) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
-            if (first_volume_by_account) {
-                self.volumes.accounts_with_rebates = self.volumes.accounts_with_rebates + 1;
-            }
         };
     }
 
@@ -170,5 +168,13 @@ module deepbook::history {
         volumes.total_fees_collected = total_fees_collected;
         volumes.stake_required = stake_required;
         volumes.accounts_with_rebates = accounts_with_rebates;
+
+    public(package) fun historic_maker_fee(
+        self: &History,
+        epoch: u64,
+    ): u64 {
+        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
+
+        self.historic_volumes[epoch].trade_params.maker_fee()
     }
 }

@@ -46,7 +46,8 @@ module deepbook::account_data {
         self: &mut AccountData,
         fill: &Fill,
     ) {
-        self.settled_balances.add_balances(*fill.settled_balances());
+        let settled_balances = fill.get_settled_maker_quantities();
+        self.settled_balances.add_balances(settled_balances);
         if (!fill.expired()) {
             self.maker_volume = self.maker_volume + fill.volume();
         };
@@ -147,9 +148,11 @@ module deepbook::account_data {
 
     public(package) fun claim_rebates(
         self: &mut AccountData,
-    ) {
+    ): (Balances, Balances) {
         self.settled_balances.add_deep(self.unclaimed_rebates);
         self.unclaimed_rebates = 0;
+
+        self.settle()
     }
 
     public(package) fun add_order(

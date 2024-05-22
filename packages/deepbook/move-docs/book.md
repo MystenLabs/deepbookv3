@@ -22,8 +22,7 @@
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
 
 
-<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
-<b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
+<pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
@@ -207,7 +206,7 @@ Order is matched against the book and injected into the book if necessary.
 If order is IOC or fully executed, it will not be injected.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -219,14 +218,15 @@ If order is IOC or fully executed, it will not be injected.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
-    timestamp: u64
+    timestamp: u64,
+    ctx: &TxContext,
 ) {
     <a href="order_info.md#0x0_order_info">order_info</a>.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
     <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid(), <a href="order_info.md#0x0_order_info">order_info</a>.price(), self.<a href="book.md#0x0_book_get_order_id">get_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()));
     <a href="order_info.md#0x0_order_info">order_info</a>.set_order_id(order_id);
     self.<a href="book.md#0x0_book_match_against_book">match_against_book</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.assert_execution()) <b>return</b>;
-    self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base());
+    self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base(), ctx);
 }
 </code></pre>
 
@@ -329,7 +329,7 @@ New quantity must be less than the original quantity.
 Order must not have already expired.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, &<a href="order.md#0x0_order_Order">order::Order</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &<a href="order.md#0x0_order_Order">order::Order</a>)
 </code></pre>
 
 
@@ -338,7 +338,7 @@ Order must not have already expired.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (Balances, &Order) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &Order) {
     <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
     <b>let</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (is_bid) {
         self.bids.borrow_mut(order_id)
@@ -346,14 +346,16 @@ Order must not have already expired.
         self.asks.borrow_mut(order_id)
     };
 
-    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="order.md#0x0_order">order</a>.modify(
+    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity() - new_quantity;
+
+    <a href="order.md#0x0_order">order</a>.modify(
         new_quantity,
         self.min_size,
         self.lot_size,
         timestamp,
     );
 
-    (<a href="balances.md#0x0_balances">balances</a>, <a href="order.md#0x0_order">order</a>)
+    (cancel_quantity, <a href="order.md#0x0_order">order</a>)
 }
 </code></pre>
 
@@ -618,7 +620,7 @@ Mutates the order and the maker order as necessary.
 Balance accounting happens before this function is called
 
 
-<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64)
+<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -631,8 +633,9 @@ Balance accounting happens before this function is called
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
     deep_per_base: u64,
+    ctx: &TxContext,
 ) {
-    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order(deep_per_base);
+    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order(deep_per_base, ctx);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         self.bids.insert(<a href="order_info.md#0x0_order_info">order_info</a>.order_id(), <a href="order.md#0x0_order">order</a>);
     } <b>else</b> {

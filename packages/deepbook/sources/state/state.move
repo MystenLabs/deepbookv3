@@ -4,13 +4,13 @@ module deepbook::state {
     };
 
     use deepbook::{
+        math,
         history::{Self, History},
         order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
-        deep_price::{Self, DeepPrice},
         account_data::{Self, AccountData},
-        balances::Balances,
+        balances::{Self, Balances},
     };
 
     const ENotEnoughStake: u64 = 2;
@@ -21,15 +21,17 @@ module deepbook::state {
         accounts: Table<ID, AccountData>,
         history: History,
         governance: Governance,
-        deep_price: DeepPrice,
     }
 
     public(package) fun empty(ctx: &mut TxContext): State {
+        let governance = governance::empty(ctx);
+        let trade_params = governance.trade_params();
+        let history = history::empty(ctx, trade_params);
+
         State {
-            history: history::empty(ctx),
-            governance: governance::empty(ctx),
+            history,
+            governance,
             accounts: table::new(ctx),
-            deep_price: deep_price::empty(),
         }
     }
 
@@ -38,10 +40,11 @@ module deepbook::state {
     /// Update taker settled balances and volumes.
     public(package) fun process_create(
         self: &mut State,
-        order_info: &OrderInfo,
+        order_info: &mut OrderInfo,
         ctx: &TxContext,
-    ) {
-        self.history.update(ctx);
+    ): (Balances, Balances) {
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         let fills = order_info.fills();
         let mut i = 0;
         while (i < fills.length()) {
@@ -52,7 +55,7 @@ module deepbook::state {
             account_data.process_maker_fill(fill);
 
             let volume = fill.volume();
-            self.history.add_volume(volume, account_data.active_stake(), account_data.maker_volume() == volume);
+            self.history.add_volume(volume, account_data.active_stake());
 
             i = i + 1;
         };
@@ -61,6 +64,17 @@ module deepbook::state {
         let account_data = &mut self.accounts[order_info.account_id()];
         account_data.add_order(order_info.order_id());
         account_data.increase_taker_volume(order_info.executed_quantity());
+
+        let account_volume = account_data.taker_volume() + account_data.maker_volume();
+        let account_stake = account_data.active_stake();
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume);
+        let maker_fee = self.governance.trade_params().maker_fee();
+        let (mut settled, mut owed) = order_info.calculate_taker_maker_fees(taker_fee, maker_fee);
+        let (old_settled, old_owed) = account_data.settle();
+        settled.add_balances(old_settled);
+        owed.add_balances(old_owed);
+
+        (settled, owed)
     }
 
     /// Update account settled balances and volumes.
@@ -71,31 +85,46 @@ module deepbook::state {
         order_id: u128,
         account_id: ID,
         ctx: &TxContext,
-    ) {
-        self.history.update(ctx);
+    ): (Balances, Balances) {
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         order.set_canceled();
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];
         let cancel_quantity = order.quantity();
-        let balances = order.cancel_amounts(
-            cancel_quantity,
-            false,
-        );
+        let epoch = order.epoch();
+        let maker_fee = self.history.historic_maker_fee(epoch);
+        let deep_per_base = order.deep_per_base();
+        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
+        let balances = balances::new(0, 0, deep_out);
+
         account_data.remove_order(order_id);
         account_data.add_settled_amounts(balances);
+
+        account_data.settle()
     }
 
     public(package) fun process_modify(
         self: &mut State,
         account_id: ID,
-        balances: &Balances,
+        cancel_quantity: u64,
+        order: &Order,
         ctx: &TxContext,
-    ) {
-        self.history.update(ctx);
+    ): (Balances, Balances) {
+        self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
-        self.accounts[account_id].add_settled_amounts(*balances);
+        let epoch = order.epoch();
+        let maker_fee = self.history.historic_maker_fee(epoch);
+        let deep_per_base = order.deep_per_base();
+        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
+        let balances = balances::new(0, 0, deep_out);
+
+        self.accounts[account_id].add_settled_amounts(balances);
+
+        self.accounts[account_id].settle()
     }
 
     public(package) fun process_stake(
@@ -103,28 +132,32 @@ module deepbook::state {
         account_id: ID,
         new_stake: u64,
         ctx: &TxContext,
-    ) {
-        self.history.update(ctx);
+    ): (Balances, Balances) {
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
         self.governance.adjust_voting_power(stake_before, stake_after);
+
+        self.accounts[account_id].settle()
     }
 
     public(package) fun process_unstake(
         self: &mut State,
         account_id: ID,
         ctx: &TxContext,
-    ) {
-        self.history.update(ctx);
+    ): (Balances, Balances) {
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];
         let (total_stake, voted_proposal) = account_data.remove_stake();
         self.governance.adjust_voting_power(total_stake, 0);
         self.governance.adjust_vote(voted_proposal, option::none(), total_stake);
+
+        account_data.settle()
     }
 
     public(package) fun process_proposal(
@@ -135,8 +168,8 @@ module deepbook::state {
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let stake = self.accounts[account_id].active_stake();
@@ -152,8 +185,8 @@ module deepbook::state {
         proposal_id: ID,
         ctx: &TxContext,
     ) {
-        self.history.update(ctx);
         self.governance.update(ctx);
+        self.history.update(ctx, self.governance.trade_params());
         self.update_account(account_id, ctx.epoch());
 
         let account_data = &mut self.accounts[account_id];
@@ -165,12 +198,6 @@ module deepbook::state {
             option::some(proposal_id),
             account_data.active_stake(),
         );
-    }
-
-    public(package) fun deep_price(
-        self: &State,
-    ): &DeepPrice {
-        &self.deep_price
     }
 
     public(package) fun governance(

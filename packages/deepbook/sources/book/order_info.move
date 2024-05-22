@@ -7,9 +7,9 @@ module deepbook::order_info {
     use sui::event;
     use deepbook::{
         math,
-        trade_params::TradeParams,
         order::{Self, Order},
         fill::Fill,
+        balances::{Self, Balances},
     };
 
     const MIN_PRICE: u64 = 1;
@@ -77,8 +77,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
-        // Maker fee when injecting order
-        trade_params: TradeParams,
+        epoch: u64,
         // Status of the order
         status: u8,
         // Is a market_order
@@ -146,8 +145,8 @@ module deepbook::order_info {
         quantity: u64,
         is_bid: bool,
         fee_is_deep: bool,
+        epoch: u64,
         expire_timestamp: u64,
-        trade_params: TradeParams,
         deep_per_base: u64,
         market_order: bool,
     ): OrderInfo {
@@ -167,8 +166,8 @@ module deepbook::order_info {
             cumulative_quote_quantity: 0,
             fills: vector[],
             fee_is_deep,
+            epoch,
             paid_fees: 0,
-            trade_params,
             status: LIVE,
             market_order,
         }
@@ -222,8 +221,8 @@ module deepbook::order_info {
         self.paid_fees
     }
 
-    public fun trade_params(self: &OrderInfo): TradeParams {
-        self.trade_params
+    public fun epoch(self: &OrderInfo): u64 {
+        self.epoch
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
@@ -262,21 +261,61 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
+    public(package) fun calculate_taker_maker_fees(
+        self: &mut OrderInfo,
+        taker_fee: u64,
+        maker_fee: u64,
+    ): (Balances, Balances) {
+        let deep_in = math::mul(
+            self.deep_per_base,
+            math::mul(self.executed_quantity, taker_fee)
+        );
+        self.paid_fees = deep_in;
+
+        let mut settled_balances = balances::new(0, 0, 0);
+        let mut owed_balances = balances::new(0, 0, 0);
+        owed_balances.add_deep(deep_in);
+
+        if (self.is_bid) {
+            settled_balances.add_base(self.executed_quantity);
+            owed_balances.add_quote(self.cumulative_quote_quantity);
+        } else {
+            settled_balances.add_quote(self.cumulative_quote_quantity);
+            owed_balances.add_base(self.executed_quantity);
+        };
+
+        let remaining_quantity = self.remaining_quantity();
+        if (remaining_quantity > 0 && !self.is_immediate_or_cancel()) {
+            let deep_in = math::mul(
+                self.deep_per_base,
+                math::mul(remaining_quantity, maker_fee)
+            );
+            owed_balances.add_deep(deep_in);
+            if (self.is_bid) {
+                owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
+            } else {
+                owed_balances.add_base(remaining_quantity);
+            };
+        };
+
+        (settled_balances, owed_balances)
+    }
+
     /// OrderInfo is converted to an Order before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(
         self: &OrderInfo,
         deep_per_base: u64,
+        ctx: &TxContext,
     ): Order {
-        let unpaid_fees = math::mul(deep_per_base, math::mul(self.remaining_quantity(), self.trade_params().maker_fee()));
         order::new(
             self.order_id,
             self.account_id,
             self.client_order_id,
             self.remaining_quantity(),
-            unpaid_fees,
-            self.fee_is_deep,
+            deep_per_base,
+            ctx.epoch(),
             self.status,
             self.expire_timestamp,
         )

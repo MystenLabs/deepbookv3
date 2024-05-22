@@ -1,18 +1,10 @@
 module deepbook::vault {
-    use std::type_name::{Self, TypeName};
-
     use sui::balance::{Self, Balance};
 
     use deepbook::{
-        math,
         account::{Account, TradeProof},
-        deep_price::{Self, DeepPrice},
-        account_data::AccountData,
-        order_info::OrderInfo,
-        balances::Self,
+        balances::Balances,
     };
-
-    const EIneligibleTargetPool: u64 = 1;
 
     public struct DEEP has store {}
 
@@ -20,7 +12,6 @@ module deepbook::vault {
         base_balance: Balance<BaseAsset>,
         quote_balance: Balance<QuoteAsset>,
         deep_balance: Balance<DEEP>,
-        deep_price: DeepPrice,
     }
 
     public(package) fun empty<BaseAsset, QuoteAsset>(): Vault<BaseAsset, QuoteAsset> {
@@ -28,18 +19,17 @@ module deepbook::vault {
             base_balance: balance::zero(),
             quote_balance: balance::zero(),
             deep_balance: balance::zero(),
-            deep_price: deep_price::empty(),
         }
     }
 
     /// Transfer any settled amounts for the account.
     public(package) fun settle_account<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
-        account_data: &mut AccountData,
+        balances_out: Balances,
+        balances_in: Balances,
         account: &mut Account,
         proof: &TradeProof,
     ) {
-        let (balances_out, balances_in) = account_data.settle();
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
             account.deposit_with_proof(proof, balance);
