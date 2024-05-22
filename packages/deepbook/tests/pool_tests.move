@@ -11,8 +11,7 @@ module deepbook::pool_tests {
             end,
             return_shared,
         },
-        balance::Self,
-        coin::Coin,
+        coin::{Self, Coin},
         sui::SUI,
         coin::mint_for_testing,
         test_utils,
@@ -1251,7 +1250,7 @@ module deepbook::pool_tests {
                 tick_size,
                 lot_size,
                 min_size,
-                balance::create_for_testing(POOL_CREATION_FEE),
+                coin::mint_for_testing(POOL_CREATION_FEE, test.ctx()),
                 test.ctx()
             );
         };

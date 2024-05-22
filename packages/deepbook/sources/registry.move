@@ -10,7 +10,14 @@ module deepbook::registry {
 
     const EPoolAlreadyExists: u64 = 1;
 
-    public struct Registry has key {
+    public struct REGISTRY has drop {}
+
+    /// DeepbookAdminCap is used to call admin functions.
+    public struct DeepbookAdminCap has key, store {
+        id: UID,
+    }
+
+    public struct Registry has key, store {
         id: UID,
         pools: Bag,
     }
@@ -40,14 +47,16 @@ module deepbook::registry {
         self.pools.add(key, true);
     }
 
-    /// Create a new registry and share it.
-    public(package) fun create_and_share(ctx: &mut TxContext) {
+    fun init(_: REGISTRY, ctx: &mut TxContext) {
         let registry = Registry {
             id: object::new(ctx),
             pools: bag::new(ctx),
         };
-
         transfer::share_object(registry);
+        let admin = DeepbookAdminCap {
+            id: object::new(ctx),
+        };
+        transfer::public_transfer(admin, ctx.sender());
     }
 
     #[test_only]
