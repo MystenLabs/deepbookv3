@@ -219,7 +219,7 @@ This function will round up the result.
 
 ## Function `median`
 
-given a vector, return the median
+given a vector of u64, return the median
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="math.md#0x0_math_median">median</a>(v: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;): u64

@@ -136,7 +136,7 @@ module deepbook::pool {
         pay_with_deep: bool,
         expire_timestamp: u64,
         clock: &Clock,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ): OrderInfo {
         self.place_order_int(
             account,
@@ -166,7 +166,7 @@ module deepbook::pool {
         is_bid: bool,
         pay_with_deep: bool,
         clock: &Clock,
-        ctx: &mut TxContext,
+        ctx: &TxContext,
     ): OrderInfo {
         self.place_order_int(
             account,
@@ -450,7 +450,7 @@ module deepbook::pool {
         let balance_to_burn = history.balance_to_burn();
         history.reset_balance_to_burn();
         assert!(balance_to_burn > 0, EInvalidAmountIn);
-         // TODO: burn deep balance
+        // TODO: burn deep balance
         // let deep_balance = self.vault.withdraw_deep(balance_to_burn);
     }
 

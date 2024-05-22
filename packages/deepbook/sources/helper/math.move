@@ -3,7 +3,6 @@
 
 module deepbook::math {
 
-
     /// scaling setting for float
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -56,7 +55,7 @@ module deepbook::math {
         }
     }
 
-    /// given a vector, return the median
+    /// given a vector of u64, return the median
     public(package) fun median(v: vector<u64>): u64 {
         let n = v.length();
         if (n == 0) {
