@@ -295,7 +295,7 @@ If there are accounts with rebates, add the current epoch's volume data to the h
 ## Function `calculate_rebate_amount`
 
 Given the epoch's volume data and the account's volume data,
-calculate and returns rebate amount and burn amount
+calculate and returns rebate amount, updates the burn amount
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): u64
@@ -364,7 +364,7 @@ Updates the historic_median for past 28 epochs
         <b>if</b> (self.historic_volumes.contains(i)) {
             median_vec.push_back(self.historic_volumes[i].total_volume);
         } <b>else</b> {
-            median_vec.push_back(0);
+            median_vec.push_back(<a href="history.md#0x0_history_MAX_U64">MAX_U64</a>);
         };
         i = i + 1;
     };

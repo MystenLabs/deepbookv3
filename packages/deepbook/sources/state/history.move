@@ -83,7 +83,7 @@ module deepbook::history {
     }
 
     /// Given the epoch's volume data and the account's volume data,
-    /// calculate and returns rebate amount and burn amount
+    /// calculate and returns rebate amount, updates the burn amount
     public(package) fun calculate_rebate_amount(
         self: &mut History,
         prev_epoch: u64,
@@ -121,7 +121,7 @@ module deepbook::history {
             if (self.historic_volumes.contains(i)) {
                 median_vec.push_back(self.historic_volumes[i].total_volume);
             } else {
-                median_vec.push_back(0);
+                median_vec.push_back(MAX_U64);
             };
             i = i + 1;
         };
