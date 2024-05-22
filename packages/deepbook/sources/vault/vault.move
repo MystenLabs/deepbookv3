@@ -2,7 +2,7 @@ module deepbook::vault {
     use sui::balance::{Self, Balance};
 
     use deepbook::{
-        account::{Account, TradeProof},
+        balance_manager::{BalanceManager, TradeProof},
         balances::Balances,
     };
 
@@ -22,36 +22,36 @@ module deepbook::vault {
         }
     }
 
-    /// Transfer any settled amounts for the account.
-    public(package) fun settle_account<BaseAsset, QuoteAsset>(
+    /// Transfer any settled amounts for the balance_manager.
+    public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
         balances_out: Balances,
         balances_in: Balances,
-        account: &mut Account,
+        balance_manager: &mut BalanceManager,
         proof: &TradeProof,
     ) {
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
-            account.deposit_with_proof(proof, balance);
+            balance_manager.deposit_with_proof(proof, balance);
         };
         if (balances_out.quote() > balances_in.quote()) {
             let balance = self.quote_balance.split(balances_out.quote() - balances_in.quote());
-            account.deposit_with_proof(proof, balance);
+            balance_manager.deposit_with_proof(proof, balance);
         };
         if (balances_out.deep() > balances_in.deep()) {
             let balance = self.deep_balance.split(balances_out.deep() - balances_in.deep());
-            account.deposit_with_proof(proof, balance);
+            balance_manager.deposit_with_proof(proof, balance);
         };
         if (balances_in.base() > balances_out.base()) {
-            let balance = account.withdraw_with_proof(proof, balances_in.base() - balances_out.base(), false);
+            let balance = balance_manager.withdraw_with_proof(proof, balances_in.base() - balances_out.base(), false);
             self.base_balance.join(balance);
         };
         if (balances_in.quote() > balances_out.quote()) {
-            let balance = account.withdraw_with_proof(proof, balances_in.quote() - balances_out.quote(), false);
+            let balance = balance_manager.withdraw_with_proof(proof, balances_in.quote() - balances_out.quote(), false);
             self.quote_balance.join(balance);
         };
         if (balances_in.deep() > balances_out.deep()) {
-            let balance = account.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
+            let balance = balance_manager.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
             self.deep_balance.join(balance);
         };
     }

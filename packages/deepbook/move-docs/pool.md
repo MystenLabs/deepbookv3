@@ -37,7 +37,7 @@ Public-facing interface for the package.
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
-<b>use</b> <a href="account_data.md#0x0_account_data">0x0::account_data</a>;
+<b>use</b> <a href="balance_manager.md#0x0_balance_manager">0x0::balance_manager</a>;
 <b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
@@ -305,11 +305,11 @@ DeepBookAdminCap is used to call admin functions.
 
 
 
-<a name="0x0_pool_EInvalidOrderAccount"></a>
+<a name="0x0_pool_EInvalidOrderBalanceManager"></a>
 
 
 
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>: u64 = 10;
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>: u64 = 10;
 </code></pre>
 
 
@@ -453,7 +453,7 @@ Place a limit order. Quantity is in base asset terms.
 For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -464,7 +464,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
@@ -477,7 +477,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     ctx: &TxContext,
 ): OrderInfo {
     self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
-        <a href="account.md#0x0_account">account</a>,
+        <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>,
         proof,
         client_order_id,
         order_type,
@@ -505,7 +505,7 @@ Place a market order. Quantity is in base asset terms. Calls place_limit_order w
 a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -516,7 +516,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
@@ -527,7 +527,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
     ctx: &TxContext,
 ): OrderInfo {
     self.<a href="pool.md#0x0_pool_place_order_int">place_order_int</a>(
-        <a href="account.md#0x0_account">account</a>,
+        <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>,
         proof,
         client_order_id,
         order_type,
@@ -551,7 +551,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 
 ## Function `swap_exact_amount`
 
-Swap exact amount without needing an account.
+Swap exact amount without needing an balance_manager.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;)
@@ -583,14 +583,14 @@ Swap exact amount without needing an account.
     };
     base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
 
-    <b>let</b> <b>mut</b> temp_account = <a href="account.md#0x0_account_new">account::new</a>(ctx);
-    temp_account.deposit(base_in, ctx);
-    temp_account.deposit(quote_in, ctx);
-    temp_account.deposit(deep_in, ctx);
-    <b>let</b> proof = temp_account.generate_proof_as_owner(ctx);
+    <b>let</b> <b>mut</b> temp_balance_manager = <a href="balance_manager.md#0x0_balance_manager_new">balance_manager::new</a>(ctx);
+    temp_balance_manager.deposit(base_in, ctx);
+    temp_balance_manager.deposit(quote_in, ctx);
+    temp_balance_manager.deposit(deep_in, ctx);
+    <b>let</b> proof = temp_balance_manager.generate_proof_as_owner(ctx);
 
     self.<a href="pool.md#0x0_pool_place_market_order">place_market_order</a>(
-        &<b>mut</b> temp_account,
+        &<b>mut</b> temp_balance_manager,
         &proof,
         0,
         <a href="order_info.md#0x0_order_info_immediate_or_cancel">order_info::immediate_or_cancel</a>(),
@@ -601,11 +601,11 @@ Swap exact amount without needing an account.
         ctx
     );
 
-    <b>let</b> base_out = temp_account.withdraw_with_proof&lt;BaseAsset&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
-    <b>let</b> quote_out = temp_account.withdraw_with_proof&lt;QuoteAsset&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
-    <b>let</b> deep_out = temp_account.withdraw_with_proof&lt;DEEP&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
+    <b>let</b> base_out = temp_balance_manager.withdraw_with_proof&lt;BaseAsset&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
+    <b>let</b> quote_out = temp_balance_manager.withdraw_with_proof&lt;QuoteAsset&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
+    <b>let</b> deep_out = temp_balance_manager.withdraw_with_proof&lt;DEEP&gt;(&proof, 0, <b>true</b>).into_coin(ctx);
 
-    temp_account.delete();
+    temp_balance_manager.delete();
 
     (base_out, quote_out, deep_out)
 }
@@ -624,7 +624,7 @@ New quantity must be less than the original quantity.
 Order must not have already expired.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -635,7 +635,7 @@ Order must not have already expired.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     order_id: u128,
     new_quantity: u64,
@@ -643,9 +643,9 @@ Order must not have already expired.
     ctx: &TxContext,
 ) {
     <b>let</b> (cancel_quantity, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="account.md#0x0_account">account</a>.id(), cancel_quantity, <a href="order.md#0x0_order">order</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.balance_manager_id() == <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), cancel_quantity, <a href="order.md#0x0_order">order</a>, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -659,13 +659,13 @@ Order must not have already expired.
 
 ## Function `cancel_order`
 
-Cancel an order. The order must be owned by the account.
-The order is removed from the book and the account's open orders.
-The account's balance is updated with the order's remaining quantity.
+Cancel an order. The order must be owned by the balance_manager.
+The order is removed from the book and the balance_manager's open orders.
+The balance_manager's balance is updated with the order's remaining quantity.
 Order canceled event is emitted.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, order_id: u128, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -676,16 +676,16 @@ Order canceled event is emitted.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_cancel_order">cancel_order</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     order_id: u128,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
-    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.account_id() == <a href="account.md#0x0_account">account</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderAccount">EInvalidOrderAccount</a>);
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="account.md#0x0_account">account</a>.id(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    <b>assert</b>!(<a href="order.md#0x0_order">order</a>.balance_manager_id() == <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
@@ -699,11 +699,11 @@ Order canceled event is emitted.
 
 ## Function `stake`
 
-Stake DEEP tokens to the pool. The account must have enough DEEP tokens.
-The account's data is updated with the staked amount.
+Stake DEEP tokens to the pool. The balance_manager must have enough DEEP tokens.
+The balance_manager's data is updated with the staked amount.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, amount: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -714,13 +714,13 @@ The account's data is updated with the staked amount.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_stake">stake</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     amount: u64,
     ctx: &TxContext,
 ) {
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="account.md#0x0_account">account</a>.id(), amount, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), amount, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
 </code></pre>
 
@@ -732,12 +732,12 @@ The account's data is updated with the staked amount.
 
 ## Function `unstake`
 
-Unstake DEEP tokens from the pool. The account must have enough staked DEEP tokens.
-The account's data is updated with the unstaked amount.
-Balance is transferred to the account immediately.
+Unstake DEEP tokens from the pool. The balance_manager must have enough staked DEEP tokens.
+The balance_manager's data is updated with the unstaked amount.
+Balance is transferred to the balance_manager immediately.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -748,14 +748,14 @@ Balance is transferred to the account immediately.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unstake">unstake</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     ctx: &TxContext,
 ) {
-    <a href="account.md#0x0_account">account</a>.validate_proof(proof);
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_proof(proof);
 
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="account.md#0x0_account">account</a>.id(), ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
 </code></pre>
 
@@ -768,13 +768,13 @@ Balance is transferred to the account immediately.
 ## Function `submit_proposal`
 
 Submit a proposal to change the taker fee, maker fee, and stake required.
-The account must have enough staked DEEP tokens to participate.
-Each account can only submit one proposal per epoch.
+The balance_manager must have enough staked DEEP tokens to participate.
+Each balance_manager can only submit one proposal per epoch.
 If the maximum proposal is reached, the proposal with the lowest vote is removed.
-If the account has less voting power than the lowest voted proposal, the proposal is not added.
+If the balance_manager has less voting power than the lowest voted proposal, the proposal is not added.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -785,16 +785,16 @@ If the account has less voting power than the lowest voted proposal, the proposa
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_submit_proposal">submit_proposal</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     taker_fee: u64,
     maker_fee: u64,
     stake_required: u64,
     ctx: &TxContext,
 ) {
-    <a href="account.md#0x0_account">account</a>.validate_proof(proof);
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_proposal(<a href="account.md#0x0_account">account</a>.id(), taker_fee, maker_fee, stake_required, ctx);
+    self.<a href="state.md#0x0_state">state</a>.process_proposal(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), taker_fee, maker_fee, stake_required, ctx);
 }
 </code></pre>
 
@@ -806,12 +806,12 @@ If the account has less voting power than the lowest voted proposal, the proposa
 
 ## Function `vote`
 
-Vote on a proposal. The account must have enough staked DEEP tokens to participate.
-Full voting power of the account is used.
+Vote on a proposal. The balance_manager must have enough staked DEEP tokens to participate.
+Full voting power of the balance_manager is used.
 Voting for a new proposal will remove the vote from the previous proposal.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, proposal_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, proposal_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -822,14 +822,14 @@ Voting for a new proposal will remove the vote from the previous proposal.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vote">vote</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     proposal_id: ID,
     ctx: &TxContext,
 ) {
-    <a href="account.md#0x0_account">account</a>.validate_proof(proof);
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_proof(proof);
 
-    self.<a href="state.md#0x0_state">state</a>.process_vote(<a href="account.md#0x0_account">account</a>.id(), proposal_id, ctx);
+    self.<a href="state.md#0x0_state">state</a>.process_vote(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), proposal_id, ctx);
 }
 </code></pre>
 
@@ -841,11 +841,11 @@ Voting for a new proposal will remove the vote from the previous proposal.
 
 ## Function `claim_rebates`
 
-Claim the rewards for the account. The account must have rewards to claim.
-The account's data is updated with the claimed rewards.
+Claim the rewards for the balance_manager. The balance_manager must have rewards to claim.
+The balance_manager's data is updated with the claimed rewards.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -856,13 +856,13 @@ The account's data is updated with the claimed rewards.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     ctx: &TxContext,
 ) {
-    <b>let</b> <a href="account_data.md#0x0_account_data">account_data</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="account.md#0x0_account">account</a>.id(), ctx.epoch());
-    <b>let</b> (settled, owed) = <a href="account_data.md#0x0_account_data">account_data</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx.epoch());
+    <b>let</b> (settled, owed) = <a href="account.md#0x0_account">account</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
 </code></pre>
 
@@ -931,10 +931,10 @@ Returns the mid price of the pool.
 
 ## Function `account_open_orders`
 
-Returns the order_id for all open order for the account in the pool.
+Returns the order_id for all open order for the balance_manager in the pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>): <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set_VecSet">vec_set::VecSet</a>&lt;u128&gt;
 </code></pre>
 
 
@@ -945,9 +945,9 @@ Returns the order_id for all open order for the account in the pool.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_account_open_orders">account_open_orders</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: ID,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: ID,
 ): VecSet&lt;u128&gt; {
-    self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="account.md#0x0_account">account</a>).open_orders()
+    self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>).open_orders()
 }
 </code></pre>
 
@@ -1238,7 +1238,7 @@ Only Admin can set a pool as whitelist.
 
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="account.md#0x0_account">account</a>: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, proof: &<a href="account.md#0x0_account_TradeProof">account::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -1249,7 +1249,7 @@ Only Admin can set a pool as whitelist.
 
 <pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="account.md#0x0_account">account</a>: &<b>mut</b> Account,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
@@ -1267,7 +1267,7 @@ Only Admin can set a pool as whitelist.
 
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
-        <a href="account.md#0x0_account">account</a>.id(),
+        <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(),
         client_order_id,
         proof.trader(),
         order_type,
@@ -1282,7 +1282,7 @@ Only Admin can set a pool as whitelist.
     );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(), ctx);
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_create(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, ctx);
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_account(settled, owed, <a href="account.md#0x0_account">account</a>, proof);
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
 
     <a href="order_info.md#0x0_order_info">order_info</a>

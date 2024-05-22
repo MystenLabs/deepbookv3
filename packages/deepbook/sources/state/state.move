@@ -9,7 +9,7 @@ module deepbook::state {
         order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
-        account_data::{Self, AccountData},
+        account::{Self, Account},
         balances::{Self, Balances},
     };
 
@@ -18,7 +18,7 @@ module deepbook::state {
     const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100; // TODO
 
     public struct State has store {
-        accounts: Table<ID, AccountData>,
+        accounts: Table<ID, Account>,
         history: History,
         governance: Governance,
     }
@@ -49,7 +49,7 @@ module deepbook::state {
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &fills[i];
-            let maker = fill.account_id();
+            let maker = fill.balance_manager_id();
             self.update_account(maker, ctx.epoch());
             let account_data = &mut self.accounts[maker];
             account_data.process_maker_fill(fill);
@@ -60,8 +60,8 @@ module deepbook::state {
             i = i + 1;
         };
 
-        self.update_account(order_info.account_id(), ctx.epoch());
-        let account_data = &mut self.accounts[order_info.account_id()];
+        self.update_account(order_info.balance_manager_id(), ctx.epoch());
+        let account_data = &mut self.accounts[order_info.balance_manager_id()];
         account_data.add_order(order_info.order_id());
         account_data.increase_taker_volume(order_info.executed_quantity());
 
@@ -218,7 +218,7 @@ module deepbook::state {
     public(package) fun account(
         self: &State,
         account_id: ID,
-    ): &AccountData {
+    ): &Account {
         &self.accounts[account_id]
     }
 
@@ -226,7 +226,7 @@ module deepbook::state {
         self: &mut State,
         account_id: ID,
         epoch: u64,
-    ): &mut AccountData {
+    ): &mut Account {
         self.update_account(account_id, epoch);
 
         &mut self.accounts[account_id]
@@ -258,7 +258,7 @@ module deepbook::state {
         epoch: u64,
     ) {
         if (!self.accounts.contains(account_id)) {
-            self.accounts.add(account_id, account_data::empty(epoch));
+            self.accounts.add(account_id, account::empty(epoch));
         };
     }
 }

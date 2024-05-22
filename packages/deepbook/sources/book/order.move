@@ -24,7 +24,7 @@ module deepbook::order {
 
     /// Order struct represents the order in the order book. It is optimized for space.
     public struct Order has store, drop {
-        account_id: ID,
+        balance_manager_id: ID,
         order_id: u128,
         client_order_id: u64,
         quantity: u64,
@@ -37,7 +37,7 @@ module deepbook::order {
 
     /// Emitted when a maker order is canceled.
     public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
-        account_id: ID,
+        balance_manager_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
@@ -50,7 +50,7 @@ module deepbook::order {
 
     /// Emitted when a maker order is modified.
     public struct OrderModified<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
-        account_id: ID,
+        balance_manager_id: ID,
         pool_id: ID,
         order_id: u128,
         client_order_id: u64,
@@ -64,7 +64,7 @@ module deepbook::order {
     /// initialize the order struct.
     public(package) fun new(
         order_id: u128,
-        account_id: ID,
+        balance_manager_id: ID,
         client_order_id: u64,
         quantity: u64,
         deep_per_base: u64,
@@ -74,7 +74,7 @@ module deepbook::order {
     ): Order {
         Order {
             order_id,
-            account_id,
+            balance_manager_id,
             client_order_id,
             quantity,
             filled_quantity: 0,
@@ -97,7 +97,7 @@ module deepbook::order {
         let quote_quantity = math::mul(volume, self.price());
 
         let order_id = self.order_id;
-        let account_id = self.account_id;
+        let balance_manager_id = self.balance_manager_id;
         let expired = self.expire_timestamp < timestamp;
 
         if (expired) {
@@ -109,7 +109,7 @@ module deepbook::order {
         
         fill::new(
             order_id,
-            account_id,
+            balance_manager_id,
             expired,
             self.quantity == self.filled_quantity,
             volume,
@@ -145,7 +145,7 @@ module deepbook::order {
         event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
             pool_id,
             order_id: self.order_id,
-            account_id: self.account_id,
+            balance_manager_id: self.balance_manager_id,
             client_order_id: self.client_order_id,
             is_bid,
             trader,
@@ -167,7 +167,7 @@ module deepbook::order {
             order_id: self.order_id,
             pool_id,
             client_order_id: self.client_order_id,
-            account_id: self.account_id,
+            balance_manager_id: self.balance_manager_id,
             trader,
             price,
             is_bid,
@@ -193,8 +193,8 @@ module deepbook::order {
         self.client_order_id
     }
 
-    public(package) fun account_id(self: &Order): ID {
-        self.account_id
+    public(package) fun balance_manager_id(self: &Order): ID {
+        self.balance_manager_id
     }
 
     public(package) fun price(self: &Order): u64 {

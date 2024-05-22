@@ -14,7 +14,7 @@ All order matching happens in this module.
 -  [Struct `OrderPlaced`](#0x0_order_info_OrderPlaced)
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_order_info_new)
--  [Function `account_id`](#0x0_order_info_account_id)
+-  [Function `balance_manager_id`](#0x0_order_info_balance_manager_id)
 -  [Function `pool_id`](#0x0_order_info_pool_id)
 -  [Function `order_id`](#0x0_order_info_order_id)
 -  [Function `client_order_id`](#0x0_order_info_client_order_id)
@@ -98,7 +98,7 @@ It is returned at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -276,13 +276,13 @@ Emitted when a maker order is filled.
 
 </dd>
 <dt>
-<code>maker_account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>maker_balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
 </dd>
 <dt>
-<code>taker_account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>taker_balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -444,7 +444,7 @@ Emitted when a maker order is injected into the order book.
 
 <dl>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -684,7 +684,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -695,7 +695,7 @@ Emitted when a maker order is injected into the order book.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(
     pool_id: ID,
-    account_id: ID,
+    balance_manager_id: ID,
     client_order_id: u64,
     trader: <b>address</b>,
     order_type: u8,
@@ -711,7 +711,7 @@ Emitted when a maker order is injected into the order book.
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
         pool_id,
         order_id: 0,
-        account_id,
+        balance_manager_id,
         client_order_id,
         trader,
         order_type,
@@ -736,13 +736,13 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_account_id"></a>
+<a name="0x0_order_info_balance_manager_id"></a>
 
-## Function `account_id`
+## Function `balance_manager_id`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_account_id">account_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -751,8 +751,8 @@ Emitted when a maker order is injected into the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_account_id">account_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): ID {
-    self.account_id
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): ID {
+    self.balance_manager_id
 }
 </code></pre>
 
@@ -1349,7 +1349,7 @@ information required to match orders.
 ): Order {
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
-        self.account_id,
+        self.balance_manager_id,
         self.client_order_id,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         deep_per_base,
@@ -1691,7 +1691,7 @@ Funds for the match or an expired order are returned to the maker as settled.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_emit_order_placed">emit_order_placed</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="order_info.md#0x0_order_info_OrderPlaced">OrderPlaced</a> {
-        account_id: self.account_id,
+        balance_manager_id: self.balance_manager_id,
         pool_id: self.pool_id,
         order_id: self.order_id,
         client_order_id: self.client_order_id,
@@ -1788,8 +1788,8 @@ Funds for the match or an expired order are returned to the maker as settled.
         base_quantity: filled_quantity,
         quote_quantity: quote_quantity,
         price,
-        maker_account_id: maker.<a href="order_info.md#0x0_order_info_account_id">account_id</a>(),
-        taker_account_id: self.account_id,
+        maker_balance_manager_id: maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>(),
+        taker_balance_manager_id: self.balance_manager_id,
         taker_is_bid: self.is_bid,
         timestamp,
     });

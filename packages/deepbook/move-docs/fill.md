@@ -8,7 +8,7 @@
 -  [Struct `Fill`](#0x0_fill_Fill)
 -  [Function `new`](#0x0_fill_new)
 -  [Function `order_id`](#0x0_fill_order_id)
--  [Function `account_id`](#0x0_fill_account_id)
+-  [Function `balance_manager_id`](#0x0_fill_balance_manager_id)
 -  [Function `expired`](#0x0_fill_expired)
 -  [Function `completed`](#0x0_fill_completed)
 -  [Function `volume`](#0x0_fill_volume)
@@ -48,7 +48,7 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
+<code>balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -94,7 +94,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, quote_quantity: u64, taker_is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, quote_quantity: u64, taker_is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -105,7 +105,7 @@ It is used to update the state.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(
     order_id: u128,
-    account_id: ID,
+    balance_manager_id: ID,
     expired: bool,
     completed: bool,
     volume: u64,
@@ -114,7 +114,7 @@ It is used to update the state.
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
         order_id,
-        account_id,
+        balance_manager_id,
         expired,
         completed,
         volume,
@@ -152,13 +152,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_account_id"></a>
+<a name="0x0_fill_balance_manager_id"></a>
 
-## Function `account_id`
+## Function `balance_manager_id`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_account_id">account_id</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_balance_manager_id">balance_manager_id</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -167,8 +167,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_account_id">account_id</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): ID {
-    self.account_id
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_balance_manager_id">balance_manager_id</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): ID {
+    self.balance_manager_id
 }
 </code></pre>
 
