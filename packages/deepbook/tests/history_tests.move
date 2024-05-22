@@ -10,7 +10,10 @@ module deepbook::history_tests {
         },
         test_utils,
     };
-    use deepbook::history::Self;
+    use deepbook::{
+        history::Self,
+        trade_params::Self,
+    };
 
     const EWrongRebateAmount: u64 = 0;
 
@@ -22,31 +25,32 @@ module deepbook::history_tests {
         let owner: address = @0x1;
         let mut test = begin(owner);
 
-        let mut history = history::empty(test.ctx());
+        let trade_params = trade_params::new(0, 0, 1_000_000);
+
+        // epoch 0
+        let mut history = history::empty(trade_params, test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             500_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
+        // epoch 1
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             1_000_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
+        // epoch 2
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
         let rebate = history.calculate_rebate_amount(
-            test.ctx().epoch() - 1,
+            1,
             3 * FLOAT_SCALING,
             1_000_000
         );
@@ -62,46 +66,51 @@ module deepbook::history_tests {
         let owner: address = @0x1;
         let mut test = begin(owner);
 
+        let trade_params = trade_params::new(0, 0, 1_000_000);
+
         // epoch 0
-        let mut history = history::empty(test.ctx());
+        let mut history = history::empty(trade_params, test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             500_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
         // epoch 1
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             1_000_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
         // epoch 3
         test.next_epoch(owner);
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
-        let rebate_epoch_0 = history.calculate_rebate_amount(
-            test.ctx().epoch() - 3,
-            0,
-            1_000_000
+        let rebate_epoch_0_alice = history.calculate_rebate_amount(
+            0, // epoch
+            0, // maker_volume
+            1_000_000 // stake
         );
-        assert!(rebate_epoch_0 == 0, EWrongRebateAmount);
+        assert!(rebate_epoch_0_alice == 0, EWrongRebateAmount);
 
-        let rebate_epoch_1 = history.calculate_rebate_amount(
-            test.ctx().epoch() - 2,
+        let rebate_epoch_1_alice = history.calculate_rebate_amount(
+            0, // epoch
+            0, // maker_volume
+            1_000_000 // stake
+        );
+        assert!(rebate_epoch_1_alice == 0, EWrongRebateAmount);
+
+        let rebate_epoch_1_bob = history.calculate_rebate_amount(
+            1,
             3 * FLOAT_SCALING,
-            1_000_000
+            1_000_000 // stake
         );
-        assert!(rebate_epoch_1 == 180_000_000, EWrongRebateAmount);
+        assert!(rebate_epoch_1_bob == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -112,30 +121,35 @@ module deepbook::history_tests {
         let owner: address = @0x1;
         let mut test = begin(owner);
 
-        let mut history = history::empty(test.ctx());
+        let trade_params = trade_params::new(0, 0, 1_000_000);
+
+        // epoch 0
+        let mut history = history::empty(trade_params, test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             500_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
+        // epoch 1
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
         history.set_current_volumes(
             15 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
             1_000_000_000, // total_fees_collected
-            1_000_000, // stake_required
-            10, // accounts_with_rebates
         );
 
+        // epoch 2
         test.next_epoch(owner);
-        history.update(test.ctx());
+        history.update(trade_params, test.ctx());
 
-        let rebate = history.calculate_rebate_amount(test.ctx().epoch() - 1, 3 * FLOAT_SCALING, 1_000_000);
+        let rebate = history.calculate_rebate_amount(
+            1,
+            3 * FLOAT_SCALING,
+            1_000_000
+        );
         assert!(rebate == 0, EWrongRebateAmount);
 
         test_utils::destroy(history);
