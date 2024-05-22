@@ -72,7 +72,7 @@ module deepbook::history {
             total_fees_collected: 0,
             stake_required: 0,
             accounts_with_rebates: 0,
-            historic_median: MAX_U64,
+            historic_median: 0,
         };
     }
 
