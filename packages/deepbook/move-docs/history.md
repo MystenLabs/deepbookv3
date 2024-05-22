@@ -10,12 +10,17 @@
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_history_empty)
 -  [Function `update`](#0x0_history_update)
+-  [Function `reset_volumes`](#0x0_history_reset_volumes)
 -  [Function `calculate_rebate_amount`](#0x0_history_calculate_rebate_amount)
+-  [Function `update_historic_median`](#0x0_history_update_historic_median)
 -  [Function `add_volume`](#0x0_history_add_volume)
+-  [Function `balance_to_burn`](#0x0_history_balance_to_burn)
+-  [Function `reset_balance_to_burn`](#0x0_history_reset_balance_to_burn)
 -  [Function `historic_maker_fee`](#0x0_history_historic_maker_fee)
 
 
-<pre><code><b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
+<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
@@ -53,6 +58,12 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 </dd>
 <dt>
 <code>total_fees_collected: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>historic_median: u64</code>
 </dt>
 <dd>
 
@@ -118,11 +129,31 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 ## Constants
 
 
+<a name="0x0_history_FLOAT_SCALING"></a>
+
+
+
+<pre><code><b>const</b> <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>: u64 = 1000000000;
+</code></pre>
+
+
+
 <a name="0x0_history_EHistoricVolumesNotFound"></a>
 
+Error codes
 
 
-<pre><code><b>const</b> <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>: u64 = 1;
+<pre><code><b>const</b> <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>: u64 = 0;
+</code></pre>
+
+
+
+<a name="0x0_history_EPOCHS_FOR_PHASE_OUT"></a>
+
+Constants
+
+
+<pre><code><b>const</b> <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>: u64 = 28;
 </code></pre>
 
 
@@ -133,7 +164,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>): <a href="history.md#0x0_history_History">history::History</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="history.md#0x0_history_History">history::History</a>
 </code></pre>
 
 
@@ -143,13 +174,14 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(
-    ctx: &<b>mut</b> TxContext,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
+    ctx: &<b>mut</b> TxContext,
 ): <a href="history.md#0x0_history_History">History</a> {
     <b>let</b> volumes = <a href="history.md#0x0_history_Volumes">Volumes</a> {
         total_volume: 0,
         total_staked_volume: 0,
         total_fees_collected: 0,
+        historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
     <b>let</b> <b>mut</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_History">History</a> {
@@ -176,7 +208,7 @@ Update the epoch if it has changed.
 If there are accounts with rebates, add the current epoch's volume data to the historic volumes.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -187,18 +219,51 @@ If there are accounts with rebates, add the current epoch's volume data to the h
 
 <pre><code><b>public</b>(package) <b>fun</b> <b>update</b>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
-    ctx: &TxContext,
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
+    ctx: &TxContext,
 ) {
     <b>let</b> epoch = ctx.epoch();
     <b>if</b> (self.epoch == epoch) <b>return</b>;
+    <b>if</b> (self.historic_volumes.contains(self.epoch)) {
+        self.historic_volumes.remove(self.epoch);
+    };
     self.historic_volumes.add(self.epoch, self.volumes);
 
     self.epoch = epoch;
+    self.<a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>);
+    self.<a href="history.md#0x0_history_update_historic_median">update_historic_median</a>();
+    self.historic_volumes.add(self.epoch, self.volumes);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_history_reset_volumes"></a>
+
+## Function `reset_volumes`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(
+    self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
+    <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
+) {
     self.volumes = <a href="history.md#0x0_history_Volumes">Volumes</a> {
         total_volume: 0,
         total_staked_volume: 0,
         total_fees_collected: 0,
+        historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
 }
@@ -213,10 +278,10 @@ If there are accounts with rebates, add the current epoch's volume data to the h
 ## Function `calculate_rebate_amount`
 
 Given the epoch's volume data and the account's volume data,
-calculate the rebate and burn amounts.
+calculate and returns rebate amount, updates the burn amount
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, epoch: u64, _maker_volume: u64, account_stake: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): u64
 </code></pre>
 
 
@@ -227,17 +292,70 @@ calculate the rebate and burn amounts.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
-    epoch: u64,
-    _maker_volume: u64,
+    prev_epoch: u64,
+    maker_volume: u64,
     account_stake: u64,
 ): u64 {
-    <b>assert</b>!(self.historic_volumes.contains(epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
-    <b>let</b> volumes = &<b>mut</b> self.historic_volumes[epoch];
+    <b>assert</b>!(self.historic_volumes.contains(prev_epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
+    <b>let</b> volumes = &<b>mut</b> self.historic_volumes[prev_epoch];
     <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> 0;
 
-    // TODO: calculate and add <b>to</b> burn <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>
+    <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
+    <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
+        <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a> - <a href="math.md#0x0_math_min">math::min</a>(<a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>, <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median))
+    } <b>else</b> {
+        0
+    };
+    <b>let</b> maker_volume_proportion = <a href="math.md#0x0_math_div">math::div</a>(maker_volume, volumes.total_staked_volume);
+    <b>let</b> maker_fee_proportion = <a href="math.md#0x0_math_mul">math::mul</a>(maker_volume_proportion, volumes.total_fees_collected);
+    <b>let</b> maker_rebate = <a href="math.md#0x0_math_mul">math::mul</a>(maker_rebate_percentage, maker_fee_proportion);
+    <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
-    0
+    self.balance_to_burn = self.balance_to_burn + maker_burn;
+
+    maker_rebate
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_history_update_historic_median"></a>
+
+## Function `update_historic_median`
+
+Updates the historic_median for past 28 epochs
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_update_historic_median">update_historic_median</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_update_historic_median">update_historic_median</a>(
+    self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
+) {
+    <b>let</b> <b>mut</b> median_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;[];
+    <b>let</b> <b>mut</b> i = <b>if</b> (self.epoch &gt; <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>) {
+        self.epoch - <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>
+    } <b>else</b> {
+        0
+    };
+    <b>while</b> (i &lt; self.epoch) {
+        <b>if</b> (self.historic_volumes.contains(i)) {
+            median_vec.push_back(self.historic_volumes[i].total_volume);
+        } <b>else</b> {
+            median_vec.push_back(0);
+        };
+        i = i + 1;
+    };
+
+    self.volumes.historic_median = <a href="math.md#0x0_math_median">math::median</a>(median_vec);
 }
 </code></pre>
 
@@ -273,6 +391,58 @@ Increments the total volume and total staked volume.
     <b>if</b> (account_stake &gt; self.volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required()) {
         self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
     };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_history_balance_to_burn"></a>
+
+## Function `balance_to_burn`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_balance_to_burn">balance_to_burn</a>(self: &<a href="history.md#0x0_history_History">history::History</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_balance_to_burn">balance_to_burn</a>(
+    self: &<a href="history.md#0x0_history_History">History</a>,
+): u64 {
+    self.balance_to_burn
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_history_reset_balance_to_burn"></a>
+
+## Function `reset_balance_to_burn`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_reset_balance_to_burn">reset_balance_to_burn</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_reset_balance_to_burn">reset_balance_to_burn</a>(
+    self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
+) {
+    self.balance_to_burn = 0
 }
 </code></pre>
 

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Public-facing interface for the package.
-/// TODO: No authorization checks are implemented;
 module deepbook::pool {
     use std::type_name;
 
@@ -441,6 +440,18 @@ module deepbook::pool {
         };
 
         target_pool.deep_price.add_price_point(deep_per_base, timestamp)
+    }
+
+    /// Burns DEEP tokens from the pool. Amount to burn is within history
+    public fun burn_deep<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+    ) {
+        let history = self.state.history();
+        let balance_to_burn = history.balance_to_burn();
+        history.reset_balance_to_burn();
+        assert!(balance_to_burn > 0, EInvalidAmountIn);
+        // TODO: burn deep balance
+        // let deep_balance = self.vault.withdraw_deep(balance_to_burn);
     }
 
     // OPERATIONAL OWNER
