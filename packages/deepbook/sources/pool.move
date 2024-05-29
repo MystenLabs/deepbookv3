@@ -342,7 +342,7 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        let account = self.state.account_mut(balance_manager.id(), ctx.epoch());
+        let account = self.state.account_mut(balance_manager.id(), ctx);
         let (settled, owed) = account.claim_rebates();
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
     }
