@@ -165,27 +165,27 @@ Update taker settled balances and volumes.
     <b>while</b> (i &lt; fills.length()) {
         <b>let</b> <a href="fill.md#0x0_fill">fill</a> = &fills[i];
         <b>let</b> maker = <a href="fill.md#0x0_fill">fill</a>.balance_manager_id();
-        self.<a href="state.md#0x0_state_update_account">update_account</a>(maker, ctx.epoch());
-        <b>let</b> account_data = &<b>mut</b> self.accounts[maker];
-        account_data.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
+        self.<a href="state.md#0x0_state_update_account">update_account</a>(maker, ctx);
+        <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
+        <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
 
         <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.volume();
-        self.<a href="history.md#0x0_history">history</a>.add_volume(volume, account_data.active_stake());
+        self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
 
         i = i + 1;
     };
 
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx.epoch());
-    <b>let</b> account_data = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
-    account_data.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
-    account_data.increase_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
+    <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    <a href="account.md#0x0_account">account</a>.add_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
 
-    <b>let</b> account_volume = account_data.taker_volume() + account_data.maker_volume();
-    <b>let</b> account_stake = account_data.active_stake();
+    <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
+    <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
     <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, account_volume);
     <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_taker_maker_fees(taker_fee, maker_fee);
-    <b>let</b> (old_settled, old_owed) = account_data.settle();
+    <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
@@ -224,9 +224,9 @@ Remove order from account orders.
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     <a href="order.md#0x0_order">order</a>.set_canceled();
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
-    <b>let</b> account_data = &<b>mut</b> self.accounts[account_id];
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
     <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
     <b>let</b> maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(epoch);
@@ -234,10 +234,10 @@ Remove order from account orders.
     <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, maker_fee));
     <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, deep_out);
 
-    account_data.remove_order(order_id);
-    account_data.add_settled_amounts(<a href="balances.md#0x0_balances">balances</a>);
+    <a href="account.md#0x0_account">account</a>.remove_order(order_id);
+    <a href="account.md#0x0_account">account</a>.add_settled_balances(<a href="balances.md#0x0_balances">balances</a>);
 
-    account_data.settle()
+    <a href="account.md#0x0_account">account</a>.settle()
 }
 </code></pre>
 
@@ -269,7 +269,7 @@ Remove order from account orders.
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
     <b>let</b> maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(epoch);
@@ -277,7 +277,7 @@ Remove order from account orders.
     <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, maker_fee));
     <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, deep_out);
 
-    self.accounts[account_id].add_settled_amounts(<a href="balances.md#0x0_balances">balances</a>);
+    self.accounts[account_id].add_settled_balances(<a href="balances.md#0x0_balances">balances</a>);
 
     self.accounts[account_id].settle()
 }
@@ -310,7 +310,7 @@ Remove order from account orders.
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
     self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(stake_before, stake_after);
@@ -345,14 +345,16 @@ Remove order from account orders.
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
-    <b>let</b> account_data = &<b>mut</b> self.accounts[account_id];
-    <b>let</b> (total_stake, voted_proposal) = account_data.remove_stake();
-    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(total_stake, 0);
-    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(voted_proposal, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), total_stake);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
+    <b>let</b> voted_stake = <a href="account.md#0x0_account">account</a>.active_stake();
+    <b>let</b> voted_proposal = <a href="account.md#0x0_account">account</a>.voted_proposal();
+    <a href="account.md#0x0_account">account</a>.remove_stake();
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(voted_stake, 0);
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(voted_proposal, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), voted_stake);
 
-    account_data.settle()
+    <a href="account.md#0x0_account">account</a>.settle()
 }
 </code></pre>
 
@@ -385,7 +387,7 @@ Remove order from account orders.
 ) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> stake = self.accounts[account_id].active_stake();
     <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
@@ -422,16 +424,16 @@ Remove order from account orders.
 ) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx.epoch());
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
-    <b>let</b> account_data = &<b>mut</b> self.accounts[account_id];
-    <b>assert</b>!(account_data.active_stake() &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
+    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.active_stake() &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
 
-    <b>let</b> prev_proposal = account_data.set_voted_proposal(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id));
+    <b>let</b> prev_proposal = <a href="account.md#0x0_account">account</a>.set_voted_proposal(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id));
     self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(
         prev_proposal,
         <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id),
-        account_data.active_stake(),
+        <a href="account.md#0x0_account">account</a>.active_stake(),
     );
 }
 </code></pre>
@@ -528,7 +530,7 @@ Remove order from account orders.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_account_mut">account_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, epoch: u64): &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_account_mut">account_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>
 </code></pre>
 
 
@@ -540,9 +542,9 @@ Remove order from account orders.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_account_mut">account_mut</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     account_id: ID,
-    epoch: u64,
+    ctx: &TxContext,
 ): &<b>mut</b> Account {
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, epoch);
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     &<b>mut</b> self.accounts[account_id]
 }
@@ -584,7 +586,7 @@ Remove order from account orders.
 
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_update_account">update_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, epoch: u64)
+<pre><code><b>fun</b> <a href="state.md#0x0_state_update_account">update_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -596,11 +598,11 @@ Remove order from account orders.
 <pre><code><b>fun</b> <a href="state.md#0x0_state_update_account">update_account</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     account_id: ID,
-    epoch: u64,
+    ctx: &TxContext,
 ) {
-    <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self, account_id, epoch);
+    <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self, account_id, ctx);
     <b>let</b> account_id = &<b>mut</b> self.accounts[account_id];
-    <b>let</b> (prev_epoch, maker_volume, active_stake) = account_id.<b>update</b>(epoch);
+    <b>let</b> (prev_epoch, maker_volume, active_stake) = account_id.<b>update</b>(ctx);
     <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
         <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
         account_id.add_rebates(rebates);
@@ -618,7 +620,7 @@ Remove order from account orders.
 
 
 
-<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, epoch: u64)
+<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -630,10 +632,10 @@ Remove order from account orders.
 <pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_account">add_new_account</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     account_id: ID,
-    epoch: u64,
+    ctx: &TxContext,
 ) {
     <b>if</b> (!self.accounts.contains(account_id)) {
-        self.accounts.add(account_id, <a href="account.md#0x0_account_empty">account::empty</a>(epoch));
+        self.accounts.add(account_id, <a href="account.md#0x0_account_empty">account::empty</a>(ctx));
     };
 }
 </code></pre>

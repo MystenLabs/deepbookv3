@@ -860,7 +860,7 @@ The balance_manager's data is updated with the claimed rewards.
     proof: &TradeProof,
     ctx: &TxContext,
 ) {
-    <b>let</b> <a href="account.md#0x0_account">account</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx.epoch());
+    <b>let</b> <a href="account.md#0x0_account">account</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     <b>let</b> (settled, owed) = <a href="account.md#0x0_account">account</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
