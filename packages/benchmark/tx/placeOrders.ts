@@ -1,10 +1,12 @@
-import { SuiClient, SuiObjectData } from "@mysten/sui.js/client";
+import { SuiClient, SuiObjectData, getFullnodeUrl } from "@mysten/sui.js/client";
 import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
-import { SUI_TYPE_ARG } from "@mysten/sui.js/utils";
+import { SUI_TYPE_ARG, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import dotenv from "dotenv";
 import { appendFileSync, writeFile, writeFileSync } from "fs";
 import { randomInt } from "crypto";
+import { SUI_CLOCK_OBJECT_ID } from "@mysten/sui.js/utils";
+import { bcs } from "@mysten/sui.js/bcs";
 dotenv.config();
 
 let owner = "0x02031593be871e2a24b69895e134d51f98ff78aff49b28e7f498c3abba41305c"
@@ -16,7 +18,7 @@ let vec = "0xeca6a498d0a8a2aaeed93cd4f78e80f74995663cbfac3fbd3fdf598bcc0dd18f"
 
 let orders: number[] = [];
 
-const client = new SuiClient({ url: "https://suins-rpc.testnet.sui.io" });
+const client = new SuiClient({ url: getFullnodeUrl('mainnet') });
 let keypair = Ed25519Keypair.deriveKeypair(process.env.ADMIN_PHRASE!)
 let totalComputationCost = 0;
 let totalStorageCost = 0;
@@ -64,19 +66,14 @@ const prepareCoinObjects = async (toAddress: string, chunks: number, baseCoinId:
 
 // return array of addresses
 const prepCoins = async () => {
-    let numCoins = 50;
-    let numIters = 20;
-    let coinAmount = 20_000_000;
+    let numCoins = 1;
+    let numIters = 1;
+    let coinAmount = 200_000_000;
     for (let i = 0; i < numIters; i++) {
         let res = await prepareCoinObjects(owner, numCoins, coin, coinAmount) as any[]
         let futures: any[] = []
         for (let j = 0; j < numCoins; j++) {
-            console.log(res[j])
-            if (randomInt(0, 100) % 2 == 0 || orders.length < 100) {
-                futures.push(placeOrdersBigVec(res[j]))
-            } else {
-                futures.push(cancelOrderBigVec(res[j]))
-            }
+            futures.push(cleanupExpired(res[j]))
         }
 
         console.log('got all futures ' + i)
@@ -85,6 +82,26 @@ const prepCoins = async () => {
         }
         console.log('done')
     }
+}
+
+const cleanupExpired = async (gasCoin: any) => {
+    console.log(`Cleaning up`)
+    let txb = new TransactionBlock();
+    txb.setGasPayment([gasCoin])
+    let orderIdvec = txb.makeMoveVec({objects: ['14709092'], type: 'u64'})
+    let orderOwnervec = txb.makeMoveVec({objects: ['0x60455349f0a1999666f8e58efe14c4c6fa50915c10bfbbb73f39b9db58db1255'], type: 'address'})
+    txb.moveCall({
+        target: `0x000000000000000000000000000000000000000000000000000000000000dee9::clob_v2::clean_up_expired_orders`,
+        typeArguments: [ '0x2::sui::SUI', '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN' ],
+        arguments: [
+            txb.object('0x4405b50d791fd3346754e8171aaab6bc2ed26c2c46efdd033c14b30ae507ac33'),
+            txb.object('0x6'),
+            orderIdvec,
+            orderOwnervec,
+        ]
+    })
+    
+    return execute(txb, 'place_order_critbit.csv')
 }
 
 const placeOrdersCritbit = async (gasCoin: any) => {
@@ -216,6 +233,62 @@ const offsiteTest = async (gasCoin: any) => {
     return execute(txb, 'offsite.csv')
 }
 
+const getOrders = async () => {
+
+    const Order = bcs.struct('Order', {
+        order_id: bcs.U64,
+        client_order_id: bcs.U64,
+        price: bcs.U64,
+        original_quantity: bcs.U64,
+        quantity: bcs.U64,
+        is_bid: bcs.Bool,
+        owner: bcs.Address,
+        expire_timestamp: bcs.U64,
+        self_matching_prevention: bcs.U8
+    });
+
+    const OrderPage = bcs.struct('OrderPage', {
+        orders: bcs.vector(Order),
+        has_next_page: bcs.Bool,
+        next_tick_level: bcs.option(bcs.U64),
+        next_order_id: bcs.option(bcs.U64)
+    });
+
+
+    const inspect = new TransactionBlock();
+    let optionNone = inspect.moveCall({
+        target: `0x1::option::none`,
+        typeArguments: [ 'u64' ],
+    })
+    inspect.moveCall({
+      target: `0xdee9::order_query::iter_bids`,
+      typeArguments: [ '0x2::sui::SUI', '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN' ],
+      arguments: [
+        inspect.object('0x4405b50d791fd3346754e8171aaab6bc2ed26c2c46efdd033c14b30ae507ac33'),
+        optionNone,
+        optionNone,
+        optionNone,
+        optionNone,
+        inspect.pure(false),
+      ],
+    });
+    const res = await client.devInspectTransactionBlock({
+      sender: normalizeSuiAddress('0x0'),
+      transactionBlock: inspect,
+    });
+    
+    // console.log(res.results!)
+    console.log(res.results![0].returnValues![0])
+    console.log(res.results![1].returnValues![0])
+    // @ts-ignore
+    let parsedResult = OrderPage.parse(new Uint8Array(res.results![1].returnValues![0][0]));
+    console.log(parsedResult.orders.length)
+    console.log(parsedResult.orders.map((e) => ({ ...e, is_expired: +e.expire_timestamp < Date.now() })))
+    // console.log(parsedResult.orders)
+}
+
+
+
 const execute = async (txb: TransactionBlock, filename: string) => {
     await client.signAndExecuteTransactionBlock({
         transactionBlock: txb,
@@ -255,4 +328,5 @@ const signAndExecute = async (txb: TransactionBlock) => {
 // get100Coins()
 // placeOrders()
 // cancelFirstAskCritbit()
-prepCoins()
+// prepCoins()
+getOrders()
