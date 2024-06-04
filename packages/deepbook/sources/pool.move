@@ -528,7 +528,7 @@ module deepbook::pool {
             deep_per_base,
             market_order,
         );
-        self.book.create_order(&mut order_info, clock.timestamp_ms(), ctx);
+        self.book.create_order(&mut order_info, clock.timestamp_ms());
         let (settled, owed) = self.state.process_create(&mut order_info, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();

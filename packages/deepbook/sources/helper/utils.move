@@ -53,8 +53,51 @@ module deepbook::utils {
         let is_bid = (encoded_order_id >> 127) == 0;
         let price = (encoded_order_id >> 64) as u64;
         let price = price & ((1u64 << 63) - 1);
-        let order_id = (encoded_order_id & (1u128 << 64 - 1)) as u64;
+        let order_id = (encoded_order_id & ((1u128 << 64) - 1)) as u64;
 
         (is_bid, price, order_id)
+    }
+
+    #[test]
+    fun test_encode_decode_order_id() {
+        let is_bid = true;
+        let price = 2371538230592318123;
+        let order_id = 9211238512301581235;
+        let encoded_order_id = encode_order_id(is_bid, price, order_id);
+        let (decoded_is_bid, decoded_price, decoded_order_id) =
+            decode_order_id(encoded_order_id);
+        assert!(decoded_is_bid == is_bid, 0);
+        assert!(decoded_price == price, 0);
+        assert!(decoded_order_id == order_id, 0);
+
+        let is_bid = false;
+        let price = 1;
+        let order_id = 1;
+        let encoded_order_id = encode_order_id(is_bid, price, order_id);
+        let (decoded_is_bid, decoded_price, decoded_order_id) =
+            decode_order_id(encoded_order_id);
+        assert!(decoded_is_bid == is_bid, 0);
+        assert!(decoded_price == price, 0);
+        assert!(decoded_order_id == order_id, 0);
+
+        let is_bid = true;
+        let price = (1u128 << 64 - 1) as u64 - 1;
+        let order_id = (1u128 << 64 - 1) as u64;
+        let encoded_order_id = encode_order_id(is_bid, price, order_id);
+        let (decoded_is_bid, decoded_price, decoded_order_id) =
+            decode_order_id(encoded_order_id);
+        assert!(decoded_is_bid == is_bid, 0);
+        assert!(decoded_price == price, 0);
+        assert!(decoded_order_id == order_id, 0);
+
+        let is_bid = false;
+        let price = 0;
+        let order_id = 0;
+        let encoded_order_id = encode_order_id(is_bid, price, order_id);
+        let (decoded_is_bid, decoded_price, decoded_order_id) =
+            decode_order_id(encoded_order_id);
+        assert!(decoded_is_bid == is_bid, 0);
+        assert!(decoded_price == price, 0);
+        assert!(decoded_order_id == order_id, 0);
     }
 }

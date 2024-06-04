@@ -69,7 +69,7 @@ module deepbook::state {
         let account_stake = account.active_stake();
         let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume);
         let maker_fee = self.governance.trade_params().maker_fee();
-        let (mut settled, mut owed) = order_info.calculate_taker_maker_fees(taker_fee, maker_fee);
+        let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
         settled.add_balances(old_settled);
         owed.add_balances(old_owed);

@@ -261,7 +261,7 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
-    public(package) fun calculate_taker_maker_fees(
+    public(package) fun calculate_partial_fill_balances(
         self: &mut OrderInfo,
         taker_fee: u64,
         maker_fee: u64,
@@ -306,16 +306,14 @@ module deepbook::order_info {
     /// information required to match orders.
     public(package) fun to_order(
         self: &OrderInfo,
-        deep_per_base: u64,
-        ctx: &TxContext,
     ): Order {
         order::new(
             self.order_id,
             self.balance_manager_id,
             self.client_order_id,
             self.remaining_quantity(),
-            deep_per_base,
-            ctx.epoch(),
+            self.deep_per_base,
+            self.epoch,
             self.status,
             self.expire_timestamp,
         )
