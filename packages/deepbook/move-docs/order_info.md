@@ -36,7 +36,7 @@ All order matching happens in this module.
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `add_fill`](#0x0_order_info_add_fill)
--  [Function `calculate_taker_maker_fees`](#0x0_order_info_calculate_taker_maker_fees)
+-  [Function `calculate_partial_fill_balances`](#0x0_order_info_calculate_partial_fill_balances)
 -  [Function `to_order`](#0x0_order_info_to_order)
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
@@ -60,7 +60,6 @@ All order matching happens in this module.
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
-<b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
 
@@ -1264,13 +1263,13 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_calculate_taker_maker_fees"></a>
+<a name="0x0_order_info_calculate_partial_fill_balances"></a>
 
-## Function `calculate_taker_maker_fees`
+## Function `calculate_partial_fill_balances`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_taker_maker_fees">calculate_taker_maker_fees</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, taker_fee: u64, maker_fee: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_partial_fill_balances">calculate_partial_fill_balances</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, taker_fee: u64, maker_fee: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -1279,7 +1278,7 @@ Emitted when a maker order is injected into the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_taker_maker_fees">calculate_taker_maker_fees</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_partial_fill_balances">calculate_partial_fill_balances</a>(
     self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
     taker_fee: u64,
     maker_fee: u64,
@@ -1333,7 +1332,7 @@ This is done to save space in the order book. Order contains the minimum
 information required to match orders.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -1344,16 +1343,14 @@ information required to match orders.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_to_order">to_order</a>(
     self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>,
-    deep_per_base: u64,
-    ctx: &TxContext,
 ): Order {
     <a href="order.md#0x0_order_new">order::new</a>(
         self.order_id,
         self.balance_manager_id,
         self.client_order_id,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
-        deep_per_base,
-        ctx.<a href="order_info.md#0x0_order_info_epoch">epoch</a>(),
+        self.deep_per_base,
+        self.epoch,
         self.status,
         self.expire_timestamp,
     )

@@ -1280,7 +1280,7 @@ Only Admin can set a pool as whitelist.
         deep_per_base,
         market_order,
     );
-    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(), ctx);
+    self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_create(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) <a href="order_info.md#0x0_order_info">order_info</a>.emit_order_placed();
