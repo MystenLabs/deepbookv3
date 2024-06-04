@@ -13,7 +13,7 @@ module deepbook::state {
         balances::{Self, Balances},
     };
 
-    const ENotEnoughStake: u64 = 2;
+    const ENotEnoughStake: u64 = 1;
 
     const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100; // TODO
 

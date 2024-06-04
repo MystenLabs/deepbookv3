@@ -40,6 +40,7 @@ Public-facing interface for the package.
 <b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="book.md#0x0_book">0x0::book</a>;
+<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
@@ -186,6 +187,15 @@ Public-facing interface for the package.
 
 
 
+<a name="0x0_pool_MAX_U64"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
+</code></pre>
+
+
+
 <a name="0x0_pool_MIN_PRICE"></a>
 
 
@@ -195,20 +205,20 @@ Public-facing interface for the package.
 
 
 
+<a name="0x0_pool_POOL_CREATION_FEE"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
+</code></pre>
+
+
+
 <a name="0x0_pool_EInvalidAmountIn"></a>
 
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 6;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
 </code></pre>
 
 
@@ -290,15 +300,6 @@ Public-facing interface for the package.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_pool_POOL_CREATION_FEE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
 </code></pre>
 
 
@@ -415,7 +416,7 @@ Place a limit order. Quantity is in base asset terms.
 For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_limit_order">place_limit_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, self_matching_option: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -430,6 +431,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
+    self_matching_option: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
@@ -443,6 +445,7 @@ For current version pay_with_deep must be true, so the fee will be paid with DEE
         proof,
         client_order_id,
         order_type,
+        self_matching_option,
         price,
         quantity,
         is_bid,
@@ -467,7 +470,7 @@ Place a market order. Quantity is in base asset terms. Calls place_limit_order w
 a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, self_matching_option: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -482,6 +485,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
+    self_matching_option: u8,
     quantity: u64,
     is_bid: bool,
     pay_with_deep: bool,
@@ -493,6 +497,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
         proof,
         client_order_id,
         order_type,
+        self_matching_option,
         <b>if</b> (is_bid) <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a> <b>else</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>,
         quantity,
         is_bid,
@@ -555,7 +560,8 @@ Swap exact amount without needing an balance_manager.
         &<b>mut</b> temp_balance_manager,
         &proof,
         0,
-        <a href="order_info.md#0x0_order_info_immediate_or_cancel">order_info::immediate_or_cancel</a>(),
+        <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>(),
+        <a href="constants.md#0x0_constants_self_matching_allowed">constants::self_matching_allowed</a>(),
         base_quantity,
         is_bid,
         pay_with_deep,
@@ -1201,7 +1207,7 @@ Only Admin can set a pool as whitelist.
 
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_place_order_int">place_order_int</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, self_matching_option: u8, price: u64, quantity: u64, is_bid: bool, pay_with_deep: bool, expire_timestamp: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, market_order: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -1216,6 +1222,7 @@ Only Admin can set a pool as whitelist.
     proof: &TradeProof,
     client_order_id: u64,
     order_type: u8,
+    self_matching_option: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
@@ -1234,6 +1241,7 @@ Only Admin can set a pool as whitelist.
         client_order_id,
         proof.trader(),
         order_type,
+        self_matching_option,
         price,
         quantity,
         is_bid,

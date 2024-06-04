@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#[test_only, allow(unused_const)]
+#[test_only]
 module deepbook::pool_tests {
     use sui::{
         clock::{Self, Clock},
@@ -27,6 +27,7 @@ module deepbook::pool_tests {
         math,
         registry,
         constants,
+        utils
     };
 
     const ALICE: address = @0xAAAA;
@@ -63,7 +64,10 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(), constants::deep_multiplier())
+            ),
             constants::filled()
         );
     }
@@ -76,7 +80,11 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(),
+                constants::deep_multiplier())
+            ),
             constants::filled()
         );
     }
@@ -89,7 +97,10 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(), constants::deep_multiplier())
+            ),
             constants::filled()
         );
     }
@@ -102,7 +113,11 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(),
+                constants::deep_multiplier())
+            ),
             constants::filled()
         );
     }
@@ -174,6 +189,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             true,
@@ -205,6 +221,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id, // client_order_id
             order_type,
+            constants::self_matching_allowed(),
             price, // price
             alice_quantity, // quantity
             is_bid,
@@ -249,6 +266,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -325,14 +343,24 @@ module deepbook::pool_tests {
         );
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_bid() {
-        test_self_matching(true);
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
+    fun test_self_matching_cancel_taker_bid() {
+        test_self_matching_cancel_taker(true);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_ask() {
-        test_self_matching(false);
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
+    fun test_self_matching_cancel_taker_ask() {
+        test_self_matching_cancel_taker(false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_self_matching_cancel_maker_bid() {
+        test_self_matching_cancel_maker(true);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_self_matching_cancel_maker_ask() {
+        test_self_matching_cancel_maker(false);
     }
 
     #[test]
@@ -366,6 +394,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -384,7 +413,10 @@ module deepbook::pool_tests {
         } else {
             2 * constants::float_scaling()
         };
-        let deep_in = math::mul(constants::taker_discount(), math::mul(constants::deep_multiplier(), constants::taker_fee()));
+        let deep_in = math::mul(
+            constants::taker_discount(),
+            math::mul(constants::deep_multiplier(), constants::taker_fee())
+        );
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
             BOB,
@@ -411,9 +443,10 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Alice places a bid/ask order, Alice then places an ask/bid order that crosses with that order
+    /// Alice places a bid/ask order
+    /// Alice then places an ask/bid order that crosses with that order with cancel_taker option
     /// Order should be rejected.
-    fun test_self_matching(
+    fun test_self_matching_cancel_taker(
         is_bid: bool,
     ) {
         let owner: address = @0x1;
@@ -440,6 +473,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             bid_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price_1,
             quantity,
             is_bid,
@@ -466,11 +500,99 @@ module deepbook::pool_tests {
             acct_id_alice,
             ask_client_order_id,
             order_type,
+            constants::cancel_taker(),
             price_2,
             quantity,
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
+    /// Alice places a bid/ask order
+    /// Alice then places an ask/bid order that crosses with that order with cancel_maker option
+    /// Maker order should be removed, with the new order placed successfully.
+    fun test_self_matching_cancel_maker(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id_1 = 1;
+        let client_order_id_2 = 2;
+        let order_type = constants::no_restriction();
+        let price_1 = 2 * constants::float_scaling();
+        let price_2 = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let fee_is_deep = true;
+
+        let order_info_1 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id_1,
+            order_type,
+            constants::self_matching_allowed(),
+            price_1,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        verify_order_info(
+            &order_info_1,
+            client_order_id_1,
+            price_1,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            constants::live(),
+            expire_timestamp,
+        );
+
+        let order_info_2 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id_2,
+            order_type,
+            constants::cancel_maker(),
+            price_2,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        verify_order_info(
+            &order_info_2,
+            client_order_id_2,
+            price_2,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            constants::live(),
+            expire_timestamp,
+        );
+
+        borrow_order_ok(
+            order_info_1.order_id(),
             &mut test,
         );
 
@@ -496,6 +618,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             true,
@@ -531,6 +654,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -548,6 +672,7 @@ module deepbook::pool_tests {
             acct_id_bob,
             bob_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             bob_price,
             bob_quantity,
             !is_bid,
@@ -573,7 +698,6 @@ module deepbook::pool_tests {
 
         borrow_order_ok(
             bob_order_info.order_id(),
-            !is_bid,
             &mut test,
         );
 
@@ -607,6 +731,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -628,6 +753,7 @@ module deepbook::pool_tests {
             acct_id_bob,
             bob_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             bob_price,
             bob_quantity,
             !is_bid,
@@ -681,6 +807,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             client_order_id,
             constants::no_restriction(),
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -701,6 +828,7 @@ module deepbook::pool_tests {
             acct_id_bob,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             !is_bid,
@@ -764,6 +892,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             client_order_id,
             constants::no_restriction(),
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -799,6 +928,7 @@ module deepbook::pool_tests {
             acct_id_bob,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             !is_bid,
@@ -838,7 +968,6 @@ module deepbook::pool_tests {
 
         borrow_order_ok(
             order_info_alice.order_id(),
-            !is_bid,
             &mut test,
         );
         end(test);
@@ -873,6 +1002,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -936,6 +1066,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -1024,11 +1155,11 @@ module deepbook::pool_tests {
     /// Internal function to borrow orderbook to ensure order exists
     fun borrow_order_ok(
         book_order_id: u128,
-        is_bid: bool,
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
         let pool = test.take_shared<Pool<SUI, USDC>>();
+        let (is_bid, _, _,) = utils::decode_order_id(book_order_id);
         borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         return_shared(pool);
     }
@@ -1087,6 +1218,7 @@ module deepbook::pool_tests {
         acct_id: ID,
         client_order_id: u64,
         order_type: u8,
+        self_matching_option: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -1109,6 +1241,7 @@ module deepbook::pool_tests {
                 &proof,
                 client_order_id,
                 order_type,
+                self_matching_option,
                 price,
                 quantity,
                 is_bid,

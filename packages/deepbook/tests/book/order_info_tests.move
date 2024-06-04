@@ -100,7 +100,7 @@ module deepbook::order_info_tests {
     // Maker: ask order with quantity 5 at price $5
     fun match_maker_partial_fill_bid_ok() {
         let mut test = begin(OWNER);
-            
+
         test.next_tx(ALICE);
         let price = 5 * constants::usdc_unit();
         let taker_quantity = 10 * constants::sui_unit();
@@ -123,7 +123,7 @@ module deepbook::order_info_tests {
     // Maker: ask order with quantity 38.13 at price $3.89
     fun match_maker_partial_fill_ask_ok() {
         let mut test = begin(OWNER);
-            
+
         test.next_tx(ALICE);
         let price = 4 * constants::usdc_unit();
         let taker_quantity = 111 * constants::sui_unit();
@@ -147,7 +147,7 @@ module deepbook::order_info_tests {
     // Maker: ask order with quantity 50 at price $5
     fun match_maker_full_fill_ok() {
         let mut test = begin(OWNER);
-        
+
         test.next_tx(ALICE);
         let price = 5 * constants::usdc_unit();
         let taker_quantity = 10 * constants::sui_unit();
@@ -290,7 +290,7 @@ module deepbook::order_info_tests {
         let price = 1_000_000;
         let quantity = 100;
         create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        
+
         abort(0)
     }
 
@@ -302,7 +302,7 @@ module deepbook::order_info_tests {
         let price = 1_000_000;
         let quantity = 100_100_100;
         create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        
+
         abort(0)
     }
 
@@ -332,7 +332,7 @@ module deepbook::order_info_tests {
             deep_per_base,
             market_order
         );
-        
+
         abort(0)
     }
 
@@ -362,7 +362,7 @@ module deepbook::order_info_tests {
             deep_per_base,
             market_order
         );
-        
+
         abort(0)
     }
 
@@ -374,7 +374,7 @@ module deepbook::order_info_tests {
         let price = 0;
         let quantity = 100_000;
         create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        
+
         abort(0)
     }
 
@@ -386,7 +386,7 @@ module deepbook::order_info_tests {
         let price = 111;
         let quantity = 100_000;
         create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        
+
         abort(0)
     }
 
@@ -419,7 +419,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
         order_info.match_maker(&mut maker_order, 0);
         order_info.assert_execution();
-        
+
         abort(0)
     }
 
@@ -452,7 +452,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
         order_info.match_maker(&mut maker_order, 0);
         order_info.assert_execution();
-        
+
         abort(0)
     }
 
@@ -540,6 +540,7 @@ module deepbook::order_info_tests {
             client_order_id,
             trader,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,

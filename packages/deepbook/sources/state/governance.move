@@ -3,7 +3,10 @@
 
 module deepbook::governance {
     use sui::vec_map::{Self, VecMap};
-    use deepbook::trade_params::{Self, TradeParams};
+    use deepbook::{
+        trade_params::{Self, TradeParams},
+        constants
+    };
 
     // === Errors ===
     const EInvalidMakerFee: u64 = 1;
@@ -24,7 +27,6 @@ module deepbook::governance {
     const MAX_MAKER_VOLATILE: u64 = 500000;
     const MAX_PROPOSALS: u64 = 100; // TODO: figure out how to prevent spam
     const VOTING_POWER_CUTOFF: u64 = 1000; // TODO
-    const MAX_U64: u64 = ((1u128) << 64 - 1) as u64;
 
     // === Structs ===
     /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
@@ -217,7 +219,7 @@ module deepbook::governance {
         voting_power: u64,
     ) {
         let mut removal_id = option::none<ID>();
-        let mut cur_lowest_votes = MAX_U64;
+        let mut cur_lowest_votes = constants::max_u64();
         let (keys, values) = self.proposals.into_keys_values();
         let mut i = 0;
 
