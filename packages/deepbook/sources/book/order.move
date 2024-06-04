@@ -92,6 +92,7 @@ module deepbook::order {
         timestamp: u64,
         quantity: u64,
         is_bid: bool,
+        expire_maker: bool,
     ): Fill {
         let volume = math::min(self.quantity, quantity);
         let quote_quantity = math::mul(volume, self.price());
@@ -100,13 +101,13 @@ module deepbook::order {
         let balance_manager_id = self.balance_manager_id;
         let expired = self.expire_timestamp < timestamp;
 
-        if (expired) {
+        if (expired || expire_maker) {
             self.status = EXPIRED;
         } else {
             self.filled_quantity = self.filled_quantity + volume;
             self.status = if (self.quantity == self.filled_quantity) FILLED else PARTIALLY_FILLED;
         };
-        
+
         fill::new(
             order_id,
             balance_manager_id,

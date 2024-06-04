@@ -3,6 +3,7 @@ module deepbook::book {
         big_vector::{Self, BigVector},
         utils,
         math,
+        constants,
         order::Order,
         order_info::OrderInfo,
     };
@@ -14,7 +15,7 @@ module deepbook::book {
     const EEmptyOrderbook: u64 = 2;
     const EInvalidPriceRange: u64 = 3;
     const EInvalidTicks: u64 = 4;
-    const ESelfMatching: u64 = 5;
+    const ESelfMatchingCancelTaker: u64 = 5;
 
     public struct Book has store {
         tick_size: u64,
@@ -212,7 +213,9 @@ module deepbook::book {
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-            assert!(maker_order.balance_manager_id() != order_info.balance_manager_id(), ESelfMatching);
+            if (order_info.self_matching_option() == constants::cancel_taker()) {
+                assert!(maker_order.balance_manager_id() != order_info.balance_manager_id(), ESelfMatchingCancelTaker);
+            };
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
 

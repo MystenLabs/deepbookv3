@@ -11,6 +11,7 @@ module deepbook::order_info {
         order::{Self, Order},
         fill::Fill,
         balances::{Self, Balances},
+        constants,
     };
 
     // === Errors ===
@@ -28,6 +29,7 @@ module deepbook::order_info {
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     // Restrictions on limit orders.
+    // No restriction on the order.
     const NO_RESTRICTION: u8 = 0;
     // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
     const IMMEDIATE_OR_CANCEL: u8 = 1;
@@ -61,6 +63,8 @@ module deepbook::order_info {
         trader: address,
         // Order type, NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY
         order_type: u8,
+        // Self matching option,
+        self_matching_option: u8,
         // Price, only used for limit orders
         price: u64,
         // Whether the order is a buy or a sell
@@ -138,7 +142,7 @@ module deepbook::order_info {
         placed_quantity: u64,
         expire_timestamp: u64,
     }
-    
+
     // === Public-View Functions ===
     public fun balance_manager_id(self: &OrderInfo): ID {
         self.balance_manager_id
@@ -158,6 +162,10 @@ module deepbook::order_info {
 
     public fun order_type(self: &OrderInfo): u8 {
         self.order_type
+    }
+
+    public fun self_matching_option(self: &OrderInfo): u8 {
+        self.self_matching_option
     }
 
     public fun price(self: &OrderInfo): u64 {
@@ -215,6 +223,7 @@ module deepbook::order_info {
         client_order_id: u64,
         trader: address,
         order_type: u8,
+        self_matching_option: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -231,6 +240,7 @@ module deepbook::order_info {
             client_order_id,
             trader,
             order_type,
+            self_matching_option,
             price,
             is_bid,
             original_quantity: quantity,
@@ -415,7 +425,16 @@ module deepbook::order_info {
     ): bool {
         if (!self.crosses_price(maker)) return false;
 
-        let fill = maker.generate_fill(timestamp, self.remaining_quantity(), self.is_bid);
+        let expire_maker =
+            self.self_matching_option() == constants::cancel_maker() &&
+            maker.balance_manager_id() == self.balance_manager_id();
+
+        let fill = maker.generate_fill(
+            timestamp,
+            self.remaining_quantity(),
+            self.is_bid,
+            expire_maker
+        );
         self.fills.push_back(fill);
         if (fill.expired()) return true;
 

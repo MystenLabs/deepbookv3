@@ -1,9 +1,10 @@
-#[test_only]
 module deepbook::constants {
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
+
     // Restrictions on limit orders.
+    // No restriction on the order.
     const NO_RESTRICTION: u8 = 0;
     // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
     const IMMEDIATE_OR_CANCEL: u8 = 1;
@@ -13,6 +14,14 @@ module deepbook::constants {
     const POST_ONLY: u8 = 3;
     // Maximum restriction value.
     const MAX_RESTRICTION: u8 = 3;
+
+    // Self matching types.
+    // Self matching is allowed.
+    const SELF_MATCHING_ALLOWED: u8 = 0;
+    // Cancel the taker order.
+    const CANCEL_TAKER: u8 = 1;
+    // Cancel the maker order.
+    const CANCEL_MAKER: u8 = 2;
 
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
@@ -32,7 +41,7 @@ module deepbook::constants {
 
     const EOrderInfoMismatch: u64 = 0;
     const EBookOrderMismatch: u64 = 1;
-    
+
     public fun pool_creation_fee(): u64 {
         POOL_CREATION_FEE
     }
@@ -127,5 +136,17 @@ module deepbook::constants {
 
     public fun sui_unit(): u64 {
         SUI_UNIT
+    }
+
+    public fun self_matching_allowed(): u8 {
+        SELF_MATCHING_ALLOWED
+    }
+
+    public fun cancel_taker(): u8 {
+        CANCEL_TAKER
+    }
+
+    public fun cancel_maker(): u8 {
+        CANCEL_MAKER
     }
 }

@@ -325,12 +325,12 @@ module deepbook::pool_tests {
         );
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
+    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatchingCancelTaker)]
     fun test_self_matching_bid() {
         test_self_matching(true);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
+    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatchingCancelTaker)]
     fun test_self_matching_ask() {
         test_self_matching(false);
     }
@@ -1109,6 +1109,7 @@ module deepbook::pool_tests {
                 &proof,
                 client_order_id,
                 order_type,
+                constants::self_matching_allowed(),
                 price,
                 quantity,
                 is_bid,
