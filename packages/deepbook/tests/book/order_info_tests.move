@@ -3,7 +3,6 @@
 
 #[test_only]
 module deepbook::order_info_tests {
-    use std::debug::print;
     use sui::{
         test_scenario::{next_tx, begin, end},
         test_utils::assert_eq,
@@ -11,11 +10,8 @@ module deepbook::order_info_tests {
     };
     use deepbook::{
         order_info::{Self, OrderInfo},
-        math,
         utils,
-        account,
         balances,
-        fill,
         constants,
     };
 
@@ -43,39 +39,39 @@ module deepbook::order_info_tests {
     }
 
     #[test]
-    // Placing a bid order with quantity 10 at price $1.2345. No fill.
+    // Placing a bid order with quantity 10 at price $1.234. No fill.
     // No taker fees, so maker fees should apply to entire quantity.
     // Since its a bid, we should be required to transfer 1 USDC into the pool.
     fun calculate_partial_fill_balances_precision_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let price = 1_234_500;
+        let price = 1_234_000;
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
         let (settled, owed) = order_info.calculate_partial_fill_balances(constants::taker_fee(), constants::maker_fee());
 
         assert_eq(settled, balances::new(0, 0, 0));
-        assert_eq(owed, balances::new(0, 12_345_000, 5_000_000)); // 5 bps of 10 SUI paid in DEEP
+        assert_eq(owed, balances::new(0, 12_340_000, 5_000_000)); // 5 bps of 10 SUI paid in DEEP
 
         end(test);
     }
 
     #[test]
-    // Placing a bid order with quantity 10.86 at price $1.2345. No fill.
+    // Placing a bid order with quantity 10.86 at price $1.234. No fill.
     fun calculate_partial_fill_balances_precision2_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let price = 1_234_500;
+        let price = 1_234_000;
         let quantity = 10_860_000_000;
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
         let (settled, owed) = order_info.calculate_partial_fill_balances(constants::taker_fee(), constants::maker_fee());
 
         assert_eq(settled, balances::new(0, 0, 0));
-        // USDC owed = 1.2345 * 10.86 = 13.40667 = 13406670
+        // USDC owed = 1.234 * 10.86 = 13.40124 = 13401240
         // DEEP owed = 10.86 * 0.0005 = 0.00543 = 5430000 (9 decimals in DEEP)
-        assert_eq(owed, balances::new(0, 13406670, 5430000));
+        assert_eq(owed, balances::new(0, 13401240, 5430000));
 
         end(test);
     }
@@ -170,20 +166,329 @@ module deepbook::order_info_tests {
     }
 
     #[test]
-    // Place a bid order with quantity 131.11 at price $1813.05. Partial fill of 100.
-    fun calculate_partial_fill_balances_bid_partial_fill_ok() {}
+    // Place a bid order with quantity 131.11 at price $1900. Partial fill of 100 at price $1813.05.
+    fun calculate_partial_fill_balances_bid_partial_fill_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_900_000_000;
+        let maker_price = 1_813_050_000;
+        let quantity = 131_110_000_000;
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        let mut maker_order = create_order_info_base(BOB, maker_price, 100 * constants::sui_unit(), false, test.ctx().epoch()).to_order();
+        let has_next = order_info.match_maker(&mut maker_order, 0);
+        assert!(has_next, 0);
+        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.executed_quantity() == 100 * constants::sui_unit(), 0);
+        // 100 * 1813.05 = 181305 = 181305000000
+        assert!(order_info.cumulative_quote_quantity() == 181_305_000_000, 0);
+        assert!(order_info.status() == constants::partially_filled(), 0);
+        assert!(order_info.remaining_quantity() == 31_110_000_000, 0);
+        let (settled, owed) = order_info.calculate_partial_fill_balances(constants::taker_fee(), constants::maker_fee());
+
+        // 100 SUI filled, the taker is owed 100 SUI.
+        assert_eq(settled, balances::new(100_000_000_000, 0, 0));
+        // Taker paid 181305 USDC for 100 SUI, so they owe 181305 USDC.
+        // The remaining 31.11 SUI is placed as a maker order at $1900
+        // Additional owed to create maker order 31.11 * 1900 = 59109 USDC.
+        // Total USDC owed = 181305 + 59109 = 240414
+
+        // Taker fee = 0.001 * 100 = 0.1 DEEP
+        // Maker fee = 0.0005 * 31.11 = 0.015555
+        // Total fees owed = 0.1 + 0.015555 = 0.115555 = 115555000
+        assert_eq(owed, balances::new(0, 240_414_000_000, 115_555_000));
+
+        end(test);
+    }
 
     #[test]
-    // Place an ask order with quantity 0.005 at price $68,191.55. Partial fill of 0.001.
-    fun calculate_partial_fill_balances_ask_partial_fill_ok() {}
+    // Place an ask order with quantity 0.005 at price $68,191.55. Partial fill of 0.001 at $70,000
+    fun calculate_partial_fill_balances_ask_partial_fill_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 68_191_550_000;
+        let maker_price = 70_000_000_000;
+        let quantity = 5_000_000;
+        let mut order_info = create_order_info_base(ALICE, price, quantity, false, test.ctx().epoch());
+        let mut maker_order = create_order_info_base(BOB, maker_price, 1_000_000, true, test.ctx().epoch()).to_order();
+        let has_next = order_info.match_maker(&mut maker_order, 0);
+        assert!(has_next, 0);
+        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.executed_quantity() == 1_000_000, 0);
+        // 0.001 * 70,000 = 70 = 70000000
+        assert!(order_info.cumulative_quote_quantity() == 70_000_000, 0);
+        assert!(order_info.status() == constants::partially_filled(), 0);
+        assert!(order_info.remaining_quantity() == 4_000_000, 0);
+        let (settled, owed) = order_info.calculate_partial_fill_balances(constants::taker_fee(), constants::maker_fee());
+
+        // Sell of 0.001 SUI filled at $70,000, taker is owed 70 USDC
+        assert_eq(settled, balances::new(0, 70_000_000, 0));
+        // Taker paid 70 USDC for 0.001 SUI, so they owe 70 USDC.
+        // The remaining 0.004 SUI is placed as a maker order at $68,191.55
+
+        // Taker fee = 0.001 * 0.001 = 0.000001 DEEP
+        // Maker fee = 0.0005 * 0.004 = 0.000002 DEEP
+        // Total fees owed = 0.000003 DEEP = 3000
+        assert_eq(owed, balances::new(5_000_000, 0, 3_000));
+
+        end(test);
+    }
 
     #[test]
     // Place a bid order with quantity 999.99 at price $111.11. Full fill.
-    fun calculate_partial_fill_balances_bid_full_fill_ok() {}
+    fun calculate_partial_fill_balances_bid_full_fill_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 111_110_000;
+        let maker_price = 111_110_000;
+        let quantity = 999_990_000_000;
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        let mut maker_order = create_order_info_base(BOB, maker_price, 999_990_000_000, false, test.ctx().epoch()).to_order();
+        let has_next = order_info.match_maker(&mut maker_order, 0);
+        assert!(has_next, 0);
+        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.executed_quantity() == 999_990_000_000, 0);
+        // 999.99 * 111.11 = 111108.8889 = 111108888900
+        assert!(order_info.cumulative_quote_quantity() == 111_108_888_900, 0);
+        assert!(order_info.status() == constants::filled(), 0);
+        assert!(order_info.remaining_quantity() == 0, 0);
+
+        end(test);
+    }
 
     #[test]
     // Place an ask order with quantity 0.0001 at price $1,000,000. Full fill.
-    fun calculate_partial_fill_balances_ask_full_fill_ok() {}
+    fun calculate_partial_fill_balances_ask_full_fill_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000_000_000;
+        let maker_price = 1_000_000_000_000;
+        let quantity = 100_000;
+        let mut order_info = create_order_info_base(ALICE, price, quantity, false, test.ctx().epoch());
+        let mut maker_order = create_order_info_base(BOB, maker_price, 100_000, true, test.ctx().epoch()).to_order();
+        let has_next = order_info.match_maker(&mut maker_order, 0);
+        assert!(has_next, 0);
+        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.executed_quantity() == 100_000, 0);
+        // 0.0001 * 1,000,000 = 100 = 100000000
+        assert!(order_info.cumulative_quote_quantity() == 100_000_000, 0);
+        assert!(order_info.status() == constants::filled(), 0);
+        assert!(order_info.remaining_quantity() == 0, 0);
+
+        end(test);
+    }
+
+
+    #[test, expected_failure(abort_code = order_info::EOrderBelowMinimumSize)]
+    fun validate_inputs_below_minimum_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100;
+        create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EOrderInvalidLotSize)]
+    fun validate_inputs_invalid_lot_size_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_100_100;
+        create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EInvalidOrderType)]
+    fun validate_inputs_invalid_order_type_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_000;
+        let balance_manager_id = id_from_address(@0x1);
+        let order_type = 5;
+        let fee_is_deep = true;
+        let deep_per_base = 1 * constants::float_scaling();
+        let market_order = false;
+        let expire_timestamp = constants::max_u64();
+        create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_base,
+            market_order
+        );
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EMarketOrderCannotBePostOnly)]
+    fun validate_inputs_market_order_post_only_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_000;
+        let balance_manager_id = id_from_address(@0x1);
+        let order_type = 3;
+        let fee_is_deep = true;
+        let deep_per_base = 1 * constants::float_scaling();
+        let market_order = true;
+        let expire_timestamp = constants::max_u64();
+        create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_base,
+            market_order
+        );
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EOrderInvalidPrice)]
+    fun validate_inputs_invalid_price_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 0;
+        let quantity = 100_000;
+        create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EOrderInvalidPrice)]
+    fun validate_inputs_invalid_price2_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 111;
+        let quantity = 100_000;
+        create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EPOSTOrderCrossesOrderbook)]
+    fun validate_execution_post_only_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_000;
+        let balance_manager_id = id_from_address(@0x1);
+        let order_type = 3;
+        let fee_is_deep = true;
+        let deep_per_base = 1 * constants::float_scaling();
+        let market_order = false;
+        let expire_timestamp = constants::max_u64();
+        let mut order_info = create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_base,
+            market_order
+        );
+        let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
+        order_info.match_maker(&mut maker_order, 0);
+        order_info.assert_execution();
+        
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = order_info::EFOKOrderCannotBeFullyFilled)]
+    fun validate_execution_FOK_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_000_000;
+        let balance_manager_id = id_from_address(@0x1);
+        let order_type = 2;
+        let fee_is_deep = true;
+        let deep_per_base = 1 * constants::float_scaling();
+        let market_order = false;
+        let expire_timestamp = constants::max_u64();
+        let mut order_info = create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_base,
+            market_order
+        );
+        let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
+        order_info.match_maker(&mut maker_order, 0);
+        order_info.assert_execution();
+        
+        abort(0)
+    }
+
+    #[test]
+    fun validate_execution_immediate_or_cancel_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1_000_000;
+        let quantity = 100_000_000;
+        let balance_manager_id = id_from_address(@0x1);
+        let order_type = 1;
+        let fee_is_deep = true;
+        let deep_per_base = 1 * constants::float_scaling();
+        let market_order = false;
+        let expire_timestamp = constants::max_u64();
+        let mut order_info = create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_base,
+            market_order
+        );
+        let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
+        order_info.match_maker(&mut maker_order, 0);
+        order_info.assert_execution();
+        assert!(order_info.status() == constants::canceled(), 0);
+
+        end(test);
+    }
 
     public fun create_order_info_base(
         trader: address,
@@ -246,6 +551,12 @@ module deepbook::order_info_tests {
         );
 
         order_info.set_order_id(utils::encode_order_id(is_bid, price, 1));
+        order_info.validate_inputs(
+            constants::tick_size(),
+            constants::min_size(),
+            constants::lot_size(),
+            0
+        );
 
         order_info
     }
