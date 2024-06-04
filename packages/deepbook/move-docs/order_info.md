@@ -53,7 +53,6 @@ All order matching happens in this module.
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
-<b>use</b> <a href="dependencies/move-stdlib/debug.md#0x1_debug">0x1::debug</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
@@ -1451,8 +1450,6 @@ Funds for the match or an expired order are returned to the maker as settled.
     <b>let</b> expire_maker =
         self.<a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>() == <a href="constants.md#0x0_constants_cancel_maker">constants::cancel_maker</a>() &&
         maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>() == self.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>();
-
-    std::debug::print(&expire_maker);
 
     <b>let</b> <a href="fill.md#0x0_fill">fill</a> = maker.generate_fill(
         timestamp,
