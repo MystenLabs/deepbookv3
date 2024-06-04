@@ -206,7 +206,7 @@ Order is matched against the book and injected into the book if necessary.
 If order is IOC or fully executed, it will not be injected.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_create_order">create_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, timestamp: u64)
 </code></pre>
 
 
@@ -219,14 +219,13 @@ If order is IOC or fully executed, it will not be injected.
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
     timestamp: u64,
-    ctx: &TxContext,
 ) {
     <a href="order_info.md#0x0_order_info">order_info</a>.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
     <b>let</b> order_id = <a href="utils.md#0x0_utils_encode_order_id">utils::encode_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid(), <a href="order_info.md#0x0_order_info">order_info</a>.price(), self.<a href="book.md#0x0_book_get_order_id">get_order_id</a>(<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()));
     <a href="order_info.md#0x0_order_info">order_info</a>.set_order_id(order_id);
     self.<a href="book.md#0x0_book_match_against_book">match_against_book</a>(<a href="order_info.md#0x0_order_info">order_info</a>, timestamp);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.assert_execution()) <b>return</b>;
-    self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base(), ctx);
+    self.<a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(<a href="order_info.md#0x0_order_info">order_info</a>);
 }
 </code></pre>
 
@@ -620,7 +619,7 @@ Mutates the order and the maker order as necessary.
 Balance accounting happens before this function is called
 
 
-<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, deep_per_base: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
 </code></pre>
 
 
@@ -632,10 +631,8 @@ Balance accounting happens before this function is called
 <pre><code><b>fun</b> <a href="book.md#0x0_book_inject_limit_order">inject_limit_order</a>(
     self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &OrderInfo,
-    deep_per_base: u64,
-    ctx: &TxContext,
 ) {
-    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order(deep_per_base, ctx);
+    <b>let</b> <a href="order.md#0x0_order">order</a> = <a href="order_info.md#0x0_order_info">order_info</a>.to_order();
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.is_bid()) {
         self.bids.insert(<a href="order_info.md#0x0_order_info">order_info</a>.order_id(), <a href="order.md#0x0_order">order</a>);
     } <b>else</b> {

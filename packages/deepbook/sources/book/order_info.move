@@ -4,6 +4,7 @@
 /// Order module defines the order struct and its methods.
 /// All order matching happens in this module.
 module deepbook::order_info {
+    // === Imports ===
     use sui::event;
     use deepbook::{
         math,
@@ -12,6 +13,17 @@ module deepbook::order_info {
         balances::{Self, Balances},
     };
 
+    // === Errors ===
+    const EOrderInvalidPrice: u64 = 0;
+    const EOrderBelowMinimumSize: u64 = 1;
+    const EOrderInvalidLotSize: u64 = 2;
+    const EInvalidExpireTimestamp: u64 = 3;
+    const EInvalidOrderType: u64 = 4;
+    const EPOSTOrderCrossesOrderbook: u64 = 5;
+    const EFOKOrderCannotBeFullyFilled: u64 = 6;
+    const EMarketOrderCannotBePostOnly: u64 = 7;
+
+    // === Constants ===
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
@@ -31,15 +43,7 @@ module deepbook::order_info {
     const FILLED: u8 = 2;
     const CANCELED: u8 = 3;
 
-    const EOrderInvalidPrice: u64 = 0;
-    const EOrderBelowMinimumSize: u64 = 1;
-    const EOrderInvalidLotSize: u64 = 2;
-    const EInvalidExpireTimestamp: u64 = 3;
-    const EInvalidOrderType: u64 = 4;
-    const EPOSTOrderCrossesOrderbook: u64 = 5;
-    const EFOKOrderCannotBeFullyFilled: u64 = 6;
-    const EMarketOrderCannotBePostOnly: u64 = 7;
-
+    // === Structs ===
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
     /// gets updated until it is completed or placed in the book.
@@ -134,45 +138,8 @@ module deepbook::order_info {
         placed_quantity: u64,
         expire_timestamp: u64,
     }
-
-    public(package) fun new(
-        pool_id: ID,
-        balance_manager_id: ID,
-        client_order_id: u64,
-        trader: address,
-        order_type: u8,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        fee_is_deep: bool,
-        epoch: u64,
-        expire_timestamp: u64,
-        deep_per_base: u64,
-        market_order: bool,
-    ): OrderInfo {
-        OrderInfo {
-            pool_id,
-            order_id: 0,
-            balance_manager_id,
-            client_order_id,
-            trader,
-            order_type,
-            price,
-            is_bid,
-            original_quantity: quantity,
-            deep_per_base,
-            expire_timestamp,
-            executed_quantity: 0,
-            cumulative_quote_quantity: 0,
-            fills: vector[],
-            fee_is_deep,
-            epoch,
-            paid_fees: 0,
-            status: LIVE,
-            market_order,
-        }
-    }
-
+    
+    // === Public-View Functions ===
     public fun balance_manager_id(self: &OrderInfo): ID {
         self.balance_manager_id
     }
@@ -241,6 +208,45 @@ module deepbook::order_info {
         self.fills
     }
 
+    // === Public-Package Functions ===
+    public(package) fun new(
+        pool_id: ID,
+        balance_manager_id: ID,
+        client_order_id: u64,
+        trader: address,
+        order_type: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        fee_is_deep: bool,
+        epoch: u64,
+        expire_timestamp: u64,
+        deep_per_base: u64,
+        market_order: bool,
+    ): OrderInfo {
+        OrderInfo {
+            pool_id,
+            order_id: 0,
+            balance_manager_id,
+            client_order_id,
+            trader,
+            order_type,
+            price,
+            is_bid,
+            original_quantity: quantity,
+            deep_per_base,
+            expire_timestamp,
+            executed_quantity: 0,
+            cumulative_quote_quantity: 0,
+            fills: vector[],
+            fee_is_deep,
+            epoch,
+            paid_fees: 0,
+            status: LIVE,
+            market_order,
+        }
+    }
+
     public(package) fun market_order(self: &OrderInfo): bool {
         self.market_order
     }
@@ -261,7 +267,7 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
-    public(package) fun calculate_taker_maker_fees(
+    public(package) fun calculate_partial_fill_balances(
         self: &mut OrderInfo,
         taker_fee: u64,
         maker_fee: u64,
@@ -306,16 +312,14 @@ module deepbook::order_info {
     /// information required to match orders.
     public(package) fun to_order(
         self: &OrderInfo,
-        deep_per_base: u64,
-        ctx: &TxContext,
     ): Order {
         order::new(
             self.order_id,
             self.balance_manager_id,
             self.client_order_id,
             self.remaining_quantity(),
-            deep_per_base,
-            ctx.epoch(),
+            self.deep_per_base,
+            self.epoch,
             self.status,
             self.expire_timestamp,
         )
