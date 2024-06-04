@@ -5,11 +5,13 @@
 
 
 
+-  [Struct `REGISTRY`](#0x0_registry_REGISTRY)
+-  [Resource `DeepbookAdminCap`](#0x0_registry_DeepbookAdminCap)
 -  [Resource `Registry`](#0x0_registry_Registry)
 -  [Struct `PoolKey`](#0x0_registry_PoolKey)
 -  [Constants](#@Constants_0)
 -  [Function `register_pool`](#0x0_registry_register_pool)
--  [Function `create_and_share`](#0x0_registry_create_and_share)
+-  [Function `init`](#0x0_registry_init)
 
 
 <pre><code><b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
@@ -21,13 +23,68 @@
 
 
 
+<a name="0x0_registry_REGISTRY"></a>
+
+## Struct `REGISTRY`
+
+
+
+<pre><code><b>struct</b> <a href="registry.md#0x0_registry_REGISTRY">REGISTRY</a> <b>has</b> drop
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>dummy_field: bool</code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
+<a name="0x0_registry_DeepbookAdminCap"></a>
+
+## Resource `DeepbookAdminCap`
+
+DeepbookAdminCap is used to call admin functions.
+
+
+<pre><code><b>struct</b> <a href="registry.md#0x0_registry_DeepbookAdminCap">DeepbookAdminCap</a> <b>has</b> store, key
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>id: <a href="dependencies/sui-framework/object.md#0x2_object_UID">object::UID</a></code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
 <a name="0x0_registry_Registry"></a>
 
 ## Resource `Registry`
 
 
 
-<pre><code><b>struct</b> <a href="registry.md#0x0_registry_Registry">Registry</a> <b>has</b> key
+<pre><code><b>struct</b> <a href="registry.md#0x0_registry_Registry">Registry</a> <b>has</b> store, key
 </code></pre>
 
 
@@ -141,14 +198,13 @@ Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exist
 
 </details>
 
-<a name="0x0_registry_create_and_share"></a>
+<a name="0x0_registry_init"></a>
 
-## Function `create_and_share`
-
-Create a new registry and share it.
+## Function `init`
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="registry.md#0x0_registry_create_and_share">create_and_share</a>(ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+
+<pre><code><b>fun</b> <a href="registry.md#0x0_registry_init">init</a>(_: <a href="registry.md#0x0_registry_REGISTRY">registry::REGISTRY</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -157,13 +213,16 @@ Create a new registry and share it.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="registry.md#0x0_registry_create_and_share">create_and_share</a>(ctx: &<b>mut</b> TxContext) {
+<pre><code><b>fun</b> <a href="registry.md#0x0_registry_init">init</a>(_: <a href="registry.md#0x0_registry_REGISTRY">REGISTRY</a>, ctx: &<b>mut</b> TxContext) {
     <b>let</b> <a href="registry.md#0x0_registry">registry</a> = <a href="registry.md#0x0_registry_Registry">Registry</a> {
         id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
         pools: <a href="dependencies/sui-framework/bag.md#0x2_bag_new">bag::new</a>(ctx),
     };
-
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="registry.md#0x0_registry">registry</a>);
+    <b>let</b> admin = <a href="registry.md#0x0_registry_DeepbookAdminCap">DeepbookAdminCap</a> {
+        id: <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx),
+    };
+    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(admin, ctx.sender());
 }
 </code></pre>
 

@@ -7,7 +7,6 @@ module deepbook::pool {
 
     use sui::{
         coin::Coin,
-        balance::Balance,
         sui::SUI,
         clock::Clock,
         event,
@@ -22,7 +21,7 @@ module deepbook::pool {
         state::{Self, State},
         vault::{Self, Vault, DEEP},
         deep_price::{Self, DeepPrice},
-        registry::Registry,
+        registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
     };
@@ -33,7 +32,7 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EInvalidAmountIn: u64 = 6;
-    const EIneligibleWhitelist: u64 = 7;
+    // const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderBalanceManager: u64 = 10;
@@ -44,11 +43,6 @@ module deepbook::pool {
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
-
-    /// DeepBookAdminCap is used to call admin functions.
-    public struct DeepBookAdminCap has key, store {
-        id: UID,
-    }
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -75,7 +69,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        creation_fee: Balance<SUI>,
+        creation_fee: Coin<SUI>,
         ctx: &mut TxContext,
     ) {
         assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
@@ -110,7 +104,7 @@ module deepbook::pool {
 
         // TODO: reconsider sending the Coin here. User pays gas;
         // TODO: depending on the frequency of the event;
-        transfer::public_transfer(creation_fee.into_coin(ctx), TREASURY_ADDRESS);
+        transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
 
         transfer::share_object(pool);
     }
@@ -460,7 +454,7 @@ module deepbook::pool {
     /// Only Admin can set a pool as stable.
     public fun set_stable<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepBookAdminCap,
+        _cap: &DeepbookAdminCap,
         stable: bool,
         ctx: &TxContext,
     ) {
@@ -471,14 +465,15 @@ module deepbook::pool {
     /// Only Admin can set a pool as whitelist.
     public fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepBookAdminCap,
+        _cap: &DeepbookAdminCap,
         whitelist: bool,
         ctx: &TxContext,
     ) {
-        let base = type_name::get<BaseAsset>();
-        let quote = type_name::get<QuoteAsset>();
-        let deep_type = type_name::get<DEEP>();
-        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+        // TODO: remove comment out section after testing
+        // let base = type_name::get<BaseAsset>();
+        // let quote = type_name::get<QuoteAsset>();
+        // let deep_type = type_name::get<DEEP>();
+        // assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
