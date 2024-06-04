@@ -1220,7 +1220,7 @@ module deepbook::pool_tests {
                 tick_size,
                 lot_size,
                 min_size,
-                balance::create_for_testing(constants::pool_creation_fee()),
+                coin::mint_for_testing(constants::pool_creation_fee(), test.ctx()),
                 test.ctx()
             );
         };
