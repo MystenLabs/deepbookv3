@@ -23,6 +23,7 @@ module deepbook::order_info {
     const EPOSTOrderCrossesOrderbook: u64 = 5;
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
     const EMarketOrderCannotBePostOnly: u64 = 7;
+    const ESelfMatchingCancelTaker: u64 = 8;
 
     // === Structs ===
     /// OrderInfo struct represents all order information.
@@ -377,10 +378,12 @@ module deepbook::order_info {
     ): bool {
         if (!self.crosses_price(maker)) return false;
 
+        if (self.self_matching_option() == constants::cancel_taker()) {
+            assert!(maker.balance_manager_id() != self.balance_manager_id(), ESelfMatchingCancelTaker);
+        };
         let expire_maker =
             self.self_matching_option() == constants::cancel_maker() &&
             maker.balance_manager_id() == self.balance_manager_id();
-
         let fill = maker.generate_fill(
             timestamp,
             self.remaining_quantity(),

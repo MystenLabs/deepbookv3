@@ -343,12 +343,12 @@ module deepbook::pool_tests {
         );
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatchingCancelTaker)]
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
     fun test_self_matching_cancel_taker_bid() {
         test_self_matching_cancel_taker(true);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatchingCancelTaker)]
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
     fun test_self_matching_cancel_taker_ask() {
         test_self_matching_cancel_taker(false);
     }

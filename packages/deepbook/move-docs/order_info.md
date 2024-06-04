@@ -579,6 +579,15 @@ Emitted when a maker order is injected into the order book.
 
 
 
+<a name="0x0_order_info_ESelfMatchingCancelTaker"></a>
+
+
+
+<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_ESelfMatchingCancelTaker">ESelfMatchingCancelTaker</a>: u64 = 8;
+</code></pre>
+
+
+
 <a name="0x0_order_info_balance_manager_id"></a>
 
 ## Function `balance_manager_id`
@@ -1447,10 +1456,12 @@ Funds for the match or an expired order are returned to the maker as settled.
 ): bool {
     <b>if</b> (!self.<a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(maker)) <b>return</b> <b>false</b>;
 
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>() == <a href="constants.md#0x0_constants_cancel_taker">constants::cancel_taker</a>()) {
+        <b>assert</b>!(maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>() != self.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>(), <a href="order_info.md#0x0_order_info_ESelfMatchingCancelTaker">ESelfMatchingCancelTaker</a>);
+    };
     <b>let</b> expire_maker =
         self.<a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>() == <a href="constants.md#0x0_constants_cancel_maker">constants::cancel_maker</a>() &&
         maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>() == self.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>();
-
     <b>let</b> <a href="fill.md#0x0_fill">fill</a> = maker.generate_fill(
         timestamp,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),

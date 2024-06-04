@@ -23,13 +23,11 @@
 
 
 <pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
-<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
-<b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 </code></pre>
 
@@ -135,15 +133,6 @@
 
 
 <pre><code><b>const</b> <a href="book.md#0x0_book_EInvalidTicks">EInvalidTicks</a>: u64 = 4;
-</code></pre>
-
-
-
-<a name="0x0_book_ESelfMatchingCancelTaker"></a>
-
-
-
-<pre><code><b>const</b> <a href="book.md#0x0_book_ESelfMatchingCancelTaker">ESelfMatchingCancelTaker</a>: u64 = 5;
 </code></pre>
 
 
@@ -567,9 +556,6 @@ Mutates the order and the maker order as necessary.
 
     <b>while</b> (!ref.is_null()) {
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
-        <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.self_matching_option() == <a href="constants.md#0x0_constants_cancel_taker">constants::cancel_taker</a>()) {
-            <b>assert</b>!(maker_order.balance_manager_id() != <a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), <a href="book.md#0x0_book_ESelfMatchingCancelTaker">ESelfMatchingCancelTaker</a>);
-        };
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
 
