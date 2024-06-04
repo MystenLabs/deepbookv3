@@ -18,6 +18,7 @@ All order matching happens in this module.
 -  [Function `order_id`](#0x0_order_info_order_id)
 -  [Function `client_order_id`](#0x0_order_info_client_order_id)
 -  [Function `order_type`](#0x0_order_info_order_type)
+-  [Function `self_matching_option`](#0x0_order_info_self_matching_option)
 -  [Function `price`](#0x0_order_info_price)
 -  [Function `is_bid`](#0x0_order_info_is_bid)
 -  [Function `original_quantity`](#0x0_order_info_original_quantity)
@@ -41,23 +42,18 @@ All order matching happens in this module.
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
 -  [Function `remaining_quantity`](#0x0_order_info_remaining_quantity)
--  [Function `assert_post_only`](#0x0_order_info_assert_post_only)
--  [Function `assert_fill_or_kill`](#0x0_order_info_assert_fill_or_kill)
--  [Function `is_immediate_or_cancel`](#0x0_order_info_is_immediate_or_cancel)
--  [Function `fill_or_kill`](#0x0_order_info_fill_or_kill)
--  [Function `immediate_or_cancel`](#0x0_order_info_immediate_or_cancel)
 -  [Function `crosses_price`](#0x0_order_info_crosses_price)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
--  [Function `is_live`](#0x0_order_info_is_live)
--  [Function `set_cancelled`](#0x0_order_info_set_cancelled)
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
 
 
 <pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
+<b>use</b> <a href="dependencies/move-stdlib/debug.md#0x1_debug">0x1::debug</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
@@ -116,6 +112,12 @@ It is returned at the end of the order lifecycle.
 </dd>
 <dt>
 <code>order_type: u8</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>self_matching_option: u8</code>
 </dt>
 <dd>
 
@@ -506,15 +508,6 @@ Emitted when a maker order is injected into the order book.
 ## Constants
 
 
-<a name="0x0_order_info_CANCELED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>: u8 = 3;
-</code></pre>
-
-
-
 <a name="0x0_order_info_EOrderBelowMinimumSize"></a>
 
 
@@ -529,33 +522,6 @@ Emitted when a maker order is injected into the order book.
 
 
 <pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_order_info_FILLED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>: u8 = 2;
-</code></pre>
-
-
-
-<a name="0x0_order_info_LIVE"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>: u8 = 0;
-</code></pre>
-
-
-
-<a name="0x0_order_info_PARTIALLY_FILLED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_PARTIALLY_FILLED">PARTIALLY_FILLED</a>: u8 = 1;
 </code></pre>
 
 
@@ -610,69 +576,6 @@ Emitted when a maker order is injected into the order book.
 
 
 <pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>: u64 = 5;
-</code></pre>
-
-
-
-<a name="0x0_order_info_FILL_OR_KILL"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>: u8 = 2;
-</code></pre>
-
-
-
-<a name="0x0_order_info_IMMEDIATE_OR_CANCEL"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>: u8 = 1;
-</code></pre>
-
-
-
-<a name="0x0_order_info_MAX_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_MAX_PRICE">MAX_PRICE</a>: u64 = 4611686018427387904;
-</code></pre>
-
-
-
-<a name="0x0_order_info_MAX_RESTRICTION"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_MAX_RESTRICTION">MAX_RESTRICTION</a>: u8 = 3;
-</code></pre>
-
-
-
-<a name="0x0_order_info_MIN_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
-</code></pre>
-
-
-
-<a name="0x0_order_info_NO_RESTRICTION"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_NO_RESTRICTION">NO_RESTRICTION</a>: u8 = 0;
-</code></pre>
-
-
-
-<a name="0x0_order_info_POST_ONLY"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>: u8 = 3;
 </code></pre>
 
 
@@ -790,6 +693,30 @@ Emitted when a maker order is injected into the order book.
 
 <pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_order_type">order_type</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u8 {
     self.order_type
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_self_matching_option"></a>
+
+## Function `self_matching_option`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): u8
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u8 {
+    self.self_matching_option
 }
 </code></pre>
 
@@ -1091,7 +1018,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, self_matching_option: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -1106,6 +1033,7 @@ Emitted when a maker order is injected into the order book.
     client_order_id: u64,
     trader: <b>address</b>,
     order_type: u8,
+    self_matching_option: u8,
     price: u64,
     quantity: u64,
     is_bid: bool,
@@ -1122,6 +1050,7 @@ Emitted when a maker order is injected into the order book.
         client_order_id,
         trader,
         order_type,
+        self_matching_option,
         price,
         is_bid,
         original_quantity: quantity,
@@ -1133,7 +1062,7 @@ Emitted when a maker order is injected into the order book.
         fee_is_deep,
         epoch,
         paid_fees: 0,
-        status: <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>,
+        status: <a href="constants.md#0x0_constants_live">constants::live</a>(),
         market_order,
     }
 }
@@ -1302,7 +1231,7 @@ Emitted when a maker order is injected into the order book.
     };
 
     <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
-    <b>if</b> (remaining_quantity &gt; 0 && !self.<a href="order_info.md#0x0_order_info_is_immediate_or_cancel">is_immediate_or_cancel</a>()) {
+    <b>if</b> (remaining_quantity &gt; 0 && !(self.<a href="order_info.md#0x0_order_info_order_type">order_type</a>() == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>())) {
         <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
             self.deep_per_base,
             <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee)
@@ -1387,12 +1316,12 @@ Validates that the initial order created meets the pool requirements.
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.original_quantity &gt;= min_size, <a href="order_info.md#0x0_order_info_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.original_quantity % lot_size == 0, <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.expire_timestamp &gt;= timestamp, <a href="order_info.md#0x0_order_info_EInvalidExpireTimestamp">EInvalidExpireTimestamp</a>);
-    <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type &gt;= <a href="order_info.md#0x0_order_info_NO_RESTRICTION">NO_RESTRICTION</a> && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_order_type">order_type</a> &lt;= <a href="order_info.md#0x0_order_info_MAX_RESTRICTION">MAX_RESTRICTION</a>, <a href="order_info.md#0x0_order_info_EInvalidOrderType">EInvalidOrderType</a>);
+    <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type &gt;= <a href="constants.md#0x0_constants_no_restriction">constants::no_restriction</a>() && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_order_type">order_type</a> &lt;= <a href="constants.md#0x0_constants_max_restriction">constants::max_restriction</a>(), <a href="order_info.md#0x0_order_info_EInvalidOrderType">EInvalidOrderType</a>);
     <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.market_order) {
-        <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type != <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>, <a href="order_info.md#0x0_order_info_EMarketOrderCannotBePostOnly">EMarketOrderCannotBePostOnly</a>);
+        <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.order_type != <a href="constants.md#0x0_constants_post_only">constants::post_only</a>(), <a href="order_info.md#0x0_order_info_EMarketOrderCannotBePostOnly">EMarketOrderCannotBePostOnly</a>);
         <b>return</b>
     };
-    <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.price &gt;= <a href="order_info.md#0x0_order_info_MIN_PRICE">MIN_PRICE</a> && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= <a href="order_info.md#0x0_order_info_MAX_PRICE">MAX_PRICE</a>, <a href="order_info.md#0x0_order_info_EOrderInvalidPrice">EOrderInvalidPrice</a>);
+    <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.price &gt;= <a href="constants.md#0x0_constants_min_price">constants::min_price</a>() && <a href="order_info.md#0x0_order_info">order_info</a>.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), <a href="order_info.md#0x0_order_info_EOrderInvalidPrice">EOrderInvalidPrice</a>);
     <b>assert</b>!(<a href="order_info.md#0x0_order_info">order_info</a>.price % tick_size == 0, <a href="order_info.md#0x0_order_info_EOrderInvalidPrice">EOrderInvalidPrice</a>);
 }
 </code></pre>
@@ -1418,15 +1347,15 @@ Assert order types after partial fill against the order book.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_execution">assert_execution</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
-    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>)
+    <b>if</b> (self.order_type == <a href="constants.md#0x0_constants_post_only">constants::post_only</a>())
         <b>assert</b>!(self.executed_quantity == 0, <a href="order_info.md#0x0_order_info_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>);
-    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>)
+    <b>if</b> (self.order_type == <a href="constants.md#0x0_constants_fill_or_kill">constants::fill_or_kill</a>())
         <b>assert</b>!(self.executed_quantity == self.original_quantity, <a href="order_info.md#0x0_order_info_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>);
-    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>) {
+    <b>if</b> (self.order_type == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>()) {
         <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() &gt; 0) {
-            self.status = <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>;
+            self.status = <a href="constants.md#0x0_constants_canceled">constants::canceled</a>();
         } <b>else</b> {
-            self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
+            self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
         };
 
         <b>return</b> <b>true</b>
@@ -1458,133 +1387,6 @@ Returns the remaining quantity for the order.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
     self.original_quantity - self.executed_quantity
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_assert_post_only"></a>
-
-## Function `assert_post_only`
-
-Asserts that the order doesn't have any fills.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_post_only">assert_post_only</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_post_only">assert_post_only</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
-    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_POST_ONLY">POST_ONLY</a>)
-        <b>assert</b>!(self.executed_quantity == 0, <a href="order_info.md#0x0_order_info_EPOSTOrderCrossesOrderbook">EPOSTOrderCrossesOrderbook</a>);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_assert_fill_or_kill"></a>
-
-## Function `assert_fill_or_kill`
-
-Asserts that the order is fully filled.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_fill_or_kill">assert_fill_or_kill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_assert_fill_or_kill">assert_fill_or_kill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
-    <b>if</b> (self.order_type == <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>)
-        <b>assert</b>!(self.executed_quantity == self.original_quantity, <a href="order_info.md#0x0_order_info_EFOKOrderCannotBeFullyFilled">EFOKOrderCannotBeFullyFilled</a>);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_is_immediate_or_cancel"></a>
-
-## Function `is_immediate_or_cancel`
-
-Checks whether this is an immediate or cancel type of order.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_is_immediate_or_cancel">is_immediate_or_cancel</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_is_immediate_or_cancel">is_immediate_or_cancel</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
-    self.order_type == <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_fill_or_kill"></a>
-
-## Function `fill_or_kill`
-
-Returns the fill or kill constant.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_or_kill">fill_or_kill</a>(): u8
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_fill_or_kill">fill_or_kill</a>(): u8 {
-    <a href="order_info.md#0x0_order_info_FILL_OR_KILL">FILL_OR_KILL</a>
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_immediate_or_cancel"></a>
-
-## Function `immediate_or_cancel`
-
-Returns the immediate or cancel constant.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_immediate_or_cancel">immediate_or_cancel</a>(): u8 {
-    <a href="order_info.md#0x0_order_info_IMMEDIATE_OR_CANCEL">IMMEDIATE_OR_CANCEL</a>
 }
 </code></pre>
 
@@ -1646,14 +1448,25 @@ Funds for the match or an expired order are returned to the maker as settled.
 ): bool {
     <b>if</b> (!self.<a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(maker)) <b>return</b> <b>false</b>;
 
-    <b>let</b> <a href="fill.md#0x0_fill">fill</a> = maker.generate_fill(timestamp, self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(), self.is_bid);
+    <b>let</b> expire_maker =
+        self.<a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>() == <a href="constants.md#0x0_constants_cancel_maker">constants::cancel_maker</a>() &&
+        maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>() == self.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>();
+
+    std::debug::print(&expire_maker);
+
+    <b>let</b> <a href="fill.md#0x0_fill">fill</a> = maker.generate_fill(
+        timestamp,
+        self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
+        self.is_bid,
+        expire_maker
+    );
     self.fills.push_back(<a href="fill.md#0x0_fill">fill</a>);
     <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired()) <b>return</b> <b>true</b>;
 
     self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.volume();
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
-    self.status = <a href="order_info.md#0x0_order_info_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
-    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="order_info.md#0x0_order_info_FILLED">FILLED</a>;
+    self.status = <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
@@ -1698,54 +1511,6 @@ Funds for the match or an expired order are returned to the maker as settled.
         price: self.price,
         expire_timestamp: self.expire_timestamp,
     });
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_is_live"></a>
-
-## Function `is_live`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_is_live">is_live</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_is_live">is_live</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
-    self.status == <a href="order_info.md#0x0_order_info_LIVE">LIVE</a>
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_order_info_set_cancelled"></a>
-
-## Function `set_cancelled`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_set_cancelled">set_cancelled</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_set_cancelled">set_cancelled</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>) {
-    self.status = <a href="order_info.md#0x0_order_info_CANCELED">CANCELED</a>;
 }
 </code></pre>
 

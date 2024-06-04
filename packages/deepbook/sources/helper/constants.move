@@ -25,13 +25,14 @@ module deepbook::constants {
     // Cancel the maker order.
     const CANCEL_MAKER: u8 = 2;
 
+    // Order statuses.
     const LIVE: u8 = 0;
     const PARTIALLY_FILLED: u8 = 1;
     const FILLED: u8 = 2;
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
-    // Governance params
+    // Constants for testing
     const MAKER_FEE: u64 = 500000;
     const TAKER_FEE: u64 = 1000000;
     const TICK_SIZE: u64 = 1000;
@@ -42,6 +43,7 @@ module deepbook::constants {
     const USDC_UNIT: u64 = 1_000_000;
     const SUI_UNIT: u64 = 1_000_000_000;
 
+    // Testing error codes
     const EOrderInfoMismatch: u64 = 0;
     const EBookOrderMismatch: u64 = 1;
 
