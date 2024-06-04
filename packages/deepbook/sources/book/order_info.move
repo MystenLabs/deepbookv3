@@ -429,6 +429,8 @@ module deepbook::order_info {
             self.self_matching_option() == constants::cancel_maker() &&
             maker.balance_manager_id() == self.balance_manager_id();
 
+        std::debug::print(&expire_maker);
+
         let fill = maker.generate_fill(
             timestamp,
             self.remaining_quantity(),
