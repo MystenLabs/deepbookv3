@@ -9,13 +9,8 @@ module deepbook::order {
         math,
         utils,
         fill::{Self, Fill},
+        constants,
     };
-
-    const LIVE: u8 = 0;
-    const PARTIALLY_FILLED: u8 = 1;
-    const FILLED: u8 = 2;
-    const CANCELED: u8 = 3;
-    const EXPIRED: u8 = 4;
 
     const EInvalidNewQuantity: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
@@ -102,10 +97,10 @@ module deepbook::order {
         let expired = self.expire_timestamp < timestamp || expire_maker;
 
         if (expired) {
-            self.status = EXPIRED;
+            self.status = constants::expired();
         } else {
             self.filled_quantity = self.filled_quantity + volume;
-            self.status = if (self.quantity == self.filled_quantity) FILLED else PARTIALLY_FILLED;
+            self.status = if (self.quantity == self.filled_quantity) constants::filled() else constants::partially_filled();
         };
 
         fill::new(
@@ -177,13 +172,9 @@ module deepbook::order {
         });
     }
 
-    public(package) fun set_live(self: &mut Order) {
-        self.status = LIVE;
-    }
-
     /// Update the order status to canceled.
     public(package) fun set_canceled(self: &mut Order) {
-        self.status = CANCELED;
+        self.status = constants::canceled();
     }
 
     public(package) fun order_id(self: &Order): u128 {

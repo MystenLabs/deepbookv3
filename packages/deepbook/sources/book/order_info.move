@@ -24,27 +24,6 @@ module deepbook::order_info {
     const EFOKOrderCannotBeFullyFilled: u64 = 6;
     const EMarketOrderCannotBePostOnly: u64 = 7;
 
-    // === Constants ===
-    const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
-
-    // Restrictions on limit orders.
-    // No restriction on the order.
-    const NO_RESTRICTION: u8 = 0;
-    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
-    const IMMEDIATE_OR_CANCEL: u8 = 1;
-    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
-    const FILL_OR_KILL: u8 = 2;
-    // Mandates that the entire order be passive. Otherwise, cancel the order.
-    const POST_ONLY: u8 = 3;
-    // Maximum restriction value.
-    const MAX_RESTRICTION: u8 = 3;
-
-    const LIVE: u8 = 0;
-    const PARTIALLY_FILLED: u8 = 1;
-    const FILLED: u8 = 2;
-    const CANCELED: u8 = 3;
-
     // === Structs ===
     /// OrderInfo struct represents all order information.
     /// This objects gets created at the beginning of the order lifecycle and
@@ -252,7 +231,7 @@ module deepbook::order_info {
             fee_is_deep,
             epoch,
             paid_fees: 0,
-            status: LIVE,
+            status: constants::live(),
             market_order,
         }
     }
@@ -301,7 +280,7 @@ module deepbook::order_info {
         };
 
         let remaining_quantity = self.remaining_quantity();
-        if (remaining_quantity > 0 && !self.is_immediate_or_cancel()) {
+        if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
             let deep_in = math::mul(
                 self.deep_per_base,
                 math::mul(remaining_quantity, maker_fee)
@@ -346,26 +325,26 @@ module deepbook::order_info {
         assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order_info.order_type >= NO_RESTRICTION && order_info.order_type <= MAX_RESTRICTION, EInvalidOrderType);
+        assert!(order_info.order_type >= constants::no_restriction() && order_info.order_type <= constants::max_restriction(), EInvalidOrderType);
         if (order_info.market_order) {
-            assert!(order_info.order_type != POST_ONLY, EMarketOrderCannotBePostOnly);
+            assert!(order_info.order_type != constants::post_only(), EMarketOrderCannotBePostOnly);
             return
         };
-        assert!(order_info.price >= MIN_PRICE && order_info.price <= MAX_PRICE, EOrderInvalidPrice);
+        assert!(order_info.price >= constants::min_price() && order_info.price <= constants::max_price(), EOrderInvalidPrice);
         assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
     }
 
     /// Assert order types after partial fill against the order book.
     public(package) fun assert_execution(self: &mut OrderInfo): bool {
-        if (self.order_type == POST_ONLY)
+        if (self.order_type == constants::post_only())
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
-        if (self.order_type == FILL_OR_KILL)
+        if (self.order_type == constants::fill_or_kill())
             assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled);
-        if (self.order_type == IMMEDIATE_OR_CANCEL) {
+        if (self.order_type == constants::immediate_or_cancel()) {
             if (self.remaining_quantity() > 0) {
-                self.status = CANCELED;
+                self.status = constants::canceled();
             } else {
-                self.status = FILLED;
+                self.status = constants::filled();
             };
 
             return true
@@ -377,33 +356,6 @@ module deepbook::order_info {
     /// Returns the remaining quantity for the order.
     public(package) fun remaining_quantity(self: &OrderInfo): u64 {
         self.original_quantity - self.executed_quantity
-    }
-
-    /// Asserts that the order doesn't have any fills.
-    public(package) fun assert_post_only(self: &OrderInfo) {
-        if (self.order_type == POST_ONLY)
-            assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
-    }
-
-    /// Asserts that the order is fully filled.
-    public(package) fun assert_fill_or_kill(self: &OrderInfo) {
-        if (self.order_type == FILL_OR_KILL)
-            assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled);
-    }
-
-    /// Checks whether this is an immediate or cancel type of order.
-    public(package) fun is_immediate_or_cancel(self: &OrderInfo): bool {
-        self.order_type == IMMEDIATE_OR_CANCEL
-    }
-
-    /// Returns the fill or kill constant.
-    public(package) fun fill_or_kill(): u8 {
-        FILL_OR_KILL
-    }
-
-    /// Returns the immediate or cancel constant.
-    public(package) fun immediate_or_cancel(): u8 {
-        IMMEDIATE_OR_CANCEL
     }
 
     /// Returns true if two opposite orders are overlapping in price.
@@ -442,8 +394,8 @@ module deepbook::order_info {
 
         self.executed_quantity = self.executed_quantity + fill.volume();
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
-        self.status = PARTIALLY_FILLED;
-        if (self.remaining_quantity() == 0) self.status = FILLED;
+        self.status = constants::partially_filled();
+        if (self.remaining_quantity() == 0) self.status = constants::filled();
 
         self.emit_order_filled(
             maker,
@@ -468,14 +420,6 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
-    }
-
-    public(package) fun is_live(self: &OrderInfo): bool {
-        self.status == LIVE
-    }
-
-    public(package) fun set_cancelled(self: &mut OrderInfo) {
-        self.status = CANCELED;
     }
 
     fun emit_order_filled(

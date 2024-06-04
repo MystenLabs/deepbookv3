@@ -2,6 +2,8 @@ module deepbook::constants {
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
+    const MIN_PRICE: u64 = 1;
+    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
 
     // Restrictions on limit orders.
     // No restriction on the order.
@@ -29,6 +31,7 @@ module deepbook::constants {
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
+    // Governance params
     const MAKER_FEE: u64 = 500000;
     const TAKER_FEE: u64 = 1000000;
     const TICK_SIZE: u64 = 1000;
@@ -148,5 +151,13 @@ module deepbook::constants {
 
     public fun cancel_maker(): u8 {
         CANCEL_MAKER
+    }
+
+    public fun min_price(): u64 {
+        MIN_PRICE
+    }
+
+    public fun max_price(): u64 {
+        MAX_PRICE
     }
 }

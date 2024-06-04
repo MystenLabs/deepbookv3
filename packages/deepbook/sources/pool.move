@@ -214,7 +214,7 @@ module deepbook::pool {
             &mut temp_balance_manager,
             &proof,
             0,
-            order_info::immediate_or_cancel(),
+            constants::immediate_or_cancel(),
             constants::self_matching_allowed(),
             base_quantity,
             is_bid,
