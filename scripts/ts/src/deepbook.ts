@@ -2,7 +2,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { getActiveAddress, signAndExecute } from "./utils";
 import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { SuiClient, SuiObjectData } from "@mysten/sui.js/client";
+import { SuiClient } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 
 // =================================================================
