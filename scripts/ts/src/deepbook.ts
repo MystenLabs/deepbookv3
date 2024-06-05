@@ -35,6 +35,18 @@ const POOL_CREATION_FEE = 100 * FLOAT_SCALAR;
 const MY_ADDRESS = getActiveAddress();
 const GAS_BUDGET = 500000000; // Update gas budget as needed for order placement
 
+// Trading constants
+// Order types
+const NO_RESTRICTION = 0;
+const IMMEDIATE_OR_CANCEL = 1;
+const FILL_OR_KILL = 2;
+const POST_ONLY = 3;
+
+// Self matching options
+const SELF_MATCHING_ALLOWED = 0;
+const CANCEL_TAKER = 1;
+const CANCEL_MAKER = 2;
+
 // =================================================================
 // Transactions
 // =================================================================
@@ -110,19 +122,37 @@ const depositIntoManager = async (
 }
 
 const withdrawFromManager = async (
+    amountToWithdraw: number,
     coinType: string,
     txb: TransactionBlock
 ) => {
-    // Result types: [0x2::coin::Coin<Type_0>]
+    const coin = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
+        arguments: [
+            txb.object(MANAGER_ID),
+            txb.pure.u64(amountToWithdraw),
+        ],
+        typeArguments: [coinType]
+    });
+
+    txb.transferObjects([coin], MY_ADDRESS);
+    console.log(`Withdrew ${amountToWithdraw} of type ${coinType} from manager ${MANAGER_ID}`);
+}
+
+const withdrawAllFromManager = async (
+    coinType: string,
+    txb: TransactionBlock
+) => {
     const coin = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
         arguments: [
             txb.object(MANAGER_ID),
         ],
-        typeArguments: [coinType] // Update type ID as needed
+        typeArguments: [coinType]
     });
 
     txb.transferObjects([coin], MY_ADDRESS);
+    console.log(`Withdrew all of type ${coinType} from manager ${MANAGER_ID}`);
 };
 
 const checkManagerBalance = async (
@@ -151,16 +181,35 @@ const checkManagerBalance = async (
 
 /// Places an order in the pool
 const placeLimitOrder = async (
+    isOwner: boolean,
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(GAS_BUDGET);
+    const clientOrderId = 88;
+    const orderType = NO_RESTRICTION;
+    const selfMatchingOption = SELF_MATCHING_ALLOWED;
+    const price = 2000000;
+    const quantity = 1000000;
+    const isBid = true;
+    const payWithDeep = false;
+    var tradeProof;
 
-    const tradeProof = txb.moveCall({
-		target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
-		arguments: [
-            txb.object(MANAGER_ID),
-        ],
-    });
+    if (isOwner) {
+        tradeProof = txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
+            arguments: [
+                txb.object(MANAGER_ID),
+            ],
+        });
+    } else {
+        tradeProof = txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
+            arguments: [
+                txb.object(MANAGER_ID),
+                txb.object(TRADECAP_ID),
+            ],
+        });
+    }
 
     const orderInfo = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
@@ -168,13 +217,13 @@ const placeLimitOrder = async (
             txb.object(POOL_ID),
             txb.object(MANAGER_ID),
             tradeProof,
-            txb.pure.u64(88), // client_order_id
-            txb.pure.u8(0),
-            txb.pure.u8(0),
-            txb.pure.u64(2000000), // price
-            txb.pure.u64(1000000), // quantity
-            txb.pure.bool(true), // is_bid
-            txb.pure.bool(false), // false to not pay with deep
+            txb.pure.u64(clientOrderId),
+            txb.pure.u8(orderType),
+            txb.pure.u8(selfMatchingOption),
+            txb.pure.u64(price),
+            txb.pure.u64(quantity),
+            txb.pure.bool(isBid),
+            txb.pure.bool(payWithDeep),
             txb.pure.u64(LARGE_TIMESTAMP),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
@@ -314,10 +363,11 @@ const executeTransaction = async () => {
     // await createAndShareBalanceManager(txb);
     // await whiteListPool(txb);
     // await depositIntoManager(10000000000, BASE_ID, BASE_TYPE, txb);
-    // await withdrawFromManager(BASE_TYPE, txb);
+    // await withdrawFromManager(2000, QUOTE_TYPE, txb);
+    // await withdrawAllFromManager(BASE_TYPE, txb);
     // await checkManagerBalance(BASE_TYPE, txb);
     // await checkManagerBalance(QUOTE_TYPE, txb);
-    // await placeLimitOrder(txb);
+    // await placeLimitOrder(true, txb);
     // await cancelOrder("36893497370791140086775802", true, txb);
     // await getAllOpenOrders(txb);
 
