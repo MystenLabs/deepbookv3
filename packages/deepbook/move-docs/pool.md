@@ -16,6 +16,7 @@ Public-facing interface for the package.
 -  [Function `swap_exact_amount`](#0x0_pool_swap_exact_amount)
 -  [Function `modify_order`](#0x0_pool_modify_order)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
+-  [Function `cancel_all_orders`](#0x0_pool_cancel_all_orders)
 -  [Function `stake`](#0x0_pool_stake)
 -  [Function `unstake`](#0x0_pool_unstake)
 -  [Function `submit_proposal`](#0x0_pool_submit_proposal)
@@ -656,6 +657,43 @@ Order canceled event is emitted.
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_cancel_all_orders"></a>
+
+## Function `cancel_all_orders`
+
+Cancel all open orders placed by the balance manager in the pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_cancel_all_orders">cancel_all_orders</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_cancel_all_orders">cancel_all_orders</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
+    proof: &TradeProof,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &TxContext,
+) {
+    <b>let</b> open_orders = self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id()).open_orders().into_keys();
+    <b>let</b> <b>mut</b> i = 0;
+    <b>while</b> (i &lt; open_orders.length()) {
+        <b>let</b> order_id = open_orders[i];
+        self.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof, order_id, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>, ctx);
+        i = i + 1;
+    }
 }
 </code></pre>
 

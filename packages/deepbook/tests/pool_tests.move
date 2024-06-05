@@ -373,6 +373,84 @@ module deepbook::pool_tests {
         test_swap_exact_amount(false);
     }
 
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_cancel_all_orders_bid() {
+        test_cancel_all_orders(true);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_cancel_all_orders_ask() {
+        test_cancel_all_orders(false);
+    }
+
+    fun test_cancel_all_orders(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        let order_info_1 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let client_order_id = 2;
+
+        let order_info_2 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_order_ok(
+            order_info_1.order_id(),
+            &mut test,
+        );
+
+        borrow_order_ok(
+            order_info_2.order_id(),
+            &mut test,
+        );
+
+        cancel_all_orders(
+            ALICE,
+            acct_id_alice,
+            &mut test
+        );
+
+        borrow_order_ok(
+            order_info_1.order_id(),
+            &mut test,
+        );
+        end(test);
+    }
+
     /// Alice places a bid order, Bob places a swap_exact_amount order
     /// Make sure the assets returned to Bob are correct
     fun test_swap_exact_amount(
@@ -1305,6 +1383,30 @@ module deepbook::pool_tests {
                 &mut balance_manager,
                 &proof,
                 order_id,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+        }
+    }
+
+    fun cancel_all_orders(
+        owner: address,
+        acct_id: ID,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(owner);
+        {
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
+
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
+            pool.cancel_all_orders<SUI, USDC>(
+                &mut balance_manager,
+                &proof,
                 &clock,
                 test.ctx()
             );

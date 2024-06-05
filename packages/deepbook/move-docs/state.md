@@ -33,6 +33,7 @@
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
+<b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
@@ -228,11 +229,14 @@ Remove order from account orders.
 
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
     <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
+    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
     <b>let</b> maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(epoch);
     <b>let</b> deep_per_base = <a href="order.md#0x0_order">order</a>.deep_per_base();
     <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, maker_fee));
-    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, deep_out);
+    <b>let</b> base_out = <b>if</b> (is_bid) { 0 } <b>else</b> { cancel_quantity };
+    <b>let</b> quote_out = <b>if</b> (is_bid) { <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) } <b>else</b> { 0 };
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(base_out, quote_out, deep_out);
 
     <a href="account.md#0x0_account">account</a>.remove_order(order_id);
     <a href="account.md#0x0_account">account</a>.add_settled_balances(<a href="balances.md#0x0_balances">balances</a>);
