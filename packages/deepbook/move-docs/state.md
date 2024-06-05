@@ -182,7 +182,7 @@ Update taker settled balances and volumes.
 
     <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
     <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
-    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, account_volume);
+    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, <a href="math.md#0x0_math_mul">math::mul</a>(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base()));
     <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();
