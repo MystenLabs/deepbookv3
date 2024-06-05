@@ -30,7 +30,7 @@ const BASE_ID = `0x7ac09c0f7b067f5671bea77149e2913eb994221534178088c070e8b3b21f5
 const QUOTE_ID = `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`;
 
 const FLOAT_SCALAR = 1000000000;
-const LARGE_TIMESTAMP = 184467440737095516;
+const LARGE_TIMESTAMP = 1844674407370955161;
 const POOL_CREATION_FEE = 100 * FLOAT_SCALAR;
 const MY_ADDRESS = getActiveAddress();
 const GAS_BUDGET = 500000000; // Update gas budget as needed for order placement
@@ -87,14 +87,14 @@ const whiteListPool = async (
 }
 
 const depositIntoManager = async (
-    amount_to_deposit: number,
-    coin_id: string,
-    coin_type: string,
+    amountToDeposit: number,
+    coinId: string,
+    coinType: string,
     txb: TransactionBlock
 ) => {
     const [deposit] = txb.splitCoins(
-        txb.object(coin_id),
-        [txb.pure.u64(amount_to_deposit)]
+        txb.object(coinId),
+        [txb.pure.u64(amountToDeposit)]
     );
 
     txb.moveCall({
@@ -103,14 +103,14 @@ const depositIntoManager = async (
             txb.object(MANAGER_ID),
             deposit,
 		],
-		typeArguments: [coin_type]
+		typeArguments: [coinType]
     });
 
-    console.log(`Deposited ${amount_to_deposit} of type ${coin_type} into manager ${MANAGER_ID}`);
+    console.log(`Deposited ${amountToDeposit} of type ${coinType} into manager ${MANAGER_ID}`);
 }
 
 const withdrawFromManager = async (
-    coin_type: string,
+    coinType: string,
     txb: TransactionBlock
 ) => {
     // Result types: [0x2::coin::Coin<Type_0>]
@@ -119,23 +119,23 @@ const withdrawFromManager = async (
         arguments: [
             txb.object(MANAGER_ID),
         ],
-        typeArguments: [coin_type] // Update type ID as needed
+        typeArguments: [coinType] // Update type ID as needed
     });
 
     txb.transferObjects([coin], MY_ADDRESS);
 };
 
 const checkManagerBalance = async (
-    coin_type: string,
+    coinType: string,
     txb: TransactionBlock
 ) => {
     // Result types: [U64]
-    const [result_0] = txb.moveCall({
+    txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
         arguments: [
             txb.object(MANAGER_ID),
         ],
-        typeArguments: [coin_type]
+        typeArguments: [coinType]
     });
 
     const res = await client.devInspectTransactionBlock({
@@ -146,7 +146,7 @@ const checkManagerBalance = async (
     const bytes = res.results![0].returnValues![0][0];
     const parsed_balance = bcs.U64.parse(new Uint8Array(bytes));
 
-    console.log(`Manager balance for ${coin_type} is ${parsed_balance.toString()}`); // Output the u64 number as a string
+    console.log(`Manager balance for ${coinType} is ${parsed_balance.toString()}`); // Output the u64 number as a string
 }
 
 /// Places an order in the pool
@@ -162,13 +162,13 @@ const placeLimitOrder = async (
         ],
     });
 
-    txb.moveCall({
+    const orderInfo = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
             txb.object(POOL_ID),
             txb.object(MANAGER_ID),
             tradeProof,
-            txb.pure.u64(88),
+            txb.pure.u64(88), // client_order_id
             txb.pure.u8(0),
             txb.pure.u8(0),
             txb.pure.u64(2000000), // price
@@ -180,17 +180,62 @@ const placeLimitOrder = async (
         ],
         typeArguments: [BASE_TYPE, QUOTE_TYPE]
     });
+
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
+
+    const ID = bcs.struct('ID', {
+        bytes: bcs.Address,
+    });
+
+    const Fill = bcs.struct('Fill', {
+        orderId: bcs.u128(),
+        balanceManagerId: ID,
+        expired: bcs.bool(),
+        completed: bcs.bool(),
+        volume: bcs.u64(),
+        quoteQuantity: bcs.u64(),
+        takerIsBid: bcs.bool()
+    });
+
+    const OrderInfo = bcs.struct('OrderInfo', {
+        poolId: bcs.Address,
+        orderId: bcs.u128(),
+        balanceManagerId: ID,
+        clientOrderId: bcs.u64(),
+        trader: bcs.Address,
+        orderType: bcs.u8(),
+        selfMatchingOption: bcs.u8(),
+        price: bcs.u64(),
+        isBid: bcs.bool(),
+        originalQuantity: bcs.u64(),
+        deepPerBase: bcs.u64(),
+        expireTimestamp: bcs.u64(),
+        executedQuantity: bcs.u64(),
+        cumulativeQuoteQuantity: bcs.u64(),
+        fills: bcs.vector(Fill),
+        feeIsDeep: bcs.bool(),
+        paidFees: bcs.u64(),
+        epoch: bcs.u64(),
+        status: bcs.u8(),
+        marketOrder: bcs.bool()
+    });
+
+    let orderInformation = res.results![1].returnValues![0][0];
+    console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
 }
 
 const cancelOrder = async (
-    order_id: string,
-    is_owner: boolean,
+    orderId: string,
+    isOwner: boolean,
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(GAS_BUDGET);
 
     var tradeProof;
-    if (is_owner) {
+    if (isOwner) {
         tradeProof = txb.moveCall({
             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
             arguments: [
@@ -202,7 +247,7 @@ const cancelOrder = async (
             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
             arguments: [
                 txb.object(MANAGER_ID),
-                txb.object(TRADECAP_ID), // TradeCapID
+                txb.object(TRADECAP_ID),
             ],
         })
     }
@@ -213,7 +258,7 @@ const cancelOrder = async (
             txb.object(POOL_ID),
             txb.object(MANAGER_ID),
             txb.object(tradeProof),
-            txb.pure.u128(order_id),
+            txb.pure.u128(orderId),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
         typeArguments: [BASE_TYPE, QUOTE_TYPE]
@@ -223,8 +268,7 @@ const cancelOrder = async (
 const getAllOpenOrders = async (
     txb: TransactionBlock
 ) => {
-    // Result types: [0x2::vec_set::VecSet<U128>]
-    const open_orders = txb.moveCall({
+    txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
         arguments: [
             txb.object(POOL_ID),
@@ -250,15 +294,15 @@ const getAllOpenOrders = async (
 }
 
 const cancelAllOrders = async (
-    is_owner: boolean,
+    isOwner: boolean,
     txb: TransactionBlock
 ) => {
     // TODO: This is a work in progress
-    const open_orders = await getAllOpenOrders(txb);
+    const openOrders = await getAllOpenOrders(txb);
 
-    for (let i = 0; i < open_orders.length; i++) {
-        await cancelOrder(open_orders[i].toString(), is_owner, txb);
-        console.log(`Cancelled order ${open_orders[i].toString()}`);
+    for (let i = 0; i < openOrders.length; i++) {
+        await cancelOrder(openOrders[i].toString(), isOwner, txb);
+        console.log(`Cancelled order ${openOrders[i].toString()}`);
     }
 }
 
@@ -274,7 +318,7 @@ const executeTransaction = async () => {
     // await checkManagerBalance(BASE_TYPE, txb);
     // await checkManagerBalance(QUOTE_TYPE, txb);
     // await placeLimitOrder(txb);
-    // await cancelOrder("36893497370791140086775803", true, txb);
+    // await cancelOrder("36893497370791140086775802", true, txb);
     // await getAllOpenOrders(txb);
 
     // Run transaction against ENV
