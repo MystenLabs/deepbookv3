@@ -142,7 +142,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_taker_fee_for_user">taker_fee_for_user</a>(self: &<a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, active_stake: u64, volume: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_taker_fee_for_user">taker_fee_for_user</a>(self: &<a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, active_stake: u64, volume_in_deep: u64): u64
 </code></pre>
 
 
@@ -151,8 +151,8 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="trade_params.md#0x0_trade_params_taker_fee_for_user">taker_fee_for_user</a>(self: &<a href="trade_params.md#0x0_trade_params_TradeParams">TradeParams</a>, active_stake: u64, volume: u64): u64 {
-    <b>if</b> (active_stake &gt;= self.stake_required && volume &gt;= self.stake_required) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="trade_params.md#0x0_trade_params_taker_fee_for_user">taker_fee_for_user</a>(self: &<a href="trade_params.md#0x0_trade_params_TradeParams">TradeParams</a>, active_stake: u64, volume_in_deep: u64): u64 {
+    <b>if</b> (active_stake &gt;= self.stake_required && volume_in_deep &gt;= self.stake_required) {
         self.taker_fee / 2
     } <b>else</b> {
         self.taker_fee

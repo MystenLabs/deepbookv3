@@ -14,7 +14,6 @@ module deepbook::book {
     const EEmptyOrderbook: u64 = 2;
     const EInvalidPriceRange: u64 = 3;
     const EInvalidTicks: u64 = 4;
-    const ESelfMatching: u64 = 5;
 
     public struct Book has store {
         tick_size: u64,
@@ -45,14 +44,13 @@ module deepbook::book {
         self: &mut Book,
         order_info: &mut OrderInfo,
         timestamp: u64,
-        ctx: &TxContext,
     ) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
         let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
         order_info.set_order_id(order_id);
         self.match_against_book(order_info, timestamp);
         if (order_info.assert_execution()) return;
-        self.inject_limit_order(order_info, order_info.deep_per_base(), ctx);
+        self.inject_limit_order(order_info);
     }
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
@@ -213,7 +211,6 @@ module deepbook::book {
 
         while (!ref.is_null()) {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
-            assert!(maker_order.balance_manager_id() != order_info.balance_manager_id(), ESelfMatching);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
 
@@ -238,10 +235,8 @@ module deepbook::book {
     fun inject_limit_order(
         self: &mut Book,
         order_info: &OrderInfo,
-        deep_per_base: u64,
-        ctx: &TxContext,
     ) {
-        let order = order_info.to_order(deep_per_base, ctx);
+        let order = order_info.to_order();
         if (order_info.is_bid()) {
             self.bids.insert(order_info.order_id(), order);
         } else {

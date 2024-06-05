@@ -142,7 +142,7 @@ Decode order_id into (is_bid, price, order_id)
     <b>let</b> is_bid = (encoded_order_id &gt;&gt; 127) == 0;
     <b>let</b> price = (encoded_order_id &gt;&gt; 64) <b>as</b> u64;
     <b>let</b> price = price & ((1u64 &lt;&lt; 63) - 1);
-    <b>let</b> order_id = (encoded_order_id & (1u128 &lt;&lt; 64 - 1)) <b>as</b> u64;
+    <b>let</b> order_id = (encoded_order_id & ((1u128 &lt;&lt; 64) - 1)) <b>as</b> u64;
 
     (is_bid, price, order_id)
 }

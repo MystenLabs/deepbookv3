@@ -24,7 +24,8 @@
 -  [Function `to_trade_params`](#0x0_governance_to_trade_params)
 
 
-<pre><code><b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
+<pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
@@ -250,15 +251,6 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 <pre><code><b>const</b> <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>: u64 = 1000000;
-</code></pre>
-
-
-
-<a name="0x0_governance_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="governance.md#0x0_governance_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
 </code></pre>
 
 
@@ -702,7 +694,7 @@ If there are multiple proposals with the same lowest votes, the latest one is re
     voting_power: u64,
 ) {
     <b>let</b> <b>mut</b> removal_id = <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>&lt;ID&gt;();
-    <b>let</b> <b>mut</b> cur_lowest_votes = <a href="governance.md#0x0_governance_MAX_U64">MAX_U64</a>;
+    <b>let</b> <b>mut</b> cur_lowest_votes = <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>();
     <b>let</b> (keys, values) = self.proposals.into_keys_values();
     <b>let</b> <b>mut</b> i = 0;
 

@@ -15,7 +15,7 @@ module deepbook::fill {
         // Whether the maker order is fully filled
         completed: bool,
         // Quantity filled
-        volume: u64,
+        base_quantity: u64,
         // Quantity of quote currency filled
         quote_quantity: u64,
         // Whether the taker is bid
@@ -27,7 +27,7 @@ module deepbook::fill {
         balance_manager_id: ID,
         expired: bool,
         completed: bool,
-        volume: u64,
+        base_quantity: u64,
         quote_quantity: u64,
         taker_is_bid: bool,
     ): Fill {
@@ -36,7 +36,7 @@ module deepbook::fill {
             balance_manager_id,
             expired,
             completed,
-            volume,
+            base_quantity,
             quote_quantity,
             taker_is_bid,
         }
@@ -58,8 +58,8 @@ module deepbook::fill {
         self.completed
     }
 
-    public(package) fun volume(self: &Fill): u64 {
-        self.volume
+    public(package) fun base_quantity(self: &Fill): u64 {
+        self.base_quantity
     }
     
     public(package) fun taker_is_bid(self: &Fill): bool {
@@ -77,7 +77,7 @@ module deepbook::fill {
     public(package) fun get_settled_maker_quantities(self: &Fill): Balances {
         let (base, quote) = if (self.expired) {
             if (self.taker_is_bid) {
-                (self.volume, 0)
+                (self.base_quantity, 0)
             } else {
                 (0, self.quote_quantity)
             }
@@ -85,7 +85,7 @@ module deepbook::fill {
             if (self.taker_is_bid) {
                 (0, self.quote_quantity)
             } else {
-                (self.volume, 0)
+                (self.base_quantity, 0)
             }
         };
 

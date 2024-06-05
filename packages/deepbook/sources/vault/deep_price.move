@@ -71,7 +71,7 @@ module deepbook::deep_price {
         self: &DeepPrice,
     ): u64 {
         // TODO: Add assert, assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
-        if (self.last_insert_timestamp() == 0) return 10 * 1_000_000_000; // Default deep conversion rate to 10
+        if (self.last_insert_timestamp() == 0) return 10 * 1_000_000_000; // Default deep conversion rate to 10, remove after testing
         let deep_per_base = math::div(self.cumulative_base, self.prices.length());
 
         deep_per_base

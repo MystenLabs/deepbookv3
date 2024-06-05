@@ -326,7 +326,7 @@ Given a fill, update the account balances and volumes as the maker.
     <b>let</b> settled_balances = <a href="fill.md#0x0_fill">fill</a>.get_settled_maker_quantities();
     self.settled_balances.add_balances(settled_balances);
     <b>if</b> (!<a href="fill.md#0x0_fill">fill</a>.expired()) {
-        self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.volume();
+        self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     };
     <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
         self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.order_id());

@@ -16,7 +16,6 @@ All order matching happens in this module.
 -  [Function `modify`](#0x0_order_modify)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
 -  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
--  [Function `set_live`](#0x0_order_set_live)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
 -  [Function `order_id`](#0x0_order_order_id)
 -  [Function `client_order_id`](#0x0_order_client_order_id)
@@ -31,7 +30,8 @@ All order matching happens in this module.
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
 
 
-<pre><code><b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
+<pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
@@ -273,15 +273,6 @@ Emitted when a maker order is modified.
 ## Constants
 
 
-<a name="0x0_order_CANCELED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_CANCELED">CANCELED</a>: u8 = 3;
-</code></pre>
-
-
-
 <a name="0x0_order_EInvalidNewQuantity"></a>
 
 
@@ -314,42 +305,6 @@ Emitted when a maker order is modified.
 
 
 <pre><code><b>const</b> <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_order_EXPIRED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>: u8 = 4;
-</code></pre>
-
-
-
-<a name="0x0_order_FILLED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_FILLED">FILLED</a>: u8 = 2;
-</code></pre>
-
-
-
-<a name="0x0_order_LIVE"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_LIVE">LIVE</a>: u8 = 0;
-</code></pre>
-
-
-
-<a name="0x0_order_PARTIALLY_FILLED"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>: u8 = 1;
 </code></pre>
 
 
@@ -406,7 +361,7 @@ Generate a fill for the resting order given the timestamp,
 quantity and whether the order is a bid.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_generate_fill">generate_fill</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64, quantity: u64, is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_generate_fill">generate_fill</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, timestamp: u64, quantity: u64, is_bid: bool, expire_maker: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -420,19 +375,20 @@ quantity and whether the order is a bid.
     timestamp: u64,
     quantity: u64,
     is_bid: bool,
+    expire_maker: bool,
 ): Fill {
-    <b>let</b> volume = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
-    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(volume, self.<a href="order.md#0x0_order_price">price</a>());
+    <b>let</b> base_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
+    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, self.<a href="order.md#0x0_order_price">price</a>());
 
     <b>let</b> order_id = self.order_id;
     <b>let</b> balance_manager_id = self.balance_manager_id;
-    <b>let</b> expired = self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp;
+    <b>let</b> expired = self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a> &lt; timestamp || expire_maker;
 
     <b>if</b> (expired) {
-        self.status = <a href="order.md#0x0_order_EXPIRED">EXPIRED</a>;
+        self.status = <a href="constants.md#0x0_constants_expired">constants::expired</a>();
     } <b>else</b> {
-        self.filled_quantity = self.filled_quantity + volume;
-        self.status = <b>if</b> (self.quantity == self.filled_quantity) <a href="order.md#0x0_order_FILLED">FILLED</a> <b>else</b> <a href="order.md#0x0_order_PARTIALLY_FILLED">PARTIALLY_FILLED</a>;
+        self.filled_quantity = self.filled_quantity + base_quantity;
+        self.status = <b>if</b> (self.quantity == self.filled_quantity) <a href="constants.md#0x0_constants_filled">constants::filled</a>() <b>else</b> <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
     };
 
     <a href="fill.md#0x0_fill_new">fill::new</a>(
@@ -440,7 +396,7 @@ quantity and whether the order is a bid.
         balance_manager_id,
         expired,
         self.quantity == self.filled_quantity,
-        volume,
+        base_quantity,
         quote_quantity,
         is_bid,
     )
@@ -473,11 +429,12 @@ quantity and whether the order is a bid.
     lot_size: u64,
     timestamp: u64,
 ) {
-    <b>let</b> cancel_quantity = self.quantity - new_quantity;
-    <b>assert</b>!(cancel_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+    <b>let</b> available_quantity = self.quantity - self.filled_quantity;
+    <b>let</b> cancel_quantity = available_quantity - new_quantity;
+    <b>assert</b>!(cancel_quantity &gt; 0 && new_quantity &lt; available_quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
     <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>assert</b>!(timestamp &lt;= self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
 
     self.filled_quantity = self.filled_quantity + cancel_quantity;
 }
@@ -569,30 +526,6 @@ quantity and whether the order is a bid.
 
 </details>
 
-<a name="0x0_order_set_live"></a>
-
-## Function `set_live`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_live">set_live</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_LIVE">LIVE</a>;
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_order_set_canceled"></a>
 
 ## Function `set_canceled`
@@ -610,7 +543,7 @@ Update the order status to canceled.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_set_canceled">set_canceled</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>) {
-    self.status = <a href="order.md#0x0_order_CANCELED">CANCELED</a>;
+    self.status = <a href="constants.md#0x0_constants_canceled">constants::canceled</a>();
 }
 </code></pre>
 

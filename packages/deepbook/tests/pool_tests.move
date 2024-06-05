@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-#[test_only, allow(unused_const)]
+#[test_only]
 module deepbook::pool_tests {
     use sui::{
         clock::{Self, Clock},
@@ -11,8 +11,7 @@ module deepbook::pool_tests {
             end,
             return_shared,
         },
-        balance::Self,
-        coin::Coin,
+        coin::{Self, Coin},
         sui::SUI,
         coin::mint_for_testing,
         test_utils,
@@ -27,41 +26,12 @@ module deepbook::pool_tests {
         big_vector::BigVector,
         math,
         registry,
+        constants,
+        utils
     };
-
-    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
-    const FLOAT_SCALING: u64 = 1_000_000_000;
-    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
-    // Restrictions on limit orders.
-    const NO_RESTRICTION: u8 = 0;
-    // Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
-    const IMMEDIATE_OR_CANCEL: u8 = 1;
-    // Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
-    const FILL_OR_KILL: u8 = 2;
-    // Mandates that the entire order be passive. Otherwise, cancel the order.
-    const POST_ONLY: u8 = 3;
-    // Maximum restriction value.
-    const MAX_RESTRICTION: u8 = 3;
-
-    const LIVE: u8 = 0;
-    const PARTIALLY_FILLED: u8 = 1;
-    const FILLED: u8 = 2;
-    const CANCELED: u8 = 3;
-    const EXPIRED: u8 = 4;
-
-    const MAKER_FEE: u64 = 500000;
-    const TAKER_FEE: u64 = 1000000;
-    const TICK_SIZE: u64 = 1000;
-    const LOT_SIZE: u64 = 1000;
-    const MIN_SIZE: u64 = 10000;
-    const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
-    const TAKER_DISCOUNT: u64 = 500_000_000;
 
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
-
-    const EOrderInfoMismatch: u64 = 0;
-    const EBookOrderMismatch: u64 = 1;
 
     public struct USDC {}
     public struct SPAM {}
@@ -90,12 +60,15 @@ module deepbook::pool_tests {
     fun test_place_then_fill_bid_ask() {
         place_then_fill(
             true,
-            NO_RESTRICTION,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            FILLED
+            constants::no_restriction(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(), constants::deep_multiplier())
+            ),
+            constants::filled()
         );
     }
 
@@ -103,12 +76,16 @@ module deepbook::pool_tests {
     fun test_place_then_fill_ask_bid() {
         place_then_fill(
             false,
-            NO_RESTRICTION,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            FILLED
+            constants::no_restriction(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(),
+                constants::deep_multiplier())
+            ),
+            constants::filled()
         );
     }
 
@@ -116,12 +93,15 @@ module deepbook::pool_tests {
     fun test_place_then_ioc_bid_ask() {
         place_then_fill(
             true,
-            IMMEDIATE_OR_CANCEL,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            FILLED
+            constants::immediate_or_cancel(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(), constants::deep_multiplier())
+            ),
+            constants::filled()
         );
     }
 
@@ -129,12 +109,16 @@ module deepbook::pool_tests {
     fun test_place_then_ioc_ask_bid() {
         place_then_fill(
             false,
-            IMMEDIATE_OR_CANCEL,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            FILLED
+            constants::immediate_or_cancel(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(),
+                constants::deep_multiplier())
+            ),
+            constants::filled()
         );
     }
 
@@ -142,11 +126,11 @@ module deepbook::pool_tests {
     fun test_place_then_ioc_no_fill_bid_ask_order_removed_e() {
         place_then_no_fill(
             true,
-            IMMEDIATE_OR_CANCEL,
+            constants::immediate_or_cancel(),
             0,
             0,
             0,
-            CANCELED
+            constants::canceled()
         );
     }
 
@@ -154,11 +138,11 @@ module deepbook::pool_tests {
     fun test_place_then_ioc_no_fill_ask_bid_order_removed_e() {
         place_then_no_fill(
             false,
-            IMMEDIATE_OR_CANCEL,
+            constants::immediate_or_cancel(),
             0,
             0,
             0,
-            CANCELED
+            constants::canceled()
         );
     }
 
@@ -166,11 +150,11 @@ module deepbook::pool_tests {
     fun test_expired_order_removed_bid_ask_e(){
         place_order_expire_timestamp_e(
             true,
-            NO_RESTRICTION,
+            constants::no_restriction(),
             0,
             0,
             0,
-            LIVE,
+            constants::live(),
         );
     }
 
@@ -178,11 +162,11 @@ module deepbook::pool_tests {
     fun test_expired_order_removed_ask_bid_e(){
         place_order_expire_timestamp_e(
             false,
-            NO_RESTRICTION,
+            constants::no_restriction(),
             0,
             0,
             0,
-            LIVE,
+            constants::live(),
         );
     }
 
@@ -194,10 +178,10 @@ module deepbook::pool_tests {
         setup_test(owner, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
         let client_order_id = 1;
-        let order_type = MAX_RESTRICTION + 1;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let order_type = constants::max_restriction() + 1;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
@@ -205,6 +189,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             true,
@@ -224,10 +209,10 @@ module deepbook::pool_tests {
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let alice_quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let alice_quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let is_bid = true;
         let pay_with_deep = true;
 
@@ -236,6 +221,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id, // client_order_id
             order_type,
+            constants::self_matching_allowed(),
             price, // price
             alice_quantity, // quantity
             is_bid,
@@ -268,9 +254,9 @@ module deepbook::pool_tests {
         set_time(100, &mut test);
 
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
         let expire_timestamp = 0;
         let is_bid = true;
         let pay_with_deep = true;
@@ -280,6 +266,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -294,12 +281,12 @@ module deepbook::pool_tests {
     fun test_partial_fill_order_bid() {
         partial_fill_order(
             true,
-            NO_RESTRICTION,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            PARTIALLY_FILLED
+            constants::no_restriction(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            constants::partially_filled()
         );
     }
 
@@ -307,19 +294,19 @@ module deepbook::pool_tests {
     fun test_partial_fill_order_ask() {
         partial_fill_order(
             false,
-            NO_RESTRICTION,
-            1 * FLOAT_SCALING,
-            1 * FLOAT_SCALING,
-            2 * FLOAT_SCALING,
-            math::mul(TAKER_DISCOUNT, math::mul(TAKER_FEE, DEEP_MULTIPLIER)),
-            PARTIALLY_FILLED
+            constants::no_restriction(),
+            1 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            constants::partially_filled()
         );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderBelowMinimumSize)]
     fun test_invalid_order_quantity_e() {
         place_with_price_quantity(
-            2 * FLOAT_SCALING,
+            2 * constants::float_scaling(),
             0
         );
     }
@@ -327,7 +314,7 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidLotSize)]
     fun test_invalid_lot_size_e() {
         place_with_price_quantity(
-            2 * FLOAT_SCALING,
+            2 * constants::float_scaling(),
             1_000_000_100,
         );
     }
@@ -336,15 +323,15 @@ module deepbook::pool_tests {
     fun test_invalid_tick_size_e() {
         place_with_price_quantity(
             2_000_000_100,
-            1 * FLOAT_SCALING,
+            1 * constants::float_scaling(),
         );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
     fun test_price_above_max_e() {
         place_with_price_quantity(
-            MAX_U64,
-            1 * FLOAT_SCALING,
+            constants::max_u64(),
+            1 * constants::float_scaling(),
         );
     }
 
@@ -352,18 +339,28 @@ module deepbook::pool_tests {
     fun test_price_below_min_e() {
         place_with_price_quantity(
             0,
-            1 * FLOAT_SCALING,
+            1 * constants::float_scaling(),
         );
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_bid() {
-        test_self_matching(true);
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
+    fun test_self_matching_cancel_taker_bid() {
+        test_self_matching_cancel_taker(true);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::ESelfMatching)]
-    fun test_self_matching_ask() {
-        test_self_matching(false);
+    #[test, expected_failure(abort_code = ::deepbook::order_info::ESelfMatchingCancelTaker)]
+    fun test_self_matching_cancel_taker_ask() {
+        test_self_matching_cancel_taker(false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_self_matching_cancel_maker_bid() {
+        test_self_matching_cancel_maker(true);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
+    fun test_self_matching_cancel_maker_ask() {
+        test_self_matching_cancel_maker(false);
     }
 
     #[test]
@@ -387,16 +384,17 @@ module deepbook::pool_tests {
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let alice_client_order_id = 1;
-        let alice_price = 2 * FLOAT_SCALING;
-        let alice_quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let alice_price = 2 * constants::float_scaling();
+        let alice_quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
-            NO_RESTRICTION,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -406,16 +404,19 @@ module deepbook::pool_tests {
         );
 
         let base_in = if (is_bid) {
-            1 * FLOAT_SCALING
+            1 * constants::float_scaling()
         } else {
             0
         };
         let quote_in = if (is_bid) {
             0
         } else {
-            2 * FLOAT_SCALING
+            2 * constants::float_scaling()
         };
-        let deep_in = math::mul(TAKER_DISCOUNT, math::mul(DEEP_MULTIPLIER, TAKER_FEE));
+        let deep_in = math::mul(
+            constants::taker_discount(),
+            math::mul(constants::deep_multiplier(), constants::taker_fee())
+        );
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
             BOB,
@@ -426,14 +427,14 @@ module deepbook::pool_tests {
         );
 
         if (is_bid) {
-            assert!(base_out.value() == 0, EOrderInfoMismatch);
-            assert!(quote_out.value() == 2 * FLOAT_SCALING, EOrderInfoMismatch);
+            assert!(base_out.value() == 0, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
-            assert!(base_out.value() == 1 * FLOAT_SCALING, EOrderInfoMismatch);
-            assert!(quote_out.value() == 0, EOrderInfoMismatch);
+            assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 0, constants::e_order_info_mismatch());
         };
 
-        assert!(deep_out.value() == 0, EOrderInfoMismatch);
+        assert!(deep_out.value() == 0, constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -442,9 +443,10 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Alice places a bid/ask order, Alice then places an ask/bid order that crosses with that order
+    /// Alice places a bid/ask order
+    /// Alice then places an ask/bid order that crosses with that order with cancel_taker option
     /// Order should be rejected.
-    fun test_self_matching(
+    fun test_self_matching_cancel_taker(
         is_bid: bool,
     ) {
         let owner: address = @0x1;
@@ -454,15 +456,15 @@ module deepbook::pool_tests {
 
         let bid_client_order_id = 1;
         let ask_client_order_id = 2;
-        let order_type = NO_RESTRICTION;
-        let price_1 = 2 * FLOAT_SCALING;
+        let order_type = constants::no_restriction();
+        let price_1 = 2 * constants::float_scaling();
         let price_2 = if (is_bid) {
-            1 * FLOAT_SCALING
+            1 * constants::float_scaling()
         } else {
-            3 * FLOAT_SCALING
+            3 * constants::float_scaling()
         };
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
         let fee_is_deep = true;
 
@@ -471,6 +473,7 @@ module deepbook::pool_tests {
             acct_id_alice,
             bid_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price_1,
             quantity,
             is_bid,
@@ -488,7 +491,7 @@ module deepbook::pool_tests {
             0,
             0,
             fee_is_deep,
-            LIVE,
+            constants::live(),
             expire_timestamp,
         );
 
@@ -497,11 +500,99 @@ module deepbook::pool_tests {
             acct_id_alice,
             ask_client_order_id,
             order_type,
+            constants::cancel_taker(),
             price_2,
             quantity,
             !is_bid,
             pay_with_deep,
             expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
+    /// Alice places a bid/ask order
+    /// Alice then places an ask/bid order that crosses with that order with cancel_maker option
+    /// Maker order should be removed, with the new order placed successfully.
+    fun test_self_matching_cancel_maker(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id_1 = 1;
+        let client_order_id_2 = 2;
+        let order_type = constants::no_restriction();
+        let price_1 = 2 * constants::float_scaling();
+        let price_2 = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let fee_is_deep = true;
+
+        let order_info_1 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id_1,
+            order_type,
+            constants::self_matching_allowed(),
+            price_1,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        verify_order_info(
+            &order_info_1,
+            client_order_id_1,
+            price_1,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            constants::live(),
+            expire_timestamp,
+        );
+
+        let order_info_2 = place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id_2,
+            order_type,
+            constants::cancel_maker(),
+            price_2,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        verify_order_info(
+            &order_info_2,
+            client_order_id_2,
+            price_2,
+            quantity,
+            0,
+            0,
+            0,
+            fee_is_deep,
+            constants::live(),
+            expire_timestamp,
+        );
+
+        borrow_order_ok(
+            order_info_1.order_id(),
             &mut test,
         );
 
@@ -518,8 +609,8 @@ module deepbook::pool_tests {
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let expire_timestamp = MAX_U64;
+        let order_type = constants::no_restriction();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
@@ -527,6 +618,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             true,
@@ -553,15 +645,16 @@ module deepbook::pool_tests {
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
         let alice_client_order_id = 1;
-        let alice_price = 2 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let alice_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
-            NO_RESTRICTION,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -571,14 +664,15 @@ module deepbook::pool_tests {
         );
 
         let bob_client_order_id = 2;
-        let bob_price = 2 * FLOAT_SCALING;
-        let bob_quantity = 2 * FLOAT_SCALING;
+        let bob_price = 2 * constants::float_scaling();
+        let bob_quantity = 2 * constants::float_scaling();
 
         let bob_order_info = place_order(
             BOB,
             acct_id_bob,
             bob_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             bob_price,
             bob_quantity,
             !is_bid,
@@ -604,7 +698,6 @@ module deepbook::pool_tests {
 
         borrow_order_ok(
             bob_order_info.order_id(),
-            !is_bid,
             &mut test,
         );
 
@@ -629,15 +722,16 @@ module deepbook::pool_tests {
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
         let alice_client_order_id = 1;
-        let alice_price = 2 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let alice_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
-            NO_RESTRICTION,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
             alice_price,
             alice_quantity,
             is_bid,
@@ -648,17 +742,18 @@ module deepbook::pool_tests {
 
         let bob_client_order_id = 2;
         let bob_price = if (is_bid) {
-            1 * FLOAT_SCALING
+            1 * constants::float_scaling()
         } else {
-            3 * FLOAT_SCALING
+            3 * constants::float_scaling()
         };
-        let bob_quantity = 1 * FLOAT_SCALING;
+        let bob_quantity = 1 * constants::float_scaling();
 
         let bob_order_info = place_order(
             BOB,
             acct_id_bob,
             bob_client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             bob_price,
             bob_quantity,
             !is_bid,
@@ -667,7 +762,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let expire_timestamp = MAX_U64;
+        let expire_timestamp = constants::max_u64();
         let fee_is_deep = true;
 
         verify_order_info(
@@ -702,16 +797,17 @@ module deepbook::pool_tests {
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
         let client_order_id = 1;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
         place_order(
             ALICE,
             acct_id_alice,
             client_order_id,
-            NO_RESTRICTION,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -722,9 +818,9 @@ module deepbook::pool_tests {
 
         let client_order_id = 2;
         let price = if (is_bid) {
-            3 * FLOAT_SCALING
+            3 * constants::float_scaling()
         } else {
-            1 * FLOAT_SCALING
+            1 * constants::float_scaling()
         };
 
         let order_info = place_order(
@@ -732,6 +828,7 @@ module deepbook::pool_tests {
             acct_id_bob,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             !is_bid,
@@ -740,8 +837,8 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let fee_is_deep = true;
 
         verify_order_info(
@@ -784,8 +881,8 @@ module deepbook::pool_tests {
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
         let client_order_id = 1;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
         let pay_with_deep = true;
         let fee_is_deep = true;
         let expire_timestamp = 100;
@@ -794,7 +891,8 @@ module deepbook::pool_tests {
             ALICE,
             acct_id_alice,
             client_order_id,
-            NO_RESTRICTION,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -819,17 +917,18 @@ module deepbook::pool_tests {
 
         let client_order_id = 2;
         let price = if (is_bid) {
-            1 * FLOAT_SCALING
+            1 * constants::float_scaling()
         } else {
-            3 * FLOAT_SCALING
+            3 * constants::float_scaling()
         };
-        let expire_timestamp = MAX_U64;
+        let expire_timestamp = constants::max_u64();
 
         let order_info_bob = place_order(
             BOB,
             acct_id_bob,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             !is_bid,
@@ -838,8 +937,8 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
 
         verify_order_info(
             &order_info_bob,
@@ -869,7 +968,6 @@ module deepbook::pool_tests {
 
         borrow_order_ok(
             order_info_alice.order_id(),
-            !is_bid,
             &mut test,
         );
         end(test);
@@ -886,13 +984,13 @@ module deepbook::pool_tests {
 
         // variables to input into order
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
 
         // variables expected from OrderInfo and Order
-        let status = LIVE;
+        let status = constants::live();
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
         let paid_fees = 0;
@@ -904,6 +1002,7 @@ module deepbook::pool_tests {
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -951,22 +1050,23 @@ module deepbook::pool_tests {
 
         // variables to input into order
         let client_order_id = 1;
-        let order_type = NO_RESTRICTION;
-        let price = 2 * FLOAT_SCALING;
-        let quantity = 1 * FLOAT_SCALING;
-        let expire_timestamp = MAX_U64;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
         let executed_quantity = 0;
         let cumulative_quote_quantity = 0;
         let paid_fees = 0;
         let fee_is_deep = true;
-        let status = LIVE;
+        let status = constants::live();
 
         let order_info = place_order(
             ALICE,
             acct_id,
             client_order_id,
             order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
             is_bid,
@@ -1011,15 +1111,15 @@ module deepbook::pool_tests {
         status: u8,
         expire_timestamp: u64,
     ) {
-        assert!(order_info.client_order_id() == client_order_id, EOrderInfoMismatch);
-        assert!(order_info.price() == price, EOrderInfoMismatch);
-        assert!(order_info.original_quantity() == original_quantity, EOrderInfoMismatch);
-        assert!(order_info.executed_quantity() == executed_quantity, EOrderInfoMismatch);
-        assert!(order_info.cumulative_quote_quantity() == cumulative_quote_quantity, EOrderInfoMismatch);
-        assert!(order_info.paid_fees() == paid_fees, EOrderInfoMismatch);
-        assert!(order_info.fee_is_deep() == fee_is_deep, EOrderInfoMismatch);
-        assert!(order_info.status() == status, EOrderInfoMismatch);
-        assert!(order_info.expire_timestamp() == expire_timestamp, EOrderInfoMismatch);
+        assert!(order_info.client_order_id() == client_order_id, constants::e_order_info_mismatch());
+        assert!(order_info.price() == price, constants::e_order_info_mismatch());
+        assert!(order_info.original_quantity() == original_quantity, constants::e_order_info_mismatch());
+        assert!(order_info.executed_quantity() == executed_quantity, constants::e_order_info_mismatch());
+        assert!(order_info.cumulative_quote_quantity() == cumulative_quote_quantity, constants::e_order_info_mismatch());
+        assert!(order_info.paid_fees() == paid_fees, constants::e_order_info_mismatch());
+        assert!(order_info.fee_is_deep() == fee_is_deep, constants::e_order_info_mismatch());
+        assert!(order_info.status() == status, constants::e_order_info_mismatch());
+        assert!(order_info.expire_timestamp() == expire_timestamp, constants::e_order_info_mismatch());
     }
 
     /// Helper, borrow orderbook and verify an order.
@@ -1055,11 +1155,11 @@ module deepbook::pool_tests {
     /// Internal function to borrow orderbook to ensure order exists
     fun borrow_order_ok(
         book_order_id: u128,
-        is_bid: bool,
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
         let pool = test.take_shared<Pool<SUI, USDC>>();
+        let (is_bid, _, _,) = utils::decode_order_id(book_order_id);
         borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         return_shared(pool);
     }
@@ -1076,14 +1176,14 @@ module deepbook::pool_tests {
         status: u8,
         expire_timestamp: u64,
     ) {
-        assert!(order.order_id() == book_order_id, EBookOrderMismatch);
-        assert!(order.client_order_id() == client_order_id, EBookOrderMismatch);
-        assert!(order.quantity() == quantity, EBookOrderMismatch);
-        assert!(order.filled_quantity() == filled_quantity, EBookOrderMismatch);
-        assert!(order.deep_per_base() == deep_per_base, EBookOrderMismatch);
-        assert!(order.epoch() == epoch, EBookOrderMismatch);
-        assert!(order.status() == status, EBookOrderMismatch);
-        assert!(order.expire_timestamp() == expire_timestamp, EBookOrderMismatch);
+        assert!(order.order_id() == book_order_id, constants::e_book_order_mismatch());
+        assert!(order.client_order_id() == client_order_id, constants::e_book_order_mismatch());
+        assert!(order.quantity() == quantity, constants::e_book_order_mismatch());
+        assert!(order.filled_quantity() == filled_quantity, constants::e_book_order_mismatch());
+        assert!(order.deep_per_base() == deep_per_base, constants::e_book_order_mismatch());
+        assert!(order.epoch() == epoch, constants::e_book_order_mismatch());
+        assert!(order.status() == status, constants::e_book_order_mismatch());
+        assert!(order.expire_timestamp() == expire_timestamp, constants::e_book_order_mismatch());
     }
 
     /// Internal function to borrow orderbook
@@ -1118,6 +1218,7 @@ module deepbook::pool_tests {
         acct_id: ID,
         client_order_id: u64,
         order_type: u8,
+        self_matching_option: u8,
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -1140,6 +1241,7 @@ module deepbook::pool_tests {
                 &proof,
                 client_order_id,
                 order_type,
+                self_matching_option,
                 price,
                 quantity,
                 is_bid,
@@ -1218,9 +1320,9 @@ module deepbook::pool_tests {
         test: &mut Scenario,
     ) {
         setup_pool_with_default_fees<SUI, USDC>(
-            TICK_SIZE, // tick size
-            LOT_SIZE, // lot size
-            MIN_SIZE, // min size
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
             test,
             sender,
         );
@@ -1251,7 +1353,7 @@ module deepbook::pool_tests {
                 tick_size,
                 lot_size,
                 min_size,
-                balance::create_for_testing(POOL_CREATION_FEE),
+                coin::mint_for_testing(constants::pool_creation_fee(), test.ctx()),
                 test.ctx()
             );
         };
@@ -1273,7 +1375,7 @@ module deepbook::pool_tests {
         sender: address,
         test: &mut Scenario,
     ): ID {
-        let amount_to_deposit = 1000000 * FLOAT_SCALING;
+        let amount_to_deposit = 1000000 * constants::float_scaling();
         test.next_tx(sender);
         {
             let mut acct = balance_manager::new(test.ctx());

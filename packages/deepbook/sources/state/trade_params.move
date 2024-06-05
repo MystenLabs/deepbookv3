@@ -28,8 +28,8 @@ module deepbook::trade_params {
         trade_params.taker_fee
     }
 
-    public(package) fun taker_fee_for_user(self: &TradeParams, active_stake: u64, volume: u64): u64 {
-        if (active_stake >= self.stake_required && volume >= self.stake_required) {
+    public(package) fun taker_fee_for_user(self: &TradeParams, active_stake: u64, volume_in_deep: u64): u64 {
+        if (active_stake >= self.stake_required && volume_in_deep >= self.stake_required) {
             self.taker_fee / 2
         } else {
             self.taker_fee

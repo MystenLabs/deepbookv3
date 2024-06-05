@@ -13,7 +13,7 @@ module deepbook::state {
         balances::{Self, Balances},
     };
 
-    const ENotEnoughStake: u64 = 2;
+    const ENotEnoughStake: u64 = 1;
 
     const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100; // TODO
 
@@ -54,7 +54,7 @@ module deepbook::state {
             let account = &mut self.accounts[maker];
             account.process_maker_fill(fill);
 
-            let volume = fill.volume();
+            let volume = fill.base_quantity();
             self.history.add_volume(volume, account.active_stake());
 
             i = i + 1;
@@ -67,9 +67,9 @@ module deepbook::state {
 
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume);
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
         let maker_fee = self.governance.trade_params().maker_fee();
-        let (mut settled, mut owed) = order_info.calculate_taker_maker_fees(taker_fee, maker_fee);
+        let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
         settled.add_balances(old_settled);
         owed.add_balances(old_owed);
