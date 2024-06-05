@@ -54,7 +54,7 @@ module deepbook::state {
             let account = &mut self.accounts[maker];
             account.process_maker_fill(fill);
 
-            let volume = fill.volume();
+            let volume = fill.base_quantity();
             self.history.add_volume(volume, account.active_stake());
 
             i = i + 1;

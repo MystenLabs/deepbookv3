@@ -11,7 +11,7 @@
 -  [Function `balance_manager_id`](#0x0_fill_balance_manager_id)
 -  [Function `expired`](#0x0_fill_expired)
 -  [Function `completed`](#0x0_fill_completed)
--  [Function `volume`](#0x0_fill_volume)
+-  [Function `base_quantity`](#0x0_fill_base_quantity)
 -  [Function `taker_is_bid`](#0x0_fill_taker_is_bid)
 -  [Function `quote_quantity`](#0x0_fill_quote_quantity)
 -  [Function `get_settled_maker_quantities`](#0x0_fill_get_settled_maker_quantities)
@@ -66,7 +66,7 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>volume: u64</code>
+<code>base_quantity: u64</code>
 </dt>
 <dd>
 
@@ -94,7 +94,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, volume: u64, quote_quantity: u64, taker_is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -108,7 +108,7 @@ It is used to update the state.
     balance_manager_id: ID,
     expired: bool,
     completed: bool,
-    volume: u64,
+    base_quantity: u64,
     quote_quantity: u64,
     taker_is_bid: bool,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
@@ -117,7 +117,7 @@ It is used to update the state.
         balance_manager_id,
         expired,
         completed,
-        volume,
+        base_quantity,
         quote_quantity,
         taker_is_bid,
     }
@@ -224,13 +224,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_volume"></a>
+<a name="0x0_fill_base_quantity"></a>
 
-## Function `volume`
+## Function `base_quantity`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_volume">volume</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_base_quantity">base_quantity</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
 </code></pre>
 
 
@@ -239,8 +239,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_volume">volume</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.volume
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_base_quantity">base_quantity</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
+    self.base_quantity
 }
 </code></pre>
 
@@ -318,7 +318,7 @@ It is used to update the state.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_get_settled_maker_quantities">get_settled_maker_quantities</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): Balances {
     <b>let</b> (base, quote) = <b>if</b> (self.expired) {
         <b>if</b> (self.taker_is_bid) {
-            (self.volume, 0)
+            (self.base_quantity, 0)
         } <b>else</b> {
             (0, self.quote_quantity)
         }
@@ -326,7 +326,7 @@ It is used to update the state.
         <b>if</b> (self.taker_is_bid) {
             (0, self.quote_quantity)
         } <b>else</b> {
-            (self.volume, 0)
+            (self.base_quantity, 0)
         }
     };
 
