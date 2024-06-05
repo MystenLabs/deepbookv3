@@ -206,4 +206,14 @@ module deepbook::account {
     public fun inactive_stake(self: &Account): u64 {
         self.inactive_stake
     }
+
+    #[test_only]
+    public fun settled_balances(self: &Account): Balances {
+        self.settled_balances
+    }
+
+    #[test_only]
+    public fun owed_balances(self: &Account): Balances {
+        self.owed_balances
+    }
 }
