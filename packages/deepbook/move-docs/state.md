@@ -169,7 +169,7 @@ Update taker settled balances and volumes.
         <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
         <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
 
-        <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.volume();
+        <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
         self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
 
         i = i + 1;

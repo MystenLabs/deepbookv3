@@ -98,7 +98,7 @@ module deepbook::account {
         let settled_balances = fill.get_settled_maker_quantities();
         self.settled_balances.add_balances(settled_balances);
         if (!fill.expired()) {
-            self.maker_volume = self.maker_volume + fill.volume();
+            self.maker_volume = self.maker_volume + fill.base_quantity();
         };
         if (fill.expired() || fill.completed()) {
             self.open_orders.remove(&fill.order_id());

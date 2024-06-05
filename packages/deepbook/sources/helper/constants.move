@@ -33,18 +33,29 @@ module deepbook::constants {
     const EXPIRED: u8 = 4;
 
     // Constants for testing
+    #[test_only]
     const MAKER_FEE: u64 = 500000;
+    #[test_only]
     const TAKER_FEE: u64 = 1000000;
+    #[test_only]
     const TICK_SIZE: u64 = 1000;
+    #[test_only]
     const LOT_SIZE: u64 = 1000;
+    #[test_only]
     const MIN_SIZE: u64 = 10000;
+    #[test_only]
     const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
+    #[test_only]
     const TAKER_DISCOUNT: u64 = 500_000_000;
+    #[test_only]
     const USDC_UNIT: u64 = 1_000_000;
+    #[test_only]
     const SUI_UNIT: u64 = 1_000_000_000;
 
     // Testing error codes
+    #[test_only]
     const EOrderInfoMismatch: u64 = 0;
+    #[test_only]
     const EBookOrderMismatch: u64 = 1;
 
     public fun pool_creation_fee(): u64 {
@@ -99,50 +110,6 @@ module deepbook::constants {
         EXPIRED
     }
 
-    public fun maker_fee(): u64 {
-        MAKER_FEE
-    }
-
-    public fun taker_fee(): u64 {
-        TAKER_FEE
-    }
-
-    public fun tick_size(): u64 {
-        TICK_SIZE
-    }
-
-    public fun lot_size(): u64 {
-        LOT_SIZE
-    }
-
-    public fun min_size(): u64 {
-        MIN_SIZE
-    }
-
-    public fun deep_multiplier(): u64 {
-        DEEP_MULTIPLIER
-    }
-
-    public fun taker_discount(): u64 {
-        TAKER_DISCOUNT
-    }
-
-    public fun e_order_info_mismatch(): u64 {
-        EOrderInfoMismatch
-    }
-
-    public fun e_book_order_mismatch(): u64 {
-        EBookOrderMismatch
-    }
-
-    public fun usdc_unit(): u64 {
-        USDC_UNIT
-    }
-
-    public fun sui_unit(): u64 {
-        SUI_UNIT
-    }
-
     public fun self_matching_allowed(): u8 {
         SELF_MATCHING_ALLOWED
     }
@@ -161,5 +128,60 @@ module deepbook::constants {
 
     public fun max_price(): u64 {
         MAX_PRICE
+    }
+
+    #[test_only]
+    public fun maker_fee(): u64 {
+        MAKER_FEE
+    }
+
+    #[test_only]
+    public fun taker_fee(): u64 {
+        TAKER_FEE
+    }
+
+    #[test_only]
+    public fun tick_size(): u64 {
+        TICK_SIZE
+    }
+
+    #[test_only]
+    public fun lot_size(): u64 {
+        LOT_SIZE
+    }
+
+    #[test_only]
+    public fun min_size(): u64 {
+        MIN_SIZE
+    }
+
+    #[test_only]
+    public fun deep_multiplier(): u64 {
+        DEEP_MULTIPLIER
+    }
+
+    #[test_only]
+    public fun taker_discount(): u64 {
+        TAKER_DISCOUNT
+    }
+
+    #[test_only]
+    public fun e_order_info_mismatch(): u64 {
+        EOrderInfoMismatch
+    }
+
+    #[test_only]
+    public fun e_book_order_mismatch(): u64 {
+        EBookOrderMismatch
+    }
+
+    #[test_only]
+    public fun usdc_unit(): u64 {
+        USDC_UNIT
+    }
+
+    #[test_only]
+    public fun sui_unit(): u64 {
+        SUI_UNIT
     }
 }

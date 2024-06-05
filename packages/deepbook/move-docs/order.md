@@ -377,8 +377,8 @@ quantity and whether the order is a bid.
     is_bid: bool,
     expire_maker: bool,
 ): Fill {
-    <b>let</b> volume = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
-    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(volume, self.<a href="order.md#0x0_order_price">price</a>());
+    <b>let</b> base_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
+    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, self.<a href="order.md#0x0_order_price">price</a>());
 
     <b>let</b> order_id = self.order_id;
     <b>let</b> balance_manager_id = self.balance_manager_id;
@@ -387,7 +387,7 @@ quantity and whether the order is a bid.
     <b>if</b> (expired) {
         self.status = <a href="constants.md#0x0_constants_expired">constants::expired</a>();
     } <b>else</b> {
-        self.filled_quantity = self.filled_quantity + volume;
+        self.filled_quantity = self.filled_quantity + base_quantity;
         self.status = <b>if</b> (self.quantity == self.filled_quantity) <a href="constants.md#0x0_constants_filled">constants::filled</a>() <b>else</b> <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
     };
 
@@ -396,7 +396,7 @@ quantity and whether the order is a bid.
         balance_manager_id,
         expired,
         self.quantity == self.filled_quantity,
-        volume,
+        base_quantity,
         quote_quantity,
         is_bid,
     )
@@ -429,11 +429,12 @@ quantity and whether the order is a bid.
     lot_size: u64,
     timestamp: u64,
 ) {
-    <b>let</b> cancel_quantity = self.quantity - new_quantity;
-    <b>assert</b>!(cancel_quantity &gt; 0 && new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+    <b>let</b> available_quantity = self.quantity - self.filled_quantity;
+    <b>let</b> cancel_quantity = available_quantity - new_quantity;
+    <b>assert</b>!(cancel_quantity &gt; 0 && new_quantity &lt; available_quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
     <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
     <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(timestamp &lt; self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>assert</b>!(timestamp &lt;= self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
 
     self.filled_quantity = self.filled_quantity + cancel_quantity;
 }

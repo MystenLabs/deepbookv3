@@ -1471,7 +1471,7 @@ Funds for the match or an expired order are returned to the maker as settled.
     self.fills.push_back(<a href="fill.md#0x0_fill">fill</a>);
     <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired()) <b>return</b> <b>true</b>;
 
-    self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.volume();
+    self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
     self.status = <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
@@ -1479,7 +1479,7 @@ Funds for the match or an expired order are returned to the maker as settled.
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
         maker.<a href="order_info.md#0x0_order_info_price">price</a>(),
-        <a href="fill.md#0x0_fill">fill</a>.volume(),
+        <a href="fill.md#0x0_fill">fill</a>.base_quantity(),
         <a href="fill.md#0x0_fill">fill</a>.quote_quantity(),
         timestamp
     );

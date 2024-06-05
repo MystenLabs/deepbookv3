@@ -393,7 +393,7 @@ module deepbook::order_info {
         self.fills.push_back(fill);
         if (fill.expired()) return true;
 
-        self.executed_quantity = self.executed_quantity + fill.volume();
+        self.executed_quantity = self.executed_quantity + fill.base_quantity();
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
         self.status = constants::partially_filled();
         if (self.remaining_quantity() == 0) self.status = constants::filled();
@@ -401,7 +401,7 @@ module deepbook::order_info {
         self.emit_order_filled(
             maker,
             maker.price(),
-            fill.volume(),
+            fill.base_quantity(),
             fill.quote_quantity(),
             timestamp
         );

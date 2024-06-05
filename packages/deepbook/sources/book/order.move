@@ -4,6 +4,7 @@
 /// Order module defines the order struct and its methods.
 /// All order matching happens in this module.
 module deepbook::order {
+    // === Imports ===
     use sui::event;
     use deepbook::{
         math,
@@ -12,11 +13,13 @@ module deepbook::order {
         constants,
     };
 
+    // === Errors ===
     const EInvalidNewQuantity: u64 = 0;
     const EOrderBelowMinimumSize: u64 = 1;
     const EOrderInvalidLotSize: u64 = 2;
     const EOrderExpired: u64 = 3;
 
+    // === Structs ===
     /// Order struct represents the order in the order book. It is optimized for space.
     public struct Order has store, drop {
         balance_manager_id: ID,
@@ -56,6 +59,7 @@ module deepbook::order {
         timestamp: u64,
     }
 
+    // === Public-Package Functions ===
     /// initialize the order struct.
     public(package) fun new(
         order_id: u128,
@@ -89,8 +93,8 @@ module deepbook::order {
         is_bid: bool,
         expire_maker: bool,
     ): Fill {
-        let volume = math::min(self.quantity, quantity);
-        let quote_quantity = math::mul(volume, self.price());
+        let base_quantity = math::min(self.quantity, quantity);
+        let quote_quantity = math::mul(base_quantity, self.price());
 
         let order_id = self.order_id;
         let balance_manager_id = self.balance_manager_id;
@@ -99,7 +103,7 @@ module deepbook::order {
         if (expired) {
             self.status = constants::expired();
         } else {
-            self.filled_quantity = self.filled_quantity + volume;
+            self.filled_quantity = self.filled_quantity + base_quantity;
             self.status = if (self.quantity == self.filled_quantity) constants::filled() else constants::partially_filled();
         };
 
@@ -108,7 +112,7 @@ module deepbook::order {
             balance_manager_id,
             expired,
             self.quantity == self.filled_quantity,
-            volume,
+            base_quantity,
             quote_quantity,
             is_bid,
         )
@@ -121,11 +125,12 @@ module deepbook::order {
         lot_size: u64,
         timestamp: u64,
     ) {
-        let cancel_quantity = self.quantity - new_quantity;
-        assert!(cancel_quantity > 0 && new_quantity < self.quantity, EInvalidNewQuantity);
+        let available_quantity = self.quantity - self.filled_quantity;
+        let cancel_quantity = available_quantity - new_quantity;
+        assert!(cancel_quantity > 0 && new_quantity < available_quantity, EInvalidNewQuantity);
         assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(timestamp < self.expire_timestamp(), EOrderExpired);
+        assert!(timestamp <= self.expire_timestamp(), EOrderExpired);
 
         self.filled_quantity = self.filled_quantity + cancel_quantity;
     }
