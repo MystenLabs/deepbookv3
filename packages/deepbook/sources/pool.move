@@ -272,6 +272,23 @@ module deepbook::pool {
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
     }
 
+    /// Cancel all open orders placed by the balance manager in the pool.
+    public fun cancel_all_orders<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &mut BalanceManager,
+        proof: &TradeProof,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
+        let open_orders = self.state.account(balance_manager.id()).open_orders().into_keys();
+        let mut i = 0;
+        while (i < open_orders.length()) {
+            let order_id = open_orders[i];
+            self.cancel_order(balance_manager, proof, order_id, clock, ctx);
+            i = i + 1;
+        }
+    }
+
     /// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP tokens.
     /// The balance_manager's data is updated with the staked amount.
     public fun stake<BaseAsset, QuoteAsset>(
