@@ -327,7 +327,8 @@ module deepbook::pool_tests {
     }
 
     /// Test crossing num_orders orders with a single order
-    /// Should be filled with the num_orders orders
+    /// Should be filled with the num_orders orders, with correct quantities
+    /// Quantity of 1 for the first num_orders orders, quantity of num_orders for the last order
     fun test_crossing_multiple(
         is_bid: bool,
         num_orders: u64,
@@ -402,7 +403,10 @@ module deepbook::pool_tests {
     }
 
     /// Test fill or kill order that crosses with an order that's smaller in quantity
-    /// Should error with EFOKOrderCannotBeFullyFilled
+    /// Should error with EFOKOrderCannotBeFullyFilled if order cannot be fully filled
+    /// Should fill correctly if order can be fully filled
+    /// First order has quantity 1, second order has quantity 2 for incorrect fill
+    /// First two orders have quantity 1, third order is quantity 2 for correct fill
     fun test_fill_or_kill(
         is_bid: bool,
         order_can_be_filled: bool,
@@ -449,7 +453,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        place_order(
+        let order_info = place_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -461,6 +465,22 @@ module deepbook::pool_tests {
             pay_with_deep,
             expire_timestamp,
             &mut test,
+        );
+
+        verify_order_info(
+            &order_info,
+            client_order_id,
+            price,
+            quantity_multiplier * quantity,
+            quantity_multiplier * quantity,
+            2 * quantity_multiplier * quantity,
+            quantity_multiplier * math::mul(
+                constants::taker_discount(),
+                math::mul(constants::taker_fee(), constants::deep_multiplier())
+            ),
+            true,
+            constants::filled(),
+            expire_timestamp,
         );
 
         end(test);

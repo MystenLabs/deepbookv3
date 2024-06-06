@@ -19,7 +19,8 @@
 -  [Function `historic_maker_fee`](#0x0_history_historic_maker_fee)
 
 
-<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
@@ -102,6 +103,12 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 </dd>
 <dt>
+<code>epoch_created: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>volumes: <a href="history.md#0x0_history_Volumes">history::Volumes</a></code>
 </dt>
 <dd>
@@ -129,15 +136,6 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 ## Constants
 
 
-<a name="0x0_history_FLOAT_SCALING"></a>
-
-
-
-<pre><code><b>const</b> <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>: u64 = 1000000000;
-</code></pre>
-
-
-
 <a name="0x0_history_EHistoricVolumesNotFound"></a>
 
 Error codes
@@ -148,23 +146,13 @@ Error codes
 
 
 
-<a name="0x0_history_EPOCHS_FOR_PHASE_OUT"></a>
-
-Constants
-
-
-<pre><code><b>const</b> <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>: u64 = 28;
-</code></pre>
-
-
-
 <a name="0x0_history_empty"></a>
 
 ## Function `empty`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="history.md#0x0_history_History">history::History</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, epoch_created: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="history.md#0x0_history_History">history::History</a>
 </code></pre>
 
 
@@ -175,6 +163,7 @@ Constants
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(
     <a href="trade_params.md#0x0_trade_params">trade_params</a>: TradeParams,
+    epoch_created: u64,
     ctx: &<b>mut</b> TxContext,
 ): <a href="history.md#0x0_history_History">History</a> {
     <b>let</b> volumes = <a href="history.md#0x0_history_Volumes">Volumes</a> {
@@ -186,6 +175,7 @@ Constants
     };
     <b>let</b> <b>mut</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_History">History</a> {
         epoch: ctx.epoch(),
+        epoch_created,
         volumes,
         historic_volumes: <a href="dependencies/sui-framework/table.md#0x2_table_new">table::new</a>(ctx),
         balance_to_burn: 0,
@@ -227,11 +217,11 @@ If there are accounts with rebates, add the current epoch's volume data to the h
     <b>if</b> (self.historic_volumes.contains(self.epoch)) {
         self.historic_volumes.remove(self.epoch);
     };
+    self.<a href="history.md#0x0_history_update_historic_median">update_historic_median</a>();
     self.historic_volumes.add(self.epoch, self.volumes);
 
     self.epoch = epoch;
     self.<a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>);
-    self.<a href="history.md#0x0_history_update_historic_median">update_historic_median</a>();
     self.historic_volumes.add(self.epoch, self.volumes);
 }
 </code></pre>
@@ -302,7 +292,7 @@ calculate and returns rebate amount, updates the burn amount
 
     <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
     <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
-        <a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a> - <a href="math.md#0x0_math_min">math::min</a>(<a href="history.md#0x0_history_FLOAT_SCALING">FLOAT_SCALING</a>, <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median))
+        <a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>() - <a href="math.md#0x0_math_min">math::min</a>(<a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>(), <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median))
     } <b>else</b> {
         0
     };
@@ -340,12 +330,13 @@ Updates the historic_median for past 28 epochs
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_update_historic_median">update_historic_median</a>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
 ) {
-    <b>let</b> <b>mut</b> median_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;[];
-    <b>let</b> <b>mut</b> i = <b>if</b> (self.epoch &gt; <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>) {
-        self.epoch - <a href="history.md#0x0_history_EPOCHS_FOR_PHASE_OUT">EPOCHS_FOR_PHASE_OUT</a>
-    } <b>else</b> {
-        0
+    <b>let</b> epochs_since_creation = self.epoch - self.epoch_created;
+    <b>if</b> (epochs_since_creation &lt; <a href="constants.md#0x0_constants_epochs_for_phase_out">constants::epochs_for_phase_out</a>()) {
+        self.volumes.historic_median = <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>();
+        <b>return</b>
     };
+    <b>let</b> <b>mut</b> median_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;[];
+    <b>let</b> <b>mut</b> i = self.epoch - <a href="constants.md#0x0_constants_epochs_for_phase_out">constants::epochs_for_phase_out</a>();
     <b>while</b> (i &lt; self.epoch) {
         <b>if</b> (self.historic_volumes.contains(i)) {
             median_vec.push_back(self.historic_volumes[i].total_volume);

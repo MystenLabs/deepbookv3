@@ -33,7 +33,6 @@ All order matching happens in this module.
 -  [Function `fills`](#0x0_order_info_fills)
 -  [Function `new`](#0x0_order_info_new)
 -  [Function `market_order`](#0x0_order_info_market_order)
--  [Function `last_fill`](#0x0_order_info_last_fill)
 -  [Function `set_order_id`](#0x0_order_info_set_order_id)
 -  [Function `set_paid_fees`](#0x0_order_info_set_paid_fees)
 -  [Function `add_fill`](#0x0_order_info_add_fill)
@@ -1104,30 +1103,6 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_last_fill"></a>
-
-## Function `last_fill`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_last_fill">last_fill</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): &Fill {
-    &self.fills[self.fills.length() - 1]
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_order_info_set_order_id"></a>
 
 ## Function `set_order_id`
@@ -1474,7 +1449,6 @@ Funds for the match or an expired order are returned to the maker as settled.
     self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
     self.status = <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
-    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
@@ -1483,8 +1457,12 @@ Funds for the match or an expired order are returned to the maker as settled.
         <a href="fill.md#0x0_fill">fill</a>.quote_quantity(),
         timestamp
     );
-
-    <b>true</b>
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) {
+        self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
+        <b>false</b>
+    } <b>else</b> {
+        <b>true</b>
+    }
 }
 </code></pre>
 
