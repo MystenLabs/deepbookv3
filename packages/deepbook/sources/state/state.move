@@ -26,7 +26,7 @@ module deepbook::state {
     public(package) fun empty(ctx: &mut TxContext): State {
         let governance = governance::empty(ctx);
         let trade_params = governance.trade_params();
-        let history = history::empty(trade_params, ctx);
+        let history = history::empty(trade_params, ctx.epoch(), ctx);
 
         State {
             history,

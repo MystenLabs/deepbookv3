@@ -306,6 +306,28 @@ module deepbook::pool_tests {
         test_crossing_multiple(false, 3)
     }
 
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
+    fun test_fill_or_kill_bid_e() {
+        test_fill_or_kill(true, false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
+    fun test_fill_or_kill_ask_e() {
+        test_fill_or_kill(false, false);
+    }
+
+    #[test]
+    fun test_fill_or_kill_bid_ok() {
+        test_fill_or_kill(true, true);
+    }
+
+    #[test]
+    fun test_fill_or_kill_ask_ok() {
+        test_fill_or_kill(false, true);
+    }
+
+    /// Test crossing num_orders orders with a single order
+    /// Should be filled with the num_orders orders
     fun test_crossing_multiple(
         is_bid: bool,
         num_orders: u64,
@@ -377,26 +399,6 @@ module deepbook::pool_tests {
         );
 
         end(test);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
-    fun test_fill_or_kill_bid_e() {
-        test_fill_or_kill(true, false);
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
-    fun test_fill_or_kill_ask_e() {
-        test_fill_or_kill(false, false);
-    }
-
-    #[test]
-    fun test_fill_or_kill_bid_ok() {
-        test_fill_or_kill(true, true);
-    }
-
-    #[test]
-    fun test_fill_or_kill_ask_ok() {
-        test_fill_or_kill(false, true);
     }
 
     /// Test fill or kill order that crosses with an order that's smaller in quantity
