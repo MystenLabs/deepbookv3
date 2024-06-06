@@ -13,7 +13,7 @@ module deepbook::state {
         balances::Balances,
     };
 
-    const ENotEnoughStake: u64 = 1;
+    const ENoStake: u64 = 1;
 
     public struct State has store {
         accounts: Table<ID, Account>,
@@ -168,7 +168,7 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let stake = self.accounts[account_id].active_stake();
-        assert!(stake > 0, ENotEnoughStake);
+        assert!(stake > 0, ENoStake);
 
         self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
         self.process_vote(account_id, account_id, ctx);
@@ -185,7 +185,7 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let account = &mut self.accounts[account_id];
-        assert!(account.active_stake() > 0, ENotEnoughStake);
+        assert!(account.active_stake() > 0, ENoStake);
 
         let prev_proposal = account.set_voted_proposal(option::some(proposal_id));
         self.governance.adjust_vote(

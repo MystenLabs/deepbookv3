@@ -84,11 +84,11 @@
 ## Constants
 
 
-<a name="0x0_state_ENotEnoughStake"></a>
+<a name="0x0_state_ENoStake"></a>
 
 
 
-<pre><code><b>const</b> <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>: u64 = 1;
+<pre><code><b>const</b> <a href="state.md#0x0_state_ENoStake">ENoStake</a>: u64 = 1;
 </code></pre>
 
 
@@ -375,7 +375,7 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> stake = self.accounts[account_id].active_stake();
-    <b>assert</b>!(stake &gt; 0, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>assert</b>!(stake &gt; 0, <a href="state.md#0x0_state_ENoStake">ENoStake</a>);
 
     self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
     self.<a href="state.md#0x0_state_process_vote">process_vote</a>(account_id, account_id, ctx);
@@ -412,7 +412,7 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.active_stake() &gt; 0, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.active_stake() &gt; 0, <a href="state.md#0x0_state_ENoStake">ENoStake</a>);
 
     <b>let</b> prev_proposal = <a href="account.md#0x0_account">account</a>.set_voted_proposal(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id));
     self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(
