@@ -5,6 +5,7 @@ module deepbook::state {
 
     use deepbook::{
         math,
+        utils,
         history::{Self, History},
         order::Order,
         order_info::OrderInfo,
@@ -93,11 +94,14 @@ module deepbook::state {
 
         let account = &mut self.accounts[account_id];
         let cancel_quantity = order.quantity() - order.filled_quantity();
+        let (is_bid, price, _) = utils::decode_order_id(order_id);
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
         let deep_per_base = order.deep_per_base();
         let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
-        let balances = balances::new(0, 0, deep_out);
+        let base_out = if (is_bid) { 0 } else { cancel_quantity };
+        let quote_out = if (is_bid) { math::mul(cancel_quantity, price) } else { 0 };
+        let balances = balances::new(base_out, quote_out, deep_out);
 
         account.remove_order(order_id);
         account.add_settled_balances(balances);

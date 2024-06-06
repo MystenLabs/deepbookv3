@@ -2,7 +2,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { getActiveAddress, signAndExecute } from "./utils";
 import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { SuiClient } from "@mysten/sui.js/client";
+import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 
 // =================================================================
@@ -10,10 +10,10 @@ import { bcs } from "@mysten/sui.js/bcs";
 // =================================================================
 
 const ENV = 'testnet';
-const client = new SuiClient({ url: "https://suins-rpc.testnet.sui.io" });
+const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
 // The package id of the `deepbook` package
-const DEEPBOOK_PACKAGE_ID = `0x186aae1dea7dfe1c02bd6628e7bf0517cd2667d8b5a5a819eadfd7ea824f4700`;
+const DEEPBOOK_PACKAGE_ID = `0x6967386a7a6a20610085e8e56b7ef80000ee9f2bbea9478af30d3efb3b6fab59`;
 const REGISTRY_ID = `0xa4789135a2cffcd8b2e155c267d1d2467506fd6ae38f616fb76bb67724805e2a`;
 const ADMINCAP_ID = `0x6244b0f5969a3d44358394f47a5dbb8c9cba3c39a75682c183dc7ab5ee087773`;
 const POOL_ID = `0x2c96d2f5d1cb4501914bbd5ec93b84cd85efdb2deaef3adc8b69e7dfda433ec1`;
@@ -339,20 +339,42 @@ const getAllOpenOrders = async (
     let parsed_order_ids = VecSet.parse(new Uint8Array(order_ids)).constants;
 
     console.log(parsed_order_ids);
-    return parsed_order_ids;
 }
 
 const cancelAllOrders = async (
     isOwner: boolean,
     txb: TransactionBlock
 ) => {
-    // TODO: This is a work in progress
-    const openOrders = await getAllOpenOrders(txb);
+    txb.setGasBudget(GAS_BUDGET);
 
-    for (let i = 0; i < openOrders.length; i++) {
-        await cancelOrder(openOrders[i].toString(), isOwner, txb);
-        console.log(`Cancelled order ${openOrders[i].toString()}`);
+    var tradeProof;
+    if (isOwner) {
+        tradeProof = txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
+            arguments: [
+                txb.object(MANAGER_ID),
+            ],
+        })
+    } else {
+        tradeProof = txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
+            arguments: [
+                txb.object(MANAGER_ID),
+                txb.object(TRADECAP_ID),
+            ],
+        })
     }
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
+        arguments: [
+            txb.object(POOL_ID),
+            txb.object(MANAGER_ID),
+            txb.object(tradeProof),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [BASE_TYPE, QUOTE_TYPE]
+    });
 }
 
 /// Main entry points, comment out as needed...
@@ -369,6 +391,7 @@ const executeTransaction = async () => {
     // await checkManagerBalance(QUOTE_TYPE, txb);
     // await placeLimitOrder(true, txb);
     // await cancelOrder("36893497370791140086775802", true, txb);
+    // await cancelAllOrders(true, txb);
     // await getAllOpenOrders(txb);
 
     // Run transaction against ENV

@@ -6,9 +6,7 @@ module deepbook::state_tests {
     };
     use deepbook::{
         state::Self,
-        account,
         balances,
-        fill,
         constants,
         order_info_tests::{create_order_info_base},
     };
@@ -86,9 +84,13 @@ module deepbook::state_tests {
         test.end();
     }
 
-    // process create after governance to raise stake required
+    // process create with different deep_per_base
 
-    // process create after gov, then after stake
+    // process create with maker in epoch 0, then gov to change fees, then taker in epoch 1
+
+    // process create after governance to raise stake required. taker fee 0.001
+
+    // process create after gov, then after stake to meet req. taker fee 0.0005
 
     #[test]
     fun process_cancel_ok() {
@@ -109,7 +111,14 @@ module deepbook::state_tests {
 
     // process cancel after partial fill
 
-    // process cancel after modify
+    // process cancel after modify after epoch change & maker fee change
 
-    // process create with different deep_per_base
+    // process stake
+
+    // process unstake
+
+    // process proposal
+
+    // process vote
+
 }
