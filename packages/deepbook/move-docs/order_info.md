@@ -507,24 +507,6 @@ Emitted when a maker order is injected into the order book.
 ## Constants
 
 
-<a name="0x0_order_info_EOrderBelowMinimumSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 1;
-</code></pre>
-
-
-
-<a name="0x0_order_info_EOrderInvalidLotSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 2;
-</code></pre>
-
-
-
 <a name="0x0_order_info_EFOKOrderCannotBeFullyFilled"></a>
 
 
@@ -557,6 +539,24 @@ Emitted when a maker order is injected into the order book.
 
 
 <pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EMarketOrderCannotBePostOnly">EMarketOrderCannotBePostOnly</a>: u64 = 7;
+</code></pre>
+
+
+
+<a name="0x0_order_info_EOrderBelowMinimumSize"></a>
+
+
+
+<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="0x0_order_info_EOrderInvalidLotSize"></a>
+
+
+
+<pre><code><b>const</b> <a href="order_info.md#0x0_order_info_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 2;
 </code></pre>
 
 

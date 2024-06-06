@@ -99,11 +99,16 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let price = 11831 * constants::usdc_unit();
         let quantity = 91932 * constants::sui_unit();
-        let mut order_info1 = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
         let mut state = state::empty(test.ctx());
-        let (settled, owed) = state.process_create(&mut order_info1, test.ctx());
+        let (settled, owed) = state.process_create(&mut order_info, test.ctx());
+
+        std::debug::print(&settled);
+        std::debug::print(&owed);
         assert_eq(settled, balances::new(0, 0, 0));
-        assert_eq(owed, balances::new(0, 1 * constants::usdc_unit(), 500_000));
+        // 11831 * 91932 = 1,087,647,492
+        // 91932 * 0.0005 = 45.966
+        assert_eq(owed, balances::new(0, 1_087_647_492 * constants::usdc_unit(), 45_966_000_000));
 
         destroy(state);
         test.end();

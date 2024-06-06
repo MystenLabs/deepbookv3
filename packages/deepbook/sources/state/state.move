@@ -5,13 +5,12 @@ module deepbook::state {
 
     use deepbook::{
         math,
-        utils,
         history::{Self, History},
         order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
         account::{Self, Account},
-        balances::{Self, Balances},
+        balances::Balances,
     };
 
     const ENotEnoughStake: u64 = 1;
@@ -83,27 +82,20 @@ module deepbook::state {
     public(package) fun process_cancel(
         self: &mut State,
         order: &mut Order,
-        order_id: u128,
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
-        order.set_canceled();
         self.update_account(account_id, ctx);
+        order.set_canceled();
 
-        let account = &mut self.accounts[account_id];
-        let cancel_quantity = order.quantity() - order.filled_quantity();
-        let (is_bid, price, _) = utils::decode_order_id(order_id);
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
-        let deep_per_base = order.deep_per_base();
-        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
-        let base_out = if (is_bid) { 0 } else { cancel_quantity };
-        let quote_out = if (is_bid) { math::mul(cancel_quantity, price) } else { 0 };
-        let balances = balances::new(base_out, quote_out, deep_out);
+        let balances = order.calculate_cancel_refund(maker_fee, option::none());
 
-        account.remove_order(order_id);
+        let account = &mut self.accounts[account_id];
+        account.remove_order(order.order_id());
         account.add_settled_balances(balances);
 
         account.settle()
@@ -122,9 +114,7 @@ module deepbook::state {
 
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
-        let deep_per_base = order.deep_per_base();
-        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
-        let balances = balances::new(0, 0, deep_out);
+        let balances = order.calculate_cancel_refund(maker_fee, option::some(cancel_quantity));
 
         self.accounts[account_id].add_settled_balances(balances);
 

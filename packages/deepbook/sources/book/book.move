@@ -14,6 +14,8 @@ module deepbook::book {
     const EEmptyOrderbook: u64 = 2;
     const EInvalidPriceRange: u64 = 3;
     const EInvalidTicks: u64 = 4;
+    const EOrderBelowMinimumSize: u64 = 5;
+    const EOrderInvalidLotSize: u64 = 6;
 
     public struct Book has store {
         tick_size: u64,
@@ -91,33 +93,19 @@ module deepbook::book {
 
     /// Cancels an order given order_id
     public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
-        let (is_bid, _, _) = utils::decode_order_id(order_id);
-        if (is_bid) {
-            self.bids.remove(order_id)
-        } else {
-            self.asks.remove(order_id)
-        }
+        self.book_side(order_id).remove(order_id)
     }
 
     /// Modifies an order given order_id and new_quantity.
     /// New quantity must be less than the original quantity.
     /// Order must not have already expired.
     public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &Order) {
-        let (is_bid, _, _) = utils::decode_order_id(order_id);
-        let order = if (is_bid) {
-            self.bids.borrow_mut(order_id)
-        } else {
-            self.asks.borrow_mut(order_id)
-        };
+        assert!(new_quantity >= self.min_size, EOrderBelowMinimumSize);
+        assert!(new_quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
+        let order = self.book_side(order_id).borrow_mut(order_id);
         let cancel_quantity = order.quantity() - new_quantity;
-
-        order.modify(
-            new_quantity,
-            self.min_size,
-            self.lot_size,
-            timestamp,
-        );
+        order.modify(new_quantity, timestamp);
 
         (cancel_quantity, order)
     }
@@ -195,6 +183,16 @@ module deepbook::book {
 
     public(package) fun asks(self: &Book): &BigVector<Order> {
         &self.asks
+    }
+
+    // Access side of book where order_id belongs
+    fun book_side(self: &mut Book, order_id: u128): &mut BigVector<Order> {
+        let (is_bid, _, _) = utils::decode_order_id(order_id);
+        if (is_bid) {
+            &mut self.bids
+        } else {
+            &mut self.asks
+        }
     }
 
     /// Matches the given order and quantity against the order book.

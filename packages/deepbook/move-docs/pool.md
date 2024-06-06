@@ -653,7 +653,7 @@ Order canceled event is emitted.
 ) {
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.balance_manager_id() == <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>);
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, order_id, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 
     <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), proof.trader(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());

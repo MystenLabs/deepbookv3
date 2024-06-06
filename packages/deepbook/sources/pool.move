@@ -266,7 +266,7 @@ module deepbook::pool {
     ) {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
-        let (settled, owed) = self.state.process_cancel(&mut order, order_id, balance_manager.id(), ctx);
+        let (settled, owed) = self.state.process_cancel(&mut order, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());

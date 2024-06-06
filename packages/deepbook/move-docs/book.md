@@ -17,6 +17,7 @@
 -  [Function `get_level2_range_and_ticks`](#0x0_book_get_level2_range_and_ticks)
 -  [Function `bids`](#0x0_book_bids)
 -  [Function `asks`](#0x0_book_asks)
+-  [Function `book_side`](#0x0_book_book_side)
 -  [Function `match_against_book`](#0x0_book_match_against_book)
 -  [Function `get_order_id`](#0x0_book_get_order_id)
 -  [Function `inject_limit_order`](#0x0_book_inject_limit_order)
@@ -99,6 +100,24 @@
 <a name="@Constants_0"></a>
 
 ## Constants
+
+
+<a name="0x0_book_EOrderBelowMinimumSize"></a>
+
+
+
+<pre><code><b>const</b> <a href="book.md#0x0_book_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 5;
+</code></pre>
+
+
+
+<a name="0x0_book_EOrderInvalidLotSize"></a>
+
+
+
+<pre><code><b>const</b> <a href="book.md#0x0_book_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 6;
+</code></pre>
+
 
 
 <a name="0x0_book_EEmptyOrderbook"></a>
@@ -296,12 +315,7 @@ Cancels an order given order_id
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_cancel_order">cancel_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128): Order {
-    <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
-    <b>if</b> (is_bid) {
-        self.bids.remove(order_id)
-    } <b>else</b> {
-        self.asks.remove(order_id)
-    }
+    self.<a href="book.md#0x0_book_book_side">book_side</a>(order_id).remove(order_id)
 }
 </code></pre>
 
@@ -328,21 +342,12 @@ Order must not have already expired.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_modify_order">modify_order</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &Order) {
-    <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
-    <b>let</b> <a href="order.md#0x0_order">order</a> = <b>if</b> (is_bid) {
-        self.bids.borrow_mut(order_id)
-    } <b>else</b> {
-        self.asks.borrow_mut(order_id)
-    };
+    <b>assert</b>!(new_quantity &gt;= self.min_size, <a href="book.md#0x0_book_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
+    <b>assert</b>!(new_quantity % self.lot_size == 0, <a href="book.md#0x0_book_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
 
+    <b>let</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book_book_side">book_side</a>(order_id).borrow_mut(order_id);
     <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity() - new_quantity;
-
-    <a href="order.md#0x0_order">order</a>.modify(
-        new_quantity,
-        self.min_size,
-        self.lot_size,
-        timestamp,
-    );
+    <a href="order.md#0x0_order">order</a>.modify(new_quantity, timestamp);
 
     (cancel_quantity, <a href="order.md#0x0_order">order</a>)
 }
@@ -520,6 +525,35 @@ The price_low and price_high are the range of prices to return.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
     &self.asks
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_book_side"></a>
+
+## Function `book_side`
+
+
+
+<pre><code><b>fun</b> <a href="book.md#0x0_book_book_side">book_side</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">book::Book</a>, order_id: u128): &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="book.md#0x0_book_book_side">book_side</a>(self: &<b>mut</b> <a href="book.md#0x0_book_Book">Book</a>, order_id: u128): &<b>mut</b> BigVector&lt;Order&gt; {
+    <b>let</b> (is_bid, _, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
+    <b>if</b> (is_bid) {
+        &<b>mut</b> self.bids
+    } <b>else</b> {
+        &<b>mut</b> self.asks
+    }
 }
 </code></pre>
 
