@@ -158,7 +158,7 @@ module deepbook::order_tests {
     }
 
     #[test]
-    // Start with quantity 10, modify it to 5, then fill 1, then modify it to 1.
+    // Start with quantity 10, modify it to 5, then fill 1, then modify it to 2.
     fun modify_ok() {
         let mut test = begin(OWNER);
 
@@ -170,32 +170,31 @@ module deepbook::order_tests {
         let ts = order.expire_timestamp();
 
         let new_quantity = 5 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.quantity() == 10 * constants::sui_unit(), 0);
-        assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
-        assert!(order.quantity() == 10 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == 5 * constants::sui_unit(), 0);
+        assert!(order.filled_quantity() == 0, 0);
         assert!(order.status() == constants::live(), 0);
 
         order.generate_fill(0, 1 * constants::sui_unit(), true, false);
-        assert!(order.quantity() == 10 * constants::sui_unit(), 0);
-        assert!(order.filled_quantity() == 6 * constants::sui_unit(), 0);
+        assert!(order.quantity() == 5 * constants::sui_unit(), 0);
+        assert!(order.filled_quantity() == 1 * constants::sui_unit(), 0);
         assert!(order.status() == constants::partially_filled(), 0);
 
-        let new_quantity = 1 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.quantity() == 10 * constants::sui_unit(), 0);
-        assert!(order.filled_quantity() == 9 * constants::sui_unit(), 0);
+        let new_quantity = 2 * constants::sui_unit();
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == 2 * constants::sui_unit(), 0);
+        assert!(order.filled_quantity() == 1 * constants::sui_unit(), 0);
         assert!(order.status() == constants::partially_filled(), 0);
 
         order.generate_fill(0, 1 * constants::sui_unit(), true, false);
-        assert!(order.quantity() == 10 * constants::sui_unit(), 0);
-        assert!(order.filled_quantity() == 10 * constants::sui_unit(), 0);
+        assert!(order.quantity() == 2 * constants::sui_unit(), 0);
+        assert!(order.filled_quantity() == 2 * constants::sui_unit(), 0);
         assert!(order.status() == constants::filled(), 0);
 
         test.end();
     }
 
-    #[test, expected_failure(abort_code = order::EOrderBelowMinimumSize)]
+    #[test, expected_failure(abort_code = order::EInvalidNewQuantity)]
     // Start with quantity 10, reduce it by 1 10 times.
     fun modify_invalid_quantity_e() {
         let mut test = begin(OWNER);
@@ -208,52 +207,35 @@ module deepbook::order_tests {
         let ts = order.expire_timestamp();
 
         let new_quantity = 9 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 1 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 8 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 2 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 7 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 3 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 6 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 4 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 5 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 4 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 6 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 3 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 7 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 2 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 8 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 1 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-        assert!(order.filled_quantity() == 9 * constants::sui_unit(), 0);
+        order.modify(new_quantity, ts);
+        assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 0 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
+        order.modify(new_quantity, ts);
         
-        abort(0)
-    }
-
-    #[test, expected_failure(abort_code = order::EOrderBelowMinimumSize)]
-    fun modify_quantity_zero_e() {
-        let mut test = begin(OWNER);
-
-        test.next_tx(ALICE);
-        let price = 10 * constants::usdc_unit();
-        let quantity = 10 * constants::sui_unit();
-        let is_bid = false;
-        let mut order = create_order_base(price, quantity, is_bid);
-        let ts = order.expire_timestamp();
-
-        let new_quantity = 0;
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-
         abort(0)
     }
 
@@ -269,25 +251,7 @@ module deepbook::order_tests {
         let ts = order.expire_timestamp();
 
         let new_quantity = 10 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
-
-        abort(0)
-    }
-
-
-    #[test, expected_failure(abort_code = order::EOrderInvalidLotSize)]
-    fun modify_quantity_invalid_lot_size_e() {
-        let mut test = begin(OWNER);
-
-        test.next_tx(ALICE);
-        let price = 10 * constants::usdc_unit();
-        let quantity = 10 * constants::sui_unit();
-        let is_bid = false;
-        let mut order = create_order_base(price, quantity, is_bid);
-        let ts = order.expire_timestamp();
-
-        let new_quantity = 1_000_000_100;
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), ts);
+        order.modify(new_quantity, ts);
 
         abort(0)
     }
@@ -317,7 +281,7 @@ module deepbook::order_tests {
         );
 
         let new_quantity = 5 * constants::sui_unit();
-        order.modify(new_quantity, constants::min_size(), constants::lot_size(), expire_timestamp + 1);
+        order.modify(new_quantity, expire_timestamp + 1);
 
         abort(0)
     }

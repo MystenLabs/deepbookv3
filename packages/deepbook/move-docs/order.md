@@ -14,6 +14,7 @@ All order matching happens in this module.
 -  [Function `new`](#0x0_order_new)
 -  [Function `generate_fill`](#0x0_order_generate_fill)
 -  [Function `modify`](#0x0_order_modify)
+-  [Function `calculate_cancel_refund`](#0x0_order_calculate_cancel_refund)
 -  [Function `emit_order_canceled`](#0x0_order_emit_order_canceled)
 -  [Function `emit_order_modified`](#0x0_order_emit_order_modified)
 -  [Function `set_canceled`](#0x0_order_set_canceled)
@@ -30,10 +31,12 @@ All order matching happens in this module.
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
 
 
-<pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
+<b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/event.md#0x2_event">0x2::event</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
@@ -282,29 +285,11 @@ Emitted when a maker order is modified.
 
 
 
-<a name="0x0_order_EOrderBelowMinimumSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>: u64 = 1;
-</code></pre>
-
-
-
 <a name="0x0_order_EOrderExpired"></a>
 
 
 
-<pre><code><b>const</b> <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>: u64 = 3;
-</code></pre>
-
-
-
-<a name="0x0_order_EOrderInvalidLotSize"></a>
-
-
-
-<pre><code><b>const</b> <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>: u64 = 2;
+<pre><code><b>const</b> <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>: u64 = 1;
 </code></pre>
 
 
@@ -413,7 +398,7 @@ quantity and whether the order is a bid.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, min_size: u64, lot_size: u64, timestamp: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, timestamp: u64)
 </code></pre>
 
 
@@ -425,18 +410,54 @@ quantity and whether the order is a bid.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(
     self: &<b>mut</b> <a href="order.md#0x0_order_Order">Order</a>,
     new_quantity: u64,
-    min_size: u64,
-    lot_size: u64,
     timestamp: u64,
 ) {
-    <b>let</b> available_quantity = self.quantity - self.filled_quantity;
-    <b>let</b> cancel_quantity = available_quantity - new_quantity;
-    <b>assert</b>!(cancel_quantity &gt; 0 && new_quantity &lt; available_quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
-    <b>assert</b>!(new_quantity &gt;= min_size, <a href="order.md#0x0_order_EOrderBelowMinimumSize">EOrderBelowMinimumSize</a>);
-    <b>assert</b>!(new_quantity % lot_size == 0, <a href="order.md#0x0_order_EOrderInvalidLotSize">EOrderInvalidLotSize</a>);
-    <b>assert</b>!(timestamp &lt;= self.<a href="order.md#0x0_order_expire_timestamp">expire_timestamp</a>(), <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    <b>assert</b>!(new_quantity &gt; self.filled_quantity &&
+            new_quantity &lt; self.quantity, <a href="order.md#0x0_order_EInvalidNewQuantity">EInvalidNewQuantity</a>);
+    <b>assert</b>!(timestamp &lt;= self.expire_timestamp, <a href="order.md#0x0_order_EOrderExpired">EOrderExpired</a>);
+    self.quantity = new_quantity;
+}
+</code></pre>
 
-    self.filled_quantity = self.filled_quantity + cancel_quantity;
+
+
+</details>
+
+<a name="0x0_order_calculate_cancel_refund"></a>
+
+## Function `calculate_cancel_refund`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_calculate_cancel_refund">calculate_cancel_refund</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>, maker_fee: u64, cancel_quantity: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_calculate_cancel_refund">calculate_cancel_refund</a>(
+    self: &<a href="order.md#0x0_order_Order">Order</a>,
+    maker_fee: u64,
+    cancel_quantity: Option&lt;u64&gt;,
+): Balances {
+    <b>let</b> cancel_quantity = <b>if</b> (cancel_quantity.is_some()) {
+        *cancel_quantity.borrow()
+    } <b>else</b> {
+        self.quantity - self.filled_quantity
+    };
+    <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(self.deep_per_base, maker_fee));
+    <b>let</b> <b>mut</b> base_out = 0;
+    <b>let</b> <b>mut</b> quote_out = 0;
+    <b>if</b> (self.<a href="order.md#0x0_order_is_bid">is_bid</a>()) {
+        quote_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>());
+    } <b>else</b> {
+        base_out = cancel_quantity;
+    };
+
+    <a href="balances.md#0x0_balances_new">balances::new</a>(base_out, quote_out, deep_out)
 }
 </code></pre>
 

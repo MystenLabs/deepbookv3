@@ -124,7 +124,7 @@ module deepbook::math {
             4 * FLOAT_SCALING,
             5 * FLOAT_SCALING
         ];
-        assert!(median(v) == 3 * FLOAT_SCALING);
+        assert!(median(v) == 3 * FLOAT_SCALING, 0);
 
         let v = vector<u64>[
             10 * FLOAT_SCALING,
@@ -133,7 +133,7 @@ module deepbook::math {
             3 * FLOAT_SCALING,
             5 * FLOAT_SCALING
         ];
-        assert!(median(v) == 5 * FLOAT_SCALING);
+        assert!(median(v) == 5 * FLOAT_SCALING, 0);
 
         let v = vector<u64>[
             10 * FLOAT_SCALING,
@@ -142,6 +142,6 @@ module deepbook::math {
             4 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
             28 * FLOAT_SCALING];
-        assert!(median(v) == 9_500_000_000);
+        assert!(median(v) == 9_500_000_000, 0);
     }
 }

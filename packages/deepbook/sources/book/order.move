@@ -11,13 +11,12 @@ module deepbook::order {
         utils,
         fill::{Self, Fill},
         constants,
+        balances::{Self, Balances},
     };
 
     // === Errors ===
     const EInvalidNewQuantity: u64 = 0;
-    const EOrderBelowMinimumSize: u64 = 1;
-    const EOrderInvalidLotSize: u64 = 2;
-    const EOrderExpired: u64 = 3;
+    const EOrderExpired: u64 = 1;
 
     // === Structs ===
     /// Order struct represents the order in the order book. It is optimized for space.
@@ -121,18 +120,34 @@ module deepbook::order {
     public(package) fun modify(
         self: &mut Order,
         new_quantity: u64,
-        min_size: u64,
-        lot_size: u64,
         timestamp: u64,
     ) {
-        let available_quantity = self.quantity - self.filled_quantity;
-        let cancel_quantity = available_quantity - new_quantity;
-        assert!(cancel_quantity > 0 && new_quantity < available_quantity, EInvalidNewQuantity);
-        assert!(new_quantity >= min_size, EOrderBelowMinimumSize);
-        assert!(new_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(timestamp <= self.expire_timestamp(), EOrderExpired);
+        assert!(new_quantity > self.filled_quantity && 
+                new_quantity < self.quantity, EInvalidNewQuantity);
+        assert!(timestamp <= self.expire_timestamp, EOrderExpired);
+        self.quantity = new_quantity;
+    }
 
-        self.filled_quantity = self.filled_quantity + cancel_quantity;
+    public(package) fun calculate_cancel_refund(
+        self: &Order,
+        maker_fee: u64,
+        cancel_quantity: Option<u64>,
+    ): Balances {
+        let cancel_quantity = if (cancel_quantity.is_some()) {
+            *cancel_quantity.borrow()
+        } else {
+            self.quantity - self.filled_quantity
+        };
+        let deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_base, maker_fee));
+        let mut base_out = 0;
+        let mut quote_out = 0;
+        if (self.is_bid()) {
+            quote_out = math::mul(cancel_quantity, self.price());
+        } else {
+            base_out = cancel_quantity;
+        };
+
+        balances::new(base_out, quote_out, deep_out)
     }
 
     public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(

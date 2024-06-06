@@ -266,7 +266,7 @@ module deepbook::pool {
     ) {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
-        let (settled, owed) = self.state.process_cancel(&mut order, order_id, balance_manager.id(), ctx);
+        let (settled, owed) = self.state.process_cancel(&mut order, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
 
         order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
@@ -359,8 +359,7 @@ module deepbook::pool {
         proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        let account = self.state.account_mut(balance_manager.id(), ctx);
-        let (settled, owed) = account.claim_rebates();
+        let (settled, owed) = self.state.process_claim_rebates(balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
     }
 
@@ -463,9 +462,7 @@ module deepbook::pool {
     public fun burn_deep<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
     ) {
-        let history = self.state.history();
-        let balance_to_burn = history.balance_to_burn();
-        history.reset_balance_to_burn();
+        let balance_to_burn = self.state.history_mut().reset_balance_to_burn();
         assert!(balance_to_burn > 0, EInvalidAmountIn);
         // TODO: burn deep balance
         // let deep_balance = self.vault.withdraw_deep(balance_to_burn);

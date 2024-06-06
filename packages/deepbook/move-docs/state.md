@@ -15,13 +15,12 @@
 -  [Function `process_unstake`](#0x0_state_process_unstake)
 -  [Function `process_proposal`](#0x0_state_process_proposal)
 -  [Function `process_vote`](#0x0_state_process_vote)
+-  [Function `process_claim_rebates`](#0x0_state_process_claim_rebates)
 -  [Function `governance`](#0x0_state_governance)
 -  [Function `governance_mut`](#0x0_state_governance_mut)
 -  [Function `account`](#0x0_state_account)
--  [Function `account_mut`](#0x0_state_account_mut)
--  [Function `history`](#0x0_state_history)
+-  [Function `history_mut`](#0x0_state_history_mut)
 -  [Function `update_account`](#0x0_state_update_account)
--  [Function `add_new_account`](#0x0_state_add_new_account)
 
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
@@ -33,7 +32,6 @@
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
 <b>use</b> <a href="order_info.md#0x0_order_info">0x0::order_info</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
-<b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
@@ -206,7 +204,7 @@ Update account settled balances and volumes.
 Remove order from account orders.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, order_id: u128, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order.md#0x0_order">order</a>: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -218,27 +216,20 @@ Remove order from account orders.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_cancel">process_cancel</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     <a href="order.md#0x0_order">order</a>: &<b>mut</b> Order,
-    order_id: u128,
     account_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
-    <a href="order.md#0x0_order">order</a>.set_canceled();
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
+    <a href="order.md#0x0_order">order</a>.set_canceled();
 
-    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
-    <b>let</b> cancel_quantity = <a href="order.md#0x0_order">order</a>.quantity();
-    <b>let</b> (is_bid, price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(order_id);
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
     <b>let</b> maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(epoch);
-    <b>let</b> deep_per_base = <a href="order.md#0x0_order">order</a>.deep_per_base();
-    <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, maker_fee));
-    <b>let</b> base_out = <b>if</b> (is_bid) { 0 } <b>else</b> { cancel_quantity };
-    <b>let</b> quote_out = <b>if</b> (is_bid) { <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, price) } <b>else</b> { 0 };
-    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(base_out, quote_out, deep_out);
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="order.md#0x0_order">order</a>.calculate_cancel_refund(maker_fee, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>());
 
-    <a href="account.md#0x0_account">account</a>.remove_order(order_id);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
+    <a href="account.md#0x0_account">account</a>.remove_order(<a href="order.md#0x0_order">order</a>.order_id());
     <a href="account.md#0x0_account">account</a>.add_settled_balances(<a href="balances.md#0x0_balances">balances</a>);
 
     <a href="account.md#0x0_account">account</a>.settle()
@@ -277,9 +268,7 @@ Remove order from account orders.
 
     <b>let</b> epoch = <a href="order.md#0x0_order">order</a>.epoch();
     <b>let</b> maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(epoch);
-    <b>let</b> deep_per_base = <a href="order.md#0x0_order">order</a>.deep_per_base();
-    <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(deep_per_base, maker_fee));
-    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, deep_out);
+    <b>let</b> <a href="balances.md#0x0_balances">balances</a> = <a href="order.md#0x0_order">order</a>.calculate_cancel_refund(maker_fee, <a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(cancel_quantity));
 
     self.accounts[account_id].add_settled_balances(<a href="balances.md#0x0_balances">balances</a>);
 
@@ -446,6 +435,41 @@ Remove order from account orders.
 
 </details>
 
+<a name="0x0_state_process_claim_rebates"></a>
+
+## Function `process_claim_rebates`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_claim_rebates">process_claim_rebates</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_claim_rebates">process_claim_rebates</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    account_id: ID,
+    ctx: &TxContext,
+): (Balances, Balances) {
+    self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
+    self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
+    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
+
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
+    <a href="account.md#0x0_account">account</a>.claim_rebates();
+
+    <a href="account.md#0x0_account">account</a>.settle()
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_state_governance"></a>
 
 ## Function `governance`
@@ -528,13 +552,13 @@ Remove order from account orders.
 
 </details>
 
-<a name="0x0_state_account_mut"></a>
+<a name="0x0_state_history_mut"></a>
 
-## Function `account_mut`
+## Function `history_mut`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_account_mut">account_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_history_mut">history_mut</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>): &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>
 </code></pre>
 
 
@@ -543,37 +567,7 @@ Remove order from account orders.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_account_mut">account_mut</a>(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    account_id: ID,
-    ctx: &TxContext,
-): &<b>mut</b> Account {
-    self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
-
-    &<b>mut</b> self.accounts[account_id]
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_history"></a>
-
-## Function `history`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history">history</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>): &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history">history</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_history_mut">history_mut</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
 ): &<b>mut</b> History {
     &<b>mut</b> self.<a href="history.md#0x0_history">history</a>
@@ -604,43 +598,16 @@ Remove order from account orders.
     account_id: ID,
     ctx: &TxContext,
 ) {
-    <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self, account_id, ctx);
+    <b>if</b> (!self.accounts.contains(account_id)) {
+        self.accounts.add(account_id, <a href="account.md#0x0_account_empty">account::empty</a>(ctx));
+    };
+
     <b>let</b> account_id = &<b>mut</b> self.accounts[account_id];
     <b>let</b> (prev_epoch, maker_volume, active_stake) = account_id.<b>update</b>(ctx);
     <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
         <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
         account_id.add_rebates(rebates);
     }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_state_add_new_account"></a>
-
-## Function `add_new_account`
-
-
-
-<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_account">add_new_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>fun</b> <a href="state.md#0x0_state_add_new_account">add_new_account</a>(
-    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
-    account_id: ID,
-    ctx: &TxContext,
-) {
-    <b>if</b> (!self.accounts.contains(account_id)) {
-        self.accounts.add(account_id, <a href="account.md#0x0_account_empty">account::empty</a>(ctx));
-    };
 }
 </code></pre>
 

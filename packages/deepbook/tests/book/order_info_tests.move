@@ -143,6 +143,36 @@ module deepbook::order_info_tests {
     }
 
     #[test]
+    // Taker: ask order with quantity 10 at price $1
+    // Maker1: bid order with quantity 1.001001 at price $1.001
+    // Maker2: bid order with quantity 1 at price $1
+    fun match_maker_multiple_ask_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 1 * constants::usdc_unit();
+        let taker_quantity = 10 * constants::sui_unit();
+        let maker1_quantity = 1_001_001_000;
+        let maker2_quantity = 1 * constants::sui_unit();
+        let mut order_info = create_order_info_base(ALICE, price, taker_quantity, false, test.ctx().epoch());
+        let mut maker_order1 = create_order_info_base(BOB, 1_001_000, maker1_quantity, true, test.ctx().epoch()).to_order();
+        // quantity matched = 1.001001, taker fee = 0.001 = 0.001001001
+        order_info.match_maker(&mut maker_order1, 0);
+        // quantity matched = 1, taker fee = 0.001 = 0.001
+        let mut maker_order2 = create_order_info_base(BOB, price, maker2_quantity, true, test.ctx().epoch()).to_order();
+        order_info.match_maker(&mut maker_order2, 0);
+        // remaining quantity = 10 - 1 - 1.001001 = 7.998999
+        // maker fee = 7.998999 * 0.0005 = 0.0039994995, rounded down 0.003999499
+        // total fee = 0.001001001 + 0.001 + 0.003999499 = 0.0060005 = 6000500
+        let (settled, owed) = order_info.calculate_partial_fill_balances(constants::taker_fee(), constants::maker_fee());
+
+        assert_eq(settled, balances::new(0, 2_002_002, 0));
+        assert_eq(owed, balances::new(10_000_000_000, 0, 6_000_500));
+
+        end(test);
+    }
+
+    #[test]
     // Taker: bid order with quantity 10 at price $5
     // Maker: ask order with quantity 50 at price $5
     fun match_maker_full_fill_ok() {
@@ -497,7 +527,7 @@ module deepbook::order_info_tests {
         is_bid: bool,
         epoch: u64,
     ): OrderInfo {
-        let balance_manager_id = id_from_address(@0x1);
+        let balance_manager_id = id_from_address(trader);
         let order_type = 0;
         let fee_is_deep = true;
         let deep_per_base = 1 * constants::float_scaling();

@@ -5,13 +5,12 @@ module deepbook::state {
 
     use deepbook::{
         math,
-        utils,
         history::{Self, History},
         order::Order,
         order_info::OrderInfo,
         governance::{Self, Governance},
         account::{Self, Account},
-        balances::{Self, Balances},
+        balances::Balances,
     };
 
     const ENotEnoughStake: u64 = 1;
@@ -83,27 +82,20 @@ module deepbook::state {
     public(package) fun process_cancel(
         self: &mut State,
         order: &mut Order,
-        order_id: u128,
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
-        order.set_canceled();
         self.update_account(account_id, ctx);
+        order.set_canceled();
 
-        let account = &mut self.accounts[account_id];
-        let cancel_quantity = order.quantity();
-        let (is_bid, price, _) = utils::decode_order_id(order_id);
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
-        let deep_per_base = order.deep_per_base();
-        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
-        let base_out = if (is_bid) { 0 } else { cancel_quantity };
-        let quote_out = if (is_bid) { math::mul(cancel_quantity, price) } else { 0 };
-        let balances = balances::new(base_out, quote_out, deep_out);
+        let balances = order.calculate_cancel_refund(maker_fee, option::none());
 
-        account.remove_order(order_id);
+        let account = &mut self.accounts[account_id];
+        account.remove_order(order.order_id());
         account.add_settled_balances(balances);
 
         account.settle()
@@ -122,9 +114,7 @@ module deepbook::state {
 
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
-        let deep_per_base = order.deep_per_base();
-        let deep_out = math::mul(cancel_quantity, math::mul(deep_per_base, maker_fee));
-        let balances = balances::new(0, 0, deep_out);
+        let balances = order.calculate_cancel_refund(maker_fee, option::some(cancel_quantity));
 
         self.accounts[account_id].add_settled_balances(balances);
 
@@ -206,6 +196,21 @@ module deepbook::state {
         );
     }
 
+    public(package) fun process_claim_rebates(
+        self: &mut State,
+        account_id: ID,
+        ctx: &TxContext,
+    ): (Balances, Balances) {
+        self.governance.update(ctx);
+        self.history.update(self.governance.trade_params(), ctx);
+        self.update_account(account_id, ctx);
+
+        let account = &mut self.accounts[account_id];
+        account.claim_rebates();
+
+        account.settle()
+    }
+
     public(package) fun governance(
         self: &State,
     ): &Governance {
@@ -228,17 +233,7 @@ module deepbook::state {
         &self.accounts[account_id]
     }
 
-    public(package) fun account_mut(
-        self: &mut State,
-        account_id: ID,
-        ctx: &TxContext,
-    ): &mut Account {
-        self.update_account(account_id, ctx);
-
-        &mut self.accounts[account_id]
-    }
-
-    public(package) fun history(
+    public(package) fun history_mut(
         self: &mut State,
     ): &mut History {
         &mut self.history
@@ -249,22 +244,15 @@ module deepbook::state {
         account_id: ID,
         ctx: &TxContext,
     ) {
-        add_new_account(self, account_id, ctx);
+        if (!self.accounts.contains(account_id)) {
+            self.accounts.add(account_id, account::empty(ctx));
+        };
+
         let account_id = &mut self.accounts[account_id];
         let (prev_epoch, maker_volume, active_stake) = account_id.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
             account_id.add_rebates(rebates);
         }
-    }
-
-    fun add_new_account(
-        self: &mut State,
-        account_id: ID,
-        ctx: &TxContext,
-    ) {
-        if (!self.accounts.contains(account_id)) {
-            self.accounts.add(account_id, account::empty(ctx));
-        };
     }
 }

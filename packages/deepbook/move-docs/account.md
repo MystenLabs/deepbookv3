@@ -516,7 +516,7 @@ Vault uses these values to perform any necessary transfers.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>)
 </code></pre>
 
 
@@ -527,11 +527,9 @@ Vault uses these values to perform any necessary transfers.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(
     self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-): (Balances, Balances) {
+) {
     self.settled_balances.add_deep(self.unclaimed_rebates);
     self.unclaimed_rebates = 0;
-
-    self.<a href="account.md#0x0_account_settle">settle</a>()
 }
 </code></pre>
 
