@@ -92,7 +92,7 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let account = &mut self.accounts[account_id];
-        let cancel_quantity = order.quantity();
+        let cancel_quantity = order.quantity() - order.filled_quantity();
         let epoch = order.epoch();
         let maker_fee = self.history.historic_maker_fee(epoch);
         let deep_per_base = order.deep_per_base();
