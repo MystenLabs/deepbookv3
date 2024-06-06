@@ -93,15 +93,6 @@
 
 
 
-<a name="0x0_state_STAKE_REQUIRED_TO_PARTICIPATE"></a>
-
-
-
-<pre><code><b>const</b> <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>: u64 = 100;
-</code></pre>
-
-
-
 <a name="0x0_state_empty"></a>
 
 ## Function `empty`
@@ -341,11 +332,12 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
-    <b>let</b> voted_stake = <a href="account.md#0x0_account">account</a>.active_stake();
+    <b>let</b> active_stake = <a href="account.md#0x0_account">account</a>.active_stake();
+    <b>let</b> inactive_stake = <a href="account.md#0x0_account">account</a>.inactive_stake();
     <b>let</b> voted_proposal = <a href="account.md#0x0_account">account</a>.voted_proposal();
     <a href="account.md#0x0_account">account</a>.remove_stake();
-    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(voted_stake, 0);
-    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(voted_proposal, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), voted_stake);
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_voting_power(active_stake + inactive_stake, 0);
+    self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(voted_proposal, <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(), active_stake);
 
     <a href="account.md#0x0_account">account</a>.settle()
 }
@@ -383,7 +375,7 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> stake = self.accounts[account_id].active_stake();
-    <b>assert</b>!(stake &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>assert</b>!(stake &gt; 0, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
 
     self.<a href="governance.md#0x0_governance">governance</a>.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
     self.<a href="state.md#0x0_state_process_vote">process_vote</a>(account_id, account_id, ctx);
@@ -420,7 +412,7 @@ Remove order from account orders.
     self.<a href="state.md#0x0_state_update_account">update_account</a>(account_id, ctx);
 
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
-    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.active_stake() &gt;= <a href="state.md#0x0_state_STAKE_REQUIRED_TO_PARTICIPATE">STAKE_REQUIRED_TO_PARTICIPATE</a>, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
+    <b>assert</b>!(<a href="account.md#0x0_account">account</a>.active_stake() &gt; 0, <a href="state.md#0x0_state_ENotEnoughStake">ENotEnoughStake</a>);
 
     <b>let</b> prev_proposal = <a href="account.md#0x0_account">account</a>.set_voted_proposal(<a href="dependencies/move-stdlib/option.md#0x1_option_some">option::some</a>(proposal_id));
     self.<a href="governance.md#0x0_governance">governance</a>.adjust_vote(
