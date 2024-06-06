@@ -298,16 +298,17 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_crossing_multiple_orders_bid_ok() {
-        test_crossing_multiple(true)
+        test_crossing_multiple(true, 3)
     }
 
     #[test]
     fun test_crossing_multiple_orders_ask_ok() {
-        test_crossing_multiple(false)
+        test_crossing_multiple(false, 3)
     }
 
     fun test_crossing_multiple(
-        is_bid: bool
+        is_bid: bool,
+        num_orders: u64,
     ) {
         let owner: address = @0x1;
         let mut test = begin(owner);
@@ -320,35 +321,25 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
-            ALICE,
-            acct_id_alice,
-            client_order_id,
-            constants::no_restriction(),
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+        let mut i = 0;
+        while (i < num_orders) {
+            place_order(
+                ALICE,
+                acct_id_alice,
+                client_order_id,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+            i = i + 1;
+        };
 
-        place_order(
-            ALICE,
-            acct_id_alice,
-            client_order_id,
-            constants::no_restriction(),
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-
-        let client_order_id = 2;
+        let client_order_id = 3;
         let price = if (is_bid) {
             1 * constants::float_scaling()
         } else {
@@ -362,7 +353,7 @@ module deepbook::pool_tests {
             constants::no_restriction(),
             constants::self_matching_allowed(),
             price,
-            2 * quantity,
+            num_orders * quantity,
             !is_bid,
             pay_with_deep,
             expire_timestamp,
@@ -373,10 +364,10 @@ module deepbook::pool_tests {
             &order_info,
             client_order_id,
             price,
-            2 * quantity,
-            2 * quantity,
-            4 * quantity,
-            2 * math::mul(
+            num_orders * quantity,
+            num_orders * quantity,
+            2 * num_orders * quantity,
+            num_orders * math::mul(
                 constants::taker_discount(),
                 math::mul(constants::taker_fee(), constants::deep_multiplier())
             ),
@@ -388,103 +379,90 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    // #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
-    // fun test_fill_or_kill_bid_e() {
-    //     test_fill_or_kill(true, false);
-    // }
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
+    fun test_fill_or_kill_bid_e() {
+        test_fill_or_kill(true, false);
+    }
 
-    // #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
-    // fun test_fill_or_kill_ask_e() {
-    //     test_fill_or_kill(false, false);
-    // }
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EFOKOrderCannotBeFullyFilled)]
+    fun test_fill_or_kill_ask_e() {
+        test_fill_or_kill(false, false);
+    }
 
-    // #[test]
-    // fun test_fill_or_kill_bid_ok() {
-    //     test_fill_or_kill(true, true);
-    // }
+    #[test]
+    fun test_fill_or_kill_bid_ok() {
+        test_fill_or_kill(true, true);
+    }
 
-    // #[test]
-    // fun test_fill_or_kill_ask_ok() {
-    //     test_fill_or_kill(false, true);
-    // }
+    #[test]
+    fun test_fill_or_kill_ask_ok() {
+        test_fill_or_kill(false, true);
+    }
 
-    // /// Test fill or kill order that crosses with an order that's smaller in quantity
-    // /// Should error with EFOKOrderCannotBeFullyFilled
-    // fun test_fill_or_kill(
-    //     is_bid: bool,
-    //     order_can_be_filled: bool,
-    // ) {
-    //     let owner: address = @0x1;
-    //     let mut test = begin(owner);
-    //     setup_test(owner, &mut test);
-    //     let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+    /// Test fill or kill order that crosses with an order that's smaller in quantity
+    /// Should error with EFOKOrderCannotBeFullyFilled
+    fun test_fill_or_kill(
+        is_bid: bool,
+        order_can_be_filled: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
-    //     let client_order_id = 1;
-    //     let price = 2 * constants::float_scaling();
-    //     let quantity = 1 * constants::float_scaling();
-    //     let expire_timestamp = constants::max_u64();
-    //     let pay_with_deep = true;
-    //     let quantity_multiplier = 2;
-    //     // let mut i = if (order_can_be_filled) {
-    //     //     quantity_multiplier
-    //     // } else {
-    //     //     1
-    //     // };
+        let client_order_id = 1;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let quantity_multiplier = 2;
+        let mut num_orders = if (order_can_be_filled) {
+            quantity_multiplier
+        } else {
+            1
+        };
 
-    //     place_order(
-    //         ALICE,
-    //         acct_id_alice,
-    //         client_order_id,
-    //         constants::no_restriction(),
-    //         constants::self_matching_allowed(),
-    //         price,
-    //         quantity,
-    //         is_bid,
-    //         pay_with_deep,
-    //         expire_timestamp,
-    //         &mut test,
-    //     );
+        while (num_orders > 0) {
+            place_order(
+                ALICE,
+                acct_id_alice,
+                client_order_id,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+            num_orders = num_orders - 1;
+        };
 
-    //     // place_order(
-    //     //     ALICE,
-    //     //     acct_id_alice,
-    //     //     client_order_id,
-    //     //     constants::no_restriction(),
-    //     //     constants::self_matching_allowed(),
-    //     //     price,
-    //     //     quantity,
-    //     //     is_bid,
-    //     //     pay_with_deep,
-    //     //     expire_timestamp,
-    //     //     &mut test,
-    //     // );
+        // Place a second order that crosses with the first i orders
+        let client_order_id = 2;
+        let price = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
 
-    //     // Place a second order that crosses with the first i orders
-    //     let client_order_id = 2;
-    //     let price = if (is_bid) {
-    //         1 * constants::float_scaling()
-    //     } else {
-    //         3 * constants::float_scaling()
-    //     };
-    //     let x = 999;
-    //     std::debug::print(&x);
+        place_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::fill_or_kill(),
+            constants::self_matching_allowed(),
+            price,
+            quantity_multiplier * quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
 
-    //     place_order(
-    //         ALICE,
-    //         acct_id_alice,
-    //         client_order_id,
-    //         constants::no_restriction(),
-    //         constants::self_matching_allowed(),
-    //         price,
-    //         quantity_multiplier * quantity,
-    //         !is_bid,
-    //         pay_with_deep,
-    //         expire_timestamp,
-    //         &mut test,
-    //     );
-
-    //     end(test);
-    // }
+        end(test);
+    }
 
     /// Test post only order that crosses with another order
     /// Should error with EPOSTOrderCrossesOrderbook

@@ -241,10 +241,6 @@ module deepbook::order_info {
         self.market_order
     }
 
-    public(package) fun last_fill(self: &OrderInfo): &Fill {
-        &self.fills[self.fills.length() - 1]
-    }
-
     public(package) fun set_order_id(self: &mut OrderInfo, order_id: u128) {
         self.order_id = order_id;
     }
@@ -396,7 +392,6 @@ module deepbook::order_info {
         self.executed_quantity = self.executed_quantity + fill.base_quantity();
         self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
         self.status = constants::partially_filled();
-        if (self.remaining_quantity() == 0) self.status = constants::filled();
 
         self.emit_order_filled(
             maker,
@@ -405,8 +400,12 @@ module deepbook::order_info {
             fill.quote_quantity(),
             timestamp
         );
-
-        true
+        if (self.remaining_quantity() == 0) {
+            self.status = constants::filled();
+            false
+        } else {
+            true
+        }
     }
 
     public(package) fun emit_order_placed(self: &OrderInfo) {
