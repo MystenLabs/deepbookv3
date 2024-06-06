@@ -175,4 +175,64 @@ module deepbook::history_tests {
         test_utils::destroy(history);
         end(test);
     }
+
+    #[test]
+    /// Pool is created on epoch 0, up till epoch 27 should still grant close to the maximum rebate.
+    /// Epoch 28 should return the normal rebate.
+    fun test_rebate_edge_epoch_ok() {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+
+        let trade_params = trade_params::new(0, 0, 1_000_000);
+
+        // epoch 0
+        let mut history = history::empty(trade_params, 0, test.ctx());
+        history.set_current_volumes(
+            10 * FLOAT_SCALING, // total_volume
+            5 * FLOAT_SCALING, // total_staked_volume
+            500_000_000, // total_fees_collected
+        );
+        let mut epochs_to_advance = constants::epochs_for_phase_out() - 1;
+
+        while (epochs_to_advance > 0) {
+            test.next_epoch(owner);
+            history.update(trade_params, test.ctx());
+            history.set_current_volumes(
+                10 * FLOAT_SCALING, // total_volume
+                5 * FLOAT_SCALING, // total_staked_volume
+                500_000_000, // total_fees_collected
+            );
+            let rebate = history.calculate_rebate_amount(
+                0, //test.ctx().epoch() - 1,
+                3 * FLOAT_SCALING,
+                1_000_000
+            );
+            assert!(rebate == 300_000_000, EWrongRebateAmount);
+            epochs_to_advance = epochs_to_advance - 1;
+        };
+
+        // epoch 28
+        test.next_epoch(owner);
+        history.update(trade_params, test.ctx());
+
+        history.set_current_volumes(
+            10 * FLOAT_SCALING, // total_volume
+            5 * FLOAT_SCALING, // total_staked_volume
+            1_000_000_000, // total_fees_collected
+        );
+
+        // epoch 29
+        test.next_epoch(owner);
+        history.update(trade_params, test.ctx());
+
+        let rebate = history.calculate_rebate_amount(
+            28,
+            3 * FLOAT_SCALING,
+            1_000_000
+        );
+        assert!(rebate == 180_000_000, EWrongRebateAmount);
+
+        test_utils::destroy(history);
+        end(test);
+    }
 }

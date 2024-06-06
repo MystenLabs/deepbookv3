@@ -62,11 +62,11 @@ module deepbook::history {
         if (self.historic_volumes.contains(self.epoch)) {
             self.historic_volumes.remove(self.epoch);
         };
+        self.update_historic_median();
         self.historic_volumes.add(self.epoch, self.volumes);
 
         self.epoch = epoch;
         self.reset_volumes(trade_params);
-        self.update_historic_median();
         self.historic_volumes.add(self.epoch, self.volumes);
     }
 
