@@ -866,8 +866,7 @@ The balance_manager's data is updated with the claimed rewards.
     proof: &TradeProof,
     ctx: &TxContext,
 ) {
-    <b>let</b> <a href="account.md#0x0_account">account</a> = self.<a href="state.md#0x0_state">state</a>.account_mut(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
-    <b>let</b> (settled, owed) = <a href="account.md#0x0_account">account</a>.<a href="pool.md#0x0_pool_claim_rebates">claim_rebates</a>();
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_claim_rebates(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
 </code></pre>
@@ -1106,9 +1105,7 @@ Burns DEEP tokens from the pool. Amount to burn is within history
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ) {
-    <b>let</b> <a href="history.md#0x0_history">history</a> = self.<a href="state.md#0x0_state">state</a>.<a href="history.md#0x0_history">history</a>();
-    <b>let</b> balance_to_burn = <a href="history.md#0x0_history">history</a>.balance_to_burn();
-    <a href="history.md#0x0_history">history</a>.reset_balance_to_burn();
+    <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
     <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
     // TODO: burn deep <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>
     // <b>let</b> deep_balance = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep(balance_to_burn);

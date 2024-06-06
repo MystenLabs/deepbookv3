@@ -430,7 +430,7 @@ Increments the total volume and total staked volume.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_reset_balance_to_burn">reset_balance_to_burn</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_reset_balance_to_burn">reset_balance_to_burn</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>): u64
 </code></pre>
 
 
@@ -441,8 +441,11 @@ Increments the total volume and total staked volume.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_reset_balance_to_burn">reset_balance_to_burn</a>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
-) {
-    self.balance_to_burn = 0
+): u64 {
+    <b>let</b> balance_to_burn = self.balance_to_burn;
+    self.balance_to_burn = 0;
+
+    balance_to_burn
 }
 </code></pre>
 

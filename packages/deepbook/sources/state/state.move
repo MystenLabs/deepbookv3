@@ -196,6 +196,21 @@ module deepbook::state {
         );
     }
 
+    public(package) fun process_claim_rebates(
+        self: &mut State,
+        account_id: ID,
+        ctx: &TxContext,
+    ): (Balances, Balances) {
+        self.governance.update(ctx);
+        self.history.update(self.governance.trade_params(), ctx);
+        self.update_account(account_id, ctx);
+
+        let account = &mut self.accounts[account_id];
+        account.claim_rebates();
+
+        account.settle()
+    }
+
     public(package) fun governance(
         self: &State,
     ): &Governance {
@@ -218,17 +233,7 @@ module deepbook::state {
         &self.accounts[account_id]
     }
 
-    public(package) fun account_mut(
-        self: &mut State,
-        account_id: ID,
-        ctx: &TxContext,
-    ): &mut Account {
-        self.update_account(account_id, ctx);
-
-        &mut self.accounts[account_id]
-    }
-
-    public(package) fun history(
+    public(package) fun history_mut(
         self: &mut State,
     ): &mut History {
         &mut self.history
@@ -239,22 +244,15 @@ module deepbook::state {
         account_id: ID,
         ctx: &TxContext,
     ) {
-        add_new_account(self, account_id, ctx);
+        if (!self.accounts.contains(account_id)) {
+            self.accounts.add(account_id, account::empty(ctx));
+        };
+
         let account_id = &mut self.accounts[account_id];
         let (prev_epoch, maker_volume, active_stake) = account_id.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
             account_id.add_rebates(rebates);
         }
-    }
-
-    fun add_new_account(
-        self: &mut State,
-        account_id: ID,
-        ctx: &TxContext,
-    ) {
-        if (!self.accounts.contains(account_id)) {
-            self.accounts.add(account_id, account::empty(ctx));
-        };
     }
 }

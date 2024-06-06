@@ -203,12 +203,14 @@ module deepbook::account_tests {
 
         test.next_tx(ALICE);
         let mut account = account::empty(test.ctx());
-        let (settled, owed) = account.claim_rebates();
+        account.claim_rebates();
+        let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 0));
 
         account.add_rebates(100);
-        let (settled, owed) = account.claim_rebates();
+        account.claim_rebates();
+        let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 0, 100));
         assert_eq(owed, balances::new(0, 0, 0));
 
@@ -216,7 +218,8 @@ module deepbook::account_tests {
         account.add_stake(100);
         // user receives 100 DEEP from rebates
         account.add_rebates(100);
-        let (settled, owed) = account.claim_rebates();
+        account.claim_rebates();
+        let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 0, 100));
         assert_eq(owed, balances::new(0, 0, 100));
 

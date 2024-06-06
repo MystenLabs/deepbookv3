@@ -159,11 +159,9 @@ module deepbook::account {
 
     public(package) fun claim_rebates(
         self: &mut Account,
-    ): (Balances, Balances) {
+    ) {
         self.settled_balances.add_deep(self.unclaimed_rebates);
         self.unclaimed_rebates = 0;
-
-        self.settle()
     }
 
     public(package) fun add_order(

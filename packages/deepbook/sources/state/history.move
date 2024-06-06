@@ -154,8 +154,11 @@ module deepbook::history {
 
     public(package) fun reset_balance_to_burn(
         self: &mut History,
-    ) {
-        self.balance_to_burn = 0
+    ): u64 {
+        let balance_to_burn = self.balance_to_burn;
+        self.balance_to_burn = 0;
+
+        balance_to_burn
     }
 
     public(package) fun historic_maker_fee(
