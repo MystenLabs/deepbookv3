@@ -40,10 +40,7 @@ module deepbook::pool {
     const EIneligibleTargetPool: u64 = 11;
 
     const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
-    const MIN_PRICE: u64 = 1;
-    const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
-    const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -172,7 +169,7 @@ module deepbook::pool {
             client_order_id,
             order_type,
             self_matching_option,
-            if (is_bid) MAX_PRICE else MIN_PRICE,
+            if (is_bid) constants::max_price() else constants::min_price(),
             quantity,
             is_bid,
             pay_with_deep,
@@ -399,7 +396,7 @@ module deepbook::pool {
         price_high: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        self.book.get_level2_range_and_ticks(price_low, price_high, MAX_U64, is_bid)
+        self.book.get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
@@ -410,8 +407,8 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
     ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
-        let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, true);
-        let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(MIN_PRICE, MAX_PRICE, ticks, false);
+        let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, true);
+        let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, false);
 
         (bid_price, bid_quantity, ask_price, ask_quantity)
     }

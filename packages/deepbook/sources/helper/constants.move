@@ -4,6 +4,7 @@ module deepbook::constants {
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
+    const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000_000; // 100 DEEP
 
     // Restrictions on limit orders.
     // No restriction on the order.
@@ -135,6 +136,10 @@ module deepbook::constants {
 
     public fun phase_out_epochs(): u64 {
         PHASE_OUT_EPOCHS
+    }
+
+    public fun default_stake_required(): u64 {
+        DEFAULT_STAKE_REQUIRED
     }
 
     #[test_only]
