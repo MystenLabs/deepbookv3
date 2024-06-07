@@ -39,6 +39,7 @@ module deepbook::pool {
     const EInvalidOrderBalanceManager: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
 
+    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {

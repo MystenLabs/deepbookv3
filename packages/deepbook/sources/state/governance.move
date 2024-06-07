@@ -68,8 +68,8 @@ module deepbook::governance {
             whitelisted: false,
             stable: false,
             proposals: vec_map::empty(),
-            trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
-            next_trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, 0),
+            trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, constants::default_stake_required()),
+            next_trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, constants::default_stake_required()),
             voting_power: 0,
             quorum: 0,
         }

@@ -44,27 +44,23 @@ module deepbook::account {
         }
     }
 
-    public(package) fun active_stake(
-        self: &Account,
-    ): u64 {
+    public(package) fun active_stake(self: &Account): u64 {
         self.active_stake
     }
+    
+    public(package) fun inactive_stake(self: &Account): u64 {
+        self.inactive_stake
+    }
 
-    public(package) fun total_volume(
-        self: &Account,
-    ): u64 {
+    public(package) fun total_volume(self: &Account): u64 {
         self.taker_volume + self.maker_volume
     }
 
-    public(package) fun voted_proposal(
-        self: &Account,
-    ): Option<ID> {
+    public(package) fun voted_proposal(self: &Account): Option<ID> {
         self.voted_proposal
     }
 
-    public(package) fun open_orders(
-        self: &Account,
-    ): VecSet<u128> {
+    public(package) fun open_orders(self: &Account): VecSet<u128> {
         self.open_orders
     }
 
@@ -200,11 +196,6 @@ module deepbook::account {
     }
 
     // === Test Functions ===
-    #[test_only]
-    public fun inactive_stake(self: &Account): u64 {
-        self.inactive_stake
-    }
-
     #[test_only]
     public fun settled_balances(self: &Account): Balances {
         self.settled_balances

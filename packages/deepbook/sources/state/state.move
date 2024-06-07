@@ -14,8 +14,8 @@ module deepbook::state {
     };
 
     const ENotEnoughStake: u64 = 1;
-
     const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1;
+    const ENoStake: u64 = 1;
 
     public struct State has store {
         accounts: Table<ID, Account>,
@@ -147,11 +147,12 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let account = &mut self.accounts[account_id];
-        let voted_stake = account.active_stake();
+        let active_stake = account.active_stake();
+        let inactive_stake = account.inactive_stake();
         let voted_proposal = account.voted_proposal();
         account.remove_stake();
-        self.governance.adjust_voting_power(voted_stake, 0);
-        self.governance.adjust_vote(voted_proposal, option::none(), voted_stake);
+        self.governance.adjust_voting_power(active_stake + inactive_stake, 0);
+        self.governance.adjust_vote(voted_proposal, option::none(), active_stake);
 
         account.settle()
     }
@@ -169,7 +170,7 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let stake = self.accounts[account_id].active_stake();
-        assert!(stake >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        assert!(stake > 0, ENoStake);
 
         self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
         self.process_vote(account_id, account_id, ctx);
@@ -186,7 +187,7 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let account = &mut self.accounts[account_id];
-        assert!(account.active_stake() >= STAKE_REQUIRED_TO_PARTICIPATE, ENotEnoughStake);
+        assert!(account.active_stake() > 0, ENoStake);
 
         let prev_proposal = account.set_voted_proposal(option::some(proposal_id));
         self.governance.adjust_vote(

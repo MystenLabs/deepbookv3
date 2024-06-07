@@ -64,10 +64,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(), constants::deep_multiplier())
-            ),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -80,11 +77,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(),
-                constants::deep_multiplier())
-            ),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -97,10 +90,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(), constants::deep_multiplier())
-            ),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -113,11 +103,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(),
-                constants::deep_multiplier())
-            ),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -178,7 +164,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::partially_filled()
         );
     }
@@ -191,7 +177,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             2 * constants::float_scaling(),
-            math::mul(constants::taker_discount(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::partially_filled()
         );
     }
@@ -390,10 +376,7 @@ module deepbook::pool_tests {
             num_orders * quantity,
             num_orders * quantity,
             2 * num_orders * quantity,
-            num_orders * math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(), constants::deep_multiplier())
-            ),
+            num_orders * math::mul(constants::taker_fee(), constants::deep_multiplier()),
             true,
             constants::filled(),
             expire_timestamp,
@@ -474,10 +457,7 @@ module deepbook::pool_tests {
             quantity_multiplier * quantity,
             quantity_multiplier * quantity,
             2 * quantity_multiplier * quantity,
-            quantity_multiplier * math::mul(
-                constants::taker_discount(),
-                math::mul(constants::taker_fee(), constants::deep_multiplier())
-            ),
+            quantity_multiplier * math::mul(constants::taker_fee(), constants::deep_multiplier()),
             true,
             constants::filled(),
             expire_timestamp,
@@ -758,10 +738,7 @@ module deepbook::pool_tests {
         } else {
             2 * constants::float_scaling()
         };
-        let deep_in = math::mul(
-            constants::taker_discount(),
-            math::mul(constants::deep_multiplier(), constants::taker_fee())
-        );
+        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee());
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
             BOB,

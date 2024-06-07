@@ -9,6 +9,7 @@ Account module manages the account data for each user.
 -  [Struct `Account`](#0x0_account_Account)
 -  [Function `empty`](#0x0_account_empty)
 -  [Function `active_stake`](#0x0_account_active_stake)
+-  [Function `inactive_stake`](#0x0_account_inactive_stake)
 -  [Function `total_volume`](#0x0_account_total_volume)
 -  [Function `voted_proposal`](#0x0_account_voted_proposal)
 -  [Function `open_orders`](#0x0_account_open_orders)
@@ -172,10 +173,32 @@ One Account struct per BalanceManager object.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_active_stake">active_stake</a>(
-    self: &<a href="account.md#0x0_account_Account">Account</a>,
-): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_active_stake">active_stake</a>(self: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
     self.active_stake
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_account_inactive_stake"></a>
+
+## Function `inactive_stake`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_inactive_stake">inactive_stake</a>(self: &<a href="account.md#0x0_account_Account">account::Account</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_inactive_stake">inactive_stake</a>(self: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
+    self.inactive_stake
 }
 </code></pre>
 
@@ -198,9 +221,7 @@ One Account struct per BalanceManager object.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_total_volume">total_volume</a>(
-    self: &<a href="account.md#0x0_account_Account">Account</a>,
-): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_total_volume">total_volume</a>(self: &<a href="account.md#0x0_account_Account">Account</a>): u64 {
     self.taker_volume + self.maker_volume
 }
 </code></pre>
@@ -224,9 +245,7 @@ One Account struct per BalanceManager object.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_voted_proposal">voted_proposal</a>(
-    self: &<a href="account.md#0x0_account_Account">Account</a>,
-): Option&lt;ID&gt; {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_voted_proposal">voted_proposal</a>(self: &<a href="account.md#0x0_account_Account">Account</a>): Option&lt;ID&gt; {
     self.voted_proposal
 }
 </code></pre>
@@ -250,9 +269,7 @@ One Account struct per BalanceManager object.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_open_orders">open_orders</a>(
-    self: &<a href="account.md#0x0_account_Account">Account</a>,
-): VecSet&lt;u128&gt; {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_open_orders">open_orders</a>(self: &<a href="account.md#0x0_account_Account">Account</a>): VecSet&lt;u128&gt; {
     self.open_orders
 }
 </code></pre>
