@@ -584,7 +584,6 @@ Validation of inputs done in <code>State</code>.
         self.voting_power +
         self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_after) -
         self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_before);
-    self.quorum = self.voting_power / 2;
 }
 </code></pre>
 

@@ -256,6 +256,7 @@ module deepbook::governance_tests {
         gov.adjust_voting_power(alice_stake, alice_stake + 1000);
         alice_stake = alice_stake + 1000;
         assert!(gov.voting_power() == 3000, 0);
+        assert!(gov.quorum() == 0, 0);
 
         test.next_epoch(OWNER);
         test.next_tx(alice);
@@ -564,8 +565,12 @@ module deepbook::governance_tests {
         let mut gov = governance::empty(test.ctx());
         gov.adjust_voting_power(0, 50_000_000_000);
         assert!(gov.voting_power() == 50_000_000_000, 0);
+        test.next_epoch(OWNER);
+        gov.update(test.ctx());
         assert!(gov.quorum() == 25_000_000_000, 0);
         gov.adjust_voting_power(50_000_000_000, 100_000_000_000);
+        test.next_epoch(OWNER);
+        gov.update(test.ctx());
         assert!(gov.voting_power() == 52_928_932_189, 0);
         assert!(gov.quorum() == 26_464_466_094, 0);
 
