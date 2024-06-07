@@ -9,6 +9,7 @@ Public-facing interface for the package.
 -  [Resource `Pool`](#0x0_pool_Pool)
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Constants](#@Constants_0)
+-  [Function `create_pool_admin`](#0x0_pool_create_pool_admin)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `whitelisted`](#0x0_pool_whitelisted)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
@@ -179,42 +180,6 @@ Public-facing interface for the package.
 ## Constants
 
 
-<a name="0x0_pool_MAX_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>: u64 = 4611686018427387904;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
-</code></pre>
-
-
-
-<a name="0x0_pool_POOL_CREATION_FEE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
-</code></pre>
-
-
-
 <a name="0x0_pool_EInvalidAmountIn"></a>
 
 
@@ -314,16 +279,16 @@ Public-facing interface for the package.
 
 
 
-<a name="0x0_pool_create_pool"></a>
+<a name="0x0_pool_create_pool_admin"></a>
 
-## Function `create_pool`
+## Function `create_pool_admin`
 
 Create a new pool. The pool is registered in the registry.
 Checks are performed to ensure the tick size, lot size, and min size are valid.
 The creation fee is transferred to the treasury address.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -332,7 +297,46 @@ The creation fee is transferred to the treasury address.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
+    tick_size: u64,
+    lot_size: u64,
+    min_size: u64,
+    creation_fee: Coin&lt;SUI&gt;,
+    _cap: &DeepbookAdminCap,
+    ctx: &<b>mut</b> TxContext,
+) {
+    <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+        <a href="registry.md#0x0_registry">registry</a>,
+        tick_size,
+        lot_size,
+        min_size,
+        creation_fee,
+        ctx,
+    )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_create_pool"></a>
+
+## Function `create_pool`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
     <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
     tick_size: u64,
     lot_size: u64,
@@ -340,7 +344,7 @@ The creation fee is transferred to the treasury address.
     creation_fee: Coin&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
 ) {
-    <b>assert</b>!(creation_fee.value() == <a href="pool.md#0x0_pool_POOL_CREATION_FEE">POOL_CREATION_FEE</a>, <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
+    <b>assert</b>!(creation_fee.value() == <a href="constants.md#0x0_constants_pool_creation_fee">constants::pool_creation_fee</a>(), <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
     <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
@@ -499,7 +503,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
         client_order_id,
         order_type,
         self_matching_option,
-        <b>if</b> (is_bid) <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a> <b>else</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>,
+        <b>if</b> (is_bid) <a href="constants.md#0x0_constants_max_price">constants::max_price</a>() <b>else</b> <a href="constants.md#0x0_constants_min_price">constants::min_price</a>(),
         quantity,
         is_bid,
         pay_with_deep,
@@ -984,7 +988,7 @@ is_bid is true for bids and false for asks.
     price_high: u64,
     is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>, is_bid)
+    self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>(), is_bid)
 }
 </code></pre>
 
@@ -1015,8 +1019,8 @@ The price vectors are sorted in descending order for bids and ascending order fo
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <b>let</b> (bid_price, bid_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>true</b>);
-    <b>let</b> (ask_price, ask_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>false</b>);
+    <b>let</b> (bid_price, bid_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>true</b>);
+    <b>let</b> (ask_price, ask_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>false</b>);
 
     (bid_price, bid_quantity, ask_price, ask_quantity)
 }
