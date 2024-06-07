@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::math {
+    use sui::math as sui_math;
 
     /// scaling setting for float
     const FLOAT_SCALING: u64 = 1_000_000_000;
@@ -68,6 +69,15 @@ module deepbook::math {
         } else {
             sorted_v[n / 2]
         }
+    }
+
+    /// Computes the integer square root of a scaled u64 value, assuming the original value
+    /// is scaled by FLOAT_SCALING. The result will be in the same floating-point representation.
+    public(package) fun sqrt(x: u64): u64 {
+        let scaled_x: u128 = (x as u128) * FLOAT_SCALING_U128;
+        let sqrt_scaled_x: u128 = sui_math::sqrt_u128(scaled_x);
+
+        sqrt_scaled_x as u64
     }
 
     fun quick_sort(mut data: vector<u64>): vector<u64> {
@@ -143,5 +153,18 @@ module deepbook::math {
             5 * FLOAT_SCALING,
             28 * FLOAT_SCALING];
         assert!(median(v) == 9_500_000_000, 0);
+    }
+
+    #[test]
+    /// Test sqrt function
+    fun test_sqrt() {
+        let scaling = 1_000_000;
+
+        assert!(sqrt(0) == 0, 0);
+        assert!(sqrt(1_000 * scaling) == 1_000 * scaling, 0);
+        assert!(sqrt(2_000 * scaling) == 1_414_213_562, 0);
+        assert!(sqrt(2_250 * scaling) == 1_500 * scaling, 0);
+        assert!(sqrt(25_000 * scaling) == 5_000 * scaling, 0);
+        assert!(sqrt(59_000 * scaling) == 7_681_145_747, 0);
     }
 }

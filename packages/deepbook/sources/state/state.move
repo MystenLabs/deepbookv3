@@ -15,7 +15,7 @@ module deepbook::state {
 
     const ENotEnoughStake: u64 = 1;
 
-    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 100; // TODO
+    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1;
 
     public struct State has store {
         accounts: Table<ID, Account>,
