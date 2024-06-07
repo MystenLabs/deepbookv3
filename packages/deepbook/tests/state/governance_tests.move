@@ -567,7 +567,6 @@ module deepbook::governance_tests {
         assert!(gov.voting_power() == 50_000_000_000, 0);
         assert!(gov.quorum() == 25_000_000_000, 0);
         gov.adjust_voting_power(50_000_000_000, 100_000_000_000);
-        std::debug::print(&gov.voting_power());
         assert!(gov.voting_power() == 52_928_932_189, 0);
         assert!(gov.quorum() == 26_464_466_094, 0);
 
