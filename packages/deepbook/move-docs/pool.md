@@ -179,33 +179,6 @@ Public-facing interface for the package.
 ## Constants
 
 
-<a name="0x0_pool_MAX_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>: u64 = 4611686018427387904;
-</code></pre>
-
-
-
-<a name="0x0_pool_MAX_U64"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>: u64 = 9223372036854775808;
-</code></pre>
-
-
-
-<a name="0x0_pool_MIN_PRICE"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>: u64 = 1;
-</code></pre>
-
-
-
 <a name="0x0_pool_POOL_CREATION_FEE"></a>
 
 
@@ -499,7 +472,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
         client_order_id,
         order_type,
         self_matching_option,
-        <b>if</b> (is_bid) <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a> <b>else</b> <a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>,
+        <b>if</b> (is_bid) <a href="constants.md#0x0_constants_max_price">constants::max_price</a>() <b>else</b> <a href="constants.md#0x0_constants_min_price">constants::min_price</a>(),
         quantity,
         is_bid,
         pay_with_deep,
@@ -984,7 +957,7 @@ is_bid is true for bids and false for asks.
     price_high: u64,
     is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="pool.md#0x0_pool_MAX_U64">MAX_U64</a>, is_bid)
+    self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>(), is_bid)
 }
 </code></pre>
 
@@ -1015,8 +988,8 @@ The price vectors are sorted in descending order for bids and ascending order fo
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    <b>let</b> (bid_price, bid_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>true</b>);
-    <b>let</b> (ask_price, ask_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="pool.md#0x0_pool_MIN_PRICE">MIN_PRICE</a>, <a href="pool.md#0x0_pool_MAX_PRICE">MAX_PRICE</a>, ticks, <b>false</b>);
+    <b>let</b> (bid_price, bid_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>true</b>);
+    <b>let</b> (ask_price, ask_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>false</b>);
 
     (bid_price, bid_quantity, ask_price, ask_quantity)
 }

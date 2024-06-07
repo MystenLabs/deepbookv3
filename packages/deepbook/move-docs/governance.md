@@ -323,8 +323,8 @@ Details of a pool. This is refreshed every epoch by the first
         whitelisted: <b>false</b>,
         stable: <b>false</b>,
         proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
-        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, 0),
-        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, 0),
+        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
+        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
         voting_power: 0,
         quorum: 0,
     }

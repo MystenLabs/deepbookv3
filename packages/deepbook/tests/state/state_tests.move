@@ -55,12 +55,12 @@ module deepbook::state_tests {
         // quote quantity = 1 * 1 + 1.001001 * 1.001 = 2.002002001 rounds down to 2.002002
         // remaining quantity = 10 - 2.001001 = 7.998999
         // taker gets reduced taker fees (no stake required)
-        // taker fees = 2.001001 * 0.0005 = 0.0010005005 rounds down to 0.001000500
+        // taker fees = 2.001001 * 0.001 = 0.002001001
         // maker fees = 7.998999 * 0.0005 = 0.0039994995 rounds down to 0.003999499
-        // total fees = 0.001000500 + 0.003999499 = 0.004999999 = 4999999
+        // total fees = 0.002001001 + 0.003999499 = 0.0060005 = 6000500
         let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
         assert_eq(settled, balances::new(0, 2_002_002, 0));
-        assert_eq(owed, balances::new(10 * constants::sui_unit(), 0, 499_9999));
+        assert_eq(owed, balances::new(10 * constants::sui_unit(), 0, 6_000_500));
 
         // Alice has 1 open order remaining. The first two orders have been filled.
         let alice = state.account(id_from_address(ALICE));
@@ -125,9 +125,9 @@ module deepbook::state_tests {
         let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
 
         assert_eq(settled, balances::new(0, 130 * constants::usdc_unit(), 0));
-        // taker fee 0.0005, quantity 10, deep_per_base 21
-        // 10 * 21 * 0.0005 = 0.105 = 105000000
-        assert_eq(owed, balances::new(10_000_000_000, 0, 105_000_000));
+        // taker fee 0.001, quantity 10, deep_per_base 21
+        // 10 * 21 * 0.001 = 0.21 = 210000000
+        assert_eq(owed, balances::new(10_000_000_000, 0, 210_000_000));
 
         destroy(state);
         test.end();
@@ -150,9 +150,8 @@ module deepbook::state_tests {
         state.process_create(&mut order_info, test.ctx());
         taker_order.match_maker(&mut order_info.to_order(), 0);
         let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
-        // taker fee is 0.001, but stake reqd = 0 so all takers get 0.0005
         assert_eq(settled, balances::new(0, 1 * constants::usdc_unit(), 0));
-        assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 500_000));
+        assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 1_000_000));
 
         // change fee structure
         
@@ -207,7 +206,6 @@ module deepbook::state_tests {
         let (settled, owed) = state.process_unstake(id_from_address(ALICE), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));
         assert_eq(owed, balances::new(0, 0, 0));
-        std::debug::print(&state.governance().voting_power());
         assert!(state.governance().voting_power() == 500_000_500, 0);
         let (settled, owed) = state.process_unstake(id_from_address(BOB), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));

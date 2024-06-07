@@ -6,7 +6,10 @@ module deepbook::governance_tests {
         test_utils::{destroy, assert_eq},
         object::id_from_address,
     };
-    use deepbook::governance;
+    use deepbook::{
+        governance,
+        constants,
+    };
 
     const OWNER: address = @0xF;
     const ALICE: address = @0xA;
@@ -303,7 +306,7 @@ module deepbook::governance_tests {
         let trade_params = gov.trade_params();
         assert!(trade_params.taker_fee() == 1000000, 0);
         assert!(trade_params.maker_fee() == 500000, 0);
-        assert!(trade_params.stake_required() == 0, 0);
+        assert!(trade_params.stake_required() == constants::default_stake_required(), 0);
         let next_trade_params = gov.next_trade_params();
         assert!(next_trade_params.taker_fee() == 500000, 0);
         assert!(next_trade_params.maker_fee() == 200000, 0);
