@@ -28,7 +28,7 @@ module deepbook::history_tests {
 
         let trade_params = trade_params::new(0, 0, 1_000_000);
         let mut history = history::empty(trade_params, 0, test.ctx());
-        let mut epochs_to_advance = constants::epochs_for_phase_out();
+        let mut epochs_to_advance = constants::phase_out_epochs();
 
         while (epochs_to_advance > 0) {
             test.next_epoch(owner);
@@ -76,7 +76,7 @@ module deepbook::history_tests {
 
         // epoch 0
         let mut history = history::empty(trade_params, 0, test.ctx());
-        let mut epochs_to_advance = constants::epochs_for_phase_out();
+        let mut epochs_to_advance = constants::phase_out_epochs();
 
         while (epochs_to_advance > 0) {
             test.next_epoch(owner);
@@ -138,7 +138,7 @@ module deepbook::history_tests {
 
         // epoch 0
         let mut history = history::empty(trade_params, 0, test.ctx());
-        let mut epochs_to_advance = constants::epochs_for_phase_out();
+        let mut epochs_to_advance = constants::phase_out_epochs();
 
         while (epochs_to_advance > 0) {
             test.next_epoch(owner);
@@ -192,7 +192,7 @@ module deepbook::history_tests {
             5 * FLOAT_SCALING, // total_staked_volume
             500_000_000, // total_fees_collected
         );
-        let mut epochs_to_advance = constants::epochs_for_phase_out() - 1;
+        let mut epochs_to_advance = constants::phase_out_epochs() - 1;
 
         while (epochs_to_advance > 0) {
             test.next_epoch(owner);

@@ -116,12 +116,12 @@ module deepbook::history {
         self: &mut History,
     ) {
         let epochs_since_creation = self.epoch - self.epoch_created;
-        if (epochs_since_creation < constants::epochs_for_phase_out()) {
+        if (epochs_since_creation < constants::phase_out_epochs()) {
             self.volumes.historic_median = constants::max_u64();
             return
         };
         let mut median_vec = vector<u64>[];
-        let mut i = self.epoch - constants::epochs_for_phase_out();
+        let mut i = self.epoch - constants::phase_out_epochs();
         while (i < self.epoch) {
             if (self.historic_volumes.contains(i)) {
                 median_vec.push_back(self.historic_volumes[i].total_volume);

@@ -331,12 +331,12 @@ Updates the historic_median for past 28 epochs
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
 ) {
     <b>let</b> epochs_since_creation = self.epoch - self.epoch_created;
-    <b>if</b> (epochs_since_creation &lt; <a href="constants.md#0x0_constants_epochs_for_phase_out">constants::epochs_for_phase_out</a>()) {
+    <b>if</b> (epochs_since_creation &lt; <a href="constants.md#0x0_constants_phase_out_epochs">constants::phase_out_epochs</a>()) {
         self.volumes.historic_median = <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>();
         <b>return</b>
     };
     <b>let</b> <b>mut</b> median_vec = <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;[];
-    <b>let</b> <b>mut</b> i = self.epoch - <a href="constants.md#0x0_constants_epochs_for_phase_out">constants::epochs_for_phase_out</a>();
+    <b>let</b> <b>mut</b> i = self.epoch - <a href="constants.md#0x0_constants_phase_out_epochs">constants::phase_out_epochs</a>();
     <b>while</b> (i &lt; self.epoch) {
         <b>if</b> (self.historic_volumes.contains(i)) {
             median_vec.push_back(self.historic_volumes[i].total_volume);

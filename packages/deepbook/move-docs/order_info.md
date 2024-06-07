@@ -41,7 +41,7 @@ All order matching happens in this module.
 -  [Function `validate_inputs`](#0x0_order_info_validate_inputs)
 -  [Function `assert_execution`](#0x0_order_info_assert_execution)
 -  [Function `remaining_quantity`](#0x0_order_info_remaining_quantity)
--  [Function `crosses_price`](#0x0_order_info_crosses_price)
+-  [Function `can_match`](#0x0_order_info_can_match)
 -  [Function `match_maker`](#0x0_order_info_match_maker)
 -  [Function `emit_order_placed`](#0x0_order_info_emit_order_placed)
 -  [Function `emit_order_filled`](#0x0_order_info_emit_order_filled)
@@ -1377,14 +1377,14 @@ Returns the remaining quantity for the order.
 
 </details>
 
-<a name="0x0_order_info_crosses_price"></a>
+<a name="0x0_order_info_can_match"></a>
 
-## Function `crosses_price`
+## Function `can_match`
 
 Returns true if two opposite orders are overlapping in price.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_can_match">can_match</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">order::Order</a>): bool
 </code></pre>
 
 
@@ -1393,7 +1393,7 @@ Returns true if two opposite orders are overlapping in price.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &Order): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order_info.md#0x0_order_info_can_match">can_match</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>, <a href="order.md#0x0_order">order</a>: &Order): bool {
     <b>let</b> maker_price = <a href="order.md#0x0_order">order</a>.<a href="order_info.md#0x0_order_info_price">price</a>();
 
     (self.original_quantity - self.executed_quantity &gt; 0 &&
@@ -1429,7 +1429,7 @@ Funds for the match or an expired order are returned to the maker as settled.
     maker: &<b>mut</b> Order,
     timestamp: u64,
 ): bool {
-    <b>if</b> (!self.<a href="order_info.md#0x0_order_info_crosses_price">crosses_price</a>(maker)) <b>return</b> <b>false</b>;
+    <b>if</b> (!self.<a href="order_info.md#0x0_order_info_can_match">can_match</a>(maker)) <b>return</b> <b>false</b>;
 
     <b>if</b> (self.<a href="order_info.md#0x0_order_info_self_matching_option">self_matching_option</a>() == <a href="constants.md#0x0_constants_cancel_taker">constants::cancel_taker</a>()) {
         <b>assert</b>!(maker.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>() != self.<a href="order_info.md#0x0_order_info_balance_manager_id">balance_manager_id</a>(), <a href="order_info.md#0x0_order_info_ESelfMatchingCancelTaker">ESelfMatchingCancelTaker</a>);
@@ -1449,6 +1449,7 @@ Funds for the match or an expired order are returned to the maker as settled.
     self.executed_quantity = self.executed_quantity + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     self.cumulative_quote_quantity = self.cumulative_quote_quantity + <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
     self.status = <a href="constants.md#0x0_constants_partially_filled">constants::partially_filled</a>();
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
 
     self.<a href="order_info.md#0x0_order_info_emit_order_filled">emit_order_filled</a>(
         maker,
@@ -1457,12 +1458,8 @@ Funds for the match or an expired order are returned to the maker as settled.
         <a href="fill.md#0x0_fill">fill</a>.quote_quantity(),
         timestamp
     );
-    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) {
-        self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
-        <b>false</b>
-    } <b>else</b> {
-        <b>true</b>
-    }
+
+    <b>true</b>
 }
 </code></pre>
 

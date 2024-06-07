@@ -33,7 +33,7 @@ module deepbook::constants {
     const EXPIRED: u8 = 4;
 
     // History constants
-    const EPOCHS_FOR_PHASE_OUT: u64 = 28;
+    const PHASE_OUT_EPOCHS: u64 = 28;
 
     // Constants for testing
     #[test_only]
@@ -133,8 +133,8 @@ module deepbook::constants {
         MAX_PRICE
     }
 
-    public fun epochs_for_phase_out(): u64 {
-        EPOCHS_FOR_PHASE_OUT
+    public fun phase_out_epochs(): u64 {
+        PHASE_OUT_EPOCHS
     }
 
     #[test_only]
