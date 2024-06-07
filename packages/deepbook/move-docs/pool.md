@@ -10,7 +10,6 @@ Public-facing interface for the package.
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Constants](#@Constants_0)
 -  [Function `create_pool_admin`](#0x0_pool_create_pool_admin)
--  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `whitelisted`](#0x0_pool_whitelisted)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
@@ -32,6 +31,7 @@ Public-facing interface for the package.
 -  [Function `burn_deep`](#0x0_pool_burn_deep)
 -  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
+-  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
 -  [Function `place_order_int`](#0x0_pool_place_order_int)
@@ -314,71 +314,6 @@ The creation fee is transferred to the treasury address.
         creation_fee,
         ctx,
     )
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_create_pool"></a>
-
-## Function `create_pool`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
-    tick_size: u64,
-    lot_size: u64,
-    min_size: u64,
-    creation_fee: Coin&lt;SUI&gt;,
-    ctx: &<b>mut</b> TxContext,
-) {
-    <b>assert</b>!(creation_fee.value() == <a href="constants.md#0x0_constants_pool_creation_fee">constants::pool_creation_fee</a>(), <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
-    <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
-    <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
-    <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
-
-    <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
-    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;();
-
-    <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
-    <b>let</b> pool_id = pool_uid.to_inner();
-
-    <b>let</b> <a href="pool.md#0x0_pool">pool</a> = <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
-        id: pool_uid,
-        <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
-        <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
-        <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
-        <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
-    };
-
-    <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
-    <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
-    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
-        pool_id,
-        taker_fee,
-        maker_fee,
-        tick_size,
-        lot_size,
-        min_size,
-    });
-
-    // TODO: reconsider sending the Coin here. User pays gas;
-    // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
-    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
-
-    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="pool.md#0x0_pool">pool</a>);
 }
 </code></pre>
 
@@ -1181,6 +1116,71 @@ Only Admin can set a pool as whitelist.
     // <b>assert</b>!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
     self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(whitelist);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_create_pool"></a>
+
+## Function `create_pool`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
+    tick_size: u64,
+    lot_size: u64,
+    min_size: u64,
+    creation_fee: Coin&lt;SUI&gt;,
+    ctx: &<b>mut</b> TxContext,
+) {
+    <b>assert</b>!(creation_fee.value() == <a href="constants.md#0x0_constants_pool_creation_fee">constants::pool_creation_fee</a>(), <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
+    <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
+    <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
+    <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
+
+    <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
+    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;();
+
+    <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
+    <b>let</b> pool_id = pool_uid.to_inner();
+
+    <b>let</b> <a href="pool.md#0x0_pool">pool</a> = <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
+        id: pool_uid,
+        <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
+        <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
+        <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
+    };
+
+    <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+    <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
+        pool_id,
+        taker_fee,
+        maker_fee,
+        tick_size,
+        lot_size,
+        min_size,
+    });
+
+    // TODO: reconsider sending the Coin here. User pays gas;
+    // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
+    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
+
+    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="pool.md#0x0_pool">pool</a>);
 }
 </code></pre>
 

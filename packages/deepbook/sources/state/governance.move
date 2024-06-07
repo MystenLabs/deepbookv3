@@ -188,6 +188,7 @@ module deepbook::governance {
             self.voting_power +
             self.stake_to_voting_power(stake_after) -
             self.stake_to_voting_power(stake_before);
+        self.quorum = self.voting_power / 2;
     }
 
     public(package) fun trade_params(self: &Governance): TradeParams {

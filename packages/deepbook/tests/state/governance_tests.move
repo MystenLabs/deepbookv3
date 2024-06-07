@@ -256,7 +256,6 @@ module deepbook::governance_tests {
         gov.adjust_voting_power(alice_stake, alice_stake + 1000);
         alice_stake = alice_stake + 1000;
         assert!(gov.voting_power() == 3000, 0);
-        assert!(gov.quorum() == 0, 0);
 
         test.next_epoch(OWNER);
         test.next_tx(alice);
@@ -556,8 +555,8 @@ module deepbook::governance_tests {
         end(test);
     }
 
-    /// Any stake over 50_000_000_000 (0.5 * min_stake for the pool) will be subjected to half the voting power
     #[test]
+     /// Any stake over 50_000_000_000 (0.5 * min_stake for the pool) will be subjected to half the voting power
     fun adjust_voting_power_over_threshold_ok() {
         let mut test = begin(OWNER);
 
