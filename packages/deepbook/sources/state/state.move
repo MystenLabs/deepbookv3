@@ -13,8 +13,6 @@ module deepbook::state {
         balances::Balances,
     };
 
-    const ENotEnoughStake: u64 = 1;
-    const STAKE_REQUIRED_TO_PARTICIPATE: u64 = 1;
     const ENoStake: u64 = 1;
 
     public struct State has store {
