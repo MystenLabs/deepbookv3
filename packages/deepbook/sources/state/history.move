@@ -1,14 +1,13 @@
 module deepbook::history {
     use sui::table::{Self, Table};
-    use deepbook::math;
-
-    /// Constants
-    const EPOCHS_FOR_PHASE_OUT: u64 = 28;
-    const FLOAT_SCALING: u64 = 1_000_000_000;
+    use deepbook::{
+        math,
+        constants,
+    };
+    use deepbook::trade_params::TradeParams;
 
     /// Error codes
     const EHistoricVolumesNotFound: u64 = 0;
-    use deepbook::trade_params::TradeParams;
 
     /// Overall volume for the current epoch. Used to calculate rebates and burns.
     public struct Volumes has store, copy, drop {
@@ -21,6 +20,7 @@ module deepbook::history {
 
     public struct History has store {
         epoch: u64,
+        epoch_created: u64,
         volumes: Volumes,
         historic_volumes: Table<u64, Volumes>,
         balance_to_burn: u64,
@@ -28,6 +28,7 @@ module deepbook::history {
 
     public(package) fun empty(
         trade_params: TradeParams,
+        epoch_created: u64,
         ctx: &mut TxContext,
     ): History {
         let volumes = Volumes {
@@ -39,6 +40,7 @@ module deepbook::history {
         };
         let mut history = History {
             epoch: ctx.epoch(),
+            epoch_created,
             volumes,
             historic_volumes: table::new(ctx),
             balance_to_burn: 0,
@@ -60,11 +62,11 @@ module deepbook::history {
         if (self.historic_volumes.contains(self.epoch)) {
             self.historic_volumes.remove(self.epoch);
         };
+        self.update_historic_median();
         self.historic_volumes.add(self.epoch, self.volumes);
 
         self.epoch = epoch;
         self.reset_volumes(trade_params);
-        self.update_historic_median();
         self.historic_volumes.add(self.epoch, self.volumes);
     }
 
@@ -95,7 +97,7 @@ module deepbook::history {
 
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = if (volumes.historic_median > 0) {
-            FLOAT_SCALING - math::min(FLOAT_SCALING, math::div(other_maker_liquidity, volumes.historic_median))
+            constants::float_scaling() - math::min(constants::float_scaling(), math::div(other_maker_liquidity, volumes.historic_median))
         } else {
             0
         };
@@ -113,12 +115,13 @@ module deepbook::history {
     public(package) fun update_historic_median(
         self: &mut History,
     ) {
-        let mut median_vec = vector<u64>[];
-        let mut i = if (self.epoch > EPOCHS_FOR_PHASE_OUT) {
-            self.epoch - EPOCHS_FOR_PHASE_OUT
-        } else {
-            0
+        let epochs_since_creation = self.epoch - self.epoch_created;
+        if (epochs_since_creation < constants::phase_out_epochs()) {
+            self.volumes.historic_median = constants::max_u64();
+            return
         };
+        let mut median_vec = vector<u64>[];
+        let mut i = self.epoch - constants::phase_out_epochs();
         while (i < self.epoch) {
             if (self.historic_volumes.contains(i)) {
                 median_vec.push_back(self.historic_volumes[i].total_volume);

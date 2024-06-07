@@ -79,7 +79,7 @@ module deepbook::state_tests {
         // Bob's balances have been settled already
         assert_eq(bob.settled_balances(), balances::new(0, 0, 0));
         assert_eq(bob.owed_balances(), balances::new(0, 0, 0));
-    
+
         destroy(state);
         test.end();
     }

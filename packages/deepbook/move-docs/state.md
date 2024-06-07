@@ -111,7 +111,7 @@
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_empty">empty</a>(ctx: &<b>mut</b> TxContext): <a href="state.md#0x0_state_State">State</a> {
     <b>let</b> <a href="governance.md#0x0_governance">governance</a> = <a href="governance.md#0x0_governance_empty">governance::empty</a>(ctx);
     <b>let</b> <a href="trade_params.md#0x0_trade_params">trade_params</a> = <a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>();
-    <b>let</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_empty">history::empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>, ctx);
+    <b>let</b> <a href="history.md#0x0_history">history</a> = <a href="history.md#0x0_history_empty">history::empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>, ctx.epoch(), ctx);
 
     <a href="state.md#0x0_state_State">State</a> {
         <a href="history.md#0x0_history">history</a>,
