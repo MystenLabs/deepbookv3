@@ -592,11 +592,16 @@ Mutates the order and the maker order as necessary.
         <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
+    };
 
-        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = <a href="order_info.md#0x0_order_info">order_info</a>.last_fill();
+    <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
+    <b>let</b> <b>mut</b> i = 0;
+    <b>while</b> (i &lt; fills.length()) {
+        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = fills[i];
         <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
             book_side.remove(<a href="fill.md#0x0_fill">fill</a>.order_id());
         };
+        i = i + 1;
     };
 }
 </code></pre>

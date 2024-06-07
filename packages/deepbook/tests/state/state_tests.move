@@ -79,7 +79,7 @@ module deepbook::state_tests {
         // Bob's balances have been settled already
         assert_eq(bob.settled_balances(), balances::new(0, 0, 0));
         assert_eq(bob.owed_balances(), balances::new(0, 0, 0));
-    
+
         destroy(state);
         test.end();
     }
@@ -103,8 +103,6 @@ module deepbook::state_tests {
         let mut state = state::empty(test.ctx());
         let (settled, owed) = state.process_create(&mut order_info, test.ctx());
 
-        std::debug::print(&settled);
-        std::debug::print(&owed);
         assert_eq(settled, balances::new(0, 0, 0));
         // 11831 * 91932 = 1,087,647,492
         // 91932 * 0.0005 = 45.966

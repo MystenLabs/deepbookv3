@@ -241,10 +241,6 @@ module deepbook::order_info {
         self.market_order
     }
 
-    public(package) fun last_fill(self: &OrderInfo): &Fill {
-        &self.fills[self.fills.length() - 1]
-    }
-
     public(package) fun set_order_id(self: &mut OrderInfo, order_id: u128) {
         self.order_id = order_id;
     }
