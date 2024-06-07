@@ -13,12 +13,14 @@
 -  [Function `min`](#0x0_math_min)
 -  [Function `max`](#0x0_math_max)
 -  [Function `median`](#0x0_math_median)
+-  [Function `sqrt`](#0x0_math_sqrt)
 -  [Function `quick_sort`](#0x0_math_quick_sort)
 -  [Function `mul_internal`](#0x0_math_mul_internal)
 -  [Function `div_internal`](#0x0_math_div_internal)
 
 
 <pre><code><b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
+<b>use</b> <a href="dependencies/sui-framework/math.md#0x2_math">0x2::math</a>;
 </code></pre>
 
 
@@ -243,6 +245,35 @@ given a vector of u64, return the median
     } <b>else</b> {
         sorted_v[n / 2]
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_math_sqrt"></a>
+
+## Function `sqrt`
+
+Computes the integer square root of a scaled u64 value, assuming the original value
+is scaled by FLOAT_SCALING. The result will be in the same floating-point representation.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="math.md#0x0_math_sqrt">sqrt</a>(x: u64): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="math.md#0x0_math_sqrt">sqrt</a>(x: u64): u64 {
+    <b>let</b> scaled_x: u128 = (x <b>as</b> u128) * <a href="math.md#0x0_math_FLOAT_SCALING_U128">FLOAT_SCALING_U128</a>;
+    <b>let</b> sqrt_scaled_x: u128 = sui_math::sqrt_u128(scaled_x);
+
+    sqrt_scaled_x <b>as</b> u64
 }
 </code></pre>
 

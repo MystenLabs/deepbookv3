@@ -362,8 +362,8 @@ quantity and whether the order is a bid.
     is_bid: bool,
     expire_maker: bool,
 ): Fill {
-    <b>let</b> base_quantity = <a href="math.md#0x0_math_min">math::min</a>(self.quantity, quantity);
-    <b>let</b> quote_quantity = <a href="math.md#0x0_math_mul">math::mul</a>(base_quantity, self.<a href="order.md#0x0_order_price">price</a>());
+    <b>let</b> base_quantity = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(self.quantity, quantity);
+    <b>let</b> quote_quantity = math::mul(base_quantity, self.<a href="order.md#0x0_order_price">price</a>());
 
     <b>let</b> order_id = self.order_id;
     <b>let</b> balance_manager_id = self.balance_manager_id;
@@ -448,11 +448,11 @@ quantity and whether the order is a bid.
     } <b>else</b> {
         self.quantity - self.filled_quantity
     };
-    <b>let</b> deep_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, <a href="math.md#0x0_math_mul">math::mul</a>(self.deep_per_base, maker_fee));
+    <b>let</b> deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_base, maker_fee));
     <b>let</b> <b>mut</b> base_out = 0;
     <b>let</b> <b>mut</b> quote_out = 0;
     <b>if</b> (self.<a href="order.md#0x0_order_is_bid">is_bid</a>()) {
-        quote_out = <a href="math.md#0x0_math_mul">math::mul</a>(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>());
+        quote_out = math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>());
     } <b>else</b> {
         base_out = cancel_quantity;
     };

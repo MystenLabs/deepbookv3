@@ -25,6 +25,7 @@
 
 
 <pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/move-stdlib/option.md#0x1_option">0x1::option</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
@@ -291,11 +292,11 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 
-<a name="0x0_governance_VOTING_POWER_CUTOFF"></a>
+<a name="0x0_governance_VOTING_PHASEOUT_MUL"></a>
 
 
 
-<pre><code><b>const</b> <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>: u64 = 1000;
+<pre><code><b>const</b> <a href="governance.md#0x0_governance_VOTING_PHASEOUT_MUL">VOTING_PHASEOUT_MUL</a>: u64 = 500000000;
 </code></pre>
 
 
@@ -492,7 +493,7 @@ Validation of the account adding is done in <code>State</code>.
         <b>assert</b>!(maker_fee &gt;= <a href="governance.md#0x0_governance_MIN_MAKER_VOLATILE">MIN_MAKER_VOLATILE</a> && maker_fee &lt;= <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_EInvalidMakerFee">EInvalidMakerFee</a>);
     };
 
-    <b>let</b> voting_power = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
+    <b>let</b> voting_power = self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
     <b>if</b> (self.proposals.size() == <a href="governance.md#0x0_governance_MAX_PROPOSALS">MAX_PROPOSALS</a>) {
         self.<a href="governance.md#0x0_governance_remove_lowest_proposal">remove_lowest_proposal</a>(voting_power);
     };
@@ -530,7 +531,7 @@ If <code>to_proposal_id</code> is some, the account is voting for that proposal.
     to_proposal_id: Option&lt;ID&gt;,
     stake_amount: u64,
 ) {
-    <b>let</b> votes = <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
+    <b>let</b> votes = self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_amount);
 
     <b>if</b> (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
         <b>let</b> proposal = &<b>mut</b> self.proposals[from_proposal_id.borrow()];
@@ -581,8 +582,8 @@ Validation of inputs done in <code>State</code>.
 ) {
     self.voting_power =
         self.voting_power +
-        <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_after) -
-        <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_before);
+        self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_after) -
+        self.<a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake_before);
 }
 </code></pre>
 
@@ -618,10 +619,10 @@ Validation of inputs done in <code>State</code>.
 
 ## Function `stake_to_voting_power`
 
-Convert stake to voting power. If the stake is above the cutoff, then the voting power is halved.
+Convert stake to voting power.
 
 
-<pre><code><b>fun</b> <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake: u64): u64
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(self: &<a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stake: u64): u64
 </code></pre>
 
 
@@ -630,12 +631,18 @@ Convert stake to voting power. If the stake is above the cutoff, then the voting
 <summary>Implementation</summary>
 
 
-<pre><code><b>fun</b> <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(stake: u64): u64 {
-    <b>if</b> (stake &gt; <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) {
-        stake - ((stake - <a href="governance.md#0x0_governance_VOTING_POWER_CUTOFF">VOTING_POWER_CUTOFF</a>) / 2)
-    } <b>else</b> {
-        stake
-    }
+<pre><code><b>fun</b> <a href="governance.md#0x0_governance_stake_to_voting_power">stake_to_voting_power</a>(
+    self: &<a href="governance.md#0x0_governance_Governance">Governance</a>,
+    stake: u64
+): u64 {
+    <b>let</b> min_stake = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required();
+    <b>let</b> multiplied_min_stake = math::mul(<a href="governance.md#0x0_governance_VOTING_PHASEOUT_MUL">VOTING_PHASEOUT_MUL</a>, min_stake);
+    <b>let</b> <b>mut</b> voting_power = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(stake, multiplied_min_stake);
+    <b>if</b> (<a href="dependencies/sui-framework/math.md#0x2_math_sqrt">math::sqrt</a>(stake) &gt; <a href="dependencies/sui-framework/math.md#0x2_math_sqrt">math::sqrt</a>(multiplied_min_stake)) {
+        voting_power = voting_power + <a href="dependencies/sui-framework/math.md#0x2_math_sqrt">math::sqrt</a>(stake) - <a href="dependencies/sui-framework/math.md#0x2_math_sqrt">math::sqrt</a>(multiplied_min_stake);
+    };
+
+    voting_power
 }
 </code></pre>
 

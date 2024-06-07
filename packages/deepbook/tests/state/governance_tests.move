@@ -555,4 +555,23 @@ module deepbook::governance_tests {
         destroy(gov);
         end(test);
     }
+
+    /// Any stake over 50_000_000_000 (0.5 * min_stake for the pool) will be subjected to half the voting power
+    #[test]
+    fun adjust_voting_power_over_threshold_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(OWNER);
+        let mut gov = governance::empty(test.ctx());
+        gov.adjust_voting_power(0, 50_000_000_000);
+        assert!(gov.voting_power() == 50_000_000_000, 0);
+        assert!(gov.quorum() == 25_000_000_000, 0);
+        gov.adjust_voting_power(50_000_000_000, 100_000_000_000);
+        std::debug::print(&gov.voting_power());
+        assert!(gov.voting_power() == 52_928_932_189, 0);
+        assert!(gov.quorum() == 26_464_466_094, 0);
+
+        destroy(gov);
+        end(test);
+    }
 }

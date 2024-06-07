@@ -1195,9 +1195,9 @@ Emitted when a maker order is injected into the order book.
     taker_fee: u64,
     maker_fee: u64,
 ): (Balances, Balances) {
-    <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+    <b>let</b> deep_in = math::mul(
         self.deep_per_base,
-        <a href="math.md#0x0_math_mul">math::mul</a>(self.executed_quantity, taker_fee)
+        math::mul(self.executed_quantity, taker_fee)
     );
     self.paid_fees = deep_in;
 
@@ -1215,13 +1215,13 @@ Emitted when a maker order is injected into the order book.
 
     <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
     <b>if</b> (remaining_quantity &gt; 0 && !(self.<a href="order_info.md#0x0_order_info_order_type">order_type</a>() == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>())) {
-        <b>let</b> deep_in = <a href="math.md#0x0_math_mul">math::mul</a>(
+        <b>let</b> deep_in = math::mul(
             self.deep_per_base,
-            <a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, maker_fee)
+            math::mul(remaining_quantity, maker_fee)
         );
         owed_balances.add_deep(deep_in);
         <b>if</b> (self.is_bid) {
-            owed_balances.add_quote(<a href="math.md#0x0_math_mul">math::mul</a>(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));
+            owed_balances.add_quote(math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));
         } <b>else</b> {
             owed_balances.add_base(remaining_quantity);
         };

@@ -235,7 +235,7 @@ Returns the conversion rate of DEEP per base token.
 ): u64 {
     // TODO: Add <b>assert</b>, <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() &gt; 0, ENoDataPoints);
     <b>if</b> (self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>() == 0) <b>return</b> 10 * 1_000_000_000; // Default deep conversion rate <b>to</b> 10, remove after testing
-    <b>let</b> deep_per_base = <a href="math.md#0x0_math_div">math::div</a>(self.cumulative_base, self.prices.length());
+    <b>let</b> deep_per_base = math::div(self.cumulative_base, self.prices.length());
 
     deep_per_base
 }
