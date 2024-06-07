@@ -360,7 +360,7 @@ module deepbook::order_info {
     }
 
     /// Returns true if two opposite orders are overlapping in price.
-    public(package) fun crosses_price(self: &OrderInfo, order: &Order): bool {
+    public(package) fun can_match(self: &OrderInfo, order: &Order): bool {
         let maker_price = order.price();
 
         (self.original_quantity - self.executed_quantity > 0 &&
@@ -376,7 +376,7 @@ module deepbook::order_info {
         maker: &mut Order,
         timestamp: u64,
     ): bool {
-        if (!self.crosses_price(maker)) return false;
+        if (!self.can_match(maker)) return false;
 
         if (self.self_matching_option() == constants::cancel_taker()) {
             assert!(maker.balance_manager_id() != self.balance_manager_id(), ESelfMatchingCancelTaker);
