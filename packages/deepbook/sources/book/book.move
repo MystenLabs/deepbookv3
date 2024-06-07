@@ -211,11 +211,16 @@ module deepbook::book {
             let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
+        };
 
-            let fill = order_info.last_fill();
+        let fills = order_info.fills();
+        let mut i = 0;
+        while (i < fills.length()) {
+            let fill = fills[i];
             if (fill.expired() || fill.completed()) {
                 book_side.remove(fill.order_id());
             };
+            i = i + 1;
         };
     }
 

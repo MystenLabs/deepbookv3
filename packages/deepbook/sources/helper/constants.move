@@ -32,6 +32,9 @@ module deepbook::constants {
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
+    // History constants
+    const PHASE_OUT_EPOCHS: u64 = 28;
+
     // Constants for testing
     #[test_only]
     const MAKER_FEE: u64 = 500000;
@@ -128,6 +131,10 @@ module deepbook::constants {
 
     public fun max_price(): u64 {
         MAX_PRICE
+    }
+
+    public fun phase_out_epochs(): u64 {
+        PHASE_OUT_EPOCHS
     }
 
     #[test_only]

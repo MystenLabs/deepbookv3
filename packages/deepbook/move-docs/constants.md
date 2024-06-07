@@ -24,6 +24,7 @@
 -  [Function `cancel_maker`](#0x0_constants_cancel_maker)
 -  [Function `min_price`](#0x0_constants_min_price)
 -  [Function `max_price`](#0x0_constants_max_price)
+-  [Function `phase_out_epochs`](#0x0_constants_phase_out_epochs)
 
 
 <pre><code></code></pre>
@@ -166,6 +167,15 @@
 
 
 <pre><code><b>const</b> <a href="constants.md#0x0_constants_PARTIALLY_FILLED">PARTIALLY_FILLED</a>: u8 = 1;
+</code></pre>
+
+
+
+<a name="0x0_constants_PHASE_OUT_EPOCHS"></a>
+
+
+
+<pre><code><b>const</b> <a href="constants.md#0x0_constants_PHASE_OUT_EPOCHS">PHASE_OUT_EPOCHS</a>: u64 = 28;
 </code></pre>
 
 
@@ -622,6 +632,30 @@
 
 <pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_max_price">max_price</a>(): u64 {
     <a href="constants.md#0x0_constants_MAX_PRICE">MAX_PRICE</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_constants_phase_out_epochs"></a>
+
+## Function `phase_out_epochs`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_phase_out_epochs">phase_out_epochs</a>(): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_phase_out_epochs">phase_out_epochs</a>(): u64 {
+    <a href="constants.md#0x0_constants_PHASE_OUT_EPOCHS">PHASE_OUT_EPOCHS</a>
 }
 </code></pre>
 
