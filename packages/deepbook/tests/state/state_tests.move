@@ -154,7 +154,7 @@ module deepbook::state_tests {
         assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 1_000_000));
 
         // change fee structure
-        
+
         // process taker order
 
         destroy(state);
@@ -199,14 +199,14 @@ module deepbook::state_tests {
         let (settled, owed) = state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 1 * constants::sui_unit()));
-        assert!(state.governance().voting_power() == 500_000_500, 0); // voting power cutoff = 1000
+        assert!(state.governance().voting_power() == 1_000_000_000, 0); // voting power cutoff = 1000
         state.process_stake(id_from_address(BOB), 1 * constants::sui_unit(), test.ctx());
-        assert!(state.governance().voting_power() == 1_000_001_000, 0);
+        assert!(state.governance().voting_power() == 2_000_000_000, 0);
 
         let (settled, owed) = state.process_unstake(id_from_address(ALICE), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));
         assert_eq(owed, balances::new(0, 0, 0));
-        assert!(state.governance().voting_power() == 500_000_500, 0);
+        assert!(state.governance().voting_power() == 1_000_000_000, 0);
         let (settled, owed) = state.process_unstake(id_from_address(BOB), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));
         assert_eq(owed, balances::new(0, 0, 0));
