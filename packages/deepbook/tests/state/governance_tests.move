@@ -557,7 +557,7 @@ module deepbook::governance_tests {
     }
 
     #[test]
-     /// Any stake over 50_000_000_000 (0.5 * min_stake for the pool) will be subjected to half the voting power
+    /// Any stake over 50 deep (0.5 * min_stake for the pool) will be subjected to voting power decrease
     fun adjust_voting_power_over_threshold_ok() {
         let mut test = begin(OWNER);
 
@@ -571,6 +571,8 @@ module deepbook::governance_tests {
         gov.adjust_voting_power(50_000_000_000, 100_000_000_000);
         test.next_epoch(OWNER);
         gov.update(test.ctx());
+        // The additional power is calculated as sqrt(total_stake=100) - sqrt(half_min_stake=50) = 2.928
+        // The total voting power is therefore 52.928, with quorum being half of that = 26.464
         assert!(gov.voting_power() == 52_928_932_189, 0);
         assert!(gov.quorum() == 26_464_466_094, 0);
 
