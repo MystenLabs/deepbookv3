@@ -328,21 +328,109 @@ module deepbook::pool_tests {
         test_mid_price();
     }
 
-    // #[test]
-    // fun test_get_amount_out_bid_then_ask_ok() {
-    //     test_get_amount_out(true);
-    // }
+    #[test]
+    fun test_swap_exact_not_fully_filled_bid_ok(){
+        test_swap_exact_not_fully_filled(true);
+    }
 
-    // #[test]
-    // fun test_get_amount_out_ask_then_bid_ok() {
-    //     test_get_amount_out(false);
-    // }
+    #[test]
+    fun test_swap_exact_not_fully_filled_ask_ok(){
+        test_swap_exact_not_fully_filled(false);
+    }
 
-    // #[test]
-    // fun test_market_order_not_fully_filled_bid_ok(){
+    /// Alice places a bid order, Bob places a swap_exact_amount order
+    /// Make sure the assets returned to Bob are correct
+    /// When swap is not fully filled, assets are returned correctly
+    /// Make sure expired orders are skipped over
+    fun test_swap_exact_not_fully_filled(
+        is_bid: bool,
+    ) {
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
-    // }
+        let alice_client_order_id = 1;
+        let alice_price = 3 * constants::float_scaling();
+        let alice_quantity = 1 * constants::float_scaling();
+        let expired_price = if (is_bid) {
+            3 * constants::float_scaling()
+        } else {
+            1 * constants::float_scaling()
+        };
+        let expire_timestamp = constants::max_u64();
+        let expire_timestamp_e = 100;
+        let pay_with_deep = true;
+        let residual = constants::lot_size() - 1;
 
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            expired_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp_e,
+            &mut test,
+        );
+
+        set_time(200, &mut test);
+
+        let base_in = if (is_bid) {
+            2 * constants::float_scaling() + residual
+        } else {
+            0
+        };
+        let quote_in = if (is_bid) {
+            0
+        } else {
+            4 * constants::float_scaling() + residual
+        };
+        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
+
+        let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
+            BOB,
+            base_in,
+            quote_in,
+            deep_in,
+            &mut test,
+        );
+
+        if (is_bid) {
+            assert!(base_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 3 * constants::float_scaling(), constants::e_order_info_mismatch());
+        } else {
+            assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+        };
+
+        assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+
+        base_out.burn_for_testing();
+        quote_out.burn_for_testing();
+        deep_out.burn_for_testing();
+
+        end(test);
+    }
+
+    /// Test getting the mid price of the order book
+    /// Expired orders are skipped
     fun test_mid_price() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
@@ -459,6 +547,7 @@ module deepbook::pool_tests {
     /// Market order of quantity 1.5 should fill one order completely, one partially, and one not at all
     /// Order 3 is fully filled for bid orders then ask market order
     /// Order 1 is fully filled for ask orders then bid market order
+    /// Order 2 is partially filled for both
     fun test_market_order(
         is_bid: bool,
     ) {
@@ -960,6 +1049,7 @@ module deepbook::pool_tests {
 
     /// Alice places a bid order, Bob places a swap_exact_amount order
     /// Make sure the assets returned to Bob are correct
+    /// Make sure expired orders are skipped over
     fun test_swap_exact_amount(
         is_bid: bool,
     ) {
@@ -970,9 +1060,15 @@ module deepbook::pool_tests {
         let alice_client_order_id = 1;
         let alice_price = 2 * constants::float_scaling();
         let alice_quantity = 2 * constants::float_scaling();
+        let expired_price = if (is_bid) {
+            3 * constants::float_scaling()
+        } else {
+            1 * constants::float_scaling()
+        };
         let expire_timestamp = constants::max_u64();
+        let expire_timestamp_e = 100;
         let pay_with_deep = true;
-        let residual = 5;
+        let residual = constants::lot_size() - 1;
 
         place_limit_order(
             ALICE,
@@ -987,6 +1083,22 @@ module deepbook::pool_tests {
             expire_timestamp,
             &mut test,
         );
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            expired_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp_e,
+            &mut test,
+        );
+
+        set_time(200, &mut test);
 
         let base_in = if (is_bid) {
             1 * constants::float_scaling() + residual

@@ -169,7 +169,7 @@ module deepbook::pool {
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
         if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity);
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
 
@@ -339,8 +339,13 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
         quote_amount: u64,
+        current_timestamp: u64,
     ): (u64, u64) {
-        self.book.get_amount_out(base_amount, quote_amount)
+        self.book.get_amount_out(
+            base_amount,
+            quote_amount,
+            current_timestamp,
+        )
     }
 
     /// Returns the mid price of the pool.

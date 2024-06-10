@@ -57,7 +57,12 @@ module deepbook::book {
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
     /// Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
-    public(package) fun get_amount_out(self: &Book, base_amount: u64, quote_amount: u64): (u64, u64) {
+    public(package) fun get_amount_out(
+        self: &Book,
+        base_amount: u64,
+        quote_amount: u64,
+        current_timestamp: u64,
+    ): (u64, u64) {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
         let is_bid = quote_amount > 0;
         let mut amount_out = 0;
@@ -71,14 +76,16 @@ module deepbook::book {
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
-            if (is_bid) {
-                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
-                amount_out = amount_out + math::div(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
-            } else {
-                let matched_amount = math::min(amount_in_left, cur_quantity);
-                amount_out = amount_out + math::mul(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
+            if (current_timestamp < order.expire_timestamp()) {
+                if (is_bid) {
+                    let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                    amount_out = amount_out + math::div(matched_amount, cur_price);
+                    amount_in_left = amount_in_left - matched_amount;
+                } else {
+                    let matched_amount = math::min(amount_in_left, cur_quantity);
+                    amount_out = amount_out + math::mul(matched_amount, cur_price);
+                    amount_in_left = amount_in_left - matched_amount;
+                };
             };
 
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
