@@ -405,6 +405,7 @@ module deepbook::pool_tests {
 
     /// Place an order
     public(package) fun place_market_order(
+        pool_id: ID,
         trader: address,
         acct_id: ID,
         client_order_id: u64,
@@ -416,7 +417,7 @@ module deepbook::pool_tests {
     ): OrderInfo {
         test.next_tx(trader);
         {
-            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
 
@@ -531,6 +532,7 @@ module deepbook::pool_tests {
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
+            pool_id,
             BOB,
             base_in,
             quote_in,
@@ -666,11 +668,11 @@ module deepbook::pool_tests {
         );
 
         let expected_mid_price = (price_bid_expired + price_ask_expired) / 2;
-        assert!(get_mid_price(&mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+        assert!(get_mid_price(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
 
         set_time(200, &mut test);
         let expected_mid_price = (price_bid_best + price_ask_best) / 2;
-        assert!(get_mid_price(&mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+        assert!(get_mid_price(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
 
         end(test);
     }
@@ -737,6 +739,7 @@ module deepbook::pool_tests {
         };
 
         let order_info = place_market_order(
+            pool_id,
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -773,6 +776,7 @@ module deepbook::pool_tests {
         );
 
         borrow_and_verify_book_order(
+            pool_id,
             partial_order_id,
             is_bid,
             partial_order_client_id,
@@ -786,6 +790,7 @@ module deepbook::pool_tests {
         );
 
         borrow_and_verify_book_order(
+            pool_id,
             full_order_id,
             is_bid,
             full_order_client_id,
@@ -1075,12 +1080,14 @@ module deepbook::pool_tests {
             &mut test,
         ).order_id();
         cancel_order(
+            pool_id,
             ALICE,
             acct_id,
             placed_order_id,
             &mut test
         );
         cancel_order(
+            pool_id,
             ALICE,
             acct_id,
             placed_order_id,
@@ -1169,22 +1176,26 @@ module deepbook::pool_tests {
         );
 
         borrow_order_ok(
+            pool_id,
             order_info_1.order_id(),
             &mut test,
         );
 
         borrow_order_ok(
+            pool_id,
             order_info_2.order_id(),
             &mut test,
         );
 
         cancel_all_orders(
+            pool_id,
             ALICE,
             acct_id_alice,
             &mut test
         );
 
         borrow_order_ok(
+            pool_id,
             order_info_1.order_id(),
             &mut test,
         );
@@ -1259,6 +1270,7 @@ module deepbook::pool_tests {
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
+            pool_id,
             BOB,
             base_in,
             quote_in,
@@ -1434,6 +1446,7 @@ module deepbook::pool_tests {
         );
 
         borrow_order_ok(
+            pool_id,
             order_info_1.order_id(),
             &mut test,
         );
@@ -1540,6 +1553,7 @@ module deepbook::pool_tests {
         );
 
         borrow_order_ok(
+            pool_id,
             bob_order_info.order_id(),
             &mut test,
         );
@@ -1700,6 +1714,7 @@ module deepbook::pool_tests {
         );
 
         cancel_order(
+            pool_id,
             BOB,
             acct_id_bob,
             order_info.order_id(),
@@ -1800,6 +1815,7 @@ module deepbook::pool_tests {
         );
 
         borrow_and_verify_book_order(
+            pool_id,
             order_info_bob.order_id(),
             !is_bid,
             client_order_id,
@@ -1813,6 +1829,7 @@ module deepbook::pool_tests {
         );
 
         borrow_order_ok(
+            pool_id,
             order_info_alice.order_id(),
             &mut test,
         );
@@ -1871,6 +1888,7 @@ module deepbook::pool_tests {
         );
 
         borrow_and_verify_book_order(
+            pool_id,
             order_info.order_id(),
             is_bid,
             client_order_id,
@@ -1935,6 +1953,7 @@ module deepbook::pool_tests {
         );
 
         cancel_order(
+            pool_id,
             ALICE,
             acct_id,
             order_info.order_id(),
@@ -1970,6 +1989,7 @@ module deepbook::pool_tests {
 
     /// Helper, borrow orderbook and verify an order.
     fun borrow_and_verify_book_order(
+        pool_id: ID,
         book_order_id: u128,
         is_bid: bool,
         client_order_id: u64,
@@ -1982,7 +2002,7 @@ module deepbook::pool_tests {
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
-        let pool = test.take_shared<Pool<SUI, USDC>>();
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let order = borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         verify_book_order(
             order,
@@ -2000,11 +2020,12 @@ module deepbook::pool_tests {
 
     /// Internal function to borrow orderbook to ensure order exists
     fun borrow_order_ok(
+        pool_id: ID,
         book_order_id: u128,
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
-        let pool = test.take_shared<Pool<SUI, USDC>>();
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let (is_bid, _, _,) = utils::decode_order_id(book_order_id);
         borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         return_shared(pool);
@@ -2074,6 +2095,7 @@ module deepbook::pool_tests {
 
     /// Place swap exact amount order
     fun place_swap_exact_amount_order(
+        pool_id: ID,
         trader: address,
         base_in: u64,
         quote_in: u64,
@@ -2082,7 +2104,7 @@ module deepbook::pool_tests {
     ): (Coin<SUI>, Coin<USDC>, Coin<DEEP>) {
         test.next_tx(trader);
         {
-            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let clock = test.take_shared<Clock>();
 
             // Place order in pool
@@ -2103,6 +2125,7 @@ module deepbook::pool_tests {
 
     /// Cancel an order
     fun cancel_order(
+        pool_id: ID,
         owner: address,
         acct_id: ID,
         order_id: u128,
@@ -2110,7 +2133,7 @@ module deepbook::pool_tests {
     ) {
         test.next_tx(owner);
         {
-            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
 
@@ -2129,13 +2152,14 @@ module deepbook::pool_tests {
     }
 
     fun cancel_all_orders(
+        pool_id: ID,
         owner: address,
         acct_id: ID,
         test: &mut Scenario,
     ) {
         test.next_tx(owner);
         {
-            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
 
@@ -2202,11 +2226,12 @@ module deepbook::pool_tests {
     }
 
     fun get_mid_price(
+        pool_id: ID,
         test: &mut Scenario,
     ): u64 {
         test.next_tx(ALICE);
         {
-            let pool = test.take_shared<Pool<SUI, USDC>>();
+            let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let clock = test.take_shared<Clock>();
 
             let mid_price = pool.mid_price<SUI, USDC>(&clock);

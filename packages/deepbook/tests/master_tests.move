@@ -32,7 +32,7 @@ module deepbook::master_tests {
         let mut test = begin(OWNER);
         let pool1_id = pool_tests::setup_test(OWNER, &mut test);
         let pool2_id = pool_tests::setup_test(OWNER, &mut test);
-        let acct_id = pool_tests::create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let acct_id = pool_tests::create_acct_and_share_with_funds(ALICE, 10 * constants::float_scaling(), &mut test);
 
         // variables to input into order
         let client_order_id = 1;
@@ -76,4 +76,19 @@ module deepbook::master_tests {
 
         end(test);
     }
+
+    // fun check_balance_ok(
+    //     acct_id: u64,
+    //     expected_deep: u64,
+    //     expected_usdc: u64,
+    //     expected_spam: u64,
+    //     test: &mut Scenario,
+    // ) {
+    //     let balance_manager =
+    //     let acct = balance_manager::balance<DEEP>();
+    //     test.assert_eq(acct.deep, expected_deep);
+    //     test.assert_eq(acct.usdc, expected_usdc);
+    //     test.assert_eq(acct.spam, expected_spam);
+    // }
+    // )
 }
