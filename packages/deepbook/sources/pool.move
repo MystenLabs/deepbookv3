@@ -346,8 +346,9 @@ module deepbook::pool {
     /// Returns the mid price of the pool.
     public fun mid_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
+        clock: &Clock,
     ): u64 {
-        self.book.mid_price()
+        self.book.mid_price(clock.timestamp_ms())
     }
 
     /// Returns the order_id for all open order for the balance_manager in the pool.
@@ -394,8 +395,8 @@ module deepbook::pool {
         clock: &Clock,
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
-        let deep_price = reference_pool.mid_price();
-        let pool_price = target_pool.mid_price();
+        let deep_price = reference_pool.mid_price(clock);
+        let pool_price = target_pool.mid_price(clock);
         let deep_base_type = type_name::get<DEEPBaseAsset>();
         let deep_quote_type = type_name::get<DEEPQuoteAsset>();
         let base_type = type_name::get<BaseAsset>();

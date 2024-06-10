@@ -351,10 +351,13 @@ module deepbook::pool_tests {
         let client_order_id = 1;
         let price_bid_1 = 1 * constants::float_scaling();
         let price_bid_best = 2 * constants::float_scaling();
-        let price_ask_best = 5 * constants::float_scaling();
+        let price_bid_expired = 2_200_000_000;
         let price_ask_1 = 6 * constants::float_scaling();
+        let price_ask_best = 5 * constants::float_scaling();
+        let price_ask_expired = 3_200_000_000;
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
+        let expire_timestamp_e = 100;
         let pay_with_deep = true;
         let is_bid = true;
 
@@ -392,11 +395,11 @@ module deepbook::pool_tests {
             client_order_id,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            price_ask_best,
+            price_bid_expired,
             quantity,
-            !is_bid,
+            is_bid,
             pay_with_deep,
-            expire_timestamp,
+            expire_timestamp_e,
             &mut test,
         );
 
@@ -414,8 +417,39 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let expected_mid_price = (price_bid_best + price_ask_best) / 2;
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_ask_best,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
 
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_ask_expired,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp_e,
+            &mut test,
+        );
+
+        let expected_mid_price = (price_bid_expired + price_ask_expired) / 2;
+        assert!(get_mid_price(&mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+
+        set_time(200, &mut test);
+        let expected_mid_price = (price_bid_best + price_ask_best) / 2;
         assert!(get_mid_price(&mut test) == expected_mid_price, constants::e_incorrect_mid_price());
 
         end(test);
@@ -964,7 +998,7 @@ module deepbook::pool_tests {
         } else {
             2 * constants::float_scaling() + residual
         };
-        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee());
+        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
             BOB,
@@ -982,7 +1016,7 @@ module deepbook::pool_tests {
             assert!(quote_out.value() == residual, constants::e_order_info_mismatch());
         };
 
-        assert!(deep_out.value() == 0, constants::e_order_info_mismatch());
+        assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1994,9 +2028,11 @@ module deepbook::pool_tests {
         test.next_tx(ALICE);
         {
             let pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
 
-            let mid_price = pool.mid_price<SUI, USDC>();
+            let mid_price = pool.mid_price<SUI, USDC>(&clock);
             return_shared(pool);
+            return_shared(clock);
 
             mid_price
         }

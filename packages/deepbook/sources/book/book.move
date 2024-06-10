@@ -115,16 +115,33 @@ module deepbook::book {
     }
 
     /// Returns the mid price of the order book.
-    public(package) fun mid_price(self: &Book): u64 {
-        let (ask_ref, ask_offset) = self.asks.min_slice();
-        let (bid_ref, bid_offset) = self.bids.max_slice();
+    public(package) fun mid_price(
+        self: &Book,
+        current_timestamp: u64,
+    ): u64 {
+        let (mut ask_ref, mut ask_offset) = self.asks.min_slice();
+        let (mut bid_ref, mut bid_offset) = self.bids.max_slice();
         assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
-        let ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
-        let ask_price = ask_order.price();
-        let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
-        let bid_price = bid_order.price();
 
-        (ask_price + bid_price) / 2
+        let mut best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        while (!ask_ref.is_null()) {
+            best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+            if (best_ask_order.expire_timestamp() > current_timestamp) break;
+            (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
+        };
+
+        let mut best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        while (!bid_ref.is_null()) {
+            best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+            if (best_bid_order.expire_timestamp() > current_timestamp) break;
+            (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
+        };
+
+        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
+        let best_ask_price = best_ask_order.price();
+        let best_bid_price = best_bid_order.price();
+
+        (best_ask_price + best_bid_price) / 2
     }
 
     /// Returns the best bids and asks.
