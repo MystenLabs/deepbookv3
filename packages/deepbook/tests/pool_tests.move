@@ -2124,7 +2124,7 @@ module deepbook::pool_tests {
     }
 
     /// Cancel an order
-    fun cancel_order(
+    public(package) fun cancel_order(
         pool_id: ID,
         owner: address,
         balance_manager_id: ID,
