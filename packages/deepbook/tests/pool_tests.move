@@ -312,6 +312,93 @@ module deepbook::pool_tests {
         test_fill_or_kill(false, true);
     }
 
+    #[test]
+    fun test_market_order_bid() {
+        test_market_order(true);
+    }
+
+    #[test]
+    fun test_market_order_ask() {
+        test_market_order(false);
+    }
+
+    fun test_market_order(
+        is_bid: bool,
+    ) {
+        let owner: address = @0x1;
+        let mut test = begin(owner);
+        setup_test(owner, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id = 1;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let mut i = 0;
+        let num_orders = 2;
+
+        while (i < num_orders) {
+            place_limit_order(
+                ALICE,
+                acct_id_alice,
+                client_order_id,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+            i = i + 1;
+        };
+
+        let client_order_id = 2;
+        let fee_is_deep = true;
+        let quantity = 1_500_000_000;
+        let price = if (is_bid) {
+            constants::min_price()
+        } else {
+            constants::max_price()
+        };
+
+        let order_info = place_market_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            &mut test,
+        );
+
+        let current_time = get_time(&mut test);
+
+        verify_order_info(
+            &order_info,
+            client_order_id,
+            price,
+            quantity,
+            quantity,
+            2 * quantity,
+            math::mul(
+                quantity,
+                math::mul(
+                    constants::taker_fee(),
+                    constants::deep_multiplier())
+            ),
+            fee_is_deep,
+            constants::filled(),
+            current_time,
+        );
+
+        end(test);
+    }
+
     /// Test crossing num_orders orders with a single order
     /// Should be filled with the num_orders orders, with correct quantities
     /// Quantity of 1 for the first num_orders orders, quantity of num_orders for the last order
@@ -332,7 +419,7 @@ module deepbook::pool_tests {
 
         let mut i = 0;
         while (i < num_orders) {
-            place_order(
+            place_limit_order(
                 ALICE,
                 acct_id_alice,
                 client_order_id,
@@ -355,7 +442,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        let order_info = place_order(
+        let order_info = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -412,7 +499,7 @@ module deepbook::pool_tests {
         };
 
         while (num_orders > 0) {
-            place_order(
+            place_limit_order(
                 ALICE,
                 acct_id_alice,
                 client_order_id,
@@ -436,7 +523,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        let order_info = place_order(
+        let order_info = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -484,7 +571,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -506,7 +593,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -537,7 +624,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id,
             client_order_id,
@@ -569,7 +656,7 @@ module deepbook::pool_tests {
         let is_bid = true;
         let pay_with_deep = true;
 
-        let placed_order_id = place_order(
+        let placed_order_id = place_limit_order(
             ALICE,
             acct_id,
             client_order_id, // client_order_id
@@ -614,7 +701,7 @@ module deepbook::pool_tests {
         let is_bid = true;
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id,
             client_order_id,
@@ -645,7 +732,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        let order_info_1 = place_order(
+        let order_info_1 = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -661,7 +748,7 @@ module deepbook::pool_tests {
 
         let client_order_id = 2;
 
-        let order_info_2 = place_order(
+        let order_info_2 = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -714,7 +801,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
@@ -790,7 +877,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let fee_is_deep = true;
 
-        let order_info_1 = place_order(
+        let order_info_1 = place_limit_order(
             ALICE,
             acct_id_alice,
             bid_client_order_id,
@@ -817,7 +904,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             ask_client_order_id,
@@ -859,7 +946,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let fee_is_deep = true;
 
-        let order_info_1 = place_order(
+        let order_info_1 = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id_1,
@@ -886,7 +973,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        let order_info_2 = place_order(
+        let order_info_2 = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id_2,
@@ -935,7 +1022,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id,
             client_order_id,
@@ -971,7 +1058,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
@@ -989,7 +1076,7 @@ module deepbook::pool_tests {
         let bob_price = 2 * constants::float_scaling();
         let bob_quantity = 2 * constants::float_scaling();
 
-        let bob_order_info = place_order(
+        let bob_order_info = place_limit_order(
             BOB,
             acct_id_bob,
             bob_client_order_id,
@@ -1048,7 +1135,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             alice_client_order_id,
@@ -1070,7 +1157,7 @@ module deepbook::pool_tests {
         };
         let bob_quantity = 1 * constants::float_scaling();
 
-        let bob_order_info = place_order(
+        let bob_order_info = place_limit_order(
             BOB,
             acct_id_bob,
             bob_client_order_id,
@@ -1124,7 +1211,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_order(
+        place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -1145,7 +1232,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling()
         };
 
-        let order_info = place_order(
+        let order_info = place_limit_order(
             BOB,
             acct_id_bob,
             client_order_id,
@@ -1209,7 +1296,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let expire_timestamp = 100;
 
-        let order_info_alice = place_order(
+        let order_info_alice = place_limit_order(
             ALICE,
             acct_id_alice,
             client_order_id,
@@ -1245,7 +1332,7 @@ module deepbook::pool_tests {
         };
         let expire_timestamp = constants::max_u64();
 
-        let order_info_bob = place_order(
+        let order_info_bob = place_limit_order(
             BOB,
             acct_id_bob,
             client_order_id,
@@ -1319,7 +1406,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let pay_with_deep = true;
 
-        let order_info = &place_order(
+        let order_info = &place_limit_order(
             ALICE,
             acct_id,
             client_order_id,
@@ -1383,7 +1470,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let status = constants::live();
 
-        let order_info = place_order(
+        let order_info = place_limit_order(
             ALICE,
             acct_id,
             client_order_id,
@@ -1534,8 +1621,22 @@ module deepbook::pool_tests {
         };
     }
 
-    /// Place an order
-    fun place_order(
+    /// Set the time in the global clock
+    fun get_time(
+        test: &mut Scenario,
+    ): u64 {
+        test.next_tx(ALICE);
+        {
+            let clock = test.take_shared<Clock>();
+            let time =clock.timestamp_ms();
+            return_shared(clock);
+
+            time
+        }
+    }
+
+    /// Place a limit order
+    fun place_limit_order(
         trader: address,
         acct_id: ID,
         client_order_id: u64,
@@ -1569,6 +1670,48 @@ module deepbook::pool_tests {
                 is_bid,
                 pay_with_deep,
                 expire_timestamp,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+
+            order_info
+        }
+    }
+
+    /// Place an order
+    fun place_market_order(
+        trader: address,
+        acct_id: ID,
+        client_order_id: u64,
+        order_type: u8,
+        self_matching_option: u8,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        test: &mut Scenario,
+    ): OrderInfo {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
+
+            // Get Proof from BalanceManager
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
+
+            // Place order in pool
+            let order_info = pool.place_market_order<SUI, USDC>(
+                &mut balance_manager,
+                &proof,
+                client_order_id,
+                order_type,
+                self_matching_option,
+                quantity,
+                is_bid,
+                pay_with_deep,
                 &clock,
                 test.ctx()
             );
