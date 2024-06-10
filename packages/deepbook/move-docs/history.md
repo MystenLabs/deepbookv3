@@ -292,13 +292,13 @@ calculate and returns rebate amount, updates the burn amount
 
     <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
     <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
-        <a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>() - <a href="math.md#0x0_math_min">math::min</a>(<a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>(), <a href="math.md#0x0_math_div">math::div</a>(other_maker_liquidity, volumes.historic_median))
+        <a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>() - <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(<a href="constants.md#0x0_constants_float_scaling">constants::float_scaling</a>(), math::div(other_maker_liquidity, volumes.historic_median))
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_volume_proportion = <a href="math.md#0x0_math_div">math::div</a>(maker_volume, volumes.total_staked_volume);
-    <b>let</b> maker_fee_proportion = <a href="math.md#0x0_math_mul">math::mul</a>(maker_volume_proportion, volumes.total_fees_collected);
-    <b>let</b> maker_rebate = <a href="math.md#0x0_math_mul">math::mul</a>(maker_rebate_percentage, maker_fee_proportion);
+    <b>let</b> maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
+    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
+    <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
@@ -346,7 +346,7 @@ Updates the historic_median for past 28 epochs
         i = i + 1;
     };
 
-    self.volumes.historic_median = <a href="math.md#0x0_math_median">math::median</a>(median_vec);
+    self.volumes.historic_median = math::median(median_vec);
 }
 </code></pre>
 

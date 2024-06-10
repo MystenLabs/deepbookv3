@@ -274,12 +274,12 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
         <b>if</b> (is_bid) {
-            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, <a href="math.md#0x0_math_mul">math::mul</a>(cur_quantity, cur_price));
-            amount_out = amount_out + <a href="math.md#0x0_math_div">math::div</a>(matched_amount, cur_price);
+            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+            amount_out = amount_out + math::div(matched_amount, cur_price);
             amount_in_left = amount_in_left - matched_amount;
         } <b>else</b> {
-            <b>let</b> matched_amount = <a href="math.md#0x0_math_min">math::min</a>(amount_in_left, cur_quantity);
-            amount_out = amount_out + <a href="math.md#0x0_math_mul">math::mul</a>(matched_amount, cur_price);
+            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+            amount_out = amount_out + math::mul(matched_amount, cur_price);
             amount_in_left = amount_in_left - matched_amount;
         };
 
@@ -406,7 +406,7 @@ Returns the mid price of the order book.
     <b>let</b> bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
     <b>let</b> bid_price = bid_order.price();
 
-    <a href="math.md#0x0_math_div">math::div</a>(ask_price + bid_price, 2)
+    math::div(ask_price + bid_price, 2)
 }
 </code></pre>
 

@@ -39,7 +39,6 @@ module deepbook::pool {
     const EInvalidOrderBalanceManager: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
 
-    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
     const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -62,49 +61,23 @@ module deepbook::pool {
     /// Create a new pool. The pool is registered in the registry.
     /// Checks are performed to ensure the tick size, lot size, and min size are valid.
     /// The creation fee is transferred to the treasury address.
-    public fun create_pool<BaseAsset, QuoteAsset>(
+    public fun create_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
         creation_fee: Coin<SUI>,
+        _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
     ) {
-        assert!(creation_fee.value() == POOL_CREATION_FEE, EInvalidFee);
-        assert!(tick_size > 0, EInvalidTickSize);
-        assert!(lot_size > 0, EInvalidLotSize);
-        assert!(min_size > 0, EInvalidMinSize);
-
-        assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
-        registry.register_pool<BaseAsset, QuoteAsset>();
-
-        let pool_uid = object::new(ctx);
-        let pool_id = pool_uid.to_inner();
-
-        let pool = Pool<BaseAsset, QuoteAsset> {
-            id: pool_uid,
-            book: book::empty(tick_size, lot_size, min_size, ctx),
-            state: state::empty(ctx),
-            vault: vault::empty(),
-            deep_price: deep_price::empty(),
-        };
-
-        let params = pool.state.governance().trade_params();
-        let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
-        event::emit(PoolCreated<BaseAsset, QuoteAsset> {
-            pool_id,
-            taker_fee,
-            maker_fee,
+        create_pool<BaseAsset, QuoteAsset>(
+            registry,
             tick_size,
             lot_size,
             min_size,
-        });
-
-        // TODO: reconsider sending the Coin here. User pays gas;
-        // TODO: depending on the frequency of the event;
-        transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
-
-        transfer::share_object(pool);
+            creation_fee,
+            ctx,
+        )
     }
 
     /// Accessor to check if the pool is whitelisted.
@@ -493,6 +466,51 @@ module deepbook::pool {
         // assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
+    }
+
+    public(package) fun create_pool<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        tick_size: u64,
+        lot_size: u64,
+        min_size: u64,
+        creation_fee: Coin<SUI>,
+        ctx: &mut TxContext,
+    ) {
+        assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
+        assert!(tick_size > 0, EInvalidTickSize);
+        assert!(lot_size > 0, EInvalidLotSize);
+        assert!(min_size > 0, EInvalidMinSize);
+
+        assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
+        registry.register_pool<BaseAsset, QuoteAsset>();
+
+        let pool_uid = object::new(ctx);
+        let pool_id = pool_uid.to_inner();
+
+        let pool = Pool<BaseAsset, QuoteAsset> {
+            id: pool_uid,
+            book: book::empty(tick_size, lot_size, min_size, ctx),
+            state: state::empty(ctx),
+            vault: vault::empty(),
+            deep_price: deep_price::empty(),
+        };
+
+        let params = pool.state.governance().trade_params();
+        let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+        event::emit(PoolCreated<BaseAsset, QuoteAsset> {
+            pool_id,
+            taker_fee,
+            maker_fee,
+            tick_size,
+            lot_size,
+            min_size,
+        });
+
+        // TODO: reconsider sending the Coin here. User pays gas;
+        // TODO: depending on the frequency of the event;
+        transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
+
+        transfer::share_object(pool);
     }
 
     public(package) fun bids<BaseAsset, QuoteAsset>(
