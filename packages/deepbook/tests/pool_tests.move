@@ -313,15 +313,19 @@ module deepbook::pool_tests {
     }
 
     #[test]
-    fun test_market_order_bid() {
+    fun test_market_order_bid_then_ask_ok() {
         test_market_order(true);
     }
 
     #[test]
-    fun test_market_order_ask() {
+    fun test_market_order_ask_then_bid_ok() {
         test_market_order(false);
     }
 
+    /// Places 3 orders at price 1, 2, 3 with quantity 1
+    /// Market order of quantity 1.5 should fill one order completely, one partially, and one not at all
+    /// Order 3 is fully filled for bid orders then ask market order
+    /// Order 1 is fully filled for ask orders then bid market order
     fun test_market_order(
         is_bid: bool,
     ) {
@@ -331,33 +335,47 @@ module deepbook::pool_tests {
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
-        let price = 2 * constants::float_scaling();
+        let base_price = constants::float_scaling();
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
         let mut i = 0;
-        let num_orders = 2;
+        let num_orders = 3;
+        let partial_order_client_id = 2;
+        let full_order_client_id = if (is_bid) {
+            1
+        } else {
+            3
+        };
+        let mut partial_order_id = 0;
+        let mut full_order_id = 0;
 
         while (i < num_orders) {
-            place_limit_order(
+            let order_info = place_limit_order(
                 ALICE,
                 acct_id_alice,
-                client_order_id,
+                client_order_id + i,
                 constants::no_restriction(),
                 constants::self_matching_allowed(),
-                price,
+                (client_order_id + i) * base_price,
                 quantity,
                 is_bid,
                 pay_with_deep,
                 expire_timestamp,
                 &mut test,
             );
+            if (order_info.client_order_id() == full_order_client_id) {
+                full_order_id = order_info.order_id();
+            };
+            if (order_info.client_order_id() == partial_order_client_id) {
+                partial_order_id = order_info.order_id();
+            };
             i = i + 1;
         };
 
-        let client_order_id = 2;
+        let client_order_id = num_orders + 1;
         let fee_is_deep = true;
-        let quantity = 1_500_000_000;
+        let quantity_2 = 1_500_000_000;
         let price = if (is_bid) {
             constants::min_price()
         } else {
@@ -370,23 +388,28 @@ module deepbook::pool_tests {
             client_order_id,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            quantity,
+            quantity_2,
             !is_bid,
             pay_with_deep,
             &mut test,
         );
 
         let current_time = get_time(&mut test);
+        let cumulative_quote_quantity = if (is_bid) {
+            4_000_000_000
+        } else {
+            2_000_000_000
+        };
 
         verify_order_info(
             &order_info,
             client_order_id,
             price,
-            quantity,
-            quantity,
-            2 * quantity,
+            quantity_2,
+            quantity_2,
+            cumulative_quote_quantity,
             math::mul(
-                quantity,
+                quantity_2,
                 math::mul(
                     constants::taker_fee(),
                     constants::deep_multiplier())
@@ -394,6 +417,32 @@ module deepbook::pool_tests {
             fee_is_deep,
             constants::filled(),
             current_time,
+        );
+
+        borrow_and_verify_book_order(
+            partial_order_id,
+            is_bid,
+            partial_order_client_id,
+            quantity,
+            500_000_000,
+            constants::deep_multiplier(),
+            0,
+            constants::partially_filled(),
+            constants::max_u64(),
+            &mut test,
+        );
+
+        borrow_and_verify_book_order(
+            full_order_id,
+            is_bid,
+            full_order_client_id,
+            quantity,
+            0,
+            constants::deep_multiplier(),
+            0,
+            constants::live(),
+            constants::max_u64(),
+            &mut test,
         );
 
         end(test);

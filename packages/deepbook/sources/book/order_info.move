@@ -360,8 +360,8 @@ module deepbook::order_info {
         let maker_price = order.price();
 
         (self.original_quantity - self.executed_quantity > 0 &&
-        self.is_bid && self.price >= maker_price ||
-        !self.is_bid && self.price <= maker_price)
+        (self.is_bid && self.price >= maker_price ||
+        !self.is_bid && self.price <= maker_price))
     }
 
     /// Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
