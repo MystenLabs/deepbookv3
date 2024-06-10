@@ -27,7 +27,8 @@ module deepbook::pool_tests {
         math,
         registry,
         constants,
-        utils
+        utils,
+        // balance_manager_tests::create_acct_and_share_with_funds as create_acct_and_share_with_funds,
     };
 
     const OWNER: address = @0x1;
@@ -347,7 +348,8 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        std::debug::print(&(1000000 * constants::float_scaling()));
 
         let alice_client_order_id = 1;
         let alice_price = 3 * constants::float_scaling();
@@ -434,7 +436,7 @@ module deepbook::pool_tests {
     fun test_mid_price() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let price_bid_1 = 1 * constants::float_scaling();
@@ -553,7 +555,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let base_price = constants::float_scaling();
@@ -677,7 +679,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let price = 2 * constants::float_scaling();
@@ -751,7 +753,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let price = 2 * constants::float_scaling();
@@ -828,7 +830,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let order_type = constants::post_only();
@@ -881,7 +883,7 @@ module deepbook::pool_tests {
     fun place_order_max_restrictions_e() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
         let client_order_id = 1;
         let order_type = constants::max_restriction() + 1;
         let price = 2 * constants::float_scaling();
@@ -910,7 +912,7 @@ module deepbook::pool_tests {
     fun place_and_cancel_order_empty_e() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let order_type = constants::no_restriction();
@@ -953,7 +955,7 @@ module deepbook::pool_tests {
     fun place_order_expired_order_skipped() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
         set_time(100, &mut test);
 
         let client_order_id = 1;
@@ -985,7 +987,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let order_type = constants::no_restriction();
@@ -1055,7 +1057,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let alice_client_order_id = 1;
         let alice_price = 2 * constants::float_scaling();
@@ -1145,7 +1147,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let bid_client_order_id = 1;
         let ask_client_order_id = 2;
@@ -1213,7 +1215,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id_1 = 1;
         let client_order_id_2 = 2;
@@ -1297,7 +1299,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let order_type = constants::no_restriction();
@@ -1331,8 +1333,8 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
-        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let alice_client_order_id = 1;
         let alice_price = 2 * constants::float_scaling();
@@ -1407,8 +1409,8 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
-        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let alice_client_order_id = 1;
         let alice_price = 2 * constants::float_scaling();
@@ -1481,8 +1483,8 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
-        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let price = 2 * constants::float_scaling();
@@ -1564,8 +1566,8 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
-        let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let acct_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let client_order_id = 1;
         let price = 2 * constants::float_scaling();
@@ -1666,7 +1668,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         // variables to input into order
         let client_order_id = 1;
@@ -1731,7 +1733,7 @@ module deepbook::pool_tests {
     ) {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
-        let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
+        let acct_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         // variables to input into order
         let client_order_id = 1;
@@ -2152,9 +2154,9 @@ module deepbook::pool_tests {
 
     public fun create_acct_and_share_with_funds(
         sender: address,
+        amount_to_deposit: u64,
         test: &mut Scenario,
     ): ID {
-        let amount_to_deposit = 1000000 * constants::float_scaling();
         test.next_tx(sender);
         {
             let mut acct = balance_manager::new(test.ctx());
