@@ -349,7 +349,6 @@ module deepbook::pool_tests {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        std::debug::print(&(1000000 * constants::float_scaling()));
 
         let alice_client_order_id = 1;
         let alice_price = 3 * constants::float_scaling();
@@ -2111,21 +2110,25 @@ module deepbook::pool_tests {
         sender: address,
     ) {
         test.next_tx(sender);
+        let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+        test.next_tx(sender);
         let mut registry = registry::test_registry(test.ctx());
         {
-            pool::create_pool<BaseAsset, QuoteAsset>(
+            pool::create_pool_admin<BaseAsset, QuoteAsset>(
                 &mut registry,
                 tick_size,
                 lot_size,
                 min_size,
                 coin::mint_for_testing(constants::pool_creation_fee(), test.ctx()),
+                &admin_cap,
                 test.ctx()
             );
         };
         test_utils::destroy(registry);
+        test_utils::destroy(admin_cap);
     }
 
-    fun deposit_into_account<T>(
+    public fun deposit_into_account<T>(
         balance_manager: &mut BalanceManager,
         amount: u64,
         test: &mut Scenario,

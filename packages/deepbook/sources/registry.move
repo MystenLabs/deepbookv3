@@ -66,4 +66,11 @@ module deepbook::registry {
             pools: bag::new(ctx),
         }
     }
+
+    #[test_only]
+    public fun get_admin_cap_for_testing(ctx: &mut TxContext): DeepbookAdminCap {
+        DeepbookAdminCap {
+            id: object::new(ctx),
+        }
+    }
 }
