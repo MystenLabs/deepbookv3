@@ -61,6 +61,7 @@ module deepbook::pool {
     /// Create a new pool. The pool is registered in the registry.
     /// Checks are performed to ensure the tick size, lot size, and min size are valid.
     /// The creation fee is transferred to the treasury address.
+    /// Returns the id of the pool created
     public fun create_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -69,7 +70,7 @@ module deepbook::pool {
         creation_fee: Coin<SUI>,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
-    ) {
+    ): ID {
         create_pool<BaseAsset, QuoteAsset>(
             registry,
             tick_size,
@@ -479,7 +480,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<SUI>,
         ctx: &mut TxContext,
-    ) {
+    ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
@@ -513,8 +514,10 @@ module deepbook::pool {
         // TODO: reconsider sending the Coin here. User pays gas;
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
-
+        let pool_id = object::id(&pool);
         transfer::share_object(pool);
+
+        pool_id
     }
 
     public(package) fun bids<BaseAsset, QuoteAsset>(

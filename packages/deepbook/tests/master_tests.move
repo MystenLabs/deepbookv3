@@ -11,7 +11,9 @@ module deepbook::master_tests {
     use deepbook::{
         balance_manager::{Self, BalanceManager, TradeCap},
         vault::{DEEP},
-        registry::{Self}
+        registry::{Self},
+        constants,
+        pool_tests,
     };
 
     public struct SPAM has store {}
@@ -27,60 +29,68 @@ module deepbook::master_tests {
     }
 
     fun test_master() {
-        let mut test = begin(@0xF);
-        let alice = @0xA;
-        // let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
-        test.next_tx(alice);
-        {
-            let mut balance_manager = balance_manager::new(test.ctx());
-            assert!(balance_manager.owner() == alice, 0);
-            balance_manager.deposit(
-                mint_for_testing<SUI>(100, test.ctx()),
-                test.ctx()
-            );
-            let balance = balance_manager.balance<SUI>();
-            assert!(balance == 100, 0);
+        let mut test = begin(OWNER);
+        let pool1_id = pool_tests::setup_test(OWNER, &mut test);
+        let acct_id = pool_tests::create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
-            balance_manager.deposit(
-                mint_for_testing<SUI>(100, test.ctx()),
-                test.ctx()
-            );
-            let balance = balance_manager.balance<SUI>();
-            assert!(balance == 200, 0);
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
 
-            balance_manager.share();
-        };
+        // variables expected from OrderInfo and Order
+        let status = constants::live();
+        let executed_quantity = 0;
+        let cumulative_quote_quantity = 0;
+        let paid_fees = 0;
+        let fee_is_deep = true;
+        let pay_with_deep = true;
+
+        let order_info = &pool_tests::place_limit_order(
+            pool1_id,
+            ALICE,
+            acct_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        pool_tests::verify_order_info(
+            order_info,
+            client_order_id,
+            price,
+            quantity,
+            executed_quantity,
+            cumulative_quote_quantity,
+            paid_fees,
+            fee_is_deep,
+            status,
+            expire_timestamp,
+        );
+
+        pool_tests::borrow_and_verify_book_order(
+            order_info.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            executed_quantity,
+            order_info.deep_per_base(),
+            test.ctx().epoch(),
+            status,
+            expire_timestamp,
+            &mut test,
+        );
+
 
         end(test);
-    }
-
-    public fun deposit_into_account<T>(
-        balance_manager: &mut BalanceManager,
-        amount: u64,
-        test: &mut Scenario,
-    ) {
-        balance_manager.deposit(
-            mint_for_testing<T>(amount, test.ctx()),
-            test.ctx()
-        );
-    }
-
-    public fun create_acct_and_share_with_funds(
-        sender: address,
-        amount: u64,
-        test: &mut Scenario,
-    ): ID {
-        test.next_tx(sender);
-        {
-            let mut balance_manager = balance_manager::new(test.ctx());
-            deposit_into_account<SUI>(&mut balance_manager, amount, test);
-            deposit_into_account<SPAM>(&mut balance_manager, amount, test);
-            deposit_into_account<USDC>(&mut balance_manager, amount, test);
-            deposit_into_account<DEEP>(&mut balance_manager, amount, test);
-            let id = object::id(&balance_manager);
-            balance_manager.share();
-
-            id
-        }
     }
 }
