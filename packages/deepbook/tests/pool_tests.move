@@ -30,6 +30,7 @@ module deepbook::pool_tests {
         utils
     };
 
+    const OWNER: address = @0x1;
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
 
@@ -322,6 +323,89 @@ module deepbook::pool_tests {
         test_market_order(false);
     }
 
+    #[test]
+    fun test_mid_price_ok() {
+        test_mid_price();
+    }
+
+    fun test_mid_price() {
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
+        let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
+
+        let client_order_id = 1;
+        let price_bid_1 = 1 * constants::float_scaling();
+        let price_bid_best = 2 * constants::float_scaling();
+        let price_ask_best = 5 * constants::float_scaling();
+        let price_ask_1 = 6 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let is_bid = true;
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_bid_1,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_bid_best,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_ask_best,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order(
+            ALICE,
+            acct_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price_ask_1,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let expected_mid_price = (price_bid_best + price_ask_best) / 2;
+
+        assert!(get_mid_price(&mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+
+        end(test);
+    }
+
     /// Places 3 orders at price 1, 2, 3 with quantity 1
     /// Market order of quantity 1.5 should fill one order completely, one partially, and one not at all
     /// Order 3 is fully filled for bid orders then ask market order
@@ -329,9 +413,8 @@ module deepbook::pool_tests {
     fun test_market_order(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -455,9 +538,8 @@ module deepbook::pool_tests {
         is_bid: bool,
         num_orders: u64,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -530,9 +612,8 @@ module deepbook::pool_tests {
         is_bid: bool,
         order_can_be_filled: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -608,9 +689,8 @@ module deepbook::pool_tests {
         is_bid: bool,
         crosses_order: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -662,9 +742,8 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidOrderType)]
     /// placing an order > MAX_RESTRICTIONS should fail
     fun place_order_max_restrictions_e() {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
         let client_order_id = 1;
         let order_type = constants::max_restriction() + 1;
@@ -692,9 +771,8 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
     /// Trying to cancel a cancelled order should fail
     fun place_and_cancel_order_empty_e() {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -736,9 +814,8 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
     /// Trying to place an order that's expiring should fail
     fun place_order_expired_order_skipped() {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
         set_time(100, &mut test);
 
@@ -769,9 +846,8 @@ module deepbook::pool_tests {
     fun test_cancel_all_orders(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -839,9 +915,8 @@ module deepbook::pool_tests {
     fun test_swap_exact_amount(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let alice_client_order_id = 1;
@@ -907,9 +982,8 @@ module deepbook::pool_tests {
     fun test_self_matching_cancel_taker(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let bid_client_order_id = 1;
@@ -976,9 +1050,8 @@ module deepbook::pool_tests {
     fun test_self_matching_cancel_maker(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id_1 = 1;
@@ -1061,9 +1134,8 @@ module deepbook::pool_tests {
         price: u64,
         quantity: u64,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         let client_order_id = 1;
@@ -1096,9 +1168,8 @@ module deepbook::pool_tests {
         expected_paid_fees: u64,
         expected_status: u8,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
@@ -1173,9 +1244,8 @@ module deepbook::pool_tests {
         expected_paid_fees: u64,
         expected_status: u8,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
@@ -1248,9 +1318,8 @@ module deepbook::pool_tests {
         expected_paid_fees: u64,
         expected_status: u8,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
@@ -1332,9 +1401,8 @@ module deepbook::pool_tests {
         expected_paid_fees: u64,
         expected_status: u8,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id_alice = create_acct_and_share_with_funds(ALICE, &mut test);
         let acct_id_bob = create_acct_and_share_with_funds(BOB, &mut test);
 
@@ -1435,9 +1503,8 @@ module deepbook::pool_tests {
     fun place_order_ok(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         // variables to input into order
@@ -1501,9 +1568,8 @@ module deepbook::pool_tests {
     fun place_and_cancel_order_ok(
         is_bid: bool,
     ) {
-        let owner: address = @0x1;
-        let mut test = begin(owner);
-        setup_test(owner, &mut test);
+        let mut test = begin(OWNER);
+        setup_test(OWNER, &mut test);
         let acct_id = create_acct_and_share_with_funds(ALICE, &mut test);
 
         // variables to input into order
@@ -1907,6 +1973,20 @@ module deepbook::pool_tests {
             mint_for_testing<T>(amount, test.ctx()),
             test.ctx()
         );
+    }
+
+    fun get_mid_price(
+        test: &mut Scenario,
+    ): u64 {
+        test.next_tx(ALICE);
+        {
+            let pool = test.take_shared<Pool<SUI, USDC>>();
+
+            let mid_price = pool.mid_price<SUI, USDC>();
+            return_shared(pool);
+
+            mid_price
+        }
     }
 
     public fun create_acct_and_share_with_funds(

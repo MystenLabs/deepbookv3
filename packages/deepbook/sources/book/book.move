@@ -124,7 +124,7 @@ module deepbook::book {
         let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
         let bid_price = bid_order.price();
 
-        math::div(ask_price + bid_price, 2)
+        (ask_price + bid_price) / 2
     }
 
     /// Returns the best bids and asks.
