@@ -339,6 +339,129 @@ module deepbook::pool_tests {
         test_swap_exact_not_fully_filled(false);
     }
 
+    /// Helper function to share a clock and a pool with default values
+    public(package) fun setup_test(
+        sender: address,
+        test: &mut Scenario,
+    ): ID {
+        let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
+            test,
+            sender,
+        );
+        share_clock(test);
+
+        pool_id
+    }
+
+    /// Place a limit order
+    public(package) fun place_limit_order(
+        pool_id: ID,
+        trader: address,
+        acct_id: ID,
+        client_order_id: u64,
+        order_type: u8,
+        self_matching_option: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        expire_timestamp: u64,
+        test: &mut Scenario,
+    ): OrderInfo {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
+
+            // Get Proof from BalanceManager
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
+
+            // Place order in pool
+            let order_info = pool.place_limit_order<SUI, USDC>(
+                &mut balance_manager,
+                &proof,
+                client_order_id,
+                order_type,
+                self_matching_option,
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+
+            order_info
+        }
+    }
+
+    /// Place an order
+    public(package) fun place_market_order(
+        trader: address,
+        acct_id: ID,
+        client_order_id: u64,
+        self_matching_option: u8,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        test: &mut Scenario,
+    ): OrderInfo {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared<Pool<SUI, USDC>>();
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
+
+            // Get Proof from BalanceManager
+            let proof = balance_manager.generate_proof_as_owner(test.ctx());
+
+            // Place order in pool
+            let order_info = pool.place_market_order<SUI, USDC>(
+                &mut balance_manager,
+                &proof,
+                client_order_id,
+                self_matching_option,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+
+            order_info
+        }
+    }
+
+    public(package) fun create_acct_and_share_with_funds(
+        sender: address,
+        amount_to_deposit: u64,
+        test: &mut Scenario,
+    ): ID {
+        test.next_tx(sender);
+        {
+            let mut acct = balance_manager::new(test.ctx());
+            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);
+            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test);
+            let id = object::id(&acct);
+            acct.share();
+
+            id
+        }
+    }
+
     /// Alice places a bid order, Bob places a swap_exact_amount order
     /// Make sure the assets returned to Bob are correct
     /// When swap is not fully filled, assets are returned correctly
@@ -1822,7 +1945,7 @@ module deepbook::pool_tests {
 
     /// Helper, verify OrderInfo.
     /// TODO: create an OrderInfo struct and use that instead of multiple parameters
-    public(package) fun verify_order_info(
+    fun verify_order_info(
         order_info: &OrderInfo,
         client_order_id: u64,
         price: u64,
@@ -1846,7 +1969,7 @@ module deepbook::pool_tests {
     }
 
     /// Helper, borrow orderbook and verify an order.
-    public(package) fun borrow_and_verify_book_order(
+    fun borrow_and_verify_book_order(
         book_order_id: u128,
         is_bid: bool,
         client_order_id: u64,
@@ -1949,93 +2072,6 @@ module deepbook::pool_tests {
         }
     }
 
-    /// Place a limit order
-    public fun place_limit_order(
-        pool_id: ID,
-        trader: address,
-        acct_id: ID,
-        client_order_id: u64,
-        order_type: u8,
-        self_matching_option: u8,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        pay_with_deep: bool,
-        expire_timestamp: u64,
-        test: &mut Scenario,
-    ): OrderInfo {
-        test.next_tx(trader);
-        {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-            let clock = test.take_shared<Clock>();
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
-
-            // Get Proof from BalanceManager
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
-
-            // Place order in pool
-            let order_info = pool.place_limit_order<SUI, USDC>(
-                &mut balance_manager,
-                &proof,
-                client_order_id,
-                order_type,
-                self_matching_option,
-                price,
-                quantity,
-                is_bid,
-                pay_with_deep,
-                expire_timestamp,
-                &clock,
-                test.ctx()
-            );
-            return_shared(pool);
-            return_shared(clock);
-            return_shared(balance_manager);
-
-            order_info
-        }
-    }
-
-    /// Place an order
-    fun place_market_order(
-        trader: address,
-        acct_id: ID,
-        client_order_id: u64,
-        self_matching_option: u8,
-        quantity: u64,
-        is_bid: bool,
-        pay_with_deep: bool,
-        test: &mut Scenario,
-    ): OrderInfo {
-        test.next_tx(trader);
-        {
-            let mut pool = test.take_shared<Pool<SUI, USDC>>();
-            let clock = test.take_shared<Clock>();
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(acct_id);
-
-            // Get Proof from BalanceManager
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
-
-            // Place order in pool
-            let order_info = pool.place_market_order<SUI, USDC>(
-                &mut balance_manager,
-                &proof,
-                client_order_id,
-                self_matching_option,
-                quantity,
-                is_bid,
-                pay_with_deep,
-                &clock,
-                test.ctx()
-            );
-            return_shared(pool);
-            return_shared(clock);
-            return_shared(balance_manager);
-
-            order_info
-        }
-    }
-
     /// Place swap exact amount order
     fun place_swap_exact_amount_order(
         trader: address,
@@ -2116,23 +2152,6 @@ module deepbook::pool_tests {
         }
     }
 
-    /// Helper function to share a clock and a pool with default values
-    public(package) fun setup_test(
-        sender: address,
-        test: &mut Scenario,
-    ): ID {
-        let pool_id = setup_pool_with_default_fees<SUI, USDC>(
-            constants::tick_size(), // tick size
-            constants::lot_size(), // lot size
-            constants::min_size(), // min size
-            test,
-            sender,
-        );
-        share_clock(test);
-
-        pool_id
-    }
-
     fun share_clock(
         test: &mut Scenario,
     ) {
@@ -2171,7 +2190,7 @@ module deepbook::pool_tests {
         pool_id
     }
 
-    public fun deposit_into_account<T>(
+    fun deposit_into_account<T>(
         balance_manager: &mut BalanceManager,
         amount: u64,
         test: &mut Scenario,
@@ -2195,25 +2214,6 @@ module deepbook::pool_tests {
             return_shared(clock);
 
             mid_price
-        }
-    }
-
-    public fun create_acct_and_share_with_funds(
-        sender: address,
-        amount_to_deposit: u64,
-        test: &mut Scenario,
-    ): ID {
-        test.next_tx(sender);
-        {
-            let mut acct = balance_manager::new(test.ctx());
-            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test);
-            let id = object::id(&acct);
-            acct.share();
-
-            id
         }
     }
 }

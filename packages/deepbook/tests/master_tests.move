@@ -31,6 +31,7 @@ module deepbook::master_tests {
     fun test_master() {
         let mut test = begin(OWNER);
         let pool1_id = pool_tests::setup_test(OWNER, &mut test);
+        let pool2_id = pool_tests::setup_test(OWNER, &mut test);
         let acct_id = pool_tests::create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
 
         // variables to input into order
@@ -40,16 +41,9 @@ module deepbook::master_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
-
-        // variables expected from OrderInfo and Order
-        let status = constants::live();
-        let executed_quantity = 0;
-        let cumulative_quote_quantity = 0;
-        let paid_fees = 0;
-        let fee_is_deep = true;
         let pay_with_deep = true;
 
-        let order_info = &pool_tests::place_limit_order(
+        pool_tests::place_limit_order(
             pool1_id,
             ALICE,
             acct_id,
@@ -64,28 +58,17 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        pool_tests::verify_order_info(
-            order_info,
+        pool_tests::place_limit_order(
+            pool2_id,
+            ALICE,
+            acct_id,
             client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
             price,
             quantity,
-            executed_quantity,
-            cumulative_quote_quantity,
-            paid_fees,
-            fee_is_deep,
-            status,
-            expire_timestamp,
-        );
-
-        pool_tests::borrow_and_verify_book_order(
-            order_info.order_id(),
             is_bid,
-            client_order_id,
-            quantity,
-            executed_quantity,
-            order_info.deep_per_base(),
-            test.ctx().epoch(),
-            status,
+            pay_with_deep,
             expire_timestamp,
             &mut test,
         );
