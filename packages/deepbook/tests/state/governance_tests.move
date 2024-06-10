@@ -575,6 +575,13 @@ module deepbook::governance_tests {
         // The total voting power is therefore 52.928, with quorum being half of that = 26.464.
         assert!(gov.voting_power() == 52_928_932_189, 0);
         assert!(gov.quorum() == 26_464_466_094, 0);
+        gov.adjust_voting_power(100_000_000_000, 200_000_000_000);
+        test.next_epoch(OWNER);
+        gov.update(test.ctx());
+        // The additional power is calculated as sqrt(total_stake=100) - sqrt(half_min_stake=50) = 7.071
+        // The total voting power is therefore 57.071, with quorum being half of that = 28.535.
+        assert!(gov.voting_power() == 57_071_067_812, 0);
+        assert!(gov.quorum() == 28_535_533_906, 0);
 
         destroy(gov);
         end(test);
