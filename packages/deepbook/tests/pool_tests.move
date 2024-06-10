@@ -328,6 +328,21 @@ module deepbook::pool_tests {
         test_mid_price();
     }
 
+    // #[test]
+    // fun test_get_amount_out_bid_then_ask_ok() {
+    //     test_get_amount_out(true);
+    // }
+
+    // #[test]
+    // fun test_get_amount_out_ask_then_bid_ok() {
+    //     test_get_amount_out(false);
+    // }
+
+    // #[test]
+    // fun test_market_order_not_fully_filled_bid_ok(){
+
+    // }
+
     fun test_mid_price() {
         let mut test = begin(OWNER);
         setup_test(OWNER, &mut test);
@@ -469,7 +484,6 @@ module deepbook::pool_tests {
             ALICE,
             acct_id_alice,
             client_order_id,
-            constants::no_restriction(),
             constants::self_matching_allowed(),
             quantity_2,
             !is_bid,
@@ -921,9 +935,10 @@ module deepbook::pool_tests {
 
         let alice_client_order_id = 1;
         let alice_price = 2 * constants::float_scaling();
-        let alice_quantity = 1 * constants::float_scaling();
+        let alice_quantity = 2 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
+        let residual = 5;
 
         place_limit_order(
             ALICE,
@@ -940,14 +955,14 @@ module deepbook::pool_tests {
         );
 
         let base_in = if (is_bid) {
-            1 * constants::float_scaling()
+            1 * constants::float_scaling() + residual
         } else {
             0
         };
         let quote_in = if (is_bid) {
             0
         } else {
-            2 * constants::float_scaling()
+            2 * constants::float_scaling() + residual
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee());
 
@@ -960,11 +975,11 @@ module deepbook::pool_tests {
         );
 
         if (is_bid) {
-            assert!(base_out.value() == 0, constants::e_order_info_mismatch());
+            assert!(base_out.value() == residual, constants::e_order_info_mismatch());
             assert!(quote_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
             assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 0, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == 0, constants::e_order_info_mismatch());
@@ -1801,7 +1816,6 @@ module deepbook::pool_tests {
         trader: address,
         acct_id: ID,
         client_order_id: u64,
-        order_type: u8,
         self_matching_option: u8,
         quantity: u64,
         is_bid: bool,
@@ -1822,7 +1836,6 @@ module deepbook::pool_tests {
                 &mut balance_manager,
                 &proof,
                 client_order_id,
-                order_type,
                 self_matching_option,
                 quantity,
                 is_bid,
