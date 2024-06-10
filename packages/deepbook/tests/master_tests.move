@@ -32,7 +32,7 @@ module deepbook::master_tests {
         let mut test = begin(OWNER);
         let pool1_id = pool_tests::setup_test(OWNER, &mut test);
         let pool2_id = pool_tests::setup_test(OWNER, &mut test);
-        let acct_id = pool_tests::create_acct_and_share_with_funds(ALICE, 10 * constants::float_scaling(), &mut test);
+        let balance_manager_id = pool_tests::create_acct_and_share_with_funds(ALICE, 10 * constants::float_scaling(), &mut test);
 
         // variables to input into order
         let client_order_id = 1;
@@ -46,7 +46,7 @@ module deepbook::master_tests {
         pool_tests::place_limit_order(
             pool1_id,
             ALICE,
-            acct_id,
+            balance_manager_id,
             client_order_id,
             order_type,
             constants::self_matching_allowed(),
@@ -61,7 +61,7 @@ module deepbook::master_tests {
         pool_tests::place_limit_order(
             pool2_id,
             ALICE,
-            acct_id,
+            balance_manager_id,
             client_order_id,
             order_type,
             constants::self_matching_allowed(),
@@ -78,13 +78,13 @@ module deepbook::master_tests {
     }
 
     // fun check_balance_ok(
-    //     acct_id: u64,
+    //     balance_manager_id: ID,
     //     expected_deep: u64,
     //     expected_usdc: u64,
     //     expected_spam: u64,
     //     test: &mut Scenario,
     // ) {
-    //     let balance_manager =
+    //     let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
     //     let acct = balance_manager::balance<DEEP>();
     //     test.assert_eq(acct.deep, expected_deep);
     //     test.assert_eq(acct.usdc, expected_usdc);
