@@ -66,6 +66,11 @@ module deepbook::master_tests {
             10000 * constants::float_scaling(),
             &mut test
         );
+        let bob_balance_manager_id = pool_tests::create_acct_and_share_with_funds(
+            BOB,
+            10000 * constants::float_scaling(),
+            &mut test
+        );
 
         // variables to input into order
         let client_order_id = 1;
@@ -77,10 +82,11 @@ module deepbook::master_tests {
         let is_bid = true;
         let pay_with_deep = true;
 
+        // Epoch 0
         if (error_code == ENotEnoughFunds) {
             pool_tests::place_limit_order<SUI, USDC>(
-                pool1_id,
                 ALICE,
+                pool1_id,
                 alice_balance_manager_id,
                 client_order_id,
                 order_type,
@@ -94,11 +100,10 @@ module deepbook::master_tests {
             );
         };
 
-        // Epoch 0
-        // Place order in pool 1
+        // Alice places bid order in pool 1
         let order_info_1 = pool_tests::place_limit_order<SUI, USDC>(
-            pool1_id,
             ALICE,
+            pool1_id,
             alice_balance_manager_id,
             client_order_id,
             order_type,
@@ -111,10 +116,10 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        // Place order in pool 2
+        // Alice place ask order in pool 2
         pool_tests::place_limit_order<SPAM, USDC>(
-            pool2_id,
             ALICE,
+            pool2_id,
             alice_balance_manager_id,
             client_order_id,
             order_type,
@@ -184,28 +189,89 @@ module deepbook::master_tests {
         );
 
         // Epoch 2
-        // New trading fees are in effect for pool1
+        // New trading fees are in effect for pool 1
         test.next_epoch(OWNER);
 
+        pool_tests::cancel_order<SUI, USDC>(
+            pool1_id,
+            ALICE,
+            alice_balance_manager_id,
+            order_info_1.order_id(),
+            &mut test
+        );
 
-        // check_balance(
-        //     ALICE,
-        //     alice_balance_manager_id,
-        //     9999 * constants::float_scaling(),
-        //     10000 * constants::float_scaling(),
-        //     9_999_995_000_000,
-        //     &mut test
-        // );
+        // Alice should get refunded the previous fees for the order
+        check_balance(
+            ALICE,
+            alice_balance_manager_id,
+            10000 * constants::float_scaling(), // SUI
+            10000 * constants::float_scaling(), // USDC
+            9999 * constants::float_scaling(), // SPAM
+            9_899_995_000_000, // DEEP
+            &mut test
+        );
 
-        // pool_tests::cancel_order(
+        let client_order_id = 2;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = true;
+
+        pool_tests::place_limit_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice should pay new fees for the order
+        check_balance(
+            ALICE,
+            alice_balance_manager_id,
+            10000 * constants::float_scaling(), // SUI
+            9998 * constants::float_scaling(), // USDC
+            9999 * constants::float_scaling(), // SPAM
+            9_899_993_000_000, // DEEP
+            &mut test
+        );
+
+        pool_tests::place_limit_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // // Bob places market ask order in pool 1 that matches with alice
+        // pool_tests::place_market_order<SUI, USDC>(
+        //     BOB,
         //     pool1_id,
-        //     ALICE,
         //     alice_balance_manager_id,
-        //     order_info_1.order_id(),
-        //     &mut test
+        //     client_order_id,
+        //     constants::self_matching_allowed(),
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     &mut test,
         // );
-
-
 
         end(test);
     }

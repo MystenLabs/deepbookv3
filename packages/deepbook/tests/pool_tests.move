@@ -360,8 +360,8 @@ module deepbook::pool_tests {
 
     /// Place a limit order
     public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
-        pool_id: ID,
         trader: address,
+        pool_id: ID,
         balance_manager_id: ID,
         client_order_id: u64,
         order_type: u8,
@@ -406,9 +406,9 @@ module deepbook::pool_tests {
     }
 
     /// Place an order
-    public(package) fun place_market_order(
-        pool_id: ID,
+    public(package) fun place_market_order<BaseAsset, QuoteAsset>(
         trader: address,
+        pool_id: ID,
         balance_manager_id: ID,
         client_order_id: u64,
         self_matching_option: u8,
@@ -419,7 +419,7 @@ module deepbook::pool_tests {
     ): OrderInfo {
         test.next_tx(trader);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
@@ -427,7 +427,7 @@ module deepbook::pool_tests {
             let proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
-            let order_info = pool.place_market_order<SUI, USDC>(
+            let order_info = pool.place_market_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
                 &proof,
                 client_order_id,
@@ -491,8 +491,8 @@ module deepbook::pool_tests {
         let residual = constants::lot_size() - 1;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -506,8 +506,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -583,8 +583,8 @@ module deepbook::pool_tests {
         let is_bid = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -598,8 +598,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -613,8 +613,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -628,8 +628,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -643,8 +643,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -658,8 +658,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -713,8 +713,8 @@ module deepbook::pool_tests {
 
         while (i < num_orders) {
             let order_info = place_limit_order<SUI, USDC>(
-                pool_id,
                 ALICE,
+                pool_id,
                 balance_manager_id_alice,
                 client_order_id + i,
                 constants::no_restriction(),
@@ -744,9 +744,9 @@ module deepbook::pool_tests {
             constants::max_price()
         };
 
-        let order_info = place_market_order(
-            pool_id,
+        let order_info = place_market_order<SUI, USDC>(
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::self_matching_allowed(),
@@ -833,8 +833,8 @@ module deepbook::pool_tests {
         let mut i = 0;
         while (i < num_orders) {
             place_limit_order<SUI, USDC>(
-                pool_id,
                 ALICE,
+                pool_id,
                 balance_manager_id_alice,
                 client_order_id,
                 constants::no_restriction(),
@@ -857,8 +857,8 @@ module deepbook::pool_tests {
         };
 
         let order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -915,8 +915,8 @@ module deepbook::pool_tests {
 
         while (num_orders > 0) {
             place_limit_order<SUI, USDC>(
-                pool_id,
                 ALICE,
+                pool_id,
                 balance_manager_id_alice,
                 client_order_id,
                 constants::no_restriction(),
@@ -940,8 +940,8 @@ module deepbook::pool_tests {
         };
 
         let order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::fill_or_kill(),
@@ -989,8 +989,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             order_type,
@@ -1012,8 +1012,8 @@ module deepbook::pool_tests {
         };
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             order_type,
@@ -1044,8 +1044,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id,
             order_type,
@@ -1077,8 +1077,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         let placed_order_id = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id, // client_order_id
             order_type,
@@ -1125,8 +1125,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id,
             order_type,
@@ -1157,8 +1157,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         let order_info_1 = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             order_type,
@@ -1174,8 +1174,8 @@ module deepbook::pool_tests {
         let client_order_id = 2;
 
         let order_info_2 = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             order_type,
@@ -1240,8 +1240,8 @@ module deepbook::pool_tests {
         let residual = constants::lot_size() - 1;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -1255,8 +1255,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -1336,8 +1336,8 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
 
         let order_info_1 = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             bid_client_order_id,
             order_type,
@@ -1364,8 +1364,8 @@ module deepbook::pool_tests {
         );
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             ask_client_order_id,
             order_type,
@@ -1407,8 +1407,8 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
 
         let order_info_1 = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id_1,
             order_type,
@@ -1435,8 +1435,8 @@ module deepbook::pool_tests {
         );
 
         let order_info_2 = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id_2,
             order_type,
@@ -1486,8 +1486,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id,
             order_type,
@@ -1523,8 +1523,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -1542,8 +1542,8 @@ module deepbook::pool_tests {
         let bob_quantity = 2 * constants::float_scaling();
 
         let bob_order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             bob_client_order_id,
             order_type,
@@ -1603,8 +1603,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             alice_client_order_id,
             constants::no_restriction(),
@@ -1626,8 +1626,8 @@ module deepbook::pool_tests {
         let bob_quantity = 1 * constants::float_scaling();
 
         let bob_order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             bob_client_order_id,
             order_type,
@@ -1681,8 +1681,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -1703,8 +1703,8 @@ module deepbook::pool_tests {
         };
 
         let order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             client_order_id,
             order_type,
@@ -1769,8 +1769,8 @@ module deepbook::pool_tests {
         let expire_timestamp = 100;
 
         let order_info_alice = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             client_order_id,
             constants::no_restriction(),
@@ -1806,8 +1806,8 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
 
         let order_info_bob = place_limit_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             client_order_id,
             order_type,
@@ -1883,8 +1883,8 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
 
         let order_info = &place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id,
             order_type,
@@ -1949,8 +1949,8 @@ module deepbook::pool_tests {
         let status = constants::live();
 
         let order_info = place_limit_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id,
             client_order_id,
             order_type,
