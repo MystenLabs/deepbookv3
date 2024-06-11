@@ -20,7 +20,7 @@ module deepbook::pool_tests {
     use deepbook::{
         pool::{Self, Pool},
         vault::DEEP,
-        balance_manager::{Self, BalanceManager},
+        balance_manager::{BalanceManager},
         order::{Order},
         order_info::OrderInfo,
         big_vector::BigVector,
@@ -28,7 +28,7 @@ module deepbook::pool_tests {
         registry::{Self, Registry},
         constants,
         utils,
-        balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
+        balance_manager_tests::{USDC, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
     };
 
     const OWNER: address = @0x1;

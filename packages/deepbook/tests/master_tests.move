@@ -224,6 +224,7 @@ module deepbook::master_tests {
 
         // Epoch 2 (Trades happen this epoch)
         // New trading fees are in effect for pool 1
+        // Stakes are in effect for both Alice and Bob
         test.next_epoch(OWNER);
 
         pool_tests::cancel_order<SUI, USDC>(
@@ -379,9 +380,46 @@ module deepbook::master_tests {
         // Bob will get no rebates as he only executed taker orders
         test.next_epoch(OWNER);
 
+        claim_rebates<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
 
+        check_balance(
+            ALICE,
+            alice_balance_manager_id,
+            10001 * constants::float_scaling(), // SUI
+            9998 * constants::float_scaling(), // USDC
+            9999 * constants::float_scaling(), // SPAM
+            10_000_001_000_000, // DEEP
+            &mut test
+        );
 
         end(test);
+    }
+
+    fun claim_rebates<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let proof = my_manager.generate_proof_as_owner(test.ctx());
+            pool::claim_rebates<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &mut my_manager,
+                &proof,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(my_manager);
+        }
     }
 
     fun unstake<BaseAsset, QuoteAsset>(
@@ -454,6 +492,7 @@ module deepbook::master_tests {
         }
     }
 
+    /// Debug function, remove after code completion
     fun check_balance_and_print(
         sender: address,
         balance_manager_id: ID,

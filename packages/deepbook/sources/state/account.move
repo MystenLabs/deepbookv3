@@ -47,7 +47,7 @@ module deepbook::account {
     public(package) fun active_stake(self: &Account): u64 {
         self.active_stake
     }
-    
+
     public(package) fun inactive_stake(self: &Account): u64 {
         self.inactive_stake
     }
@@ -100,7 +100,7 @@ module deepbook::account {
             self.open_orders.remove(&fill.order_id());
         }
     }
-    
+
     public(package) fun add_taker_volume(
         self: &mut Account,
         volume: u64,

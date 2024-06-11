@@ -114,6 +114,8 @@ module deepbook::order {
             base_quantity,
             quote_quantity,
             is_bid,
+            self.epoch,
+            self.deep_per_base,
         )
     }
 
@@ -122,7 +124,7 @@ module deepbook::order {
         new_quantity: u64,
         timestamp: u64,
     ) {
-        assert!(new_quantity > self.filled_quantity && 
+        assert!(new_quantity > self.filled_quantity &&
                 new_quantity < self.quantity, EInvalidNewQuantity);
         assert!(timestamp <= self.expire_timestamp, EOrderExpired);
         self.quantity = new_quantity;

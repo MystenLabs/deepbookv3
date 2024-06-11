@@ -54,6 +54,12 @@ module deepbook::state {
 
             let volume = fill.base_quantity();
             self.history.add_volume(volume, account.active_stake());
+            let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
+            let order_maker_fee = math::mul (
+                math::mul(volume, historic_maker_fee),
+                fill.maker_deep_per_base()
+            );
+            self.history.add_total_fees_collected(order_maker_fee);
 
             i = i + 1;
         };
@@ -67,8 +73,10 @@ module deepbook::state {
         let account_stake = account.active_stake();
         let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
         let maker_fee = self.governance.trade_params().maker_fee();
+
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
+        self.history.add_total_fees_collected(order_info.paid_fees());
         settled.add_balances(old_settled);
         owed.add_balances(old_owed);
 
@@ -256,11 +264,11 @@ module deepbook::state {
             self.accounts.add(account_id, account::empty(ctx));
         };
 
-        let account_id = &mut self.accounts[account_id];
-        let (prev_epoch, maker_volume, active_stake) = account_id.update(ctx);
+        let account = &mut self.accounts[account_id];
+        let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-            account_id.add_rebates(rebates);
+            account.add_rebates(rebates);
         }
     }
 }
