@@ -45,6 +45,7 @@ module deepbook::state {
         self.history.update(self.governance.trade_params(), ctx);
         let fills = order_info.fills();
         let mut i = 0;
+
         while (i < fills.length()) {
             let fill = &fills[i];
             let maker = fill.balance_manager_id();
@@ -55,7 +56,7 @@ module deepbook::state {
             let volume = fill.base_quantity();
             self.history.add_volume(volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let order_maker_fee = math::mul (
+            let order_maker_fee = math::mul(
                 math::mul(volume, historic_maker_fee),
                 fill.maker_deep_per_base()
             );

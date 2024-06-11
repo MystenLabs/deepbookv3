@@ -101,7 +101,11 @@ module deepbook::history {
         } else {
             0
         };
-        let maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
+        let maker_volume_proportion = if (volumes.total_staked_volume > 0) {
+            math::div(maker_volume, volumes.total_staked_volume)
+        } else {
+            0
+        };
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;

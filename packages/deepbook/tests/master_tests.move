@@ -105,7 +105,7 @@ module deepbook::master_tests {
         let is_bid = true;
         let pay_with_deep = true;
         let mut maker_fee = constants::maker_fee();
-        let mut taker_fee = constants::taker_fee();
+        let taker_fee;
         let deep_multiplier = constants::deep_multiplier();
         let mut alice_balance = ExpectedBalances{
             sui: starting_balance,
@@ -425,7 +425,7 @@ module deepbook::master_tests {
         );
         alice_balance.deep = alice_balance.deep + math::mul(800_000, deep_multiplier);
 
-        check_balance_and_print(
+        check_balance(
             alice_balance_manager_id,
             &alice_balance,
             &mut test
@@ -450,12 +450,7 @@ module deepbook::master_tests {
 
         check_balance(
             bob_balance_manager_id,
-            &ExpectedBalances {
-                sui: 9999 * constants::float_scaling(),
-                usdc: 10002 * constants::float_scaling(),
-                spam: 10000 * constants::float_scaling(),
-                deep: 9_899_994_000_000,
-            },
+            &bob_balance,
             &mut test
         );
 
@@ -467,24 +462,100 @@ module deepbook::master_tests {
             100 * constants::float_scaling(),
             &mut test
         );
+        alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
 
         check_balance(
             alice_balance_manager_id,
-            &ExpectedBalances {
-                sui: 10001 * constants::float_scaling(),
-                usdc: 9998 * constants::float_scaling(),
-                spam: 9999 * constants::float_scaling(),
-                deep: 9_900_001_000_000,
-            },
+            &alice_balance,
             &mut test
         );
 
         // Advance to epoch 28
+        let quantity = 1 * constants::float_scaling();
         let mut i = 24;
+        // For 24 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
+        // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
+        // Fees paid for each should be 0.02%+0.06% = 0.08%, multiplied by deep multiplier
+        // Alice should have 48 more SUI at the end of the loop
+        // Bob should have 96 more USDC at the end of the loop
         while (i > 0) {
             test.next_epoch(OWNER);
+            pool_tests::place_limit_order<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+            pool_tests::place_limit_order<SUI, USDC>(
+                BOB,
+                pool1_id,
+                bob_balance_manager_id,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                2 * quantity,
+                !is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+            pool_tests::place_limit_order<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
             i = i - 1;
         };
+        withdraw_settled_amounts<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            &mut test
+        );
+        let taker_sui_traded = 24 * constants::float_scaling();
+        let maker_sui_traded = 24 * constants::float_scaling();
+        let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        alice_balance.sui = alice_balance.sui + quantity_sui_traded;
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
+        alice_balance.deep = alice_balance.deep - math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+        bob_balance.sui = bob_balance.sui - quantity_sui_traded;
+        bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
+        bob_balance.deep = bob_balance.deep - math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
         assert!(test.ctx().epoch() == 28, 0);
 
         end(test);
