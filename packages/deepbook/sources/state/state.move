@@ -75,6 +75,15 @@ module deepbook::state {
         (settled, owed)
     }
 
+    public(package) fun withdraw_settled_amounts(
+        self: &mut State,
+        balance_manager_id: ID,
+    ): (Balances, Balances) {
+        let account = &mut self.accounts[balance_manager_id];
+
+        account.settle()
+    }
+
     /// Update account settled balances and volumes.
     /// Remove order from account orders.
     public(package) fun process_cancel(

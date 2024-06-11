@@ -2230,17 +2230,6 @@ module deepbook::pool_tests {
         pool_id
     }
 
-    fun deposit_into_account<T>(
-        balance_manager: &mut BalanceManager,
-        amount: u64,
-        test: &mut Scenario,
-    ) {
-        balance_manager.deposit(
-            mint_for_testing<T>(amount, test.ctx()),
-            test.ctx()
-        );
-    }
-
     fun get_mid_price<BaseAsset, QuoteAsset>(
         pool_id: ID,
         test: &mut Scenario,

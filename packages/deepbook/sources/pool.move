@@ -473,6 +473,17 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
 
+    public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &mut BalanceManager,
+        proof: &TradeProof,
+    ) {
+        balance_manager.validate_proof(proof);
+
+        let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+    }
+
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,

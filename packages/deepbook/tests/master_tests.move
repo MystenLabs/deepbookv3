@@ -246,35 +246,71 @@ module deepbook::master_tests {
             &mut test
         );
 
-        pool_tests::place_limit_order<SUI, USDC>(
-            ALICE,
+        let quantity = 100 * constants::float_scaling();
+
+        // Bob places market ask order with large size in pool 1, only quantity 1 should be filled with Alice's bid order
+        // Taker fee paid should be 0.06%
+        pool_tests::place_market_order<SUI, USDC>(
+            BOB,
             pool1_id,
-            alice_balance_manager_id,
+            bob_balance_manager_id,
             client_order_id,
-            order_type,
             constants::self_matching_allowed(),
-            price,
             quantity,
-            is_bid,
+            !is_bid,
             pay_with_deep,
-            expire_timestamp,
             &mut test,
         );
 
-        // // Bob places market ask order in pool 1 that matches with alice
-        // pool_tests::place_market_order<SUI, USDC>(
-        //     BOB,
-        //     pool1_id,
-        //     alice_balance_manager_id,
-        //     client_order_id,
-        //     constants::self_matching_allowed(),
-        //     quantity,
-        //     is_bid,
-        //     pay_with_deep,
-        //     &mut test,
-        // );
+        check_balance(
+            BOB,
+            bob_balance_manager_id,
+            9999 * constants::float_scaling(), // SUI
+            10002 * constants::float_scaling(), // USDC
+            10000 * constants::float_scaling(), // SPAM
+            9_999_994_000_000, // DEEP
+            &mut test
+        );
+
+        withdraw_settled_amounts<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+
+        check_balance(
+            ALICE,
+            alice_balance_manager_id,
+            10001 * constants::float_scaling(), // SUI
+            9998 * constants::float_scaling(), // USDC
+            9999 * constants::float_scaling(), // SPAM
+            9_899_993_000_000, // DEEP
+            &mut test
+        );
 
         end(test);
+    }
+
+    fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let proof = my_manager.generate_proof_as_owner(test.ctx());
+            pool::withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &mut my_manager,
+                &proof
+            );
+            return_shared(my_manager);
+            return_shared(pool);
+        }
     }
 
     fun check_balance(
@@ -293,6 +329,35 @@ module deepbook::master_tests {
             let usdc = balance_manager::balance<USDC>(&my_manager);
             let spam = balance_manager::balance<SPAM>(&my_manager);
             let deep = balance_manager::balance<DEEP>(&my_manager);
+            assert!(sui == expected_sui, 0);
+            assert!(usdc == expected_usdc, 0);
+            assert!(spam == expected_spam, 0);
+            assert!(deep == expected_deep, 0);
+
+            return_shared(my_manager);
+        }
+    }
+
+    fun check_balance_and_print(
+        sender: address,
+        balance_manager_id: ID,
+        expected_sui: u64,
+        expected_usdc: u64,
+        expected_spam: u64,
+        expected_deep: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let sui = balance_manager::balance<SUI>(&my_manager);
+            let usdc = balance_manager::balance<USDC>(&my_manager);
+            let spam = balance_manager::balance<SPAM>(&my_manager);
+            let deep = balance_manager::balance<DEEP>(&my_manager);
+            std::debug::print(&sui);
+            std::debug::print(&usdc);
+            std::debug::print(&spam);
+            std::debug::print(&deep);
             assert!(sui == expected_sui, 0);
             assert!(usdc == expected_usdc, 0);
             assert!(spam == expected_spam, 0);

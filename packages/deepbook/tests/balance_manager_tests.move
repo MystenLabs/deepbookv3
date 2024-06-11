@@ -274,7 +274,7 @@ module deepbook::balance_manager_tests {
         abort 0
     }
 
-    public fun deposit_into_account<T>(
+    public(package) fun deposit_into_account<T>(
         balance_manager: &mut BalanceManager,
         amount: u64,
         test: &mut Scenario,
@@ -285,7 +285,7 @@ module deepbook::balance_manager_tests {
         );
     }
 
-    public fun create_acct_and_share_with_funds(
+    public(package) fun create_acct_and_share_with_funds(
         sender: address,
         amount: u64,
         test: &mut Scenario,
