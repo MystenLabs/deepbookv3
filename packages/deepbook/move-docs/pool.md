@@ -286,9 +286,10 @@ Public-facing interface for the package.
 Create a new pool. The pool is registered in the registry.
 Checks are performed to ensure the tick size, lot size, and min size are valid.
 The creation fee is transferred to the treasury address.
+Returns the id of the pool created
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -305,7 +306,7 @@ The creation fee is transferred to the treasury address.
     creation_fee: Coin&lt;SUI&gt;,
     _cap: &DeepbookAdminCap,
     ctx: &<b>mut</b> TxContext,
-) {
+): ID {
     <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(
         <a href="registry.md#0x0_registry">registry</a>,
         tick_size,
@@ -410,7 +411,7 @@ Place a market order. Quantity is in base asset terms. Calls place_limit_order w
 a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, order_type: u8, self_matching_option: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_place_market_order">place_market_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>, client_order_id: u64, self_matching_option: u8, quantity: u64, is_bid: bool, pay_with_deep: bool, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -424,7 +425,6 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     proof: &TradeProof,
     client_order_id: u64,
-    order_type: u8,
     self_matching_option: u8,
     quantity: u64,
     is_bid: bool,
@@ -436,7 +436,7 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
         <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>,
         proof,
         client_order_id,
-        order_type,
+        <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>(),
         self_matching_option,
         <b>if</b> (is_bid) <a href="constants.md#0x0_constants_max_price">constants::max_price</a>() <b>else</b> <a href="constants.md#0x0_constants_min_price">constants::min_price</a>(),
         quantity,
@@ -486,7 +486,7 @@ Swap exact amount without needing an balance_manager.
     <b>let</b> pay_with_deep = deep_in.value() &gt; 0;
     <b>let</b> is_bid = quote_quantity &gt; 0;
     <b>if</b> (is_bid) {
-        (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity);
+        (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     };
     base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
 
@@ -500,7 +500,6 @@ Swap exact amount without needing an balance_manager.
         &<b>mut</b> temp_balance_manager,
         &proof,
         0,
-        <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>(),
         <a href="constants.md#0x0_constants_self_matching_allowed">constants::self_matching_allowed</a>(),
         base_quantity,
         is_bid,
@@ -822,7 +821,7 @@ Dry run to determine the amount out for a given base or quote amount.
 Only one out of base or quote amount should be non-zero.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64): (u64, u64)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, current_timestamp: u64): (u64, u64)
 </code></pre>
 
 
@@ -835,8 +834,13 @@ Only one out of base or quote amount should be non-zero.
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     base_amount: u64,
     quote_amount: u64,
+    current_timestamp: u64,
 ): (u64, u64) {
-    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(base_amount, quote_amount)
+    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(
+        base_amount,
+        quote_amount,
+        current_timestamp,
+    )
 }
 </code></pre>
 
@@ -851,7 +855,7 @@ Only one out of base or quote amount should be non-zero.
 Returns the mid price of the pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): u64
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>): u64
 </code></pre>
 
 
@@ -862,8 +866,9 @@ Returns the mid price of the pool.
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_mid_price">mid_price</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ): u64 {
-    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_mid_price">mid_price</a>()
+    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms())
 }
 </code></pre>
 
@@ -988,8 +993,8 @@ Allows for the calculation of deep price per base asset.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
-    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>();
-    <b>let</b> pool_price = target_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>();
+    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
+    <b>let</b> pool_price = target_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
     <b>let</b> deep_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEPBaseAsset&gt;();
     <b>let</b> deep_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEPQuoteAsset&gt;();
     <b>let</b> base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
@@ -1129,7 +1134,7 @@ Only Admin can set a pool as whitelist.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/sui-framework/sui.md#0x2_sui_SUI">sui::SUI</a>&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -1145,7 +1150,7 @@ Only Admin can set a pool as whitelist.
     min_size: u64,
     creation_fee: Coin&lt;SUI&gt;,
     ctx: &<b>mut</b> TxContext,
-) {
+): ID {
     <b>assert</b>!(creation_fee.value() == <a href="constants.md#0x0_constants_pool_creation_fee">constants::pool_creation_fee</a>(), <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
@@ -1179,8 +1184,10 @@ Only Admin can set a pool as whitelist.
     // TODO: reconsider sending the Coin here. User pays gas;
     // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
-
+    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(&<a href="pool.md#0x0_pool">pool</a>);
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="pool.md#0x0_pool">pool</a>);
+
+    pool_id
 }
 </code></pre>
 

@@ -250,7 +250,7 @@ Given base_amount and quote_amount, calculate the base_amount_out and quote_amou
 Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, base_amount: u64, quote_amount: u64): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, base_amount: u64, quote_amount: u64, current_timestamp: u64): (u64, u64)
 </code></pre>
 
 
@@ -259,7 +259,12 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(self: &<a href="book.md#0x0_book_Book">Book</a>, base_amount: u64, quote_amount: u64): (u64, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(
+    self: &<a href="book.md#0x0_book_Book">Book</a>,
+    base_amount: u64,
+    quote_amount: u64,
+    current_timestamp: u64,
+): (u64, u64) {
     <b>assert</b>!((base_amount &gt; 0 || quote_amount &gt; 0) && !(base_amount &gt; 0 && quote_amount &gt; 0), <a href="book.md#0x0_book_EInvalidAmountIn">EInvalidAmountIn</a>);
     <b>let</b> is_bid = quote_amount &gt; 0;
     <b>let</b> <b>mut</b> amount_out = 0;
@@ -273,14 +278,16 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
         <b>let</b> cur_price = <a href="order.md#0x0_order">order</a>.price();
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
-        <b>if</b> (is_bid) {
-            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
-            amount_out = amount_out + math::div(matched_amount, cur_price);
-            amount_in_left = amount_in_left - matched_amount;
-        } <b>else</b> {
-            <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
-            amount_out = amount_out + math::mul(matched_amount, cur_price);
-            amount_in_left = amount_in_left - matched_amount;
+        <b>if</b> (current_timestamp &lt; <a href="order.md#0x0_order">order</a>.expire_timestamp()) {
+            <b>if</b> (is_bid) {
+                <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+                amount_out = amount_out + math::div(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            } <b>else</b> {
+                <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+                amount_out = amount_out + math::mul(matched_amount, cur_price);
+                amount_in_left = amount_in_left - matched_amount;
+            };
         };
 
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
@@ -388,7 +395,7 @@ Order must not have already expired.
 Returns the mid price of the order book.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_mid_price">mid_price</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_mid_price">mid_price</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, current_timestamp: u64): u64
 </code></pre>
 
 
@@ -397,16 +404,33 @@ Returns the mid price of the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_mid_price">mid_price</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): u64 {
-    <b>let</b> (ask_ref, ask_offset) = self.asks.min_slice();
-    <b>let</b> (bid_ref, bid_offset) = self.bids.max_slice();
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_mid_price">mid_price</a>(
+    self: &<a href="book.md#0x0_book_Book">Book</a>,
+    current_timestamp: u64,
+): u64 {
+    <b>let</b> (<b>mut</b> ask_ref, <b>mut</b> ask_offset) = self.asks.min_slice();
+    <b>let</b> (<b>mut</b> bid_ref, <b>mut</b> bid_offset) = self.bids.max_slice();
     <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="book.md#0x0_book_EEmptyOrderbook">EEmptyOrderbook</a>);
-    <b>let</b> ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
-    <b>let</b> ask_price = ask_order.price();
-    <b>let</b> bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
-    <b>let</b> bid_price = bid_order.price();
 
-    math::div(ask_price + bid_price, 2)
+    <b>let</b> <b>mut</b> best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+    <b>while</b> (!ask_ref.is_null()) {
+        best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        <b>if</b> (best_ask_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
+        (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
+    };
+
+    <b>let</b> <b>mut</b> best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+    <b>while</b> (!bid_ref.is_null()) {
+        best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        <b>if</b> (best_bid_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
+        (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
+    };
+
+    <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="book.md#0x0_book_EEmptyOrderbook">EEmptyOrderbook</a>);
+    <b>let</b> best_ask_price = best_ask_order.price();
+    <b>let</b> best_bid_price = best_bid_order.price();
+
+    (best_ask_price + best_bid_price) / 2
 }
 </code></pre>
 
