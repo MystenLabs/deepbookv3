@@ -17,7 +17,6 @@
 -  [Function `balance_to_burn`](#0x0_history_balance_to_burn)
 -  [Function `reset_balance_to_burn`](#0x0_history_reset_balance_to_burn)
 -  [Function `historic_maker_fee`](#0x0_history_historic_maker_fee)
--  [Function `historic_taker_fee`](#0x0_history_historic_taker_fee)
 -  [Function `add_total_fees_collected`](#0x0_history_add_total_fees_collected)
 
 
@@ -466,35 +465,6 @@ Increments the total volume and total staked volume.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_historic_maker_fee">historic_maker_fee</a>(
-    self: &<a href="history.md#0x0_history_History">History</a>,
-    epoch: u64,
-): u64 {
-    <b>assert</b>!(self.historic_volumes.contains(epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
-
-    self.historic_volumes[epoch].<a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee()
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_history_historic_taker_fee"></a>
-
-## Function `historic_taker_fee`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_historic_taker_fee">historic_taker_fee</a>(self: &<a href="history.md#0x0_history_History">history::History</a>, epoch: u64): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_historic_taker_fee">historic_taker_fee</a>(
     self: &<a href="history.md#0x0_history_History">History</a>,
     epoch: u64,
 ): u64 {

@@ -177,15 +177,6 @@ module deepbook::history {
         self.historic_volumes[epoch].trade_params.maker_fee()
     }
 
-    public(package) fun historic_taker_fee(
-        self: &History,
-        epoch: u64,
-    ): u64 {
-        assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
-
-        self.historic_volumes[epoch].trade_params.maker_fee()
-    }
-
     public(package) fun add_total_fees_collected(
         self: &mut History,
         fees: u64,
