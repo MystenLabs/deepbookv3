@@ -153,6 +153,7 @@ Update taker settled balances and volumes.
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
     <b>let</b> <b>mut</b> i = 0;
+
     <b>while</b> (i &lt; fills.length()) {
         <b>let</b> <a href="fill.md#0x0_fill">fill</a> = &fills[i];
         <b>let</b> maker = <a href="fill.md#0x0_fill">fill</a>.balance_manager_id();
@@ -163,7 +164,7 @@ Update taker settled balances and volumes.
         <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
         self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
         <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
-        <b>let</b> order_maker_fee = math::mul (
+        <b>let</b> order_maker_fee = math::mul(
             math::mul(volume, historic_maker_fee),
             <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
         );

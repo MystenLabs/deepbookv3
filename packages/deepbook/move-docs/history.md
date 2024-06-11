@@ -298,7 +298,11 @@ calculate and returns rebate amount, updates the burn amount
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
+    <b>let</b> maker_volume_proportion = <b>if</b> (volumes.total_staked_volume &gt; 0) {
+        math::div(maker_volume, volumes.total_staked_volume)
+    } <b>else</b> {
+        0
+    };
     <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
     <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
@@ -381,7 +385,7 @@ Increments the total volume and total staked volume.
     <b>if</b> (maker_volume == 0) <b>return</b>;
 
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-    <b>if</b> (account_stake &gt; self.volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required()) {
+    <b>if</b> (account_stake &gt;= self.volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required()) {
         self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
     };
 }
