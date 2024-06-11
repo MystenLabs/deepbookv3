@@ -557,31 +557,36 @@ module deepbook::governance_tests {
     }
 
     #[test]
-    /// Any stake over 50 deep (0.5 * min_stake for the pool) will be subjected to voting power decrease
+    /// Any stake over 100k DEEP will be subject to voting power decrease
     fun adjust_voting_power_over_threshold_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(OWNER);
         let mut gov = governance::empty(test.ctx());
-        gov.adjust_voting_power(0, 50_000_000_000);
-        assert!(gov.voting_power() == 50_000_000_000, 0);
+        gov.adjust_voting_power(0, 100_000 * constants::sui_unit());
+        assert!(gov.voting_power() == 100_000 * constants::sui_unit(), 0);
         test.next_epoch(OWNER);
         gov.update(test.ctx());
-        assert!(gov.quorum() == 25_000_000_000, 0);
-        gov.adjust_voting_power(50_000_000_000, 100_000_000_000);
+        assert!(gov.quorum() == 50_000 * constants::sui_unit(), 0);
+        gov.adjust_voting_power(100_000 * constants::sui_unit(), 150_000 * constants::sui_unit());
         test.next_epoch(OWNER);
         gov.update(test.ctx());
-        // The additional power is calculated as sqrt(total_stake=100) - sqrt(half_min_stake=50) = 2.928
+        // The additional power is calculated as sqrt(total_stake = 150k) - sqrt(threshold = 100k)
+        // 387.298334620 - 316.227766016 = 71.070568604
+        // total voting power = 100000 + 71.070568604 = 100071.070568604
+        // quorum = 50035.535284302
         // The total voting power is therefore 52.928, with quorum being half of that = 26.464.
-        assert!(gov.voting_power() == 52_928_932_189, 0);
-        assert!(gov.quorum() == 26_464_466_094, 0);
-        gov.adjust_voting_power(100_000_000_000, 200_000_000_000);
+        assert!(gov.voting_power() == 100_071_070_568_604, 0);
+        assert!(gov.quorum() == 50_035_535_284_302, 0);
+        gov.adjust_voting_power(150_000 * constants::sui_unit(), 200_000 * constants::sui_unit());
         test.next_epoch(OWNER);
         gov.update(test.ctx());
-        // The additional power is calculated as sqrt(total_stake=100) - sqrt(half_min_stake=50) = 7.071
-        // The total voting power is therefore 57.071, with quorum being half of that = 28.535.
-        assert!(gov.voting_power() == 57_071_067_812, 0);
-        assert!(gov.quorum() == 28_535_533_906, 0);
+        // The additional power is calculated as sqrt(total_stake = 200k) - sqrt(threshold = 100k)
+        // 447.213595499 - 316.227766016 = 130.985829483
+        // total voting power = 100000 + 130.985829484 = 100130.985829483
+        // quorum = 50065.492914741
+        assert!(gov.voting_power() == 100_130_985_829_483, 0);
+        assert!(gov.quorum() == 50_065_492_914_741, 0);
 
         destroy(gov);
         end(test);
