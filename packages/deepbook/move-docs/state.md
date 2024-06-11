@@ -9,6 +9,7 @@
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_state_empty)
 -  [Function `process_create`](#0x0_state_process_create)
+-  [Function `withdraw_settled_amounts`](#0x0_state_withdraw_settled_amounts)
 -  [Function `process_cancel`](#0x0_state_process_cancel)
 -  [Function `process_modify`](#0x0_state_process_modify)
 -  [Function `process_stake`](#0x0_state_process_stake)
@@ -161,6 +162,12 @@ Update taker settled balances and volumes.
 
         <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
         self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
+        <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
+        <b>let</b> order_maker_fee = math::mul (
+            math::mul(volume, historic_maker_fee),
+            <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
+        );
+        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(order_maker_fee);
 
         i = i + 1;
     };
@@ -174,12 +181,43 @@ Update taker settled balances and volumes.
     <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
     <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base()));
     <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
+
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();
+    self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="order_info.md#0x0_order_info">order_info</a>.paid_fees());
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
     (settled, owed)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_state_withdraw_settled_amounts"></a>
+
+## Function `withdraw_settled_amounts`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_withdraw_settled_amounts">withdraw_settled_amounts</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_withdraw_settled_amounts">withdraw_settled_amounts</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    balance_manager_id: ID,
+): (Balances, Balances) {
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[balance_manager_id];
+
+    <a href="account.md#0x0_account">account</a>.settle()
 }
 </code></pre>
 
@@ -594,11 +632,11 @@ Remove order from account orders.
         self.accounts.add(account_id, <a href="account.md#0x0_account_empty">account::empty</a>(ctx));
     };
 
-    <b>let</b> account_id = &<b>mut</b> self.accounts[account_id];
-    <b>let</b> (prev_epoch, maker_volume, active_stake) = account_id.<b>update</b>(ctx);
+    <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[account_id];
+    <b>let</b> (prev_epoch, maker_volume, active_stake) = <a href="account.md#0x0_account">account</a>.<b>update</b>(ctx);
     <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
         <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-        account_id.add_rebates(rebates);
+        <a href="account.md#0x0_account">account</a>.add_rebates(rebates);
     }
 }
 </code></pre>

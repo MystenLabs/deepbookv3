@@ -31,6 +31,7 @@ Public-facing interface for the package.
 -  [Function `burn_deep`](#0x0_pool_burn_deep)
 -  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
+-  [Function `withdraw_settled_amounts`](#0x0_pool_withdraw_settled_amounts)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
@@ -1121,6 +1122,37 @@ Only Admin can set a pool as whitelist.
     // <b>assert</b>!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
     self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(whitelist);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_withdraw_settled_amounts"></a>
+
+## Function `withdraw_settled_amounts`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, proof: &<a href="balance_manager.md#0x0_balance_manager_TradeProof">balance_manager::TradeProof</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
+    proof: &TradeProof,
+) {
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_proof(proof);
+
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id());
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, proof);
 }
 </code></pre>
 
