@@ -11,12 +11,10 @@ module deepbook::master_tests {
             return_shared,
         },
         sui::SUI,
-        coin::mint_for_testing,
     };
     use deepbook::{
-        balance_manager::{Self, BalanceManager, TradeCap},
+        balance_manager::{Self, BalanceManager},
         vault::{DEEP},
-        registry::{Self},
         constants,
         pool_tests::{Self},
         pool::{Self, Pool},
@@ -198,7 +196,7 @@ module deepbook::master_tests {
         );
 
         if (error_code == ECannotPropose) {
-            submit_proposal(
+            submit_proposal<SUI, USDC>(
                 ALICE,
                 pool1_id,
                 alice_balance_manager_id,
@@ -214,7 +212,7 @@ module deepbook::master_tests {
         // Alice proposes a change to the maker fee for epoch 2
         // Governance changed maker fees to 0.02%, taker fees to 0.06%, same deep staking required
         test.next_epoch(OWNER);
-        submit_proposal(
+        submit_proposal<SUI, USDC>(
             ALICE,
             pool1_id,
             alice_balance_manager_id,
@@ -270,7 +268,7 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        // Alice should pay new fees for the order
+        // Alice should pay new fees for the order, maker fee should be 0.02%
         check_balance(
             ALICE,
             alice_balance_manager_id,
@@ -332,10 +330,82 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Epoch 3, Alice and Bob will try to claim rebates
+        // Epoch 3, Alice proposes new fees, then unstakes
+        // Bob proposes new fees as well after Alice unstakes, but quorum is based on old voting power
+        // So proposal is also not passed
+        // Stake of 200 deep should be returned to Alice, new proposal not passed
         test.next_epoch(OWNER);
 
+        submit_proposal<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            800_000,
+            400_000,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+
+        unstake<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+
+        check_balance(
+            ALICE,
+            alice_balance_manager_id,
+            10001 * constants::float_scaling(), // SUI
+            9998 * constants::float_scaling(), // USDC
+            9999 * constants::float_scaling(), // SPAM
+            9_999_993_000_000, // DEEP
+            &mut test
+        );
+
+        submit_proposal<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            900_000,
+            500_000,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+
+        // Epoch 4
+        // Alice earned the 0.08% total fee collected in epoch 2
+        // Alice will make a claim for the fees collected in the last epoch
+        // Bob will get no rebates as he only executed taker orders
+        test.next_epoch(OWNER);
+
+
+
         end(test);
+    }
+
+    fun unstake<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            // Get Proof from BalanceManager
+            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
+
+            pool::unstake<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &mut my_manager,
+                &trade_proof,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(my_manager);
+        }
     }
 
     fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
@@ -439,7 +509,7 @@ module deepbook::master_tests {
         }
     }
 
-    fun submit_proposal(
+    fun submit_proposal<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
         balance_manager_id: ID,
@@ -450,12 +520,12 @@ module deepbook::master_tests {
     ){
         test.next_tx(sender);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             // Get Proof from BalanceManager
             let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
-            pool::submit_proposal<SUI, USDC>(
+            pool::submit_proposal<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
                 &trade_proof,
