@@ -29,6 +29,7 @@ module deepbook::master_tests {
     const NoError: u64 = 0;
     const EDuplicatePool: u64 = 1;
     const ENotEnoughFunds: u64 = 2;
+    const ECannotPropose: u64 = 3;
 
     #[test]
     fun test_master_ok(){
@@ -41,8 +42,13 @@ module deepbook::master_tests {
     }
 
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EBalanceManagerBalanceTooLow)]
-    fun test_master_not_enough_funds(){
+    fun test_master_not_enough_funds_e(){
         test_master(ENotEnoughFunds)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::state::ENoStake)]
+    fun test_master_cannot_propose_e(){
+        test_master(ECannotPropose)
     }
 
     fun test_master(
@@ -149,6 +155,18 @@ module deepbook::master_tests {
             9_899_990_000_000,
             &mut test
         );
+
+        if (error_code == ECannotPropose) {
+            submit_proposal(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                600_000,
+                200_000,
+                100 * constants::float_scaling(),
+                &mut test
+            );
+        };
 
         // Epoch 1
         // Alice now has a stake of 100 that's effective
