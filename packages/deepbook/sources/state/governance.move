@@ -27,7 +27,7 @@ module deepbook::governance {
     const MIN_MAKER_VOLATILE: u64 = 200000;
     const MAX_MAKER_VOLATILE: u64 = 500000;
     const MAX_PROPOSALS: u64 = 100;
-    const VOTING_PHASEOUT_MUL: u64 = 500_000_000;
+    const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000_000; // 100k
 
     // === Structs ===
     /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
@@ -108,7 +108,7 @@ module deepbook::governance {
         if (self.epoch == epoch) return;
 
         self.epoch = epoch;
-        self.quorum = self.voting_power / 2;
+        self.quorum = math::mul(self.voting_power, constants::half());
         self.proposals = vec_map::empty();
         self.trade_params = self.next_trade_params;
     }
@@ -137,7 +137,7 @@ module deepbook::governance {
             assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
         };
 
-        let voting_power = self.stake_to_voting_power(stake_amount);
+        let voting_power = stake_to_voting_power(stake_amount);
         if (self.proposals.size() == MAX_PROPOSALS) {
             self.remove_lowest_proposal(voting_power);
         };
@@ -155,7 +155,7 @@ module deepbook::governance {
         to_proposal_id: Option<ID>,
         stake_amount: u64,
     ) {
-        let votes = self.stake_to_voting_power(stake_amount);
+        let votes = stake_to_voting_power(stake_amount);
 
         if (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
             let proposal = &mut self.proposals[from_proposal_id.borrow()];
@@ -186,8 +186,8 @@ module deepbook::governance {
     ) {
         self.voting_power =
             self.voting_power +
-            self.stake_to_voting_power(stake_after) -
-            self.stake_to_voting_power(stake_before);
+            stake_to_voting_power(stake_after) -
+            stake_to_voting_power(stake_before);
     }
 
     public(package) fun trade_params(self: &Governance): TradeParams {
@@ -197,16 +197,13 @@ module deepbook::governance {
     // === Private Functions ===
     /// Convert stake to voting power.
     fun stake_to_voting_power(
-        self: &Governance,
         stake: u64
     ): u64 {
-        let min_stake = self.trade_params.stake_required();
-        let multiplied_min_stake = math::mul(VOTING_PHASEOUT_MUL, min_stake);
-        let mut voting_power = math::min(stake, multiplied_min_stake);
-        if (math::sqrt(stake) > math::sqrt(multiplied_min_stake)) {
-            voting_power = voting_power + math::sqrt(stake) - math::sqrt(multiplied_min_stake);
+        let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
+        if (stake > VOTING_POWER_THRESHOLD) {
+            voting_power = voting_power + math::sqrt(stake) - math::sqrt(VOTING_POWER_THRESHOLD);
         };
-
+        
         voting_power
     }
 

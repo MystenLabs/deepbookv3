@@ -26,6 +26,7 @@
 -  [Function `max_price`](#0x0_constants_max_price)
 -  [Function `phase_out_epochs`](#0x0_constants_phase_out_epochs)
 -  [Function `default_stake_required`](#0x0_constants_default_stake_required)
+-  [Function `half`](#0x0_constants_half)
 
 
 <pre><code></code></pre>
@@ -105,6 +106,15 @@
 
 
 <pre><code><b>const</b> <a href="constants.md#0x0_constants_FILL_OR_KILL">FILL_OR_KILL</a>: u8 = 2;
+</code></pre>
+
+
+
+<a name="0x0_constants_HALF"></a>
+
+
+
+<pre><code><b>const</b> <a href="constants.md#0x0_constants_HALF">HALF</a>: u64 = 500000000;
 </code></pre>
 
 
@@ -690,6 +700,30 @@
 
 <pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_default_stake_required">default_stake_required</a>(): u64 {
     <a href="constants.md#0x0_constants_DEFAULT_STAKE_REQUIRED">DEFAULT_STAKE_REQUIRED</a>
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_constants_half"></a>
+
+## Function `half`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_half">half</a>(): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="constants.md#0x0_constants_half">half</a>(): u64 {
+    <a href="constants.md#0x0_constants_HALF">HALF</a>
 }
 </code></pre>
 

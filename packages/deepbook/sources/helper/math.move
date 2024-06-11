@@ -168,5 +168,6 @@ module deepbook::math {
         assert!(sqrt(59_000 * scaling) == 7_681_145_747, 0);
         assert!(sqrt(100_000_000 * scaling) == 316_227_766_016, 0);
         assert!(sqrt(300_000_000 * scaling) == 547_722_557_505, 0);
+        assert!(sqrt(100_000_000_000) == 10_000_000_000, 0);
     }
 }
