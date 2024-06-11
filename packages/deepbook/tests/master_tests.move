@@ -272,6 +272,14 @@ module deepbook::master_tests {
             &mut test
         );
 
+        // Alice withdraws settled amounts twice, should only settle once
+        withdraw_settled_amounts<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+
         withdraw_settled_amounts<SUI, USDC>(
             ALICE,
             pool1_id,
