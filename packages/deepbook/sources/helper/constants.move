@@ -5,6 +5,7 @@ module deepbook::constants {
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
     const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000_000; // 100 DEEP
+    const HALF: u64 = 500_000_000;
 
     // Restrictions on limit orders.
     // No restriction on the order.
@@ -140,6 +141,10 @@ module deepbook::constants {
 
     public fun default_stake_required(): u64 {
         DEFAULT_STAKE_REQUIRED
+    }
+
+    public fun half(): u64 {
+        HALF
     }
 
     #[test_only]

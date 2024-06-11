@@ -217,6 +217,56 @@ module deepbook::state_tests {
     }
 
     // process proposal
+    #[test, expected_failure(abort_code = state::ENoStake)]
+    fun process_proposal_no_stake_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let mut state = state::empty(test.ctx());
+        state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
+
+        abort(0)
+    }
+
+    #[test, expected_failure(abort_code = state::ENoStake)]
+    // have to wait for epoch to turn
+    fun process_proposal_no_stake_e2() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let mut state = state::empty(test.ctx());
+        state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
+
+        abort(0)
+    }
+
+    #[test]
+    fun process_proposal_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let mut state = state::empty(test.ctx());
+        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(BOB), 250 * constants::sui_unit(), test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        // total voting power = 50 + (sqrt(100) - sqrt(50)) = 50 + 10 - 7.071067811 = 52.928932189 rounded down
+        // total voting power = 50 + (sqrt(250) - sqrt(50)) = 50 + 15.811388300 - 7.071067811 = 58.740320489 rounded down
+        // total = 52.928932189 + 58.740320489 = 111.669252678
+        // quorum = 111.669252678 * 0.5 = 55.834626339 rouned down
+        assert!(state.governance().voting_power() == 350 * constants::sui_unit(), 0);
+        assert!(state.governance().quorum() == 175 * constants::sui_unit(), 0);
+        assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 100 * constants::sui_unit(), 0);
+
+        // total voting power 
+        // assert!(state.governance().quorum() == )
+
+        destroy(state);
+        test.end();
+    }
 
     // process vote
 }
