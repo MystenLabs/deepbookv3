@@ -22,6 +22,13 @@ module deepbook::master_tests {
         math
     };
 
+    public struct ExpectedBalances has drop {
+        sui: u64,
+        usdc: u64,
+        spam: u64,
+        deep: u64,
+    }
+
     const OWNER: address = @0x1;
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
@@ -98,16 +105,20 @@ module deepbook::master_tests {
         let is_bid = true;
         let pay_with_deep = true;
         let mut maker_fee = constants::maker_fee();
-        let taker_fee = constants::taker_fee();
+        let mut taker_fee = constants::taker_fee();
         let deep_multiplier = constants::deep_multiplier();
-        let mut alice_sui = starting_balance;
-        let mut alice_usdc = starting_balance;
-        let mut alice_spam = starting_balance;
-        let mut alice_deep = starting_balance;
-        let mut bob_sui = starting_balance;
-        let mut bob_usdc = starting_balance;
-        let mut bob_spam = starting_balance;
-        let mut bob_deep = starting_balance;
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+        };
+        let mut bob_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+        };
 
         // Epoch 0
         assert!(test.ctx().epoch() == 0, 0);
@@ -144,13 +155,13 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
-        alice_usdc = alice_usdc - math::mul(price, quantity);
-        alice_deep = alice_deep - math::mul(
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
+        alice_balance.deep = alice_balance.deep - math::mul(
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
 
-        // Alice place ask order in pool 2
+        // Alice places ask order in pool 2
         pool_tests::place_limit_order<SPAM, USDC>(
             ALICE,
             pool2_id,
@@ -166,23 +177,19 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        alice_spam = alice_spam - quantity;
-        alice_deep = alice_deep - math::mul(
+        alice_balance.spam = alice_balance.spam - quantity;
+        alice_balance.deep = alice_balance.deep - math::mul(
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            alice_sui,
-            alice_usdc,
-            alice_spam,
-            alice_deep,
+            &alice_balance,
             &mut test
         );
 
-        // Alice Stakes 100 DEEP into pool 1 during epoch 1
+        // Alice stakes 100 DEEP into pool 1 during epoch 1
         stake(
             ALICE,
             pool1_id,
@@ -190,15 +197,11 @@ module deepbook::master_tests {
             200 * constants::float_scaling(),
             &mut test
         );
-        alice_deep = alice_deep - 200 * constants::float_scaling();
+        alice_balance.deep = alice_balance.deep - 200 * constants::float_scaling();
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            alice_sui,
-            alice_usdc,
-            alice_spam,
-            alice_deep,
+            &alice_balance,
             &mut test
         );
 
@@ -212,7 +215,7 @@ module deepbook::master_tests {
             );
         };
 
-        // Bob Stakes 100 DEEP into pool 1 during epoch 1
+        // Bob stakes 100 DEEP into pool 1 during epoch 1
         stake(
             BOB,
             pool1_id,
@@ -220,15 +223,11 @@ module deepbook::master_tests {
             100 * constants::float_scaling(),
             &mut test
         );
-        bob_deep = bob_deep - 100 * constants::float_scaling();
+        bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
 
         check_balance(
-            BOB,
             bob_balance_manager_id,
-            bob_sui,
-            bob_usdc,
-            bob_spam,
-            bob_deep,
+            &bob_balance,
             &mut test
         );
 
@@ -268,6 +267,7 @@ module deepbook::master_tests {
         assert!(test.ctx().epoch() == 2, 0);
         let old_maker_fee = maker_fee;
         maker_fee = 200_000;
+        taker_fee = 600_000;
 
         // Alice should get refunded the previous fees for the order
         pool_tests::cancel_order<SUI, USDC>(
@@ -277,19 +277,15 @@ module deepbook::master_tests {
             order_info_1.order_id(),
             &mut test
         );
-        alice_usdc = alice_usdc + math::mul(price, quantity);
-        alice_deep = alice_deep + math::mul(
+        alice_balance.usdc = alice_balance.usdc + math::mul(price, quantity);
+        alice_balance.deep = alice_balance.deep + math::mul(
             math::mul(old_maker_fee, deep_multiplier),
             quantity
         );
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            alice_sui,
-            alice_usdc,
-            alice_spam,
-            alice_deep,
+            &alice_balance,
             &mut test
         );
 
@@ -310,22 +306,19 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
-        alice_usdc = alice_usdc - math::mul(price, quantity);
-        alice_deep = alice_deep - math::mul(
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
+        alice_balance.deep = alice_balance.deep - math::mul(
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            alice_sui,
-            alice_usdc,
-            alice_spam,
-            alice_deep,
+            &alice_balance,
             &mut test
         );
 
+        let executed_quantity = 1 * constants::float_scaling();
         let quantity = 100 * constants::float_scaling();
 
         // Bob places market ask order with large size in pool 1, only quantity 1 should be filled with Alice's bid order
@@ -341,14 +334,16 @@ module deepbook::master_tests {
             pay_with_deep,
             &mut test,
         );
+        bob_balance.sui = bob_balance.sui - executed_quantity;
+        bob_balance.usdc = bob_balance.usdc + math::mul(price, executed_quantity);
+        bob_balance.deep = bob_balance.deep - math::mul(
+            math::mul(taker_fee, deep_multiplier),
+            executed_quantity
+        );
 
         check_balance(
-            BOB,
             bob_balance_manager_id,
-            9999 * constants::float_scaling(), // SUI
-            10002 * constants::float_scaling(), // USDC
-            10000 * constants::float_scaling(), // SPAM
-            9_899_994_000_000, // DEEP
+            &bob_balance,
             &mut test
         );
 
@@ -359,6 +354,7 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
+        alice_balance.sui = alice_balance.sui + executed_quantity;
 
         withdraw_settled_amounts<SUI, USDC>(
             ALICE,
@@ -368,12 +364,8 @@ module deepbook::master_tests {
         );
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            10001 * constants::float_scaling(), // SUI
-            9998 * constants::float_scaling(), // USDC
-            9999 * constants::float_scaling(), // SPAM
-            9_799_993_000_000, // DEEP
+            &alice_balance,
             &mut test
         );
 
@@ -400,14 +392,11 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
+        alice_balance.deep = alice_balance.deep + 200 * constants::float_scaling();
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            10001 * constants::float_scaling(), // SUI
-            9998 * constants::float_scaling(), // USDC
-            9999 * constants::float_scaling(), // SPAM
-            9_999_993_000_000, // DEEP
+            &alice_balance,
             &mut test
         );
 
@@ -434,14 +423,11 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
+        alice_balance.deep = alice_balance.deep + math::mul(800_000, deep_multiplier);
 
-        check_balance(
-            ALICE,
+        check_balance_and_print(
             alice_balance_manager_id,
-            10001 * constants::float_scaling(), // SUI
-            9998 * constants::float_scaling(), // USDC
-            9999 * constants::float_scaling(), // SPAM
-            10_000_001_000_000, // DEEP
+            &alice_balance,
             &mut test
         );
 
@@ -463,12 +449,13 @@ module deepbook::master_tests {
         );
 
         check_balance(
-            BOB,
             bob_balance_manager_id,
-            9999 * constants::float_scaling(), // SUI
-            10002 * constants::float_scaling(), // USDC
-            10000 * constants::float_scaling(), // SPAM
-            9_899_994_000_000, // DEEP
+            &ExpectedBalances {
+                sui: 9999 * constants::float_scaling(),
+                usdc: 10002 * constants::float_scaling(),
+                spam: 10000 * constants::float_scaling(),
+                deep: 9_899_994_000_000,
+            },
             &mut test
         );
 
@@ -482,12 +469,13 @@ module deepbook::master_tests {
         );
 
         check_balance(
-            ALICE,
             alice_balance_manager_id,
-            10001 * constants::float_scaling(), // SUI
-            9998 * constants::float_scaling(), // USDC
-            9999 * constants::float_scaling(), // SPAM
-            9_900_001_000_000, // DEEP
+            &ExpectedBalances {
+                sui: 10001 * constants::float_scaling(),
+                usdc: 9998 * constants::float_scaling(),
+                spam: 9999 * constants::float_scaling(),
+                deep: 9_900_001_000_000,
+            },
             &mut test
         );
 
@@ -498,8 +486,6 @@ module deepbook::master_tests {
             i = i - 1;
         };
         assert!(test.ctx().epoch() == 28, 0);
-
-
 
         end(test);
     }
@@ -572,25 +558,21 @@ module deepbook::master_tests {
     }
 
     fun check_balance(
-        sender: address,
         balance_manager_id: ID,
-        expected_sui: u64,
-        expected_usdc: u64,
-        expected_spam: u64,
-        expected_deep: u64,
+        expected_balances: &ExpectedBalances,
         test: &mut Scenario,
     ) {
-        test.next_tx(sender);
+        test.next_tx(OWNER);
         {
             let my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             let sui = balance_manager::balance<SUI>(&my_manager);
             let usdc = balance_manager::balance<USDC>(&my_manager);
             let spam = balance_manager::balance<SPAM>(&my_manager);
             let deep = balance_manager::balance<DEEP>(&my_manager);
-            assert!(sui == expected_sui, 0);
-            assert!(usdc == expected_usdc, 0);
-            assert!(spam == expected_spam, 0);
-            assert!(deep == expected_deep, 0);
+            assert!(sui == expected_balances.sui, 0);
+            assert!(usdc == expected_balances.usdc, 0);
+            assert!(spam == expected_balances.spam, 0);
+            assert!(deep == expected_balances.deep, 0);
 
             return_shared(my_manager);
         }
@@ -598,15 +580,11 @@ module deepbook::master_tests {
 
     /// Debug function, remove after code completion
     fun check_balance_and_print(
-        sender: address,
         balance_manager_id: ID,
-        expected_sui: u64,
-        expected_usdc: u64,
-        expected_spam: u64,
-        expected_deep: u64,
+        expected_balances: &ExpectedBalances,
         test: &mut Scenario,
     ) {
-        test.next_tx(sender);
+        test.next_tx(OWNER);
         {
             let my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             let sui = balance_manager::balance<SUI>(&my_manager);
@@ -617,10 +595,10 @@ module deepbook::master_tests {
             std::debug::print(&usdc);
             std::debug::print(&spam);
             std::debug::print(&deep);
-            assert!(sui == expected_sui, 0);
-            assert!(usdc == expected_usdc, 0);
-            assert!(spam == expected_spam, 0);
-            assert!(deep == expected_deep, 0);
+            assert!(sui == expected_balances.sui, 0);
+            assert!(usdc == expected_balances.usdc, 0);
+            assert!(spam == expected_balances.spam, 0);
+            assert!(deep == expected_balances.deep, 0);
 
             return_shared(my_manager);
         }
