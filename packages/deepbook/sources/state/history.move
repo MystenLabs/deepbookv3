@@ -148,7 +148,7 @@ module deepbook::history {
         if (maker_volume == 0) return;
 
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-        if (account_stake > self.volumes.trade_params.stake_required()) {
+        if (account_stake >= self.volumes.trade_params.stake_required()) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
         };
     }

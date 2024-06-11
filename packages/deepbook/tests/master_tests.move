@@ -472,8 +472,8 @@ module deepbook::master_tests {
 
         // Advance to epoch 28
         let quantity = 1 * constants::float_scaling();
-        let mut i = 24;
-        // For 24 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
+        let mut i = 23;
+        // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
         // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
         // Fees paid for each should be 0.02%+0.06% = 0.08%, multiplied by deep multiplier
         // Alice should have 48 more SUI at the end of the loop
@@ -530,8 +530,8 @@ module deepbook::master_tests {
             bob_balance_manager_id,
             &mut test
         );
-        let taker_sui_traded = 24 * constants::float_scaling();
-        let maker_sui_traded = 24 * constants::float_scaling();
+        let taker_sui_traded = 23 * constants::float_scaling();
+        let maker_sui_traded = 23 * constants::float_scaling();
         let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
         alice_balance.sui = alice_balance.sui + quantity_sui_traded;
         alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
@@ -556,7 +556,46 @@ module deepbook::master_tests {
             &bob_balance,
             &mut test
         );
+
+        test.next_epoch(OWNER);
         assert!(test.ctx().epoch() == 28, 0);
+
+        // Alice claims rebates for the past 23 epochs
+        claim_rebates<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+        alice_balance.deep = alice_balance.deep + math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+
+        check_balance_and_print(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Bob claims rebates for the past 23 epochs
+        claim_rebates<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            &mut test
+        );
+
+        bob_balance.deep = bob_balance.deep + math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
         end(test);
     }
