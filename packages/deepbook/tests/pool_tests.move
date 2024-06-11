@@ -359,7 +359,7 @@ module deepbook::pool_tests {
     }
 
     /// Place a limit order
-    public(package) fun place_limit_order(
+    public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
         pool_id: ID,
         trader: address,
         balance_manager_id: ID,
@@ -375,7 +375,7 @@ module deepbook::pool_tests {
     ): OrderInfo {
         test.next_tx(trader);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
@@ -383,7 +383,7 @@ module deepbook::pool_tests {
             let proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
-            let order_info = pool.place_limit_order<SUI, USDC>(
+            let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
                 &proof,
                 client_order_id,
@@ -490,7 +490,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let residual = constants::lot_size() - 1;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -505,7 +505,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -534,14 +534,15 @@ module deepbook::pool_tests {
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
-        let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
-            pool_id,
-            BOB,
-            base_in,
-            quote_in,
-            deep_in,
-            &mut test,
-        );
+        let (base_out, quote_out, deep_out) =
+            place_swap_exact_amount_order<SUI, USDC>(
+                pool_id,
+                BOB,
+                base_in,
+                quote_in,
+                deep_in,
+                &mut test,
+            );
 
         if (is_bid) {
             assert!(base_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
@@ -581,7 +582,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let is_bid = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -596,7 +597,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -611,7 +612,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -626,7 +627,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -641,7 +642,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -656,7 +657,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -672,11 +673,11 @@ module deepbook::pool_tests {
         );
 
         let expected_mid_price = (price_bid_expired + price_ask_expired) / 2;
-        assert!(get_mid_price(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+        assert!(get_mid_price<SUI, USDC>(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
 
         set_time(200, &mut test);
         let expected_mid_price = (price_bid_best + price_ask_best) / 2;
-        assert!(get_mid_price(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
+        assert!(get_mid_price<SUI, USDC>(pool_id, &mut test) == expected_mid_price, constants::e_incorrect_mid_price());
 
         end(test);
     }
@@ -711,7 +712,7 @@ module deepbook::pool_tests {
         let mut full_order_id = 0;
 
         while (i < num_orders) {
-            let order_info = place_limit_order(
+            let order_info = place_limit_order<SUI, USDC>(
                 pool_id,
                 ALICE,
                 balance_manager_id_alice,
@@ -780,7 +781,7 @@ module deepbook::pool_tests {
             current_time,
         );
 
-        borrow_and_verify_book_order(
+        borrow_and_verify_book_order<SUI, USDC>(
             pool_id,
             partial_order_id,
             is_bid,
@@ -794,7 +795,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        borrow_and_verify_book_order(
+        borrow_and_verify_book_order<SUI, USDC>(
             pool_id,
             full_order_id,
             is_bid,
@@ -831,7 +832,7 @@ module deepbook::pool_tests {
 
         let mut i = 0;
         while (i < num_orders) {
-            place_limit_order(
+            place_limit_order<SUI, USDC>(
                 pool_id,
                 ALICE,
                 balance_manager_id_alice,
@@ -855,7 +856,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        let order_info = place_limit_order(
+        let order_info = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -913,7 +914,7 @@ module deepbook::pool_tests {
         };
 
         while (num_orders > 0) {
-            place_limit_order(
+            place_limit_order<SUI, USDC>(
                 pool_id,
                 ALICE,
                 balance_manager_id_alice,
@@ -938,7 +939,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        let order_info = place_limit_order(
+        let order_info = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -987,7 +988,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1010,7 +1011,7 @@ module deepbook::pool_tests {
             3 * constants::float_scaling()
         };
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1042,7 +1043,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1075,7 +1076,7 @@ module deepbook::pool_tests {
         let is_bid = true;
         let pay_with_deep = true;
 
-        let placed_order_id = place_limit_order(
+        let placed_order_id = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1089,14 +1090,14 @@ module deepbook::pool_tests {
             expire_timestamp, // no expiration
             &mut test,
         ).order_id();
-        cancel_order(
+        cancel_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
             placed_order_id,
             &mut test
         );
-        cancel_order(
+        cancel_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1123,7 +1124,7 @@ module deepbook::pool_tests {
         let is_bid = true;
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1155,7 +1156,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        let order_info_1 = place_limit_order(
+        let order_info_1 = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1172,7 +1173,7 @@ module deepbook::pool_tests {
 
         let client_order_id = 2;
 
-        let order_info_2 = place_limit_order(
+        let order_info_2 = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1187,26 +1188,26 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             order_info_1.order_id(),
             &mut test,
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             order_info_2.order_id(),
             &mut test,
         );
 
-        cancel_all_orders(
+        cancel_all_orders<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
             &mut test
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             order_info_1.order_id(),
             &mut test,
@@ -1238,7 +1239,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let residual = constants::lot_size() - 1;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1253,7 +1254,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1282,14 +1283,15 @@ module deepbook::pool_tests {
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
-        let (base_out, quote_out, deep_out) = place_swap_exact_amount_order(
-            pool_id,
-            BOB,
-            base_in,
-            quote_in,
-            deep_in,
-            &mut test,
-        );
+        let (base_out, quote_out, deep_out) =
+            place_swap_exact_amount_order<SUI, USDC>(
+                pool_id,
+                BOB,
+                base_in,
+                quote_in,
+                deep_in,
+                &mut test,
+            );
 
         if (is_bid) {
             assert!(base_out.value() == residual, constants::e_order_info_mismatch());
@@ -1333,7 +1335,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let fee_is_deep = true;
 
-        let order_info_1 = place_limit_order(
+        let order_info_1 = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1361,7 +1363,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1404,7 +1406,7 @@ module deepbook::pool_tests {
         let pay_with_deep = true;
         let fee_is_deep = true;
 
-        let order_info_1 = place_limit_order(
+        let order_info_1 = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1432,7 +1434,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        let order_info_2 = place_limit_order(
+        let order_info_2 = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1460,7 +1462,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             order_info_1.order_id(),
             &mut test,
@@ -1483,7 +1485,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1520,7 +1522,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1539,7 +1541,7 @@ module deepbook::pool_tests {
         let bob_price = 2 * constants::float_scaling();
         let bob_quantity = 2 * constants::float_scaling();
 
-        let bob_order_info = place_limit_order(
+        let bob_order_info = place_limit_order<SUI, USDC>(
             pool_id,
             BOB,
             balance_manager_id_bob,
@@ -1569,7 +1571,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             bob_order_info.order_id(),
             &mut test,
@@ -1600,7 +1602,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1623,7 +1625,7 @@ module deepbook::pool_tests {
         };
         let bob_quantity = 1 * constants::float_scaling();
 
-        let bob_order_info = place_limit_order(
+        let bob_order_info = place_limit_order<SUI, USDC>(
             pool_id,
             BOB,
             balance_manager_id_bob,
@@ -1678,7 +1680,7 @@ module deepbook::pool_tests {
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
-        place_limit_order(
+        place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1700,7 +1702,7 @@ module deepbook::pool_tests {
             1 * constants::float_scaling()
         };
 
-        let order_info = place_limit_order(
+        let order_info = place_limit_order<SUI, USDC>(
             pool_id,
             BOB,
             balance_manager_id_bob,
@@ -1732,7 +1734,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        cancel_order(
+        cancel_order<SUI, USDC>(
             pool_id,
             BOB,
             balance_manager_id_bob,
@@ -1766,7 +1768,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let expire_timestamp = 100;
 
-        let order_info_alice = place_limit_order(
+        let order_info_alice = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id_alice,
@@ -1803,7 +1805,7 @@ module deepbook::pool_tests {
         };
         let expire_timestamp = constants::max_u64();
 
-        let order_info_bob = place_limit_order(
+        let order_info_bob = place_limit_order<SUI, USDC>(
             pool_id,
             BOB,
             balance_manager_id_bob,
@@ -1834,7 +1836,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        borrow_and_verify_book_order(
+        borrow_and_verify_book_order<SUI, USDC>(
             pool_id,
             order_info_bob.order_id(),
             !is_bid,
@@ -1848,7 +1850,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        borrow_order_ok(
+        borrow_order_ok<SUI, USDC>(
             pool_id,
             order_info_alice.order_id(),
             &mut test,
@@ -1880,7 +1882,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let pay_with_deep = true;
 
-        let order_info = &place_limit_order(
+        let order_info = &place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1908,7 +1910,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        borrow_and_verify_book_order(
+        borrow_and_verify_book_order<SUI, USDC>(
             pool_id,
             order_info.order_id(),
             is_bid,
@@ -1946,7 +1948,7 @@ module deepbook::pool_tests {
         let fee_is_deep = true;
         let status = constants::live();
 
-        let order_info = place_limit_order(
+        let order_info = place_limit_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -1974,7 +1976,7 @@ module deepbook::pool_tests {
             expire_timestamp,
         );
 
-        cancel_order(
+        cancel_order<SUI, USDC>(
             pool_id,
             ALICE,
             balance_manager_id,
@@ -2010,7 +2012,7 @@ module deepbook::pool_tests {
     }
 
     /// Helper, borrow orderbook and verify an order.
-    fun borrow_and_verify_book_order(
+    fun borrow_and_verify_book_order<BaseAsset, QuoteAsset>(
         pool_id: ID,
         book_order_id: u128,
         is_bid: bool,
@@ -2024,7 +2026,7 @@ module deepbook::pool_tests {
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
-        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
         let order = borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         verify_book_order(
             order,
@@ -2041,13 +2043,13 @@ module deepbook::pool_tests {
     }
 
     /// Internal function to borrow orderbook to ensure order exists
-    fun borrow_order_ok(
+    fun borrow_order_ok<BaseAsset, QuoteAsset>(
         pool_id: ID,
         book_order_id: u128,
         test: &mut Scenario,
     ) {
         test.next_tx(@0x1);
-        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
         let (is_bid, _, _,) = utils::decode_order_id(book_order_id);
         borrow_orderbook(&pool, is_bid).borrow(book_order_id);
         return_shared(pool);
@@ -2116,24 +2118,24 @@ module deepbook::pool_tests {
     }
 
     /// Place swap exact amount order
-    fun place_swap_exact_amount_order(
+    fun place_swap_exact_amount_order<BaseAsset, QuoteAsset>(
         pool_id: ID,
         trader: address,
         base_in: u64,
         quote_in: u64,
         deep_in: u64,
         test: &mut Scenario,
-    ): (Coin<SUI>, Coin<USDC>, Coin<DEEP>) {
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         test.next_tx(trader);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
 
             // Place order in pool
             let (base_out, quote_out, deep_out) =
-                pool.swap_exact_amount<SUI, USDC>(
-                    mint_for_testing<SUI>(base_in, test.ctx()),
-                    mint_for_testing<USDC>(quote_in, test.ctx()),
+                pool.swap_exact_amount<BaseAsset, QuoteAsset>(
+                    mint_for_testing<BaseAsset>(base_in, test.ctx()),
+                    mint_for_testing<QuoteAsset>(quote_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
                     &clock,
                     test.ctx()
@@ -2146,7 +2148,7 @@ module deepbook::pool_tests {
     }
 
     /// Cancel an order
-    public(package) fun cancel_order(
+    public(package) fun cancel_order<BaseAsset, QuoteAsset>(
         pool_id: ID,
         owner: address,
         balance_manager_id: ID,
@@ -2155,12 +2157,12 @@ module deepbook::pool_tests {
     ) {
         test.next_tx(owner);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
             let proof = balance_manager.generate_proof_as_owner(test.ctx());
-            pool.cancel_order<SUI, USDC>(
+            pool.cancel_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
                 &proof,
                 order_id,
@@ -2173,7 +2175,7 @@ module deepbook::pool_tests {
         }
     }
 
-    fun cancel_all_orders(
+    fun cancel_all_orders<BaseAsset, QuoteAsset>(
         pool_id: ID,
         owner: address,
         balance_manager_id: ID,
@@ -2181,12 +2183,12 @@ module deepbook::pool_tests {
     ) {
         test.next_tx(owner);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
             let proof = balance_manager.generate_proof_as_owner(test.ctx());
-            pool.cancel_all_orders<SUI, USDC>(
+            pool.cancel_all_orders<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
                 &proof,
                 &clock,
@@ -2261,16 +2263,16 @@ module deepbook::pool_tests {
         );
     }
 
-    fun get_mid_price(
+    fun get_mid_price<BaseAsset, QuoteAsset>(
         pool_id: ID,
         test: &mut Scenario,
     ): u64 {
         test.next_tx(ALICE);
         {
-            let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
 
-            let mid_price = pool.mid_price<SUI, USDC>(&clock);
+            let mid_price = pool.mid_price<BaseAsset, QuoteAsset>(&clock);
             return_shared(pool);
             return_shared(clock);
 
