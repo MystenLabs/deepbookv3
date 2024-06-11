@@ -18,8 +18,9 @@ module deepbook::master_tests {
         vault::{DEEP},
         registry::{Self},
         constants,
-        pool_tests::{Self, USDC, SPAM},
+        pool_tests::{Self},
         pool::{Self, Pool},
+        balance_manager_tests::{Self, USDC, SPAM}
     };
 
     const OWNER: address = @0x1;
@@ -61,12 +62,12 @@ module deepbook::master_tests {
             pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, &mut test);
         };
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
-        let alice_balance_manager_id = pool_tests::create_acct_and_share_with_funds(
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             ALICE,
             10000 * constants::float_scaling(),
             &mut test
         );
-        let bob_balance_manager_id = pool_tests::create_acct_and_share_with_funds(
+        let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             BOB,
             10000 * constants::float_scaling(),
             &mut test

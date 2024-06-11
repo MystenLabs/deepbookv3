@@ -28,15 +28,12 @@ module deepbook::pool_tests {
         registry::{Self, Registry},
         constants,
         utils,
-        // balance_manager_tests::create_acct_and_share_with_funds as create_acct_and_share_with_funds,
+        balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
     };
 
     const OWNER: address = @0x1;
     const ALICE: address = @0xAAAA;
     const BOB: address = @0xBBBB;
-
-    public struct USDC {}
-    public struct SPAM {}
 
     #[test]
     fun test_place_order_bid() {
@@ -443,25 +440,6 @@ module deepbook::pool_tests {
             return_shared(balance_manager);
 
             order_info
-        }
-    }
-
-    public(package) fun create_acct_and_share_with_funds(
-        sender: address,
-        amount_to_deposit: u64,
-        test: &mut Scenario,
-    ): ID {
-        test.next_tx(sender);
-        {
-            let mut acct = balance_manager::new(test.ctx());
-            deposit_into_account<SUI>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<SPAM>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<USDC>(&mut acct, amount_to_deposit, test);
-            deposit_into_account<DEEP>(&mut acct, amount_to_deposit, test);
-            let id = object::id(&acct);
-            acct.share();
-
-            id
         }
     }
 
