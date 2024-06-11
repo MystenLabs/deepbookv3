@@ -261,9 +261,6 @@ module deepbook::state_tests {
         assert!(state.governance().quorum() == 175 * constants::sui_unit(), 0);
         assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 100 * constants::sui_unit(), 0);
 
-        // total voting power 
-        // assert!(state.governance().quorum() == )
-
         destroy(state);
         test.end();
     }
