@@ -182,7 +182,6 @@ module deepbook::master_tests {
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -198,7 +197,6 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.deep = alice_balance.deep - 200 * constants::float_scaling();
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -224,7 +222,6 @@ module deepbook::master_tests {
             &mut test
         );
         bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
-
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -282,7 +279,6 @@ module deepbook::master_tests {
             math::mul(old_maker_fee, deep_multiplier),
             quantity
         );
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -311,7 +307,6 @@ module deepbook::master_tests {
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -340,7 +335,6 @@ module deepbook::master_tests {
             math::mul(taker_fee, deep_multiplier),
             executed_quantity
         );
-
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -362,7 +356,6 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -393,7 +386,6 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.deep = alice_balance.deep + 200 * constants::float_scaling();
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -424,7 +416,6 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.deep = alice_balance.deep + math::mul(800_000, deep_multiplier);
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -447,7 +438,6 @@ module deepbook::master_tests {
             bob_balance_manager_id,
             &mut test
         );
-
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -463,7 +453,6 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -480,56 +469,21 @@ module deepbook::master_tests {
         // Bob should have 96 more USDC at the end of the loop
         while (i > 0) {
             test.next_epoch(OWNER);
-            pool_tests::place_limit_order<SUI, USDC>(
-                ALICE,
+            execute_cross_trading<SUI, USDC>(
                 pool1_id,
                 alice_balance_manager_id,
-                client_order_id,
-                order_type,
-                constants::self_matching_allowed(),
-                price,
-                quantity,
-                is_bid,
-                pay_with_deep,
-                expire_timestamp,
-                &mut test,
-            );
-            pool_tests::place_limit_order<SUI, USDC>(
-                BOB,
-                pool1_id,
                 bob_balance_manager_id,
                 client_order_id,
                 order_type,
-                constants::self_matching_allowed(),
-                price,
-                2 * quantity,
-                !is_bid,
-                pay_with_deep,
-                expire_timestamp,
-                &mut test,
-            );
-            pool_tests::place_limit_order<SUI, USDC>(
-                ALICE,
-                pool1_id,
-                alice_balance_manager_id,
-                client_order_id,
-                order_type,
-                constants::self_matching_allowed(),
                 price,
                 quantity,
                 is_bid,
                 pay_with_deep,
-                expire_timestamp,
-                &mut test,
+                constants::max_u64(),
+                &mut test
             );
             i = i - 1;
         };
-        withdraw_settled_amounts<SUI, USDC>(
-            BOB,
-            pool1_id,
-            bob_balance_manager_id,
-            &mut test
-        );
         let taker_sui_traded = 23 * constants::float_scaling();
         let maker_sui_traded = 23 * constants::float_scaling();
         let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
@@ -545,7 +499,6 @@ module deepbook::master_tests {
             math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
-
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -571,8 +524,7 @@ module deepbook::master_tests {
             math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
-
-        check_balance_and_print(
+        check_balance(
             alice_balance_manager_id,
             &alice_balance,
             &mut test
@@ -585,12 +537,95 @@ module deepbook::master_tests {
             bob_balance_manager_id,
             &mut test
         );
-
         bob_balance.deep = bob_balance.deep + math::mul(
             math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
+        // Same cross trading happens during epoch 28
+        // quantity being traded is halved, each person will make 0.5 quantity and take 0.5 quantity
+        let quantity = 500_000_000;
+        execute_cross_trading<SUI, USDC>(
+            pool1_id,
+            alice_balance_manager_id,
+            bob_balance_manager_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            constants::max_u64(),
+            &mut test
+        );
+        let taker_sui_traded = quantity;
+        let maker_sui_traded = quantity;
+        let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        alice_balance.sui = alice_balance.sui + quantity_sui_traded;
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
+        alice_balance.deep = alice_balance.deep - math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+        bob_balance.sui = bob_balance.sui - quantity_sui_traded;
+        bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
+        bob_balance.deep = bob_balance.deep - math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier
+        );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
+
+        // Epoch 29. Rebates should now be using the normal calculation
+        test.next_epoch(OWNER);
+        assert!(test.ctx().epoch() == 29, 0);
+        claim_rebates<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+        claim_rebates<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            &mut test
+        );
+        let fees_generated = math::mul(
+            2 * (math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee)),
+            deep_multiplier
+        );
+        let historic_median = 2 * constants::float_scaling();
+        let other_maker_liquidity = 500_000_000;
+        let maker_rebate_percentage = if (historic_median > 0) {
+            constants::float_scaling() - math::min(constants::float_scaling(), math::div(other_maker_liquidity, historic_median))
+        } else {
+            0
+        }; // 75%
+
+        let maker_volume_proportion = 500_000_000;
+        let maker_fee_proportion = math::mul(maker_volume_proportion, fees_generated); // 4000000
+        let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion); // 3000000
+        alice_balance.deep = alice_balance.deep + maker_rebate;
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        bob_balance.deep = bob_balance.deep + maker_rebate;
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -598,6 +633,69 @@ module deepbook::master_tests {
         );
 
         end(test);
+    }
+
+    fun execute_cross_trading<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        balance_manager_id_1: ID,
+        balance_manager_id_2: ID,
+        client_order_id: u64,
+        order_type: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        expire_timestamp: u64,
+        test: &mut Scenario,
+    ) {
+        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+            ALICE,
+            pool_id,
+            balance_manager_id_1,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            test,
+        );
+        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+            BOB,
+            pool_id,
+            balance_manager_id_2,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            2 * quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            test,
+        );
+        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+            ALICE,
+            pool_id,
+            balance_manager_id_1,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            test,
+        );
+        withdraw_settled_amounts<SUI, USDC>(
+            BOB,
+            pool_id,
+            balance_manager_id_2,
+            test
+        );
     }
 
     fun claim_rebates<BaseAsset, QuoteAsset>(
@@ -688,6 +786,7 @@ module deepbook::master_tests {
         }
     }
 
+    #[allow(unused_function)]
     /// Debug function, remove after code completion
     fun check_balance_and_print(
         balance_manager_id: ID,
