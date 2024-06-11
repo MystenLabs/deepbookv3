@@ -30,7 +30,8 @@ module deepbook::master_tests {
     const NoError: u64 = 0;
     const EDuplicatePool: u64 = 1;
     const ENotEnoughFunds: u64 = 2;
-    const ECannotPropose: u64 = 3;
+    const EIncorrectStakeOwner: u64 = 3;
+    const ECannotPropose: u64 = 4;
 
     #[test]
     fun test_master_ok(){
@@ -45,6 +46,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EBalanceManagerBalanceTooLow)]
     fun test_master_not_enough_funds_e(){
         test_master(ENotEnoughFunds)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
+    fun test_master_incorrect_stake_owner_e(){
+        test_master(EIncorrectStakeOwner)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::state::ENoStake)]
@@ -139,16 +145,16 @@ module deepbook::master_tests {
             10000 * constants::float_scaling(),
             9998 * constants::float_scaling(),
             9999 * constants::float_scaling(),
-            9999_990_000_000,
+            9_999_990_000_000,
             &mut test
         );
 
-        // Alice Stakes 100 DEEP into pool 1
+        // Alice Stakes 100 DEEP into pool 1 during epoch 1
         stake(
             ALICE,
             pool1_id,
             alice_balance_manager_id,
-            100 * constants::float_scaling(),
+            200 * constants::float_scaling(),
             &mut test
         );
 
@@ -158,7 +164,36 @@ module deepbook::master_tests {
             10000 * constants::float_scaling(),
             9998 * constants::float_scaling(),
             9999 * constants::float_scaling(),
-            9_899_990_000_000,
+            9_799_990_000_000,
+            &mut test
+        );
+
+        if (error_code == EIncorrectStakeOwner) {
+            stake(
+                BOB,
+                pool1_id,
+                alice_balance_manager_id,
+                200 * constants::float_scaling(),
+                &mut test
+            );
+        };
+
+        // Bob Stakes 100 DEEP into pool 1 during epoch 1
+        stake(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+
+        check_balance(
+            BOB,
+            bob_balance_manager_id,
+            10000 * constants::float_scaling(),
+            10000 * constants::float_scaling(),
+            10000 * constants::float_scaling(),
+            9_900_000_000_000,
             &mut test
         );
 
@@ -189,7 +224,7 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Epoch 2
+        // Epoch 2 (Trades happen this epoch)
         // New trading fees are in effect for pool 1
         test.next_epoch(OWNER);
 
@@ -208,7 +243,7 @@ module deepbook::master_tests {
             10000 * constants::float_scaling(), // SUI
             10000 * constants::float_scaling(), // USDC
             9999 * constants::float_scaling(), // SPAM
-            9_899_995_000_000, // DEEP
+            9_799_995_000_000, // DEEP
             &mut test
         );
 
@@ -242,7 +277,7 @@ module deepbook::master_tests {
             10000 * constants::float_scaling(), // SUI
             9998 * constants::float_scaling(), // USDC
             9999 * constants::float_scaling(), // SPAM
-            9_899_993_000_000, // DEEP
+            9_799_993_000_000, // DEEP
             &mut test
         );
 
@@ -268,7 +303,7 @@ module deepbook::master_tests {
             9999 * constants::float_scaling(), // SUI
             10002 * constants::float_scaling(), // USDC
             10000 * constants::float_scaling(), // SPAM
-            9_999_994_000_000, // DEEP
+            9_899_994_000_000, // DEEP
             &mut test
         );
 
@@ -293,9 +328,12 @@ module deepbook::master_tests {
             10001 * constants::float_scaling(), // SUI
             9998 * constants::float_scaling(), // USDC
             9999 * constants::float_scaling(), // SPAM
-            9_899_993_000_000, // DEEP
+            9_799_993_000_000, // DEEP
             &mut test
         );
+
+        // Epoch 3, Alice and Bob will try to claim rebates
+        test.next_epoch(OWNER);
 
         end(test);
     }

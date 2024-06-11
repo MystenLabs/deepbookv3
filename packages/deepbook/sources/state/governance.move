@@ -203,7 +203,7 @@ module deepbook::governance {
         if (stake > VOTING_POWER_THRESHOLD) {
             voting_power = voting_power + math::sqrt(stake) - math::sqrt(VOTING_POWER_THRESHOLD);
         };
-        
+
         voting_power
     }
 
