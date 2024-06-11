@@ -60,11 +60,15 @@ module deepbook::registry {
     }
 
     #[test_only]
-    public fun test_registry(ctx: &mut TxContext): Registry {
-        Registry {
+    public fun test_registry(ctx: &mut TxContext): ID {
+        let registry = Registry {
             id: object::new(ctx),
             pools: bag::new(ctx),
-        }
+        };
+        let id = object::id(&registry);
+        transfer::share_object(registry);
+
+        id
     }
 
     #[test_only]
