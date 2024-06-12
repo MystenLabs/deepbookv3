@@ -3,9 +3,8 @@
 
 /// The BalanceManager is a shared object that holds all of the balances for different assets. A combination of `BalanceManager` and
 /// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
-/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of
-/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating
-/// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
+/// owner directly, or by any trader in the authorized_traders list. Either the owner or trader can generate a `TradeProof`
+/// without the risk of equivocation.
 module deepbook::balance_manager {
     use sui::{
         bag::{Self, Bag},
@@ -28,13 +27,13 @@ module deepbook::balance_manager {
         id: UID,
         owner: address,
         balances: Bag,
-        allow_list: VecSet<address>,
+        authorized_traders: VecSet<address>,
     }
 
     /// Balance identifier.
     public struct BalanceKey<phantom T> has store, copy, drop {}
 
-    /// BalanceManager owner and `TradeCap` owners can generate a `TradeProof`.
+    /// BalanceManager owner and authorized traders can generate a `TradeProof`.
     /// `TradeProof` is used to validate the balance_manager when trading on DeepBook.
     public struct TradeProof has drop {
         balance_manager_id: ID,
@@ -46,7 +45,7 @@ module deepbook::balance_manager {
             id: object::new(ctx),
             owner: ctx.sender(),
             balances: bag::new(ctx),
-            allow_list: vec_set::empty(),
+            authorized_traders: vec_set::empty(),
         }
     }
 
@@ -66,28 +65,28 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
+    /// Authorize a trader. Only the owner can authorize.
     public fun authorize_trader(
         balance_manager: &mut BalanceManager,
         authorize_address: address,
         ctx: &mut TxContext
     ) {
         balance_manager.validate_owner(ctx);
-        assert!(balance_manager.allow_list.size() < MAX_TRADERS, EMaxTraderReached);
+        assert!(balance_manager.authorized_traders.size() < MAX_TRADERS, EMaxTraderReached);
 
-        balance_manager.allow_list.insert(authorize_address);
+        balance_manager.authorized_traders.insert(authorize_address);
     }
 
-    /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
+    /// Revoke an authorized_trader. Only the owner can revoke.
     public fun remove_trader(balance_manager: &mut BalanceManager, trader_address: address, ctx: &TxContext) {
         balance_manager.validate_owner(ctx);
 
-        assert!(balance_manager.allow_list.contains(&trader_address), ETraderNotInList);
-        balance_manager.allow_list.remove(&trader_address);
+        assert!(balance_manager.authorized_traders.contains(&trader_address), ETraderNotInList);
+        balance_manager.authorized_traders.remove(&trader_address);
     }
 
     /// Generate a `TradeProof` by the owner
-    public fun generate_proof_as_owner(balance_manager: &mut BalanceManager, ctx: &TxContext): TradeProof {
+    public fun generate_proof_as_owner(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
         balance_manager.validate_owner(ctx);
 
         TradeProof {
@@ -97,7 +96,7 @@ module deepbook::balance_manager {
     }
 
     /// Generate a `TradeProof` by the trader
-    public fun generate_proof_as_trader(balance_manager: &mut BalanceManager, ctx: &TxContext): TradeProof {
+    public fun generate_proof_as_trader(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
         balance_manager.validate_trader(ctx);
 
         TradeProof {
@@ -208,7 +207,7 @@ module deepbook::balance_manager {
             id,
             owner: _,
             balances,
-            allow_list: _,
+            authorized_traders: _,
         } = balance_manager;
 
         id.delete();
@@ -224,6 +223,6 @@ module deepbook::balance_manager {
     }
 
     fun validate_trader(balance_manager: &BalanceManager, ctx: &TxContext) {
-        assert!(balance_manager.allow_list.contains(&ctx.sender()), EInvalidTrader);
+        assert!(balance_manager.authorized_traders.contains(&ctx.sender()), EInvalidTrader);
     }
 }
