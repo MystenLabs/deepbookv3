@@ -100,7 +100,7 @@ module deepbook::master_tests {
         let order_type = constants::no_restriction();
         let price = 2 * constants::float_scaling();
         let quantity = 1 * constants::float_scaling();
-        let big_quantity = 100_000 * constants::float_scaling();
+        let big_quantity = 1_000_000 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
         let pay_with_deep = true;
@@ -404,6 +404,7 @@ module deepbook::master_tests {
 
         // Epoch 4
         // Alice earned the 0.08% total fee collected in epoch 2
+        // Alice 0.02% maker fee + Bob 0.06% taker = 0.08% total fees
         // Alice will make a claim for the fees collected
         // Bob will get no rebates as he only executed taker orders
         test.next_epoch(OWNER);
