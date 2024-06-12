@@ -64,6 +64,8 @@ module deepbook::constants {
     const EBookOrderMismatch: u64 = 1;
     #[test_only]
     const EIncorrectMidPrice: u64 = 2;
+    #[test_only]
+    const EIncorrectPoolId: u64 = 3;
 
     public fun pool_creation_fee(): u64 {
         POOL_CREATION_FEE
@@ -207,5 +209,10 @@ module deepbook::constants {
     #[test_only]
     public fun sui_unit(): u64 {
         SUI_UNIT
+    }
+
+    #[test_only]
+    public fun e_incorrect_pool_id(): u64 {
+        EIncorrectPoolId
     }
 }

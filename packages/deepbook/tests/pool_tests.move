@@ -28,7 +28,7 @@ module deepbook::pool_tests {
         registry::{Self, Registry},
         constants,
         utils,
-        balance_manager_tests::{USDC, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
+        balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
     };
 
     const OWNER: address = @0x1;
@@ -344,6 +344,38 @@ module deepbook::pool_tests {
     #[test, expected_failure(abort_code = ::deepbook::registry::EPoolAlreadyExists)]
     fun test_duplicate_pool_e(){
         test_unregister_pool(false);
+    }
+
+    #[test]
+    fun test_get_pool_id_by_asset_ok(){
+        test_get_pool_id_by_asset();
+    }
+
+    fun test_get_pool_id_by_asset(){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
+        let pool_id_2 = setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
+        let pool_id_1_returned = get_pool_id_by_asset<SUI, USDC>(registry_id, &mut test);
+        let pool_id_2_returned = get_pool_id_by_asset<SPAM, USDC>(registry_id, &mut test);
+
+        assert!(pool_id_1 == pool_id_1_returned, constants::e_incorrect_pool_id());
+        assert!(pool_id_2 == pool_id_2_returned, constants::e_incorrect_pool_id());
+        end(test);
+    }
+
+    fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
+        registry_id: ID,
+        test: &mut Scenario,
+    ): ID {
+        test.next_tx(OWNER);
+        {
+            let registry = test.take_shared_by_id<Registry>(registry_id);
+            let pool_id = pool::get_pool_id_by_asset<BaseAsset, QuoteAsset>(&registry);
+            return_shared(registry);
+
+            pool_id
+        }
     }
 
     fun test_unregister_pool(
