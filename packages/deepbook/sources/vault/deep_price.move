@@ -49,44 +49,54 @@ module deepbook::deep_price {
         timestamp: u64,
         is_base_conversion: bool,
     ) {
-        assert!(self.last_insert_timestamp(is_base_conversion) + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
+        // assert!(self.last_insert_timestamp(is_base_conversion) + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
         let asset_prices = if (is_base_conversion) {
             &mut self.base_prices
         } else {
             &mut self.quote_prices
-        };
-        let idx = if (is_base_conversion) {
-            self.index_to_replace_base
-        } else {
-            self.index_to_replace_quote
         };
 
         asset_prices.push_back(Price {
             timestamp: timestamp,
             conversion_rate: conversion_rate,
         });
-        // if (is_base_conversion) {
-        //     self.cumulative_base = self.cumulative_base + conversion_rate;
+        if (is_base_conversion) {
+            self.cumulative_base = self.cumulative_base + conversion_rate;
+            let idx = self.index_to_replace_base;
 
-        //     if (asset_prices.length() == MAX_DATA_POINTS + 1) {
-        //         cumulative_asset = cumulative_asset - asset_prices[idx].conversion_rate;
-        //         asset_prices.swap_remove(idx);
-        //         asset_prices.swap_remove(idx);
-        //         index_to_replace = index_to_replace + 1 % MAX_DATA_POINTS;
-        //     };
+            if (asset_prices.length() == MAX_DATA_POINTS + 1) {
+                self.cumulative_base = self.cumulative_base - asset_prices[idx].conversion_rate;
+                asset_prices.swap_remove(idx);
+                asset_prices.swap_remove(idx);
+                self.index_to_replace_base = self.index_to_replace_base + 1 % MAX_DATA_POINTS;
+            };
 
-        //     let mut idx = index_to_replace;
-        //     while (asset_prices[idx].timestamp + MAX_DATA_POINT_AGE_MS < timestamp) {
-        //         cumulative_asset = cumulative_asset - asset_prices[idx].conversion_rate;
-        //         asset_prices.remove(idx);
-        //         index_to_replace = index_to_replace + 1 % MAX_DATA_POINTS;
-        //         idx = index_to_replace;
-        //     }
-        // } else {
-        //     self.cumulative_quote = self.cumulative_quote + conversion_rate;
+            let mut idx = self.index_to_replace_base;
+            while (asset_prices[idx].timestamp + MAX_DATA_POINT_AGE_MS < timestamp) {
+                self.cumulative_base = self.cumulative_base - asset_prices[idx].conversion_rate;
+                asset_prices.remove(idx);
+                self.index_to_replace_base = self.index_to_replace_base + 1 % MAX_DATA_POINTS;
+                idx = self.index_to_replace_base;
+            }
+        } else {
+            self.cumulative_quote = self.cumulative_quote + conversion_rate;
+            let idx = self.index_to_replace_quote;
 
-        //     self.cumulative_quote
-        // };
+            if (asset_prices.length() == MAX_DATA_POINTS + 1) {
+                self.cumulative_quote = self.cumulative_quote - asset_prices[idx].conversion_rate;
+                asset_prices.swap_remove(idx);
+                asset_prices.swap_remove(idx);
+                self.index_to_replace_quote = self.index_to_replace_quote + 1 % MAX_DATA_POINTS;
+            };
+
+            let mut idx = self.index_to_replace_quote;
+            while (asset_prices[idx].timestamp + MAX_DATA_POINT_AGE_MS < timestamp) {
+                self.cumulative_quote = self.cumulative_quote - asset_prices[idx].conversion_rate;
+                asset_prices.remove(idx);
+                self.index_to_replace_quote = self.index_to_replace_quote + 1 % MAX_DATA_POINTS;
+                idx = self.index_to_replace_quote;
+            }
+        }
     }
 
     /// Returns the conversion rate of DEEP per asset token.

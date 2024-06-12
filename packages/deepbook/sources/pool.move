@@ -434,7 +434,7 @@ module deepbook::pool {
         if (reference_other_is_target_base){
             target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
         } else {
-            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
+            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, false);
         }
     }
 
