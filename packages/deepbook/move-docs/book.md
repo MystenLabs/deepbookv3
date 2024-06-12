@@ -24,6 +24,7 @@
 
 
 <pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
+<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
@@ -410,27 +411,26 @@ Returns the mid price of the order book.
 ): u64 {
     <b>let</b> (<b>mut</b> ask_ref, <b>mut</b> ask_offset) = self.asks.min_slice();
     <b>let</b> (<b>mut</b> bid_ref, <b>mut</b> bid_offset) = self.bids.max_slice();
-    <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="book.md#0x0_book_EEmptyOrderbook">EEmptyOrderbook</a>);
+    <b>let</b> <b>mut</b> best_ask_price = 0;
+    <b>let</b> <b>mut</b> best_bid_price = 0;
 
-    <b>let</b> <b>mut</b> best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
     <b>while</b> (!ask_ref.is_null()) {
-        best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        <b>let</b> best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        best_ask_price = best_ask_order.price();
         <b>if</b> (best_ask_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
         (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
     };
 
-    <b>let</b> <b>mut</b> best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
     <b>while</b> (!bid_ref.is_null()) {
-        best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        <b>let</b> best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        best_bid_price = best_bid_order.price();
         <b>if</b> (best_bid_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
         (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
     };
 
     <b>assert</b>!(!ask_ref.is_null() && !bid_ref.is_null(), <a href="book.md#0x0_book_EEmptyOrderbook">EEmptyOrderbook</a>);
-    <b>let</b> best_ask_price = best_ask_order.price();
-    <b>let</b> best_bid_price = best_bid_order.price();
 
-    (best_ask_price + best_bid_price) / 2
+    math::mul(best_ask_price + best_bid_price, <a href="constants.md#0x0_constants_half">constants::half</a>())
 }
 </code></pre>
 
