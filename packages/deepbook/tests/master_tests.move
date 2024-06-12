@@ -466,8 +466,8 @@ module deepbook::master_tests {
         // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
         // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
         // Fees paid for each should be 0.02%+0.06% = 0.08%, multiplied by deep multiplier
-        // Alice should have 48 more SUI at the end of the loop
-        // Bob should have 96 more USDC at the end of the loop
+        // Alice should have 46 more SUI at the end of the loop
+        // Bob should have 92 more USDC at the end of the loop
         while (i > 0) {
             test.next_epoch(OWNER);
             execute_cross_trading<SUI, USDC>(
