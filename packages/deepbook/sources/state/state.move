@@ -10,7 +10,7 @@ module deepbook::state {
         order_info::OrderInfo,
         governance::{Self, Governance},
         account::{Self, Account},
-        balances::Balances,
+        balances::{Self, Balances},
     };
 
     const ENoStake: u64 = 1;
@@ -60,7 +60,7 @@ module deepbook::state {
                 math::mul(volume, historic_maker_fee),
                 fill.maker_deep_per_base()
             );
-            self.history.add_total_fees_collected(order_maker_fee);
+            self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 
             i = i + 1;
         };
@@ -77,7 +77,7 @@ module deepbook::state {
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
-        self.history.add_total_fees_collected(order_info.paid_fees());
+        self.history.add_total_fees_collected(balances::new(0, 0, order_info.paid_fees()));
         settled.add_balances(old_settled);
         owed.add_balances(old_owed);
 
