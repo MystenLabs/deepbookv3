@@ -11,6 +11,7 @@ module deepbook::master_tests {
             return_shared,
         },
         sui::SUI,
+        test_utils,
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
@@ -20,7 +21,8 @@ module deepbook::master_tests {
         pool::{Self, Pool},
         balance_manager_tests::{Self, USDC, SPAM},
         math,
-        balances::{Self, Balances}
+        balances::{Self, Balances},
+        registry::{Self, DeepbookAdminCap},
     };
 
     public struct ExpectedBalances has drop {
@@ -40,6 +42,7 @@ module deepbook::master_tests {
     const EIncorrectStakeOwner: u64 = 3;
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
+    const ECannotSetWhitelist: u64 = 6;
 
     #[test]
     fun test_master_ok(){
@@ -73,16 +76,23 @@ module deepbook::master_tests {
 
     #[test]
     fun test_master_2_ok(){
-        test_master_2()
+        test_master_2(NoError)
     }
 
-    fun test_master_2(){
+    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
+    fun test_master_2_cannot_set_whitelist_e(){
+        test_master_2(ECannotSetWhitelist)
+    }
+
+    fun test_master_2(
+        error_code: u64,
+    ){
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
         let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, DEEP>(OWNER, registry_id, &mut test);
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, &mut test);
         let starting_balance = 10000 * constants::float_scaling();
 
         let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
@@ -96,9 +106,44 @@ module deepbook::master_tests {
             &mut test
         );
 
+        set_whitelist<SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            true,
+            &mut test
+        );
 
+        if (error_code == ECannotSetWhitelist) {
+            set_whitelist<SPAM, SUI>(
+                OWNER,
+                pool2_id,
+                true,
+                &mut test
+            );
+        };
 
         end(test);
+    }
+
+    fun set_whitelist<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        is_whitelisted: bool,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            pool::set_whitelist<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &admin_cap,
+                is_whitelisted,
+                test.ctx()
+            );
+            test_utils::destroy(admin_cap);
+            return_shared(pool);
+        }
     }
 
     fun test_master(

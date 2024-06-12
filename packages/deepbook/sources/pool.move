@@ -33,7 +33,7 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EInvalidAmountIn: u64 = 6;
-    // const EIneligibleWhitelist: u64 = 7;
+    const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderBalanceManager: u64 = 10;
@@ -464,11 +464,11 @@ module deepbook::pool {
         whitelist: bool,
         ctx: &TxContext,
     ) {
-        // TODO: remove comment out section after testing
-        // let base = type_name::get<BaseAsset>();
-        // let quote = type_name::get<QuoteAsset>();
-        // let deep_type = type_name::get<DEEP>();
-        // assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+        // TODO: remove the below for testing
+        let base = type_name::get<BaseAsset>();
+        let quote = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
