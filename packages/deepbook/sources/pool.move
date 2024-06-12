@@ -401,36 +401,41 @@ module deepbook::pool {
         clock: &Clock,
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
-        let deep_price = reference_pool.mid_price(clock);
-        let pool_price = target_pool.mid_price(clock);
-        let deep_base_type = type_name::get<ReferenceBaseAsset>();
-        let deep_quote_type = type_name::get<ReferenceQuoteAsset>();
-        let base_type = type_name::get<BaseAsset>();
-        let quote_type = type_name::get<QuoteAsset>();
+        let reference_pool_price = reference_pool.mid_price(clock);
+        let reference_base_type = type_name::get<ReferenceBaseAsset>();
+        let reference_quote_type = type_name::get<ReferenceQuoteAsset>();
+        let target_base_type = type_name::get<BaseAsset>();
+        let target_quote_type = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
         let timestamp = clock.timestamp_ms();
-        if (base_type == deep_type) {
-            return target_pool.deep_price.add_price_point(1, timestamp)
-        };
-        if (quote_type == deep_type) {
-            return target_pool.deep_price.add_price_point(pool_price, timestamp)
-        };
 
-        assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
-                (quote_type == deep_base_type || quote_type == deep_quote_type), EIneligibleTargetPool);
-        assert!(!(base_type == deep_base_type && quote_type == deep_quote_type), EIneligibleTargetPool);
+        assert!((reference_base_type == deep_type || reference_quote_type == deep_type), EIneligibleTargetPool);
 
-        let deep_per_base = if (base_type == deep_base_type) {
-            deep_price
-        } else if (base_type == deep_quote_type) {
-            math::div(1_000_000_000, deep_price)
-        } else if (quote_type == deep_base_type) {
-            math::mul(deep_price, pool_price)
+        let reference_deep_is_base = reference_base_type == deep_type;
+        let reference_other_type = if (reference_deep_is_base) {
+            reference_quote_type
         } else {
-            math::div(deep_price, pool_price)
+            reference_base_type
+        };
+        let reference_other_is_target_base = reference_other_type == target_base_type;
+        let reference_other_is_target_quote = reference_other_type == target_quote_type;
+        assert!(reference_other_is_target_base || reference_other_is_target_quote, EIneligibleTargetPool);
+
+        // For DEEP/USDC pool, reference_deep_is_base is true, DEEP per USDC is reference_pool_price
+        // For USDC/DEEP pool, reference_deep_is_base is false, USDC per DEEP is reference_pool_price
+        let deep_per_reference_other_price = if (reference_deep_is_base) {
+            reference_pool_price
+        } else {
+            math::div(1_000_000_000, reference_pool_price)
         };
 
-        target_pool.deep_price.add_price_point(deep_per_base, timestamp)
+        // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
+        // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
+        if (reference_other_is_target_base){
+            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
+        } else {
+            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
+        }
     }
 
     /// Burns DEEP tokens from the pool. Amount to burn is within history
@@ -579,7 +584,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let deep_per_base = self.deep_price.conversion_rate();
+        let deep_per_base = self.deep_price.deep_per_asset(true);
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
