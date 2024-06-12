@@ -78,7 +78,26 @@ module deepbook::master_tests {
 
     fun test_master_2(){
         let mut test = begin(OWNER);
-        // TODO: Test add_deep_price_point
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, DEEP>(OWNER, registry_id, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
+        let starting_balance = 10000 * constants::float_scaling();
+
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            ALICE,
+            starting_balance,
+            &mut test
+        );
+        let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            BOB,
+            starting_balance,
+            &mut test
+        );
+
+
+
         end(test);
     }
 
