@@ -19,7 +19,8 @@ module deepbook::master_tests {
         pool_tests::{Self},
         pool::{Self, Pool},
         balance_manager_tests::{Self, USDC, SPAM},
-        math
+        math,
+        balances::{Self, Balances}
     };
 
     public struct ExpectedBalances has drop {
@@ -460,6 +461,17 @@ module deepbook::master_tests {
             &mut test
         );
 
+        // Now the vault balance should only include the 2 stakes of 100 DEEP
+        check_vault_balances<SUI, USDC>(
+            pool1_id,
+            &balances::new(
+                0,
+                0,
+                200 * constants::float_scaling()
+            ),
+            &mut test
+        );
+
         // Advance to epoch 28
         let quantity = 1 * constants::float_scaling();
         let mut i = 23;
@@ -697,6 +709,23 @@ module deepbook::master_tests {
             balance_manager_id_2,
             test
         );
+    }
+
+    fun check_vault_balances<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        expected_balances: &Balances,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let (vault_base, vault_quote, vault_deep) = pool::vault_balances<BaseAsset, QuoteAsset>(&pool);
+            assert!(vault_base == expected_balances.base(), 0);
+            assert!(vault_quote == expected_balances.quote(), 0);
+            assert!(vault_deep == expected_balances.deep(), 0);
+
+            return_shared(pool);
+        }
     }
 
     fun claim_rebates<BaseAsset, QuoteAsset>(

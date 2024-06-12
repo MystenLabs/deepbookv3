@@ -55,4 +55,11 @@ module deepbook::vault {
             self.deep_balance.join(balance);
         };
     }
+
+    #[test_only]
+    public fun balances<BaseAsset, QuoteAsset>(
+        self: &Vault<BaseAsset, QuoteAsset>
+    ): (u64, u64, u64) {
+        (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
+    }
 }

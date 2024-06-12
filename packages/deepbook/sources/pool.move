@@ -585,4 +585,11 @@ module deepbook::pool {
 
         order_info
     }
+
+    #[test_only]
+    public fun vault_balances<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        self.vault.balances()
+    }
 }
