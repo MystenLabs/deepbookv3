@@ -28,7 +28,7 @@ module deepbook::balance_manager {
         id: UID,
         owner: address,
         balances: Bag,
-        allow_listed: VecSet<address>,
+        allow_list: VecSet<address>,
     }
 
     /// Balance identifier.
@@ -46,7 +46,7 @@ module deepbook::balance_manager {
             id: object::new(ctx),
             owner: ctx.sender(),
             balances: bag::new(ctx),
-            allow_listed: vec_set::empty(),
+            allow_list: vec_set::empty(),
         }
     }
 
@@ -67,23 +67,23 @@ module deepbook::balance_manager {
     }
 
     /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
-    public fun add_trader(
+    public fun authorize_trader(
         balance_manager: &mut BalanceManager,
         authorize_address: address,
         ctx: &mut TxContext
     ) {
         balance_manager.validate_owner(ctx);
-        assert!(balance_manager.allow_listed.size() < MAX_TRADERS, EMaxTraderReached);
+        assert!(balance_manager.allow_list.size() < MAX_TRADERS, EMaxTraderReached);
 
-        balance_manager.allow_listed.insert(authorize_address);
+        balance_manager.allow_list.insert(authorize_address);
     }
 
     /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
     public fun remove_trader(balance_manager: &mut BalanceManager, trader_address: address, ctx: &TxContext) {
         balance_manager.validate_owner(ctx);
 
-        assert!(balance_manager.allow_listed.contains(&trader_address), ETraderNotInList);
-        balance_manager.allow_listed.remove(&trader_address);
+        assert!(balance_manager.allow_list.contains(&trader_address), ETraderNotInList);
+        balance_manager.allow_list.remove(&trader_address);
     }
 
     /// Generate a `TradeProof` by the owner
@@ -208,7 +208,7 @@ module deepbook::balance_manager {
             id,
             owner: _,
             balances,
-            allow_listed: _,
+            allow_list: _,
         } = balance_manager;
 
         id.delete();
@@ -224,6 +224,6 @@ module deepbook::balance_manager {
     }
 
     fun validate_trader(balance_manager: &BalanceManager, ctx: &TxContext) {
-        assert!(balance_manager.allow_listed.contains(&ctx.sender()), EInvalidTrader);
+        assert!(balance_manager.allow_list.contains(&ctx.sender()), EInvalidTrader);
     }
 }
