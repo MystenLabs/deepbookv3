@@ -395,16 +395,16 @@ module deepbook::pool {
 
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
-    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
+    public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
         target_pool: &mut Pool<BaseAsset, QuoteAsset>,
-        reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+        reference_pool: &Pool<ReferenceBaseAsset, ReferenceQuoteAsset>,
         clock: &Clock,
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
         let deep_price = reference_pool.mid_price(clock);
         let pool_price = target_pool.mid_price(clock);
-        let deep_base_type = type_name::get<DEEPBaseAsset>();
-        let deep_quote_type = type_name::get<DEEPQuoteAsset>();
+        let deep_base_type = type_name::get<ReferenceBaseAsset>();
+        let deep_quote_type = type_name::get<ReferenceQuoteAsset>();
         let base_type = type_name::get<BaseAsset>();
         let quote_type = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();

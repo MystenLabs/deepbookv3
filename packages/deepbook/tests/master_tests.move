@@ -12,6 +12,7 @@ module deepbook::master_tests {
         },
         sui::SUI,
         test_utils,
+        clock::{Clock},
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
@@ -19,10 +20,10 @@ module deepbook::master_tests {
         constants,
         pool_tests::{Self},
         pool::{Self, Pool},
-        balance_manager_tests::{Self, USDC, SPAM},
+        balance_manager_tests::{Self, USDC, SPAM, USDT},
         math,
         balances::{Self, Balances},
-        registry::{Self, DeepbookAdminCap},
+        registry::{Self},
     };
 
     public struct ExpectedBalances has drop {
@@ -30,6 +31,7 @@ module deepbook::master_tests {
         usdc: u64,
         spam: u64,
         deep: u64,
+        usdt: u64,
     }
 
     const OWNER: address = @0x1;
@@ -43,6 +45,7 @@ module deepbook::master_tests {
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
     const ECannotSetWhitelist: u64 = 6;
+    const EEmptyPool: u64 = 7;
 
     #[test]
     fun test_master_ok(){
@@ -84,6 +87,11 @@ module deepbook::master_tests {
         test_master_2(ECannotSetWhitelist)
     }
 
+    #[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
+    fun test_master_2_empty_pool_e(){
+        test_master_2(EEmptyPool)
+    }
+
     fun test_master_2(
         error_code: u64,
     ){
@@ -114,20 +122,22 @@ module deepbook::master_tests {
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
         let pay_with_deep = true;
-        let mut maker_fee = constants::maker_fee();
-        let taker_fee;
-        let deep_multiplier = constants::deep_multiplier();
+        let maker_fee = constants::maker_fee();
+        let taker_fee = constants::taker_fee();
+        let deep_multiplier;
         let mut alice_balance = ExpectedBalances{
             sui: starting_balance,
             usdc: starting_balance,
             spam: starting_balance,
             deep: starting_balance,
+            usdt: starting_balance,
         };
         let mut bob_balance = ExpectedBalances{
             sui: starting_balance,
             usdc: starting_balance,
             spam: starting_balance,
             deep: starting_balance,
+            usdt: starting_balance,
         };
 
         // Epoch 0
@@ -248,7 +258,68 @@ module deepbook::master_tests {
             &mut test
         );
 
+        if (error_code == EEmptyPool) {
+            // SPAM/SUI pool has no orders, cannot add price point
+            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+                OWNER,
+                pool2_id,
+                pool1_id,
+                &mut test
+            );
+        };
+        // add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+        //     OWNER,
+        //     pool2_id,
+        //     pool1_id,
+        //     &mut test
+        // );
+
+        // When deep price point is added to pool_2, the mid price of (100 + 200) / 2 = 150 should be added
+
         end(test);
+    }
+
+    fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+        sender: address,
+        target_pool_id: ID,
+        reference_pool_id: ID,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let mut target_pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(target_pool_id);
+            let reference_pool = test.take_shared_by_id<Pool<ReferenceBaseAsset, ReferenceQuoteAsset>>(reference_pool_id);
+            let clock = test.take_shared<Clock>();
+            pool::add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+                &mut target_pool,
+                &reference_pool,
+                &clock
+            );
+            return_shared(target_pool);
+            return_shared(reference_pool);
+            return_shared(clock);
+        }
+    }
+
+    fun set_stable<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        stable: bool,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            pool::set_stable<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &admin_cap,
+                stable,
+                test.ctx()
+            );
+            test_utils::destroy(admin_cap);
+            return_shared(pool);
+        }
     }
 
     fun set_whitelist<BaseAsset, QuoteAsset>(
@@ -314,12 +385,14 @@ module deepbook::master_tests {
             usdc: starting_balance,
             spam: starting_balance,
             deep: starting_balance,
+            usdt: starting_balance,
         };
         let mut bob_balance = ExpectedBalances{
             sui: starting_balance,
             usdc: starting_balance,
             spam: starting_balance,
             deep: starting_balance,
+            usdt: starting_balance,
         };
 
         // Epoch 0
@@ -1008,10 +1081,12 @@ module deepbook::master_tests {
             let usdc = balance_manager::balance<USDC>(&my_manager);
             let spam = balance_manager::balance<SPAM>(&my_manager);
             let deep = balance_manager::balance<DEEP>(&my_manager);
+            let usdt = balance_manager::balance<USDT>(&my_manager);
             assert!(sui == expected_balances.sui, 0);
             assert!(usdc == expected_balances.usdc, 0);
             assert!(spam == expected_balances.spam, 0);
             assert!(deep == expected_balances.deep, 0);
+            assert!(usdt == expected_balances.usdt, 0);
 
             return_shared(my_manager);
         }

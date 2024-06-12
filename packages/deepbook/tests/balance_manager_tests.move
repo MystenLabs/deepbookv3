@@ -15,6 +15,7 @@ module deepbook::balance_manager_tests {
 
     public struct SPAM has store {}
     public struct USDC has store {}
+    public struct USDT has store {}
 
     #[test]
     fun test_deposit_ok() {
@@ -290,6 +291,7 @@ module deepbook::balance_manager_tests {
             deposit_into_account<SPAM>(&mut balance_manager, amount, test);
             deposit_into_account<USDC>(&mut balance_manager, amount, test);
             deposit_into_account<DEEP>(&mut balance_manager, amount, test);
+            deposit_into_account<USDT>(&mut balance_manager, amount, test);
             let id = object::id(&balance_manager);
             balance_manager.share();
 
