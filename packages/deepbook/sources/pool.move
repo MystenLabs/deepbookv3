@@ -484,6 +484,25 @@ module deepbook::pool {
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
     }
 
+    public fun vault_balances<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        self.vault.balances()
+    }
+
+    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        _cap: &DeepbookAdminCap,
+    ) {
+        registry.unregister_pool<BaseAsset, QuoteAsset>();
+    }
+
+    public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
+        registry: &Registry,
+    ): ID {
+        registry.get_pool_id<BaseAsset, QuoteAsset>()
+    }
+
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -498,8 +517,6 @@ module deepbook::pool {
         assert!(min_size > 0, EInvalidMinSize);
 
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
-        registry.register_pool<BaseAsset, QuoteAsset>();
-
         let pool_uid = object::new(ctx);
         let pool_id = pool_uid.to_inner();
 
@@ -510,6 +527,8 @@ module deepbook::pool {
             vault: vault::empty(),
             deep_price: deep_price::empty(),
         };
+
+        registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
 
         let params = pool.state.governance().trade_params();
         let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
@@ -584,12 +603,5 @@ module deepbook::pool {
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
         order_info
-    }
-
-    #[test_only]
-    public fun vault_balances<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-    ): (u64, u64, u64) {
-        self.vault.balances()
     }
 }
