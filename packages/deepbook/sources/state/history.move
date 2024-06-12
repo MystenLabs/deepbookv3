@@ -101,7 +101,11 @@ module deepbook::history {
         } else {
             0
         };
-        let maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
+        let maker_volume_proportion = if (volumes.total_staked_volume > 0) {
+            math::div(maker_volume, volumes.total_staked_volume)
+        } else {
+            0
+        };
         let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;
@@ -144,7 +148,7 @@ module deepbook::history {
         if (maker_volume == 0) return;
 
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-        if (account_stake > self.volumes.trade_params.stake_required()) {
+        if (account_stake >= self.volumes.trade_params.stake_required()) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
         };
     }
@@ -171,6 +175,13 @@ module deepbook::history {
         assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
 
         self.historic_volumes[epoch].trade_params.maker_fee()
+    }
+
+    public(package) fun add_total_fees_collected(
+        self: &mut History,
+        fees: u64,
+    ) {
+        self.volumes.total_fees_collected = self.volumes.total_fees_collected + fees;
     }
 
     #[test_only]

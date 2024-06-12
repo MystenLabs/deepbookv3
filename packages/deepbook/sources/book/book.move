@@ -5,6 +5,7 @@ module deepbook::book {
         math,
         order::Order,
         order_info::OrderInfo,
+        constants,
     };
 
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
@@ -57,7 +58,12 @@ module deepbook::book {
 
     /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
     /// Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
-    public(package) fun get_amount_out(self: &Book, base_amount: u64, quote_amount: u64): (u64, u64) {
+    public(package) fun get_amount_out(
+        self: &Book,
+        base_amount: u64,
+        quote_amount: u64,
+        current_timestamp: u64,
+    ): (u64, u64) {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
         let is_bid = quote_amount > 0;
         let mut amount_out = 0;
@@ -71,14 +77,16 @@ module deepbook::book {
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
-            if (is_bid) {
-                let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
-                amount_out = amount_out + math::div(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
-            } else {
-                let matched_amount = math::min(amount_in_left, cur_quantity);
-                amount_out = amount_out + math::mul(matched_amount, cur_price);
-                amount_in_left = amount_in_left - matched_amount;
+            if (current_timestamp < order.expire_timestamp()) {
+                if (is_bid) {
+                    let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                    amount_out = amount_out + math::div(matched_amount, cur_price);
+                    amount_in_left = amount_in_left - matched_amount;
+                } else {
+                    let matched_amount = math::min(amount_in_left, cur_quantity);
+                    amount_out = amount_out + math::mul(matched_amount, cur_price);
+                    amount_in_left = amount_in_left - matched_amount;
+                };
             };
 
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
@@ -115,16 +123,32 @@ module deepbook::book {
     }
 
     /// Returns the mid price of the order book.
-    public(package) fun mid_price(self: &Book): u64 {
-        let (ask_ref, ask_offset) = self.asks.min_slice();
-        let (bid_ref, bid_offset) = self.bids.max_slice();
-        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
-        let ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
-        let ask_price = ask_order.price();
-        let bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
-        let bid_price = bid_order.price();
+    public(package) fun mid_price(
+        self: &Book,
+        current_timestamp: u64,
+    ): u64 {
+        let (mut ask_ref, mut ask_offset) = self.asks.min_slice();
+        let (mut bid_ref, mut bid_offset) = self.bids.max_slice();
+        let mut best_ask_price = 0;
+        let mut best_bid_price = 0;
 
-        math::div(ask_price + bid_price, 2)
+        while (!ask_ref.is_null()) {
+            let best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+            best_ask_price = best_ask_order.price();
+            if (best_ask_order.expire_timestamp() > current_timestamp) break;
+            (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
+        };
+
+        while (!bid_ref.is_null()) {
+            let best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+            best_bid_price = best_bid_order.price();
+            if (best_bid_order.expire_timestamp() > current_timestamp) break;
+            (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
+        };
+
+        assert!(!ask_ref.is_null() && !bid_ref.is_null(), EEmptyOrderbook);
+
+        math::mul(best_ask_price + best_bid_price, constants::half())
     }
 
     /// Returns the best bids and asks.

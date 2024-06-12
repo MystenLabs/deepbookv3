@@ -61,6 +61,7 @@ module deepbook::pool {
     /// Create a new pool. The pool is registered in the registry.
     /// Checks are performed to ensure the tick size, lot size, and min size are valid.
     /// The creation fee is transferred to the treasury address.
+    /// Returns the id of the pool created
     public fun create_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -69,7 +70,7 @@ module deepbook::pool {
         creation_fee: Coin<SUI>,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
-    ) {
+    ): ID {
         create_pool<BaseAsset, QuoteAsset>(
             registry,
             tick_size,
@@ -128,7 +129,6 @@ module deepbook::pool {
         balance_manager: &mut BalanceManager,
         proof: &TradeProof,
         client_order_id: u64,
-        order_type: u8,
         self_matching_option: u8,
         quantity: u64,
         is_bid: bool,
@@ -140,7 +140,7 @@ module deepbook::pool {
             balance_manager,
             proof,
             client_order_id,
-            order_type,
+            constants::immediate_or_cancel(),
             self_matching_option,
             if (is_bid) constants::max_price() else constants::min_price(),
             quantity,
@@ -170,7 +170,7 @@ module deepbook::pool {
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
         if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity);
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
 
@@ -184,7 +184,6 @@ module deepbook::pool {
             &mut temp_balance_manager,
             &proof,
             0,
-            constants::immediate_or_cancel(),
             constants::self_matching_allowed(),
             base_quantity,
             is_bid,
@@ -341,15 +340,21 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
         quote_amount: u64,
+        current_timestamp: u64,
     ): (u64, u64) {
-        self.book.get_amount_out(base_amount, quote_amount)
+        self.book.get_amount_out(
+            base_amount,
+            quote_amount,
+            current_timestamp,
+        )
     }
 
     /// Returns the mid price of the pool.
     public fun mid_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
+        clock: &Clock,
     ): u64 {
-        self.book.mid_price()
+        self.book.mid_price(clock.timestamp_ms())
     }
 
     /// Returns the order_id for all open order for the balance_manager in the pool.
@@ -396,8 +401,8 @@ module deepbook::pool {
         clock: &Clock,
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
-        let deep_price = reference_pool.mid_price();
-        let pool_price = target_pool.mid_price();
+        let deep_price = reference_pool.mid_price(clock);
+        let pool_price = target_pool.mid_price(clock);
         let deep_base_type = type_name::get<DEEPBaseAsset>();
         let deep_quote_type = type_name::get<DEEPQuoteAsset>();
         let base_type = type_name::get<BaseAsset>();
@@ -468,6 +473,17 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
 
+    public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &mut BalanceManager,
+        proof: &TradeProof,
+    ) {
+        balance_manager.validate_proof(proof);
+
+        let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+    }
+
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -475,7 +491,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<SUI>,
         ctx: &mut TxContext,
-    ) {
+    ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
@@ -509,8 +525,10 @@ module deepbook::pool {
         // TODO: reconsider sending the Coin here. User pays gas;
         // TODO: depending on the frequency of the event;
         transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
-
+        let pool_id = object::id(&pool);
         transfer::share_object(pool);
+
+        pool_id
     }
 
     public(package) fun bids<BaseAsset, QuoteAsset>(

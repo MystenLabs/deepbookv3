@@ -1397,8 +1397,8 @@ Returns true if two opposite orders are overlapping in price.
     <b>let</b> maker_price = <a href="order.md#0x0_order">order</a>.<a href="order_info.md#0x0_order_info_price">price</a>();
 
     (self.original_quantity - self.executed_quantity &gt; 0 &&
-    self.is_bid && self.price &gt;= maker_price ||
-    !self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price)
+    (self.is_bid && self.price &gt;= maker_price ||
+    !self.is_bid && self.<a href="order_info.md#0x0_order_info_price">price</a> &lt;= maker_price))
 }
 </code></pre>
 

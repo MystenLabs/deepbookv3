@@ -384,6 +384,8 @@ quantity and whether the order is a bid.
         base_quantity,
         quote_quantity,
         is_bid,
+        self.epoch,
+        self.deep_per_base,
     )
 }
 </code></pre>

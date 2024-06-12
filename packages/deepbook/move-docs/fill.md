@@ -14,6 +14,8 @@
 -  [Function `base_quantity`](#0x0_fill_base_quantity)
 -  [Function `taker_is_bid`](#0x0_fill_taker_is_bid)
 -  [Function `quote_quantity`](#0x0_fill_quote_quantity)
+-  [Function `maker_epoch`](#0x0_fill_maker_epoch)
+-  [Function `maker_deep_per_base`](#0x0_fill_maker_deep_per_base)
 -  [Function `get_settled_maker_quantities`](#0x0_fill_get_settled_maker_quantities)
 
 
@@ -83,6 +85,18 @@ It is used to update the state.
 <dd>
 
 </dd>
+<dt>
+<code>maker_epoch: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>maker_deep_per_base: u64</code>
+</dt>
+<dd>
+
+</dd>
 </dl>
 
 
@@ -94,7 +108,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool, maker_epoch: u64, maker_deep_per_base: u64): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -111,6 +125,8 @@ It is used to update the state.
     base_quantity: u64,
     quote_quantity: u64,
     taker_is_bid: bool,
+    maker_epoch: u64,
+    maker_deep_per_base: u64,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
         order_id,
@@ -120,6 +136,8 @@ It is used to update the state.
         base_quantity,
         quote_quantity,
         taker_is_bid,
+        maker_epoch,
+        maker_deep_per_base,
     }
 }
 </code></pre>
@@ -293,6 +311,54 @@ It is used to update the state.
     } <b>else</b> {
         self.quote_quantity
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_fill_maker_epoch"></a>
+
+## Function `maker_epoch`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_epoch">maker_epoch</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_epoch">maker_epoch</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
+    self.maker_epoch
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_fill_maker_deep_per_base"></a>
+
+## Function `maker_deep_per_base`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_base">maker_deep_per_base</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_base">maker_deep_per_base</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
+    self.maker_deep_per_base
 }
 </code></pre>
 

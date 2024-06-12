@@ -17,6 +17,7 @@
 -  [Function `balance_to_burn`](#0x0_history_balance_to_burn)
 -  [Function `reset_balance_to_burn`](#0x0_history_reset_balance_to_burn)
 -  [Function `historic_maker_fee`](#0x0_history_historic_maker_fee)
+-  [Function `add_total_fees_collected`](#0x0_history_add_total_fees_collected)
 
 
 <pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
@@ -296,7 +297,11 @@ calculate and returns rebate amount, updates the burn amount
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_volume_proportion = math::div(maker_volume, volumes.total_staked_volume);
+    <b>let</b> maker_volume_proportion = <b>if</b> (volumes.total_staked_volume &gt; 0) {
+        math::div(maker_volume, volumes.total_staked_volume)
+    } <b>else</b> {
+        0
+    };
     <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
     <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
@@ -379,7 +384,7 @@ Increments the total volume and total staked volume.
     <b>if</b> (maker_volume == 0) <b>return</b>;
 
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
-    <b>if</b> (account_stake &gt; self.volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required()) {
+    <b>if</b> (account_stake &gt;= self.volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required()) {
         self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
     };
 }
@@ -466,6 +471,33 @@ Increments the total volume and total staked volume.
     <b>assert</b>!(self.historic_volumes.contains(epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
 
     self.historic_volumes[epoch].<a href="trade_params.md#0x0_trade_params">trade_params</a>.maker_fee()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_history_add_total_fees_collected"></a>
+
+## Function `add_total_fees_collected`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_total_fees_collected">add_total_fees_collected</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, fees: u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_add_total_fees_collected">add_total_fees_collected</a>(
+    self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
+    fees: u64,
+) {
+    self.volumes.total_fees_collected = self.volumes.total_fees_collected + fees;
 }
 </code></pre>
 

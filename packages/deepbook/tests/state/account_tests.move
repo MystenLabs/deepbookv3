@@ -12,6 +12,7 @@ module deepbook::account_tests {
         account,
         balances,
         fill,
+        constants,
     };
 
     const OWNER: address = @0xF;
@@ -43,7 +44,7 @@ module deepbook::account_tests {
         test.next_tx(ALICE);
         let mut account = account::empty(test.ctx());
         account.add_order(1);
-        let fill = fill::new(1, id_from_address(@0xB), false, false, 100, 500, false);
+        let fill = fill::new(1, id_from_address(@0xB), false, false, 100, 500, false, 0, constants::deep_multiplier());
         account.process_maker_fill(&fill);
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(100, 0, 0));
@@ -53,7 +54,7 @@ module deepbook::account_tests {
         assert!(account.open_orders().contains(&(1 as u128)), 0);
 
         account.add_order(2);
-        let fill = fill::new(2, id_from_address(@0xC), false, true, 100, 500, true);
+        let fill = fill::new(2, id_from_address(@0xC), false, true, 100, 500, true, 0, constants::deep_multiplier());
         account.process_maker_fill(&fill);
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 500, 0));
@@ -64,7 +65,7 @@ module deepbook::account_tests {
         assert!(!account.open_orders().contains(&(2 as u128)), 0);
 
         account.add_order(3);
-        let fill = fill::new(3, id_from_address(@0xC), true, false, 100, 500, true);
+        let fill = fill::new(3, id_from_address(@0xC), true, false, 100, 500, true, 0, constants::deep_multiplier());
         account.process_maker_fill(&fill);
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(100, 0, 0));
@@ -76,7 +77,7 @@ module deepbook::account_tests {
         assert!(!account.open_orders().contains(&(3 as u128)), 0);
 
         account.add_order(4);
-        let fill = fill::new(4, id_from_address(@0xC), false, true, 100, 500, true);
+        let fill = fill::new(4, id_from_address(@0xC), false, true, 100, 500, true, 0, constants::deep_multiplier());
         account.process_maker_fill(&fill);
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 500, 0));
@@ -143,9 +144,9 @@ module deepbook::account_tests {
         assert!(prev_active_stake == 0, 0);
 
         account.add_order(1);
-        let fill = fill::new(1, id_from_address(@0xB), false, false, 100, 500, false);
+        let fill = fill::new(1, id_from_address(@0xB), false, false, 100, 500, false, 0, constants::deep_multiplier());
         account.process_maker_fill(&fill);
-        
+
         // update doesn't do anything until next epoch
         let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
         assert!(prev_epoch == 0, 0);
@@ -184,7 +185,7 @@ module deepbook::account_tests {
         let (before, after) = account.add_stake(100);
         assert!(before == 100, 0);
         assert!(after == 200, 0);
-        
+
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
         let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
@@ -233,7 +234,7 @@ module deepbook::account_tests {
         test.next_tx(ALICE);
         let mut account = account::empty(test.ctx());
         assert!(account.voted_proposal().is_none(), 0);
-        
+
         let prev_proposal = account.set_voted_proposal(option::some(id_from_address(@0x1)));
         assert!(prev_proposal.is_none(), 0);
         assert!(account.voted_proposal().borrow() == id_from_address(@0x1), 0);
