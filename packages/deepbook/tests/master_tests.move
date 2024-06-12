@@ -106,6 +106,34 @@ module deepbook::master_tests {
             &mut test
         );
 
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 100 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = true;
+        let mut maker_fee = constants::maker_fee();
+        let taker_fee;
+        let deep_multiplier = constants::deep_multiplier();
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+        };
+        let mut bob_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+        };
+
+        // Epoch 0
+        assert!(test.ctx().epoch() == 0, 0);
+
+        // Set pool 1 as whitelisted, which means 0 trading fees
         set_whitelist<SUI, DEEP>(
             OWNER,
             pool1_id,
@@ -113,6 +141,7 @@ module deepbook::master_tests {
             &mut test
         );
 
+        // Cannot set pool 2 as whitelisted because DEEP is not an asset
         if (error_code == ECannotSetWhitelist) {
             set_whitelist<SPAM, SUI>(
                 OWNER,
@@ -121,6 +150,103 @@ module deepbook::master_tests {
                 &mut test
             );
         };
+
+        // Trading within pool 1 should have no fees
+        // Alice should get 2 more sui, Bob should lose 2 sui
+        // Alice should get 200 less deep, Bob should get 200 deep
+        execute_cross_trading<SUI, DEEP>(
+            pool1_id,
+            alice_balance_manager_id,
+            bob_balance_manager_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            constants::max_u64(),
+            &mut test
+        );
+        alice_balance.sui = alice_balance.sui + 2 * quantity;
+        alice_balance.deep = alice_balance.deep - 2 * math::mul(price, quantity);
+        bob_balance.sui = bob_balance.sui - 2 * quantity;
+        bob_balance.deep = bob_balance.deep + 2 * math::mul(price, quantity);
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
+
+        // Alice stakes 100 deep into pool 1
+        stake<SUI, DEEP>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+        alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
+
+        // Bob stakes 100 deep into pool 1
+        stake<SUI, DEEP>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+        bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
+
+        // Alice places a bid order in pool 1 with quantity 1, price 100
+        pool_tests::place_limit_order<SUI, DEEP>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        // Alice should have 100 less deep
+        alice_balance.deep = alice_balance.deep - math::mul(price, quantity);
+
+        // Bob places a ask order in pool 1 with quantity 1, price 200
+        pool_tests::place_limit_order<SUI, DEEP>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            2 * price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        // Bob should have 1 less sui
+        bob_balance.sui = bob_balance.sui - quantity;
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
         end(test);
     }
@@ -265,7 +391,7 @@ module deepbook::master_tests {
         );
 
         // Alice stakes 100 DEEP into pool 1 during epoch 0 to be effective in epoch 1
-        stake(
+        stake<SUI, USDC>(
             ALICE,
             pool1_id,
             alice_balance_manager_id,
@@ -280,7 +406,7 @@ module deepbook::master_tests {
         );
 
         if (error_code == EIncorrectStakeOwner) {
-            stake(
+            stake<SUI, USDC>(
                 BOB,
                 pool1_id,
                 alice_balance_manager_id,
@@ -290,7 +416,7 @@ module deepbook::master_tests {
         };
 
         // Bob stakes 100 DEEP into pool 1 during epoch 1
-        stake(
+        stake<SUI, USDC>(
             BOB,
             pool1_id,
             bob_balance_manager_id,
@@ -522,7 +648,7 @@ module deepbook::master_tests {
         );
 
         // Alice restakes 100 DEEP into pool 1 during epoch 4
-        stake(
+        stake<SUI, USDC>(
             ALICE,
             pool1_id,
             alice_balance_manager_id,
@@ -778,7 +904,7 @@ module deepbook::master_tests {
             expire_timestamp,
             test,
         );
-        withdraw_settled_amounts<SUI, USDC>(
+        withdraw_settled_amounts<BaseAsset, QuoteAsset>(
             BOB,
             pool_id,
             balance_manager_id_2,
@@ -918,7 +1044,7 @@ module deepbook::master_tests {
         }
     }
 
-    fun stake(
+    fun stake<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
         balance_manager_id: ID,
@@ -927,12 +1053,12 @@ module deepbook::master_tests {
     ){
         test.next_tx(sender);
         {
-            let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             // Get Proof from BalanceManager
             let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
-            pool::stake<SUI, USDC>(
+            pool::stake<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
                 &trade_proof,

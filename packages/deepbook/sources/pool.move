@@ -464,7 +464,7 @@ module deepbook::pool {
         whitelist: bool,
         ctx: &TxContext,
     ) {
-        // TODO: remove the below for testing
+        // TODO: remove the below for testing as needed
         let base = type_name::get<BaseAsset>();
         let quote = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
