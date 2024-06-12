@@ -188,7 +188,7 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Alice stakes 100 DEEP into pool 1 during epoch 1
+        // Alice stakes 100 DEEP into pool 1 during epoch 0 to be effective in epoch 1
         stake(
             ALICE,
             pool1_id,
