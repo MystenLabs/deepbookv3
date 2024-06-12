@@ -37,6 +37,9 @@ module deepbook::constants {
     // History constants
     const PHASE_OUT_EPOCHS: u64 = 28;
 
+    // Fee type constants
+    const FEE_IS_DEEP: bool = true;
+
     // Constants for testing
     #[test_only]
     const MAKER_FEE: u64 = 500000;
@@ -149,6 +152,10 @@ module deepbook::constants {
 
     public fun half(): u64 {
         HALF
+    }
+
+    public fun fee_is_deep(): bool {
+        FEE_IS_DEEP
     }
 
     #[test_only]

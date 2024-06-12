@@ -91,6 +91,12 @@ Order struct represents the order in the order book. It is optimized for space.
 
 </dd>
 <dt>
+<code>fee_is_deep: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
 <code>deep_per_base: u64</code>
 </dt>
 <dd>
@@ -301,7 +307,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, fee_is_deep: bool, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -315,6 +321,7 @@ initialize the order struct.
     balance_manager_id: ID,
     client_order_id: u64,
     quantity: u64,
+    fee_is_deep: bool,
     deep_per_base: u64,
     epoch: u64,
     status: u8,
@@ -326,6 +333,7 @@ initialize the order struct.
         client_order_id,
         quantity,
         filled_quantity: 0,
+        fee_is_deep,
         deep_per_base,
         epoch,
         status,

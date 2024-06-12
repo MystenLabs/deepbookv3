@@ -56,7 +56,6 @@ module deepbook::vault {
         };
     }
 
-    #[test_only]
     public fun balances<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>
     ): (u64, u64, u64) {

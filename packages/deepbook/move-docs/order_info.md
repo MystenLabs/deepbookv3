@@ -1261,6 +1261,7 @@ information required to match orders.
         self.balance_manager_id,
         self.client_order_id,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
+        self.fee_is_deep,
         self.deep_per_base,
         self.epoch,
         self.status,

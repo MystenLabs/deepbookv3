@@ -269,7 +269,7 @@ module deepbook::state {
         let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-            account.add_rebates(rebates);
+            account.add_rebates(balances::new(0, 0, rebates));
         }
     }
 }

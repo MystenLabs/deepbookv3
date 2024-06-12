@@ -209,7 +209,7 @@ module deepbook::account_tests {
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 0));
 
-        account.add_rebates(100);
+        account.add_rebates(balances::new(0, 0, 100));
         account.claim_rebates();
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 0, 100));
@@ -218,7 +218,7 @@ module deepbook::account_tests {
         // user owes 100 DEEP for staking
         account.add_stake(100);
         // user receives 100 DEEP from rebates
-        account.add_rebates(100);
+        account.add_rebates(balances::new(0, 0, 100));
         account.claim_rebates();
         let (settled, owed) = account.settle();
         assert_eq(settled, balances::new(0, 0, 100));

@@ -71,6 +71,17 @@ module deepbook::master_tests {
         test_master(EIncorrectRebateClaimer)
     }
 
+    #[test]
+    fun test_master_2_ok(){
+        test_master_2()
+    }
+
+    fun test_master_2(){
+        let mut test = begin(OWNER);
+        // TODO: Test add_deep_price_point
+        end(test);
+    }
+
     fun test_master(
         error_code: u64,
     ) {

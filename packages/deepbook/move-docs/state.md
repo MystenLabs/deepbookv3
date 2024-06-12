@@ -168,7 +168,7 @@ Update taker settled balances and volumes.
             math::mul(volume, historic_maker_fee),
             <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
         );
-        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(order_maker_fee);
+        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
 
         i = i + 1;
     };
@@ -185,7 +185,7 @@ Update taker settled balances and volumes.
 
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();
-    self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="order_info.md#0x0_order_info">order_info</a>.paid_fees());
+    self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, <a href="order_info.md#0x0_order_info">order_info</a>.paid_fees()));
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
@@ -637,7 +637,7 @@ Remove order from account orders.
     <b>let</b> (prev_epoch, maker_volume, active_stake) = <a href="account.md#0x0_account">account</a>.<b>update</b>(ctx);
     <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
         <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-        <a href="account.md#0x0_account">account</a>.add_rebates(rebates);
+        <a href="account.md#0x0_account">account</a>.add_rebates(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, rebates));
     }
 }
 </code></pre>

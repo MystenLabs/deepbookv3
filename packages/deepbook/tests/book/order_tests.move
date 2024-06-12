@@ -235,7 +235,7 @@ module deepbook::order_tests {
         assert!(order.quantity() == new_quantity, 0);
         let new_quantity = 0 * constants::sui_unit();
         order.modify(new_quantity, ts);
-        
+
         abort(0)
     }
 
@@ -326,6 +326,7 @@ module deepbook::order_tests {
             balance_manager_id,
             1,
             quantity,
+            constants::fee_is_deep(),
             deep_per_base,
             epoch,
             constants::live(),

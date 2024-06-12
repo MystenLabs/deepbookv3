@@ -304,6 +304,7 @@ module deepbook::order_info {
             self.balance_manager_id,
             self.client_order_id,
             self.remaining_quantity(),
+            self.fee_is_deep,
             self.deep_per_base,
             self.epoch,
             self.status,
