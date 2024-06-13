@@ -630,6 +630,7 @@ module deepbook::master_tests {
         let quantity = 100 * constants::float_scaling();
 
         // Bob places market ask order with large size in pool 1, only quantity 1 should be filled with Alice's bid order
+        // Bob will not get discounted fees as even though he's staked, there's volume traded yet
         // Taker fee paid should be 0.06%
         pool_tests::place_market_order<SUI, USDC>(
             BOB,
@@ -789,7 +790,10 @@ module deepbook::master_tests {
         let mut i = 23;
         // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
         // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
-        // Fees paid for each should be 0.02%+0.06% = 0.08%, multiplied by deep multiplier
+        // Discount will be 50% for Alice because sheplaces a maker order first that's taken
+        // Bob will not get discount because he takes Alice's order
+        // Fees paid for each should be 0.02% maker for both, 0.03% taker for Alice, 0.06% taker for Bob
+        // Total fees collected should be 0.065% for each epoch
         // Alice should have 46 more SUI at the end of the loop
         // Bob should have 92 more USDC at the end of the loop
         while (i > 0) {
@@ -812,10 +816,11 @@ module deepbook::master_tests {
         let taker_sui_traded = 23 * constants::float_scaling();
         let maker_sui_traded = 23 * constants::float_scaling();
         let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        let avg_taker_fee = math::mul(taker_fee + math::mul(constants::half(), taker_fee), constants::half());
         alice_balance.sui = alice_balance.sui + quantity_sui_traded;
         alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
         alice_balance.deep = alice_balance.deep - math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            math::mul(taker_sui_traded, math::mul(constants::half(), taker_fee)) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
         bob_balance.sui = bob_balance.sui - quantity_sui_traded;
@@ -829,7 +834,7 @@ module deepbook::master_tests {
             &alice_balance,
             &mut test
         );
-        check_balance(
+        check_balance_and_print(
             bob_balance_manager_id,
             &bob_balance,
             &mut test
@@ -846,7 +851,7 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.deep = alice_balance.deep + math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
         check_balance(
@@ -863,7 +868,7 @@ module deepbook::master_tests {
             &mut test
         );
         bob_balance.deep = bob_balance.deep + math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
         check_balance(
@@ -987,40 +992,40 @@ module deepbook::master_tests {
             expire_timestamp,
             test,
         );
-        // pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
-        //     BOB,
-        //     pool_id,
-        //     balance_manager_id_2,
-        //     client_order_id,
-        //     order_type,
-        //     constants::self_matching_allowed(),
-        //     price,
-        //     2 * quantity,
-        //     !is_bid,
-        //     pay_with_deep,
-        //     expire_timestamp,
-        //     test,
-        // );
-        // pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
-        //     ALICE,
-        //     pool_id,
-        //     balance_manager_id_1,
-        //     client_order_id,
-        //     order_type,
-        //     constants::self_matching_allowed(),
-        //     price,
-        //     quantity,
-        //     is_bid,
-        //     pay_with_deep,
-        //     expire_timestamp,
-        //     test,
-        // );
-        // withdraw_settled_amounts<BaseAsset, QuoteAsset>(
-        //     BOB,
-        //     pool_id,
-        //     balance_manager_id_2,
-        //     test
-        // );
+        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+            BOB,
+            pool_id,
+            balance_manager_id_2,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            2 * quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            test,
+        );
+        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+            ALICE,
+            pool_id,
+            balance_manager_id_1,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            test,
+        );
+        withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+            BOB,
+            pool_id,
+            balance_manager_id_2,
+            test
+        );
     }
 
     fun check_vault_balances<BaseAsset, QuoteAsset>(
@@ -1148,6 +1153,10 @@ module deepbook::master_tests {
             std::debug::print(&usdc);
             std::debug::print(&spam);
             std::debug::print(&deep);
+            std::debug::print(&expected_balances.sui);
+            std::debug::print(&expected_balances.usdc);
+            std::debug::print(&expected_balances.spam);
+            std::debug::print(&expected_balances.deep);
             assert!(sui == expected_balances.sui, 0);
             assert!(usdc == expected_balances.usdc, 0);
             assert!(spam == expected_balances.spam, 0);
