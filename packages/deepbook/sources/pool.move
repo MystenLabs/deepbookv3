@@ -584,8 +584,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let deep_per_asset = self.deep_price.deep_per_asset(true);
-        let conversion_is_base = true;
+        let (conversion_is_base, deep_per_asset) = self.deep_price.deep_per_asset();
 
         let mut order_info = order_info::new(
             self.id.to_inner(),

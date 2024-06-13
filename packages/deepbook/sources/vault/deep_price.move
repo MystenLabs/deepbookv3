@@ -103,30 +103,35 @@ module deepbook::deep_price {
     /// is_base is true if the asset is the base asset.
     public(package) fun deep_per_asset(
         self: &DeepPrice,
-        is_base: bool,
-    ): u64 {
-        // TODO: Add assert, assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
-        if (self.last_insert_timestamp(is_base) == 0) return 10 * 1_000_000_000; // Default deep conversion rate to 10, remove after testing
-        let cumulative_asset = if (is_base) {
+    ): (bool, u64) {
+        let is_base_conversion = true;
+
+        // TODO: Add assert, then remove override below.
+        // assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
+        if (self.last_insert_timestamp(is_base_conversion) == 0 && self.last_insert_timestamp(is_base_conversion) == 0) {
+            return (true, 10 * 1_000_000_000); // Default deep conversion rate to 10, remove after testing
+        };
+
+        let cumulative_asset = if (is_base_conversion) {
             self.cumulative_base
         } else {
             self.cumulative_quote
         };
-        let asset_length = if (is_base) {
+        let asset_length = if (is_base_conversion) {
             self.base_prices.length()
         } else {
             self.quote_prices.length()
         };
         let deep_per_asset = math::div(cumulative_asset, asset_length);
 
-        deep_per_asset
+        (true, deep_per_asset)
     }
 
     fun last_insert_timestamp(
         self: &DeepPrice,
-        is_base: bool,
+        is_base_conversion: bool,
     ): u64 {
-        let prices = if (is_base) {
+        let prices = if (is_base_conversion) {
             &self.base_prices
         } else {
             &self.quote_prices

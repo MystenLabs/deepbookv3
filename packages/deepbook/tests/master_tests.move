@@ -124,7 +124,6 @@ module deepbook::master_tests {
         let pay_with_deep = true;
         let maker_fee = constants::maker_fee();
         let taker_fee = constants::taker_fee();
-        let deep_multiplier;
         let mut alice_balance = ExpectedBalances{
             sui: starting_balance,
             usdc: starting_balance,
@@ -212,6 +211,16 @@ module deepbook::master_tests {
         );
         bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
 
+        if (error_code == EEmptyPool) {
+            // SUI/DEEP pool has no orders, cannot add price point
+            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+                OWNER,
+                pool2_id,
+                pool1_id,
+                &mut test
+            );
+        };
+
         // Alice places a bid order in pool 1 with quantity 1, price 100
         pool_tests::place_limit_order<SUI, DEEP>(
             ALICE,
@@ -258,15 +267,6 @@ module deepbook::master_tests {
             &mut test
         );
 
-        if (error_code == EEmptyPool) {
-            // SPAM/SUI pool has no orders, cannot add price point
-            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-                OWNER,
-                pool2_id,
-                pool1_id,
-                &mut test
-            );
-        };
         // add_deep_price_point<SPAM, SUI, SUI, DEEP>(
         //     OWNER,
         //     pool2_id,
