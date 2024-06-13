@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::deep_price {
-    use deepbook::math;
-
     // Minimum of 1 minutes between data points
     const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60;
     // Price points older than 1 day will be removed
@@ -58,7 +56,6 @@ module deepbook::deep_price {
         });
         if (is_base_conversion) {
             self.cumulative_base = self.cumulative_base + conversion_rate;
-
             while (
                 asset_prices.length() == MAX_DATA_POINTS + 1 ||
                 asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
@@ -68,7 +65,6 @@ module deepbook::deep_price {
             }
         } else {
             self.cumulative_quote = self.cumulative_quote + conversion_rate;
-
             while (
                 asset_prices.length() == MAX_DATA_POINTS + 1 ||
                 asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
@@ -80,7 +76,7 @@ module deepbook::deep_price {
     }
 
     /// Returns the conversion rate of DEEP per asset token.
-    /// is_base is true if the asset is the base asset.
+    /// Base will be used by default, if there are no base data then quote will be used
     public(package) fun deep_per_asset(
         self: &DeepPrice,
         whitelisted: bool,
@@ -89,9 +85,6 @@ module deepbook::deep_price {
             return (true, 0) // no fees for whitelist
         };
         assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
-        if (self.last_insert_timestamp(true) == 0 && self.last_insert_timestamp(false) == 0) {
-            return (true, 10 * 1_000_000_000); // Default deep conversion rate to 10, remove after testing
-        };
 
         let is_base_conversion = self.last_insert_timestamp(true) > 0;
 

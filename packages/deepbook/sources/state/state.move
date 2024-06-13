@@ -108,13 +108,6 @@ module deepbook::state {
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
-        // std::debug::print(&4444444);
-        // std::debug::print(&settled.base());
-        // std::debug::print(&settled.quote());
-        // std::debug::print(&settled.deep());
-        // std::debug::print(&owed.base());
-        // std::debug::print(&owed.quote());
-        // std::debug::print(&owed.deep());
         self.history.add_total_fees_collected(balances::new(0, 0, order_info.paid_fees()));
         settled.add_balances(old_settled);
         owed.add_balances(old_owed);

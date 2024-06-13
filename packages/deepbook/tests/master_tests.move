@@ -125,6 +125,13 @@ module deepbook::master_tests {
             &mut test,
         );
 
+        // Default mid price for pool should be 100 for tests only
+        check_mid_price<SUI, DEEP>(
+            pool1_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+
         let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             ALICE,
             starting_balance,
@@ -212,20 +219,20 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Alice stakes 100 deep into pool 1
-        stake<SUI, DEEP>(
+        // Alice stakes 100 deep into pool 2
+        stake<SPAM, SUI>(
             ALICE,
-            pool1_id,
+            pool2_id,
             alice_balance_manager_id,
             100 * constants::float_scaling(),
             &mut test
         );
         alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
 
-        // Bob stakes 100 deep into pool 1
-        stake<SUI, DEEP>(
+        // Bob stakes 100 deep into pool 2
+        stake<SPAM, SUI>(
             BOB,
-            pool1_id,
+            pool2_id,
             bob_balance_manager_id,
             100 * constants::float_scaling(),
             &mut test
@@ -241,12 +248,6 @@ module deepbook::master_tests {
                 &mut test
             );
         };
-
-        std::debug::print(&8888888);
-        check_mid_price<SUI, DEEP>(
-            pool1_id,
-            &mut test
-        );
 
         // Alice places a bid order in pool 1 with quantity 1, price 125
         let price = 125 * constants::float_scaling();
@@ -269,7 +270,7 @@ module deepbook::master_tests {
 
         // Bob places a ask order in pool 1 with quantity 1, price 175
         let price = 175 * constants::float_scaling();
-        let orderinfo = pool_tests::place_limit_order<SUI, DEEP>(
+        pool_tests::place_limit_order<SUI, DEEP>(
             BOB,
             pool1_id,
             bob_balance_manager_id,
@@ -283,8 +284,6 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
-        std::debug::print(&orderinfo.order_id());
-        std::debug::print(&orderinfo.remaining_quantity());
 
         // Bob should have 1 less sui
         bob_balance.sui = bob_balance.sui - quantity;
@@ -299,20 +298,26 @@ module deepbook::master_tests {
             &mut test
         );
 
-        std::debug::print(&8888888);
-        check_mid_price<SUI, DEEP>(
-            pool1_id,
-            &mut test
-        );
-
+        // Epoch 1
         // Pool 2 now uses pool 1 as reference pool
         // Pool 2 deep per base should be 0 (non functional)
         // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
-        pool_tests::set_time(1_000_000_000, &mut test);
+        // Stakes in pool 2 for both Alice and Bob are in effect
+        test.next_epoch(OWNER);
+        assert!(test.ctx().epoch() == 1, 0);
+        pool_tests::set_time(100_000, &mut test);
+
+        // New deep per quote is 125, the average of 100 and 150.
         pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
             OWNER,
             pool2_id,
             pool1_id,
+            &mut test
+        );
+        // Check data added is 150
+        check_mid_price<SUI, DEEP>(
+            pool1_id,
+            150 * constants::float_scaling(),
             &mut test
         );
 
@@ -332,7 +337,7 @@ module deepbook::master_tests {
         // Since deep per sui is 150 (based on orders placed in pool 1),
         // Alice should pay 0.05% * (quantity 1 * price 10 * conversion 150) = 0.75 DEEP
         // Alice also pays 10 SUI for SPAM
-        pool_tests::place_limit_order<SPAM, SUI>(
+        let order_info = pool_tests::place_limit_order<SPAM, SUI>(
             ALICE,
             pool2_id,
             alice_balance_manager_id,
@@ -346,23 +351,101 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
-        let deep_multiplier = 150_000_000_000;
+        let deep_multiplier = 125_000_000_000;
         alice_balance.sui = alice_balance.sui - math::mul(price, quantity);
         alice_balance.deep = alice_balance.deep - math::mul(
             math::mul(maker_fee, math::mul(price, quantity)),
             deep_multiplier
         );
-        // check_balance_and_print(
-        //     alice_balance_manager_id,
-        //     &alice_balance,
-        //     &mut test
-        // );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Alice cancels the order, gets the exact same refund back
+        pool_tests::cancel_order<SPAM, SUI>(
+            pool2_id,
+            ALICE,
+            alice_balance_manager_id,
+            order_info.order_id(),
+            &mut test
+        );
+        alice_balance.sui = alice_balance.sui + math::mul(price, quantity);
+        alice_balance.deep = alice_balance.deep + math::mul(
+            math::mul(maker_fee, math::mul(price, quantity)),
+            deep_multiplier
+        );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        let price = 10 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        // Alice places a bid order in pool 2 with quantity 1, price 10
+        // Bob will take and place an additional quantity 1, price 10 order
+        // Then Alice will take
+        // Both alice and bob will pay 0.05% * (quantity 1 * price 10 * conversion 150) = 0.75 DEEP
+        // for maker order and 0.10% * (quantity 1 * price 10 * conversion 150) = 0.75 DEEP for taker order
+        execute_cross_trading<SPAM, SUI>(
+            pool2_id,
+            alice_balance_manager_id,
+            bob_balance_manager_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            constants::max_u64(),
+            &mut test
+        );
+        let maker_quantity_traded = quantity;
+        let taker_quantity_traded = quantity;
+        let quantity_traded = maker_quantity_traded + taker_quantity_traded;
+        let alice_maker_fee = math::mul(
+            math::mul(maker_fee, math::mul(price, quantity)),
+            deep_multiplier
+        );
+        let alice_taker_fee = math::mul(
+            math::mul(math::mul(constants::half(), taker_fee), math::mul(price, quantity)),
+            deep_multiplier
+        );
+        alice_balance.spam = alice_balance.spam + quantity_traded;
+        alice_balance.sui = alice_balance.sui - math::mul(price, quantity_traded);
+
+        let bob_maker_fee = math::mul(
+            math::mul(maker_fee, math::mul(price, quantity)),
+            deep_multiplier
+        );
+        let bob_taker_fee = math::mul(
+            math::mul(taker_fee, math::mul(price, quantity)),
+            deep_multiplier
+        );
+        alice_balance.deep = alice_balance.deep - alice_maker_fee - alice_taker_fee;
+        bob_balance.spam = bob_balance.spam - quantity_traded;
+        bob_balance.sui = bob_balance.sui + math::mul(price, quantity_traded);
+        bob_balance.deep = bob_balance.deep - bob_maker_fee - bob_taker_fee;
+
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
         end(test);
     }
 
     fun check_mid_price<BaseAsset, QuoteAsset>(
         pool_id: ID,
+        expected_mid_price: u64,
         test: &mut Scenario,
     ){
         test.next_tx(OWNER);
@@ -370,12 +453,14 @@ module deepbook::master_tests {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mid_price = pool::mid_price(&pool, &clock);
-            std::debug::print(&mid_price);
+            assert!(mid_price == expected_mid_price, 0);
             return_shared(pool);
             return_shared(clock);
         }
     }
 
+    #[allow(unused_function)]
+    /// TODO: Test setting stable pools
     fun set_stable<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
@@ -875,7 +960,7 @@ module deepbook::master_tests {
             &alice_balance,
             &mut test
         );
-        check_balance_and_print(
+        check_balance(
             bob_balance_manager_id,
             &bob_balance,
             &mut test
