@@ -23,7 +23,8 @@ All order matching happens in this module.
 -  [Function `is_bid`](#0x0_order_info_is_bid)
 -  [Function `original_quantity`](#0x0_order_info_original_quantity)
 -  [Function `executed_quantity`](#0x0_order_info_executed_quantity)
--  [Function `deep_per_base`](#0x0_order_info_deep_per_base)
+-  [Function `deep_per_asset`](#0x0_order_info_deep_per_asset)
+-  [Function `conversion_is_base`](#0x0_order_info_conversion_is_base)
 -  [Function `cumulative_quote_quantity`](#0x0_order_info_cumulative_quote_quantity)
 -  [Function `paid_fees`](#0x0_order_info_paid_fees)
 -  [Function `epoch`](#0x0_order_info_epoch)
@@ -139,7 +140,19 @@ It is returned at the end of the order lifecycle.
 
 </dd>
 <dt>
-<code>deep_per_base: u64</code>
+<code>deep_per_asset: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>conversion_is_base: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>whitelisted: bool</code>
 </dt>
 <dd>
 
@@ -827,13 +840,13 @@ Emitted when a maker order is injected into the order book.
 
 </details>
 
-<a name="0x0_order_info_deep_per_base"></a>
+<a name="0x0_order_info_deep_per_asset"></a>
 
-## Function `deep_per_base`
+## Function `deep_per_asset`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_base">deep_per_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): u64
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_asset">deep_per_asset</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): u64
 </code></pre>
 
 
@@ -842,8 +855,32 @@ Emitted when a maker order is injected into the order book.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_base">deep_per_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
-    self.deep_per_base
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_deep_per_asset">deep_per_asset</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): u64 {
+    self.deep_per_asset
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_order_info_conversion_is_base"></a>
+
+## Function `conversion_is_base`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_conversion_is_base">conversion_is_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="order_info.md#0x0_order_info_conversion_is_base">conversion_is_base</a>(self: &<a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a>): bool {
+    self.conversion_is_base
 }
 </code></pre>
 
@@ -1025,7 +1062,7 @@ Emitted when a maker order is injected into the order book.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, self_matching_option: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_base: u64, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_new">new</a>(pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, trader: <b>address</b>, order_type: u8, self_matching_option: u8, price: u64, quantity: u64, is_bid: bool, fee_is_deep: bool, epoch: u64, expire_timestamp: u64, deep_per_asset: u64, conversion_is_base: bool, whitelisted: bool, market_order: bool): <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>
 </code></pre>
 
 
@@ -1047,7 +1084,9 @@ Emitted when a maker order is injected into the order book.
     fee_is_deep: bool,
     epoch: u64,
     expire_timestamp: u64,
-    deep_per_base: u64,
+    deep_per_asset: u64,
+    conversion_is_base: bool,
+    whitelisted: bool,
     market_order: bool,
 ): <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
     <a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a> {
@@ -1061,7 +1100,9 @@ Emitted when a maker order is injected into the order book.
         price,
         is_bid,
         original_quantity: quantity,
-        deep_per_base,
+        deep_per_asset,
+        conversion_is_base,
+        whitelisted,
         expire_timestamp,
         executed_quantity: 0,
         cumulative_quote_quantity: 0,
@@ -1195,15 +1236,22 @@ Emitted when a maker order is injected into the order book.
     taker_fee: u64,
     maker_fee: u64,
 ): (Balances, Balances) {
-    <b>let</b> deep_in = math::mul(
-        self.deep_per_base,
-        math::mul(self.executed_quantity, taker_fee)
-    );
-    self.paid_fees = deep_in;
+    <b>let</b> taker_deep_in = <b>if</b> (self.conversion_is_base) {
+        math::mul(
+            self.deep_per_asset,
+            math::mul(self.executed_quantity, taker_fee)
+        )
+    } <b>else</b> {
+        math::mul(
+            self.deep_per_asset,
+            math::mul(self.cumulative_quote_quantity, taker_fee)
+        )
+    };
+    self.paid_fees = taker_deep_in;
 
     <b>let</b> <b>mut</b> settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, 0);
     <b>let</b> <b>mut</b> owed_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, 0);
-    owed_balances.add_deep(deep_in);
+    owed_balances.add_deep(taker_deep_in);
 
     <b>if</b> (self.is_bid) {
         settled_balances.add_base(self.executed_quantity);
@@ -1215,10 +1263,13 @@ Emitted when a maker order is injected into the order book.
 
     <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
     <b>if</b> (remaining_quantity &gt; 0 && !(self.<a href="order_info.md#0x0_order_info_order_type">order_type</a>() == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>())) {
-        <b>let</b> deep_in = math::mul(
-            self.deep_per_base,
+        <b>let</b> <b>mut</b> deep_in = math::mul(
+            self.deep_per_asset,
             math::mul(remaining_quantity, maker_fee)
         );
+        <b>if</b> (!self.<a href="order_info.md#0x0_order_info_conversion_is_base">conversion_is_base</a>()) {
+            deep_in = math::mul(deep_in, self.<a href="order_info.md#0x0_order_info_price">price</a>());
+        };
         owed_balances.add_deep(deep_in);
         <b>if</b> (self.is_bid) {
             owed_balances.add_quote(math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));
@@ -1262,7 +1313,9 @@ information required to match orders.
         self.client_order_id,
         self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>(),
         self.fee_is_deep,
-        self.deep_per_base,
+        self.deep_per_asset,
+        self.conversion_is_base,
+        self.whitelisted,
         self.epoch,
         self.status,
         self.expire_timestamp,
@@ -1341,6 +1394,12 @@ Assert order types after partial fill against the order book.
         } <b>else</b> {
             self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
         };
+
+        <b>return</b> <b>true</b>
+    };
+
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) {
+        self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
 
         <b>return</b> <b>true</b>
     };

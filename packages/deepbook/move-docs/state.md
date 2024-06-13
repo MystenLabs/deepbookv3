@@ -161,13 +161,23 @@ Update taker settled balances and volumes.
         <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
         <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
 
-        <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
-        self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
+        <b>let</b> base_volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
+        <b>let</b> quote_volume = <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
+        self.<a href="history.md#0x0_history">history</a>.add_volume(base_volume, <a href="account.md#0x0_account">account</a>.active_stake());
         <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
-        <b>let</b> order_maker_fee = math::mul(
-            math::mul(volume, historic_maker_fee),
-            <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
-        );
+        <b>let</b> fee_volume = <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.maker_conversion_is_base()) {
+            base_volume
+        } <b>else</b> {
+            quote_volume
+        };
+        <b>let</b> order_maker_fee = <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.maker_is_whitelisted()) {
+            0
+        } <b>else</b> {
+            math::mul(
+                math::mul(fee_volume, historic_maker_fee),
+                <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_asset()
+            )
+        };
         self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
 
         i = i + 1;
@@ -175,13 +185,34 @@ Update taker settled balances and volumes.
 
     self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx);
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
-    <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
-    <a href="account.md#0x0_account">account</a>.add_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
-
     <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
     <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
-    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base()));
+
+    <b>let</b> volume_in_deep = <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.conversion_is_base()) {
+        math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_asset())
+    } <b>else</b> <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity() &gt; 0) {
+        <b>let</b> avg_executed_price = math::div(
+            <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity(),
+            <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()
+        );
+        math::mul(
+            avg_executed_price,
+            math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_asset())
+        )
+    } <b>else</b> {
+        math::mul(
+            <a href="order_info.md#0x0_order_info">order_info</a>.price(),
+            math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_asset())
+        )
+    };
+
+    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, volume_in_deep);
     <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
+
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
+        <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    };
+    <a href="account.md#0x0_account">account</a>.add_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
 
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();

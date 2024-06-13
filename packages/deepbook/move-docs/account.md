@@ -346,7 +346,7 @@ Given a fill, update the account balances and volumes as the maker.
         self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     };
     <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
-        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.order_id());
+        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.maker_order_id());
     }
 }
 </code></pre>

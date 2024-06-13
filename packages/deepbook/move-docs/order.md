@@ -25,7 +25,7 @@ All order matching happens in this module.
 -  [Function `is_bid`](#0x0_order_is_bid)
 -  [Function `quantity`](#0x0_order_quantity)
 -  [Function `filled_quantity`](#0x0_order_filled_quantity)
--  [Function `deep_per_base`](#0x0_order_deep_per_base)
+-  [Function `deep_per_asset`](#0x0_order_deep_per_asset)
 -  [Function `epoch`](#0x0_order_epoch)
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
@@ -97,7 +97,19 @@ Order struct represents the order in the order book. It is optimized for space.
 
 </dd>
 <dt>
-<code>deep_per_base: u64</code>
+<code>deep_per_asset: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>conversion_is_base: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>whitelisted: bool</code>
 </dt>
 <dd>
 
@@ -307,7 +319,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, fee_is_deep: bool, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, fee_is_deep: bool, deep_per_asset: u64, conversion_is_base: bool, whitelisted: bool, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -322,7 +334,9 @@ initialize the order struct.
     client_order_id: u64,
     quantity: u64,
     fee_is_deep: bool,
-    deep_per_base: u64,
+    deep_per_asset: u64,
+    conversion_is_base: bool,
+    whitelisted: bool,
     epoch: u64,
     status: u8,
     expire_timestamp: u64,
@@ -334,7 +348,9 @@ initialize the order struct.
         quantity,
         filled_quantity: 0,
         fee_is_deep,
-        deep_per_base,
+        deep_per_asset,
+        conversion_is_base,
+        whitelisted,
         epoch,
         status,
         expire_timestamp,
@@ -393,7 +409,9 @@ quantity and whether the order is a bid.
         quote_quantity,
         is_bid,
         self.epoch,
-        self.deep_per_base,
+        self.deep_per_asset,
+        self.conversion_is_base,
+        self.whitelisted
     )
 }
 </code></pre>
@@ -458,7 +476,10 @@ quantity and whether the order is a bid.
     } <b>else</b> {
         self.quantity - self.filled_quantity
     };
-    <b>let</b> deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_base, maker_fee));
+    <b>let</b> <b>mut</b> deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_asset, maker_fee));
+    <b>if</b> (!self.conversion_is_base) {
+        deep_out = math::mul(deep_out, self.<a href="order.md#0x0_order_price">price</a>());
+    };
     <b>let</b> <b>mut</b> base_out = 0;
     <b>let</b> <b>mut</b> quote_out = 0;
     <b>if</b> (self.<a href="order.md#0x0_order_is_bid">is_bid</a>()) {
@@ -754,13 +775,13 @@ Update the order status to canceled.
 
 </details>
 
-<a name="0x0_order_deep_per_base"></a>
+<a name="0x0_order_deep_per_asset"></a>
 
-## Function `deep_per_base`
+## Function `deep_per_asset`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_deep_per_base">deep_per_base</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_deep_per_asset">deep_per_asset</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
 </code></pre>
 
 
@@ -769,8 +790,8 @@ Update the order status to canceled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_deep_per_base">deep_per_base</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
-    self.deep_per_base
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_deep_per_asset">deep_per_asset</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
+    self.deep_per_asset
 }
 </code></pre>
 

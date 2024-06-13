@@ -1006,36 +1006,41 @@ Allows for the calculation of deep price per base asset.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ) {
     <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
-    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
-    <b>let</b> pool_price = target_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
-    <b>let</b> deep_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceBaseAsset&gt;();
-    <b>let</b> deep_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceQuoteAsset&gt;();
-    <b>let</b> base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
-    <b>let</b> quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <b>let</b> reference_pool_price = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
+    <b>let</b> reference_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceBaseAsset&gt;();
+    <b>let</b> reference_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceQuoteAsset&gt;();
+    <b>let</b> target_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> target_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
     <b>let</b> timestamp = <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms();
-    <b>if</b> (base_type == deep_type) {
-        <b>return</b> target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(1, timestamp)
-    };
-    <b>if</b> (quote_type == deep_type) {
-        <b>return</b> target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(pool_price, timestamp)
-    };
 
-    <b>assert</b>!((base_type == deep_base_type || base_type == deep_quote_type) ||
-            (quote_type == deep_base_type || quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
-    <b>assert</b>!(!(base_type == deep_base_type && quote_type == deep_quote_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+    <b>assert</b>!((reference_base_type == deep_type || reference_quote_type == deep_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
 
-    <b>let</b> deep_per_base = <b>if</b> (base_type == deep_base_type) {
-        <a href="deep_price.md#0x0_deep_price">deep_price</a>
-    } <b>else</b> <b>if</b> (base_type == deep_quote_type) {
-        math::div(1_000_000_000, <a href="deep_price.md#0x0_deep_price">deep_price</a>)
-    } <b>else</b> <b>if</b> (quote_type == deep_base_type) {
-        math::mul(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+    <b>let</b> reference_deep_is_base = reference_base_type == deep_type;
+    <b>let</b> reference_other_type = <b>if</b> (reference_deep_is_base) {
+        reference_quote_type
     } <b>else</b> {
-        math::div(<a href="deep_price.md#0x0_deep_price">deep_price</a>, pool_price)
+        reference_base_type
+    };
+    <b>let</b> reference_other_is_target_base = reference_other_type == target_base_type;
+    <b>let</b> reference_other_is_target_quote = reference_other_type == target_quote_type;
+    <b>assert</b>!(reference_other_is_target_base || reference_other_is_target_quote, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+
+    // For DEEP/USDC <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>true</b>, DEEP per USDC is reference_pool_price
+    // For USDC/DEEP <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>false</b>, USDC per DEEP is reference_pool_price
+    <b>let</b> deep_per_reference_other_price = <b>if</b> (reference_deep_is_base) {
+        math::div(1_000_000_000, reference_pool_price)
+    } <b>else</b> {
+        reference_pool_price
     };
 
-    target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_base, timestamp)
+    // For USDC/SUI <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>true</b>, add price point <b>to</b> deep per base
+    // For SUI/USDC <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>false</b>, add price point <b>to</b> deep per quote
+    <b>if</b> (reference_other_is_target_base){
+        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>true</b>);
+    } <b>else</b> {
+        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>false</b>);
+    }
 }
 </code></pre>
 
@@ -1402,7 +1407,7 @@ Only Admin can set a pool as whitelist.
     ctx: &TxContext,
 ): OrderInfo {
     <b>assert</b>!(pay_with_deep || self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EFeeTypeNotSupported">EFeeTypeNotSupported</a>);
-    <b>let</b> deep_per_base = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.conversion_rate();
+    <b>let</b> (conversion_is_base, deep_per_asset) = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.deep_per_asset(self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>());
 
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
         self.id.to_inner(),
@@ -1417,7 +1422,9 @@ Only Admin can set a pool as whitelist.
         pay_with_deep,
         ctx.epoch(),
         expire_timestamp,
-        deep_per_base,
+        deep_per_asset,
+        conversion_is_base,
+        self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(),
         market_order,
     );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());

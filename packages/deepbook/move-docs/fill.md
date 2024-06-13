@@ -7,7 +7,7 @@
 
 -  [Struct `Fill`](#0x0_fill_Fill)
 -  [Function `new`](#0x0_fill_new)
--  [Function `order_id`](#0x0_fill_order_id)
+-  [Function `maker_order_id`](#0x0_fill_maker_order_id)
 -  [Function `balance_manager_id`](#0x0_fill_balance_manager_id)
 -  [Function `expired`](#0x0_fill_expired)
 -  [Function `completed`](#0x0_fill_completed)
@@ -15,7 +15,9 @@
 -  [Function `taker_is_bid`](#0x0_fill_taker_is_bid)
 -  [Function `quote_quantity`](#0x0_fill_quote_quantity)
 -  [Function `maker_epoch`](#0x0_fill_maker_epoch)
--  [Function `maker_deep_per_base`](#0x0_fill_maker_deep_per_base)
+-  [Function `maker_deep_per_asset`](#0x0_fill_maker_deep_per_asset)
+-  [Function `maker_conversion_is_base`](#0x0_fill_maker_conversion_is_base)
+-  [Function `maker_is_whitelisted`](#0x0_fill_maker_is_whitelisted)
 -  [Function `get_settled_maker_quantities`](#0x0_fill_get_settled_maker_quantities)
 
 
@@ -44,7 +46,7 @@ It is used to update the state.
 
 <dl>
 <dt>
-<code>order_id: u128</code>
+<code>maker_order_id: u128</code>
 </dt>
 <dd>
 
@@ -92,7 +94,19 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>maker_deep_per_base: u64</code>
+<code>maker_deep_per_asset: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>maker_conversion_is_base: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>maker_is_whitelisted: bool</code>
 </dt>
 <dd>
 
@@ -108,7 +122,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool, maker_epoch: u64, maker_deep_per_base: u64): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(maker_order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool, maker_epoch: u64, maker_deep_per_asset: u64, maker_conversion_is_base: bool, maker_is_whitelisted: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -118,7 +132,7 @@ It is used to update the state.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(
-    order_id: u128,
+    maker_order_id: u128,
     balance_manager_id: ID,
     expired: bool,
     completed: bool,
@@ -126,10 +140,12 @@ It is used to update the state.
     quote_quantity: u64,
     taker_is_bid: bool,
     maker_epoch: u64,
-    maker_deep_per_base: u64,
+    maker_deep_per_asset: u64,
+    maker_conversion_is_base: bool,
+    maker_is_whitelisted: bool,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
-        order_id,
+        maker_order_id,
         balance_manager_id,
         expired,
         completed,
@@ -137,7 +153,9 @@ It is used to update the state.
         quote_quantity,
         taker_is_bid,
         maker_epoch,
-        maker_deep_per_base,
+        maker_deep_per_asset,
+        maker_conversion_is_base,
+        maker_is_whitelisted,
     }
 }
 </code></pre>
@@ -146,13 +164,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_order_id"></a>
+<a name="0x0_fill_maker_order_id"></a>
 
-## Function `order_id`
+## Function `maker_order_id`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_order_id">order_id</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u128
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_order_id">maker_order_id</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u128
 </code></pre>
 
 
@@ -161,8 +179,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_order_id">order_id</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u128 {
-    self.order_id
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_order_id">maker_order_id</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u128 {
+    self.maker_order_id
 }
 </code></pre>
 
@@ -342,13 +360,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_maker_deep_per_base"></a>
+<a name="0x0_fill_maker_deep_per_asset"></a>
 
-## Function `maker_deep_per_base`
+## Function `maker_deep_per_asset`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_base">maker_deep_per_base</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_asset">maker_deep_per_asset</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
 </code></pre>
 
 
@@ -357,8 +375,56 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_base">maker_deep_per_base</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.maker_deep_per_base
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_asset">maker_deep_per_asset</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
+    self.maker_deep_per_asset
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_fill_maker_conversion_is_base"></a>
+
+## Function `maker_conversion_is_base`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_conversion_is_base">maker_conversion_is_base</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_conversion_is_base">maker_conversion_is_base</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): bool {
+    self.maker_conversion_is_base
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_fill_maker_is_whitelisted"></a>
+
+## Function `maker_is_whitelisted`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_is_whitelisted">maker_is_whitelisted</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_is_whitelisted">maker_is_whitelisted</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): bool {
+    self.maker_is_whitelisted
 }
 </code></pre>
 
