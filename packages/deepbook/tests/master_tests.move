@@ -149,7 +149,7 @@ module deepbook::master_tests {
         assert!(test.ctx().epoch() == 0, 0);
 
         // Set pool 1 as whitelisted, which means 0 trading fees
-        set_whitelist<SUI, DEEP>(
+        pool_tests::set_whitelist<SUI, DEEP>(
             OWNER,
             pool1_id,
             true,
@@ -158,7 +158,7 @@ module deepbook::master_tests {
 
         // Cannot set pool 2 as whitelisted because DEEP is not an asset
         if (error_code == ECannotSetWhitelist) {
-            set_whitelist<SPAM, SUI>(
+            pool_tests::set_whitelist<SPAM, SUI>(
                 OWNER,
                 pool2_id,
                 true,
@@ -219,7 +219,7 @@ module deepbook::master_tests {
 
         if (error_code == EEmptyPool) {
             // SUI/DEEP pool has no orders, cannot add price point
-            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+            pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
                 OWNER,
                 pool2_id,
                 pool1_id,
@@ -277,7 +277,7 @@ module deepbook::master_tests {
         // Pool 2 deep per base should be 0 (non functional)
         // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
         pool_tests::set_time(1_000_000_000, &mut test);
-        add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+        pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
             OWNER,
             pool2_id,
             pool1_id,
@@ -286,7 +286,7 @@ module deepbook::master_tests {
 
         if (error_code == EDataRecentlyAdded) {
             // Cannot add deep price point again because it was added too recently
-            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+            pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
                 OWNER,
                 pool2_id,
                 pool1_id,
@@ -317,28 +317,6 @@ module deepbook::master_tests {
         end(test);
     }
 
-    fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
-        sender: address,
-        target_pool_id: ID,
-        reference_pool_id: ID,
-        test: &mut Scenario,
-    ){
-        test.next_tx(sender);
-        {
-            let mut target_pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(target_pool_id);
-            let reference_pool = test.take_shared_by_id<Pool<ReferenceBaseAsset, ReferenceQuoteAsset>>(reference_pool_id);
-            let clock = test.take_shared<Clock>();
-            pool::add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
-                &mut target_pool,
-                &reference_pool,
-                &clock
-            );
-            return_shared(target_pool);
-            return_shared(reference_pool);
-            return_shared(clock);
-        }
-    }
-
     fun set_stable<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
@@ -353,27 +331,6 @@ module deepbook::master_tests {
                 &mut pool,
                 &admin_cap,
                 stable,
-                test.ctx()
-            );
-            test_utils::destroy(admin_cap);
-            return_shared(pool);
-        }
-    }
-
-    fun set_whitelist<BaseAsset, QuoteAsset>(
-        sender: address,
-        pool_id: ID,
-        is_whitelisted: bool,
-        test: &mut Scenario,
-    ){
-        test.next_tx(sender);
-        {
-            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            pool::set_whitelist<BaseAsset, QuoteAsset>(
-                &mut pool,
-                &admin_cap,
-                is_whitelisted,
                 test.ctx()
             );
             test_utils::destroy(admin_cap);

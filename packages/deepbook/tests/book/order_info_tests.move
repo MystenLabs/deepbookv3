@@ -350,6 +350,7 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let whitelisted = true;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -362,6 +363,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            whitelisted,
             market_order
         );
 
@@ -382,6 +384,7 @@ module deepbook::order_info_tests {
         let market_order = true;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let whitelisted = true;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -394,6 +397,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            whitelisted,
             market_order
         );
 
@@ -438,6 +442,7 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let whitelisted = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -450,6 +455,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            whitelisted,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
@@ -473,6 +479,7 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let whitelisted = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -485,6 +492,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            whitelisted,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
@@ -508,6 +516,7 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let whitelisted = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -520,6 +529,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            whitelisted,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
@@ -544,6 +554,7 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_deep = true;
+        let whitelisted = true;
 
         create_order_info(
             balance_manager_id,
@@ -557,6 +568,7 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_deep,
+            whitelisted,
             market_order
         )
     }
@@ -572,7 +584,8 @@ module deepbook::order_info_tests {
         epoch: u64,
         expire_timestamp: u64,
         deep_per_asset: u64,
-        conversion_is_deep: bool,
+        conversion_is_base: bool,
+        whitelisted: bool,
         market_order: bool,
     ): OrderInfo {
         let pool_id = id_from_address(@0x2);
@@ -591,7 +604,8 @@ module deepbook::order_info_tests {
             epoch,
             expire_timestamp,
             deep_per_asset,
-            conversion_is_deep,
+            conversion_is_base,
+            whitelisted,
             market_order,
         );
 

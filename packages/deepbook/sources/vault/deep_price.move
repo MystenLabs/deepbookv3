@@ -12,7 +12,7 @@ module deepbook::deep_price {
     const MAX_DATA_POINTS: u64 = 100;
 
     const EDataPointRecentlyAdded: u64 = 1;
-    // const ENoDataPoints: u64 = 2;
+    const ENoDataPoints: u64 = 2;
 
     /// DEEP price point.
     public struct Price has store, drop {
@@ -77,17 +77,18 @@ module deepbook::deep_price {
                 asset_prices.remove(0);
             }
         };
-        std::debug::print(&self.cumulative_base);
-        std::debug::print(&self.cumulative_quote);
     }
 
     /// Returns the conversion rate of DEEP per asset token.
     /// is_base is true if the asset is the base asset.
     public(package) fun deep_per_asset(
         self: &DeepPrice,
+        whitelisted: bool,
     ): (bool, u64) {
-        // TODO: Add assert, then remove override below.
-        // assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
+        if (whitelisted) {
+            return (true, 0); // no fees for whitelist
+        };
+        assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
         if (self.last_insert_timestamp(true) == 0 && self.last_insert_timestamp(false) == 0) {
             return (true, 10 * 1_000_000_000); // Default deep conversion rate to 10, remove after testing
         };
@@ -106,7 +107,7 @@ module deepbook::deep_price {
         };
         let deep_per_asset = cumulative_asset / asset_length;
 
-        (true, deep_per_asset)
+        (is_base_conversion, deep_per_asset)
     }
 
     fun last_insert_timestamp(

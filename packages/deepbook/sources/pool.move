@@ -432,10 +432,8 @@ module deepbook::pool {
         // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
         // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
         if (reference_other_is_target_base){
-            std::debug::print(&88888);
             target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
         } else {
-            std::debug::print(&99999);
             target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, false);
         }
     }
@@ -586,7 +584,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let (conversion_is_base, deep_per_asset) = self.deep_price.deep_per_asset();
+        let (conversion_is_base, deep_per_asset) = self.deep_price.deep_per_asset(self.whitelisted());
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -603,6 +601,7 @@ module deepbook::pool {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
+            self.whitelisted(),
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
