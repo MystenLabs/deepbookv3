@@ -53,11 +53,17 @@ module deepbook::state {
             let account = &mut self.accounts[maker];
             account.process_maker_fill(fill);
 
-            let volume = fill.base_quantity();
-            self.history.add_volume(volume, account.active_stake());
+            let base_volume = fill.base_quantity();
+            let quote_volume = fill.quote_quantity();
+            self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
+            let fee_volume = if (fill.maker_conversion_is_base()) {
+                base_volume
+            } else {
+                quote_volume
+            };
             let order_maker_fee = math::mul(
-                math::mul(volume, historic_maker_fee),
+                math::mul(fee_volume, historic_maker_fee),
                 fill.maker_deep_per_asset()
             );
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));

@@ -122,6 +122,7 @@ module deepbook::order {
             is_bid,
             self.epoch,
             self.deep_per_asset,
+            self.conversion_is_base,
         )
     }
 
