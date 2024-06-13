@@ -26,6 +26,8 @@ module deepbook::fill {
         maker_deep_per_asset: u64,
         // Deep conversion is base
         maker_conversion_is_base: bool,
+        // Whether the maker order was placed while pool is whitelisted
+        maker_is_whitelisted: bool,
     }
 
     public(package) fun new(
@@ -39,6 +41,7 @@ module deepbook::fill {
         maker_epoch: u64,
         maker_deep_per_asset: u64,
         maker_conversion_is_base: bool,
+        maker_is_whitelisted: bool,
     ): Fill {
         Fill {
             order_id,
@@ -51,6 +54,7 @@ module deepbook::fill {
             maker_epoch,
             maker_deep_per_asset,
             maker_conversion_is_base,
+            maker_is_whitelisted,
         }
     }
 
@@ -96,6 +100,10 @@ module deepbook::fill {
 
     public(package) fun maker_conversion_is_base(self: &Fill): bool {
         self.maker_conversion_is_base
+    }
+
+    public(package) fun maker_is_whitelisted(self: &Fill): bool {
+        self.maker_is_whitelisted
     }
 
     public(package) fun get_settled_maker_quantities(self: &Fill): Balances {

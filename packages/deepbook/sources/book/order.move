@@ -126,6 +126,7 @@ module deepbook::order {
             self.epoch,
             self.deep_per_asset,
             self.conversion_is_base,
+            self.whitelisted
         )
     }
 

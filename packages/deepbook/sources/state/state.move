@@ -62,10 +62,14 @@ module deepbook::state {
             } else {
                 quote_volume
             };
-            let order_maker_fee = math::mul(
-                math::mul(fee_volume, historic_maker_fee),
-                fill.maker_deep_per_asset()
-            );
+            let order_maker_fee = if (fill.maker_is_whitelisted()) {
+                0
+            } else {
+                math::mul(
+                    math::mul(fee_volume, historic_maker_fee),
+                    fill.maker_deep_per_asset()
+                )
+            };
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 
             i = i + 1;
