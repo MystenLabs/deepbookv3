@@ -179,7 +179,7 @@ module deepbook::state_tests {
         // alice and bob stake 100 DEEP each
         // default stake required is 100
         let mut state = state::empty(test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(ALICE), 120 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 100 * constants::sui_unit(), test.ctx());
 
         // to make stakes active
@@ -252,7 +252,7 @@ module deepbook::state_tests {
         // alice and bob stake 50 DEEP each
         // default stake required is 100
         let mut state = state::empty(test.ctx());
-        state.process_stake(id_from_address(ALICE), 50 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(ALICE), 60 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 50 * constants::sui_unit(), test.ctx());
 
         // to make stakes active
