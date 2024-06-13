@@ -78,7 +78,26 @@ module deepbook::state {
 
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_asset()));
+
+        let volume_in_deep = if (order_info.conversion_is_base()) {
+            math::mul(account_volume, order_info.deep_per_asset())
+        } else if (order_info.executed_quantity() > 0) {
+            let avg_executed_price = math::div(
+                order_info.cumulative_quote_quantity(),
+                order_info.executed_quantity()
+            );
+            math::mul(
+                avg_executed_price,
+                math::mul(account_volume, order_info.deep_per_asset())
+            )
+        } else {
+            math::mul(
+                order_info.price(),
+                math::mul(account_volume, order_info.deep_per_asset())
+            )
+        };
+
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, volume_in_deep);
         let maker_fee = self.governance.trade_params().maker_fee();
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);

@@ -2136,11 +2136,11 @@ module deepbook::pool_tests {
     }
 
     /// Set the time in the global clock
-    fun set_time(
+    public(package) fun set_time(
         current_time: u64,
         test: &mut Scenario,
     ) {
-        test.next_tx(ALICE);
+        test.next_tx(OWNER);
         {
             let mut clock = test.take_shared<Clock>();
             clock.set_for_testing(current_time);
@@ -2152,7 +2152,7 @@ module deepbook::pool_tests {
     fun get_time(
         test: &mut Scenario,
     ): u64 {
-        test.next_tx(ALICE);
+        test.next_tx(OWNER);
         {
             let clock = test.take_shared<Clock>();
             let time =clock.timestamp_ms();

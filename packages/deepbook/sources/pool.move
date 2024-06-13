@@ -424,16 +424,18 @@ module deepbook::pool {
         // For DEEP/USDC pool, reference_deep_is_base is true, DEEP per USDC is reference_pool_price
         // For USDC/DEEP pool, reference_deep_is_base is false, USDC per DEEP is reference_pool_price
         let deep_per_reference_other_price = if (reference_deep_is_base) {
-            reference_pool_price
-        } else {
             math::div(1_000_000_000, reference_pool_price)
+        } else {
+            reference_pool_price
         };
 
         // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
         // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
         if (reference_other_is_target_base){
+            std::debug::print(&88888);
             target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
         } else {
+            std::debug::print(&99999);
             target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, false);
         }
     }

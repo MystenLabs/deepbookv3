@@ -46,6 +46,7 @@ module deepbook::master_tests {
     const EIncorrectRebateClaimer: u64 = 5;
     const ECannotSetWhitelist: u64 = 6;
     const EEmptyPool: u64 = 7;
+    const EDataRecentlyAdded: u64 = 8;
 
     #[test]
     fun test_master_ok(){
@@ -90,6 +91,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
     fun test_master_2_empty_pool_e(){
         test_master_2(EEmptyPool)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
+    fun test_master_2_recently_added_e(){
+        test_master_2(EDataRecentlyAdded)
     }
 
     fun test_master_2(
@@ -267,12 +273,44 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-        //     OWNER,
-        //     pool2_id,
-        //     pool1_id,
-        //     &mut test
-        // );
+        // Pool 2 now uses pool 1 as reference pool
+        // Pool 2 deep per base should be 0 (non functional)
+        // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
+        pool_tests::set_time(1_000_000_000, &mut test);
+        add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+            OWNER,
+            pool2_id,
+            pool1_id,
+            &mut test
+        );
+
+        if (error_code == EDataRecentlyAdded) {
+            // Cannot add deep price point again because it was added too recently
+            add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+                OWNER,
+                pool2_id,
+                pool1_id,
+                &mut test
+            );
+        };
+
+        // Alice places a bid order in pool 2 with quantity 1, price 100
+        // Maker fee should be the default of 0.05%
+        // Since deep per sui is 150, Alice should pay 0.05% * (quantity 1 * price 100 * conversion 150) = 0.75 DEEP
+        pool_tests::place_limit_order<SPAM, SUI>(
+            ALICE,
+            pool2_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
 
         // When deep price point is added to pool_2, the mid price of (100 + 200) / 2 = 150 should be added
 
