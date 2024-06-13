@@ -458,7 +458,7 @@ module deepbook::pool_tests {
     }
 
     /// Set up a reference pool where Deep per base is 10
-    fun setup_reference_pool<BaseAsset, QuoteAsset>(
+    public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
         sender: address,
         registry_id: ID,
         balance_manager_id: ID,

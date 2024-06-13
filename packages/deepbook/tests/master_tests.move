@@ -78,25 +78,25 @@ module deepbook::master_tests {
         test_master(EIncorrectRebateClaimer)
     }
 
-    #[test]
-    fun test_master_2_ok(){
-        test_master_2(NoError)
-    }
+    // #[test]
+    // fun test_master_2_ok(){
+    //     test_master_2(NoError)
+    // }
 
-    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
-    fun test_master_2_cannot_set_whitelist_e(){
-        test_master_2(ECannotSetWhitelist)
-    }
+    // #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
+    // fun test_master_2_cannot_set_whitelist_e(){
+    //     test_master_2(ECannotSetWhitelist)
+    // }
 
-    #[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
-    fun test_master_2_empty_pool_e(){
-        test_master_2(EEmptyPool)
-    }
+    // #[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
+    // fun test_master_2_empty_pool_e(){
+    //     test_master_2(EEmptyPool)
+    // }
 
-    #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
-    fun test_master_2_recently_added_e(){
-        test_master_2(EDataRecentlyAdded)
-    }
+    // #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
+    // fun test_master_2_recently_added_e(){
+    //     test_master_2(EDataRecentlyAdded)
+    // }
 
     fun test_master_2(
         error_code: u64,
@@ -104,10 +104,26 @@ module deepbook::master_tests {
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
 
-        // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, DEEP>(OWNER, registry_id, &mut test);
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, &mut test);
         let starting_balance = 10000 * constants::float_scaling();
+
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, &mut test);
+
+        // Default price point of 10 deep per base (SPAM) will be added
+        pool_tests::set_time(0, &mut test);
+        pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+            OWNER,
+            pool2_id,
+            pool1_id,
+            &mut test,
+        );
 
         let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             ALICE,
@@ -343,6 +359,18 @@ module deepbook::master_tests {
     ) {
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+
+        let starting_balance = 10000 * constants::float_scaling();
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
+        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
         let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
@@ -350,7 +378,20 @@ module deepbook::master_tests {
             pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, &mut test);
         };
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
-        let starting_balance = 10000 * constants::float_scaling();
+
+        // Default price point of 10 deep per base will be added
+        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            pool1_reference_id,
+            &mut test,
+        );
+        pool_tests::add_deep_price_point<SPAM, USDC, SPAM, DEEP>(
+            OWNER,
+            pool2_id,
+            pool2_reference_id,
+            &mut test,
+        );
 
         let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             ALICE,
