@@ -128,18 +128,20 @@ module deepbook::order_tests {
         let price = 10 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let is_bid = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let order_id = 1;
         let balance_manager_id = id_from_address(ALICE);
         let epoch = 1;
         let expire_timestamp = test.ctx().epoch_timestamp_ms();
+        let conversion_is_base = true;
         let mut order = create_order(
             price,
             quantity,
             is_bid,
             order_id,
             balance_manager_id,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             epoch,
             expire_timestamp,
         );
@@ -264,18 +266,20 @@ module deepbook::order_tests {
         let price = 10 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let is_bid = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let order_id = 1;
         let balance_manager_id = id_from_address(ALICE);
         let epoch = 1;
         let expire_timestamp = test.ctx().epoch_timestamp_ms() + 1000;
+        let conversion_is_base = true;
         let mut order = create_order(
             price,
             quantity,
             is_bid,
             order_id,
             balance_manager_id,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             epoch,
             expire_timestamp,
         );
@@ -291,11 +295,12 @@ module deepbook::order_tests {
         quantity: u64,
         is_bid: bool,
     ): Order {
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let order_id = 1;
         let balance_manager_id = id_from_address(ALICE);
         let epoch = 1;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
 
         create_order(
             price,
@@ -303,7 +308,8 @@ module deepbook::order_tests {
             is_bid,
             order_id,
             balance_manager_id,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             epoch,
             expire_timestamp,
         )
@@ -315,7 +321,8 @@ module deepbook::order_tests {
         is_bid: bool,
         order_id: u64,
         balance_manager_id: ID,
-        deep_per_base: u64,
+        deep_per_asset: u64,
+        conversion_is_base: bool,
         epoch: u64,
         expire_timestamp: u64,
     ): Order {
@@ -327,7 +334,8 @@ module deepbook::order_tests {
             1,
             quantity,
             constants::fee_is_deep(),
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             epoch,
             constants::live(),
             expire_timestamp,

@@ -1888,7 +1888,7 @@ module deepbook::pool_tests {
             client_order_id,
             quantity,
             expected_executed_quantity,
-            order_info_bob.deep_per_base(),
+            order_info_bob.deep_per_asset(),
             test.ctx().epoch(),
             expected_status,
             expire_timestamp,
@@ -1962,7 +1962,7 @@ module deepbook::pool_tests {
             client_order_id,
             quantity,
             executed_quantity,
-            order_info.deep_per_base(),
+            order_info.deep_per_asset(),
             test.ctx().epoch(),
             status,
             expire_timestamp,
@@ -2107,7 +2107,7 @@ module deepbook::pool_tests {
         client_order_id: u64,
         quantity: u64,
         filled_quantity: u64,
-        deep_per_base: u64,
+        deep_per_asset: u64,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -2116,7 +2116,7 @@ module deepbook::pool_tests {
         assert!(order.client_order_id() == client_order_id, constants::e_book_order_mismatch());
         assert!(order.quantity() == quantity, constants::e_book_order_mismatch());
         assert!(order.filled_quantity() == filled_quantity, constants::e_book_order_mismatch());
-        assert!(order.deep_per_base() == deep_per_base, constants::e_book_order_mismatch());
+        assert!(order.deep_per_asset() == deep_per_asset, constants::e_book_order_mismatch());
         assert!(order.epoch() == epoch, constants::e_book_order_mismatch());
         assert!(order.status() == status, constants::e_book_order_mismatch());
         assert!(order.expire_timestamp() == expire_timestamp, constants::e_book_order_mismatch());

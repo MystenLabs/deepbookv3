@@ -51,8 +51,10 @@ module deepbook::order_info {
         is_bid: bool,
         // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
-        // DEEP conversion per base asset
-        deep_per_base: u64,
+        // DEEP conversion per input asset
+        deep_per_asset: u64,
+        // Conversion is base
+        conversion_is_base: bool,
         // Expiration timestamp in ms
         expire_timestamp: u64,
         // Quantity executed so far
@@ -164,8 +166,8 @@ module deepbook::order_info {
         self.executed_quantity
     }
 
-    public fun deep_per_base(self: &OrderInfo): u64 {
-        self.deep_per_base
+    public fun deep_per_asset(self: &OrderInfo): u64 {
+        self.deep_per_asset
     }
 
     public fun cumulative_quote_quantity(self: &OrderInfo): u64 {
@@ -210,7 +212,8 @@ module deepbook::order_info {
         fee_is_deep: bool,
         epoch: u64,
         expire_timestamp: u64,
-        deep_per_base: u64,
+        deep_per_asset: u64,
+        conversion_is_base: bool,
         market_order: bool,
     ): OrderInfo {
         OrderInfo {
@@ -224,7 +227,8 @@ module deepbook::order_info {
             price,
             is_bid,
             original_quantity: quantity,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             expire_timestamp,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
@@ -259,7 +263,7 @@ module deepbook::order_info {
         maker_fee: u64,
     ): (Balances, Balances) {
         let deep_in = math::mul(
-            self.deep_per_base,
+            self.deep_per_asset,
             math::mul(self.executed_quantity, taker_fee)
         );
         self.paid_fees = deep_in;
@@ -279,7 +283,7 @@ module deepbook::order_info {
         let remaining_quantity = self.remaining_quantity();
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
             let deep_in = math::mul(
-                self.deep_per_base,
+                self.deep_per_asset,
                 math::mul(remaining_quantity, maker_fee)
             );
             owed_balances.add_deep(deep_in);
@@ -305,7 +309,8 @@ module deepbook::order_info {
             self.client_order_id,
             self.remaining_quantity(),
             self.fee_is_deep,
-            self.deep_per_base,
+            self.deep_per_asset,
+            self.conversion_is_base,
             self.epoch,
             self.status,
             self.expire_timestamp,

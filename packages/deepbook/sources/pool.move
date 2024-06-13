@@ -584,7 +584,8 @@ module deepbook::pool {
         ctx: &TxContext,
     ): OrderInfo {
         assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let deep_per_base = self.deep_price.deep_per_asset(true);
+        let deep_per_asset = self.deep_price.deep_per_asset(true);
+        let conversion_is_base = true;
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -599,7 +600,8 @@ module deepbook::pool {
             pay_with_deep,
             ctx.epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());

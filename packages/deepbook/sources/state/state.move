@@ -58,7 +58,7 @@ module deepbook::state {
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
             let order_maker_fee = math::mul(
                 math::mul(volume, historic_maker_fee),
-                fill.maker_deep_per_base()
+                fill.maker_deep_per_asset()
             );
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 
@@ -72,7 +72,7 @@ module deepbook::state {
 
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_asset()));
         let maker_fee = self.governance.trade_params().maker_fee();
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);

@@ -23,7 +23,8 @@ module deepbook::fill {
         // Maker epoch
         maker_epoch: u64,
         // Maker deep per base
-        maker_deep_per_base: u64,
+        maker_deep_per_asset: u64,
+        // Deep conversion is
     }
 
     public(package) fun new(
@@ -35,7 +36,7 @@ module deepbook::fill {
         quote_quantity: u64,
         taker_is_bid: bool,
         maker_epoch: u64,
-        maker_deep_per_base: u64,
+        maker_deep_per_asset: u64,
     ): Fill {
         Fill {
             order_id,
@@ -46,7 +47,7 @@ module deepbook::fill {
             quote_quantity,
             taker_is_bid,
             maker_epoch,
-            maker_deep_per_base,
+            maker_deep_per_asset,
         }
     }
 
@@ -86,8 +87,8 @@ module deepbook::fill {
         self.maker_epoch
     }
 
-    public(package) fun maker_deep_per_base(self: &Fill): u64 {
-        self.maker_deep_per_base
+    public(package) fun maker_deep_per_asset(self: &Fill): u64 {
+        self.maker_deep_per_asset
     }
 
     public(package) fun get_settled_maker_quantities(self: &Fill): Balances {

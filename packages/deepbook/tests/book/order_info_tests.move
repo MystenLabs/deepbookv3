@@ -346,9 +346,10 @@ module deepbook::order_info_tests {
         let balance_manager_id = id_from_address(@0x1);
         let order_type = 5;
         let fee_is_deep = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -359,7 +360,8 @@ module deepbook::order_info_tests {
             fee_is_deep,
             test.ctx().epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order
         );
 
@@ -376,9 +378,10 @@ module deepbook::order_info_tests {
         let balance_manager_id = id_from_address(@0x1);
         let order_type = 3;
         let fee_is_deep = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let market_order = true;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -389,7 +392,8 @@ module deepbook::order_info_tests {
             fee_is_deep,
             test.ctx().epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order
         );
 
@@ -430,9 +434,10 @@ module deepbook::order_info_tests {
         let balance_manager_id = id_from_address(@0x1);
         let order_type = 3;
         let fee_is_deep = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -443,7 +448,8 @@ module deepbook::order_info_tests {
             fee_is_deep,
             test.ctx().epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
@@ -463,9 +469,10 @@ module deepbook::order_info_tests {
         let balance_manager_id = id_from_address(@0x1);
         let order_type = 2;
         let fee_is_deep = true;
-        let deep_per_base = 1 * constants::float_scaling();
+        let deep_per_asset = 1 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -476,7 +483,8 @@ module deepbook::order_info_tests {
             fee_is_deep,
             test.ctx().epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
@@ -499,6 +507,7 @@ module deepbook::order_info_tests {
         let deep_per_base = 1 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -510,6 +519,7 @@ module deepbook::order_info_tests {
             test.ctx().epoch(),
             expire_timestamp,
             deep_per_base,
+            conversion_is_base,
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
@@ -533,6 +543,7 @@ module deepbook::order_info_tests {
         let deep_per_base = 1 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_deep = true;
 
         create_order_info(
             balance_manager_id,
@@ -545,6 +556,7 @@ module deepbook::order_info_tests {
             epoch,
             expire_timestamp,
             deep_per_base,
+            conversion_is_deep,
             market_order
         )
     }
@@ -560,6 +572,7 @@ module deepbook::order_info_tests {
         epoch: u64,
         expire_timestamp: u64,
         deep_per_base: u64,
+        conversion_is_deep: bool,
         market_order: bool,
     ): OrderInfo {
         let pool_id = id_from_address(@0x2);
@@ -578,6 +591,7 @@ module deepbook::order_info_tests {
             epoch,
             expire_timestamp,
             deep_per_base,
+            conversion_is_deep,
             market_order,
         );
 

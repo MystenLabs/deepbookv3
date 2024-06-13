@@ -96,9 +96,10 @@ module deepbook::state_tests {
         let balance_manager_id = id_from_address(BOB);
         let order_type = 0;
         let fee_is_deep = true;
-        let deep_per_base = 21 * constants::float_scaling();
+        let deep_per_asset = 21 * constants::float_scaling();
         let market_order = false;
         let expire_timestamp = constants::max_u64();
+        let conversion_is_base = true;
         let mut taker_order = create_order_info(
             balance_manager_id,
             BOB,
@@ -109,7 +110,8 @@ module deepbook::state_tests {
             fee_is_deep,
             test.ctx().epoch(),
             expire_timestamp,
-            deep_per_base,
+            deep_per_asset,
+            conversion_is_base,
             market_order
         );
 
