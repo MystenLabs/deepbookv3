@@ -67,13 +67,14 @@ module deepbook::state {
 
         self.update_account(order_info.balance_manager_id(), ctx);
         let account = &mut self.accounts[order_info.balance_manager_id()];
-        account.add_order(order_info.order_id());
-        account.add_taker_volume(order_info.executed_quantity());
 
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
         let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
         let maker_fee = self.governance.trade_params().maker_fee();
+
+        account.add_order(order_info.order_id());
+        account.add_taker_volume(order_info.executed_quantity());
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();

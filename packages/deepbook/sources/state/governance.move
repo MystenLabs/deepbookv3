@@ -160,7 +160,7 @@ module deepbook::governance {
         if (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
             let proposal = &mut self.proposals[from_proposal_id.borrow()];
             proposal.votes = proposal.votes - votes;
-            if (proposal.votes + votes > self.quorum && proposal.votes < self.quorum) {
+            if (proposal.votes + votes >= self.quorum && proposal.votes < self.quorum) {
                 self.next_trade_params = self.trade_params;
             };
         };
@@ -170,7 +170,7 @@ module deepbook::governance {
 
             let proposal = &mut self.proposals[to_proposal_id.borrow()];
             proposal.votes = proposal.votes + votes;
-            if (proposal.votes > self.quorum) {
+            if (proposal.votes >= self.quorum) {
                 self.next_trade_params = proposal.to_trade_params();
             };
         };

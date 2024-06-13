@@ -536,7 +536,7 @@ If <code>to_proposal_id</code> is some, the account is voting for that proposal.
     <b>if</b> (from_proposal_id.is_some() && self.proposals.contains(from_proposal_id.borrow())) {
         <b>let</b> proposal = &<b>mut</b> self.proposals[from_proposal_id.borrow()];
         proposal.votes = proposal.votes - votes;
-        <b>if</b> (proposal.votes + votes &gt; self.quorum && proposal.votes &lt; self.quorum) {
+        <b>if</b> (proposal.votes + votes &gt;= self.quorum && proposal.votes &lt; self.quorum) {
             self.next_trade_params = self.<a href="trade_params.md#0x0_trade_params">trade_params</a>;
         };
     };
@@ -546,7 +546,7 @@ If <code>to_proposal_id</code> is some, the account is voting for that proposal.
 
         <b>let</b> proposal = &<b>mut</b> self.proposals[to_proposal_id.borrow()];
         proposal.votes = proposal.votes + votes;
-        <b>if</b> (proposal.votes &gt; self.quorum) {
+        <b>if</b> (proposal.votes &gt;= self.quorum) {
             self.next_trade_params = proposal.<a href="governance.md#0x0_governance_to_trade_params">to_trade_params</a>();
         };
     };
