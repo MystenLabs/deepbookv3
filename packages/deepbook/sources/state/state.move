@@ -99,11 +99,11 @@ module deepbook::state {
         };
 
         let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, volume_in_deep);
-        std::debug::print(&taker_fee);
         let maker_fee = self.governance.trade_params().maker_fee();
 
-        // TODO: we should only add if remaining quantity is 0
-        account.add_order(order_info.order_id());
+        if (order_info.remaining_quantity() > 0) {
+            account.add_order(order_info.order_id());
+        };
         account.add_taker_volume(order_info.executed_quantity());
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);

@@ -372,6 +372,12 @@ module deepbook::order_info {
             return true
         };
 
+        if (self.remaining_quantity() == 0) {
+            self.status = constants::filled();
+
+            return true
+        };
+
         false
     }
 

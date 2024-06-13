@@ -7,7 +7,7 @@ module deepbook::fill {
     /// It is used to update the state.
     public struct Fill has store, drop, copy {
         // ID of the maker order
-        order_id: u128,
+        maker_order_id: u128,
         // account_id of the maker order
         balance_manager_id: ID,
         // Whether the maker order is expired
@@ -31,7 +31,7 @@ module deepbook::fill {
     }
 
     public(package) fun new(
-        order_id: u128,
+        maker_order_id: u128,
         balance_manager_id: ID,
         expired: bool,
         completed: bool,
@@ -44,7 +44,7 @@ module deepbook::fill {
         maker_is_whitelisted: bool,
     ): Fill {
         Fill {
-            order_id,
+            maker_order_id,
             balance_manager_id,
             expired,
             completed,
@@ -58,8 +58,8 @@ module deepbook::fill {
         }
     }
 
-    public(package) fun order_id(self: &Fill): u128 {
-        self.order_id
+    public(package) fun maker_order_id(self: &Fill): u128 {
+        self.maker_order_id
     }
 
     public(package) fun balance_manager_id(self: &Fill): ID {

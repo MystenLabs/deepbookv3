@@ -97,7 +97,7 @@ module deepbook::account {
             self.maker_volume = self.maker_volume + fill.base_quantity();
         };
         if (fill.expired() || fill.completed()) {
-            self.open_orders.remove(&fill.order_id());
+            self.open_orders.remove(&fill.maker_order_id());
         }
     }
 
