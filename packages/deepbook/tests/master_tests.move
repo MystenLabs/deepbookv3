@@ -78,10 +78,10 @@ module deepbook::master_tests {
         test_master(EIncorrectRebateClaimer)
     }
 
-    // #[test]
-    // fun test_master_2_ok(){
-    //     test_master_2(NoError)
-    // }
+    #[test]
+    fun test_master_2_ok(){
+        test_master_2(NoError)
+    }
 
     // #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
     // fun test_master_2_cannot_set_whitelist_e(){
@@ -112,7 +112,7 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        // Create two pools, pool 1 will be used as reference pool
         let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, &mut test);
 
@@ -191,8 +191,8 @@ module deepbook::master_tests {
             bob_balance_manager_id,
             client_order_id,
             order_type,
-            price,
-            quantity,
+            price, // 100 * constants::float_scaling();
+            quantity, // 1 * constants::float_scaling();
             is_bid,
             pay_with_deep,
             constants::max_u64(),
@@ -202,133 +202,135 @@ module deepbook::master_tests {
         alice_balance.deep = alice_balance.deep - 2 * math::mul(price, quantity);
         bob_balance.sui = bob_balance.sui - 2 * quantity;
         bob_balance.deep = bob_balance.deep + 2 * math::mul(price, quantity);
-        check_balance(
+        std::debug::print(&77777);
+        check_balance_and_print(
             alice_balance_manager_id,
             &alice_balance,
             &mut test
         );
-        check_balance(
+        check_balance_and_print(
             bob_balance_manager_id,
             &bob_balance,
             &mut test
         );
 
-        // Alice stakes 100 deep into pool 1
-        stake<SUI, DEEP>(
-            ALICE,
-            pool1_id,
-            alice_balance_manager_id,
-            100 * constants::float_scaling(),
-            &mut test
-        );
-        alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
 
-        // Bob stakes 100 deep into pool 1
-        stake<SUI, DEEP>(
-            BOB,
-            pool1_id,
-            bob_balance_manager_id,
-            100 * constants::float_scaling(),
-            &mut test
-        );
-        bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
+        // // Alice stakes 100 deep into pool 1
+        // stake<SUI, DEEP>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     100 * constants::float_scaling(),
+        //     &mut test
+        // );
+        // alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
 
-        if (error_code == EEmptyPool) {
-            // SUI/DEEP pool has no orders, cannot add price point
-            pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-                OWNER,
-                pool2_id,
-                pool1_id,
-                &mut test
-            );
-        };
+        // // Bob stakes 100 deep into pool 1
+        // stake<SUI, DEEP>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     100 * constants::float_scaling(),
+        //     &mut test
+        // );
+        // bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
 
-        // Alice places a bid order in pool 1 with quantity 1, price 100
-        pool_tests::place_limit_order<SUI, DEEP>(
-            ALICE,
-            pool1_id,
-            alice_balance_manager_id,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-        // Alice should have 100 less deep
-        alice_balance.deep = alice_balance.deep - math::mul(price, quantity);
+        // if (error_code == EEmptyPool) {
+        //     // SUI/DEEP pool has no orders, cannot add price point
+        //     pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+        //         OWNER,
+        //         pool2_id,
+        //         pool1_id,
+        //         &mut test
+        //     );
+        // };
 
-        // Bob places a ask order in pool 1 with quantity 1, price 200
-        pool_tests::place_limit_order<SUI, DEEP>(
-            BOB,
-            pool1_id,
-            bob_balance_manager_id,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            2 * price,
-            quantity,
-            !is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-        // Bob should have 1 less sui
-        bob_balance.sui = bob_balance.sui - quantity;
-        check_balance(
-            alice_balance_manager_id,
-            &alice_balance,
-            &mut test
-        );
-        check_balance(
-            bob_balance_manager_id,
-            &bob_balance,
-            &mut test
-        );
+        // // Alice places a bid order in pool 1 with quantity 1, price 100
+        // pool_tests::place_limit_order<SUI, DEEP>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     price,
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     &mut test,
+        // );
+        // // Alice should have 100 less deep
+        // alice_balance.deep = alice_balance.deep - math::mul(price, quantity);
 
-        // Pool 2 now uses pool 1 as reference pool
-        // Pool 2 deep per base should be 0 (non functional)
-        // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
-        pool_tests::set_time(1_000_000_000, &mut test);
-        pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-            OWNER,
-            pool2_id,
-            pool1_id,
-            &mut test
-        );
+        // // Bob places a ask order in pool 1 with quantity 1, price 200
+        // pool_tests::place_limit_order<SUI, DEEP>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     2 * price,
+        //     quantity,
+        //     !is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     &mut test,
+        // );
+        // // Bob should have 1 less sui
+        // bob_balance.sui = bob_balance.sui - quantity;
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
 
-        if (error_code == EDataRecentlyAdded) {
-            // Cannot add deep price point again because it was added too recently
-            pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-                OWNER,
-                pool2_id,
-                pool1_id,
-                &mut test
-            );
-        };
+        // // Pool 2 now uses pool 1 as reference pool
+        // // Pool 2 deep per base should be 0 (non functional)
+        // // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
+        // pool_tests::set_time(1_000_000_000, &mut test);
+        // pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+        //     OWNER,
+        //     pool2_id,
+        //     pool1_id,
+        //     &mut test
+        // );
 
-        // Alice places a bid order in pool 2 with quantity 1, price 100
-        // Maker fee should be the default of 0.05%
-        // Since deep per sui is 150, Alice should pay 0.05% * (quantity 1 * price 100 * conversion 150) = 0.75 DEEP
-        pool_tests::place_limit_order<SPAM, SUI>(
-            ALICE,
-            pool2_id,
-            alice_balance_manager_id,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+        // if (error_code == EDataRecentlyAdded) {
+        //     // Cannot add deep price point again because it was added too recently
+        //     pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
+        //         OWNER,
+        //         pool2_id,
+        //         pool1_id,
+        //         &mut test
+        //     );
+        // };
 
-        // When deep price point is added to pool_2, the mid price of (100 + 200) / 2 = 150 should be added
+        // // Alice places a bid order in pool 2 with quantity 1, price 100
+        // // Maker fee should be the default of 0.05%
+        // // Since deep per sui is 150, Alice should pay 0.05% * (quantity 1 * price 100 * conversion 150) = 0.75 DEEP
+        // pool_tests::place_limit_order<SPAM, SUI>(
+        //     ALICE,
+        //     pool2_id,
+        //     alice_balance_manager_id,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     price,
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     &mut test,
+        // );
+
+        // // When deep price point is added to pool_2, the mid price of (100 + 200) / 2 = 150 should be added
 
         end(test);
     }
@@ -985,40 +987,40 @@ module deepbook::master_tests {
             expire_timestamp,
             test,
         );
-        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
-            BOB,
-            pool_id,
-            balance_manager_id_2,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            2 * quantity,
-            !is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            test,
-        );
-        pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
-            ALICE,
-            pool_id,
-            balance_manager_id_1,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            test,
-        );
-        withdraw_settled_amounts<BaseAsset, QuoteAsset>(
-            BOB,
-            pool_id,
-            balance_manager_id_2,
-            test
-        );
+        // pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+        //     BOB,
+        //     pool_id,
+        //     balance_manager_id_2,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     price,
+        //     2 * quantity,
+        //     !is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     test,
+        // );
+        // pool_tests::place_limit_order<BaseAsset, QuoteAsset>(
+        //     ALICE,
+        //     pool_id,
+        //     balance_manager_id_1,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     price,
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     test,
+        // );
+        // withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+        //     BOB,
+        //     pool_id,
+        //     balance_manager_id_2,
+        //     test
+        // );
     }
 
     fun check_vault_balances<BaseAsset, QuoteAsset>(

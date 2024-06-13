@@ -275,6 +275,7 @@ module deepbook::order_info {
             math::mul(self.executed_quantity, taker_fee)
         );
         self.paid_fees = deep_in;
+        std::debug::print(&66666666);
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);
@@ -289,11 +290,16 @@ module deepbook::order_info {
         };
 
         let remaining_quantity = self.remaining_quantity();
+        std::debug::print(&remaining_quantity);
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
             let mut deep_in = math::mul(
                 self.deep_per_asset,
                 math::mul(remaining_quantity, maker_fee)
             );
+            std::debug::print(&333333);
+            std::debug::print(&self.deep_per_asset);
+            std::debug::print(&remaining_quantity);
+            std::debug::print(&maker_fee);
             if (!self.conversion_is_base()) {
                 deep_in = math::mul(deep_in, self.price());
             };
@@ -322,6 +328,7 @@ module deepbook::order_info {
             self.fee_is_deep,
             self.deep_per_asset,
             self.conversion_is_base,
+            self.whitelisted,
             self.epoch,
             self.status,
             self.expire_timestamp,

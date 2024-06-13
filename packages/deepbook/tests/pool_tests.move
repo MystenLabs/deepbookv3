@@ -457,7 +457,7 @@ module deepbook::pool_tests {
         }
     }
 
-    /// Set up a reference pool where Deep per base is 10
+    /// Set up a reference pool where Deep per base is 100
     public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
         sender: address,
         registry_id: ID,
@@ -484,7 +484,7 @@ module deepbook::pool_tests {
             1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            5 * constants::float_scaling(),
+            1 * constants::float_scaling(),
             1 * constants::float_scaling(),
             true,
             true,
@@ -499,7 +499,7 @@ module deepbook::pool_tests {
             1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            15 * constants::float_scaling(),
+            199 * constants::float_scaling(),
             1 * constants::float_scaling(),
             false,
             true,

@@ -86,8 +86,9 @@ module deepbook::deep_price {
         whitelisted: bool,
     ): (bool, u64) {
         if (whitelisted) {
-            return (true, 0); // no fees for whitelist
+            return (true, 0) // no fees for whitelist
         };
+        std::debug::print(&666666);
         assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
         if (self.last_insert_timestamp(true) == 0 && self.last_insert_timestamp(false) == 0) {
             return (true, 10 * 1_000_000_000); // Default deep conversion rate to 10, remove after testing

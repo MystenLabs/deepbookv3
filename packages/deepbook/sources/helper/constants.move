@@ -52,7 +52,7 @@ module deepbook::constants {
     #[test_only]
     const MIN_SIZE: u64 = 10000;
     #[test_only]
-    const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
+    const DEEP_MULTIPLIER: u64 = 100 * FLOAT_SCALING;
     #[test_only]
     const TAKER_DISCOUNT: u64 = 500_000_000;
     #[test_only]
