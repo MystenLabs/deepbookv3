@@ -270,15 +270,22 @@ module deepbook::order_info {
         taker_fee: u64,
         maker_fee: u64,
     ): (Balances, Balances) {
-        let deep_in = math::mul(
-            self.deep_per_asset,
-            math::mul(self.executed_quantity, taker_fee)
-        );
-        self.paid_fees = deep_in;
+        let taker_deep_in = if (self.conversion_is_base) {
+            math::mul(
+                self.deep_per_asset,
+                math::mul(self.executed_quantity, taker_fee)
+            )
+        } else {
+            math::mul(
+                self.deep_per_asset,
+                math::mul(self.cumulative_quote_quantity, taker_fee)
+            )
+        };
+        self.paid_fees = taker_deep_in;
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);
-        owed_balances.add_deep(deep_in);
+        owed_balances.add_deep(taker_deep_in);
 
         if (self.is_bid) {
             settled_balances.add_base(self.executed_quantity);

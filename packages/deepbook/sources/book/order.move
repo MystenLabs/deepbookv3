@@ -151,7 +151,10 @@ module deepbook::order {
         } else {
             self.quantity - self.filled_quantity
         };
-        let deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_asset, maker_fee));
+        let mut deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_asset, maker_fee));
+        if (!self.conversion_is_base) {
+            deep_out = math::mul(deep_out, self.price());
+        };
         let mut base_out = 0;
         let mut quote_out = 0;
         if (self.is_bid()) {
