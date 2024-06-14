@@ -33,7 +33,7 @@ module deepbook::pool {
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
     const EInvalidAmountIn: u64 = 6;
-    // const EIneligibleWhitelist: u64 = 7;
+    const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderBalanceManager: u64 = 10;
@@ -464,11 +464,11 @@ module deepbook::pool {
         whitelist: bool,
         ctx: &TxContext,
     ) {
-        // TODO: remove comment out section after testing
-        // let base = type_name::get<BaseAsset>();
-        // let quote = type_name::get<QuoteAsset>();
-        // let deep_type = type_name::get<DEEP>();
-        // assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+        // TODO: remove the below for testing as needed
+        let base = type_name::get<BaseAsset>();
+        let quote = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
@@ -482,6 +482,25 @@ module deepbook::pool {
 
         let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+    }
+
+    public fun vault_balances<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        self.vault.balances()
+    }
+
+    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        _cap: &DeepbookAdminCap,
+    ) {
+        registry.unregister_pool<BaseAsset, QuoteAsset>();
+    }
+
+    public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
+        registry: &Registry,
+    ): ID {
+        registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
@@ -498,8 +517,6 @@ module deepbook::pool {
         assert!(min_size > 0, EInvalidMinSize);
 
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
-        registry.register_pool<BaseAsset, QuoteAsset>();
-
         let pool_uid = object::new(ctx);
         let pool_id = pool_uid.to_inner();
 
@@ -510,6 +527,8 @@ module deepbook::pool {
             vault: vault::empty(),
             deep_price: deep_price::empty(),
         };
+
+        registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
 
         let params = pool.state.governance().trade_params();
         let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());

@@ -3,43 +3,37 @@
 
 /// The BalanceManager is a shared object that holds all of the balances for different assets. A combination of `BalanceManager` and
 /// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
-/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of
-/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating
-/// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
+/// owner directly, or by any trader in the authorized_traders list. Either the owner or trader can generate a `TradeProof`
+/// without the risk of equivocation.
 module deepbook::balance_manager {
     use sui::{
         bag::{Self, Bag},
         balance::{Self, Balance},
         coin::Coin,
+        vec_set::{Self, VecSet},
     };
 
     const EInvalidOwner: u64 = 0;
     const EInvalidTrader: u64 = 1;
     const EInvalidProof: u64 = 2;
     const EBalanceManagerBalanceTooLow: u64 = 3;
-    const EMaxTradeCapsReached: u64 = 4;
-    const ETradeCapNotInList: u64 = 5;
+    const EMaxTraderReached: u64 = 4;
+    const ETraderNotInList: u64 = 5;
 
-    const MAX_TRADE_CAPS: u64 = 1000;
+    const MAX_TRADERS: u64 = 1000;
 
     /// A shared object that is passed into pools for placing orders.
     public struct BalanceManager has key {
         id: UID,
         owner: address,
         balances: Bag,
-        allow_listed: vector<ID>,
+        authorized_traders: VecSet<address>,
     }
 
     /// Balance identifier.
     public struct BalanceKey<phantom T> has store, copy, drop {}
 
-    /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
-    public struct TradeCap has key, store {
-        id: UID,
-        balance_manager_id: ID,
-    }
-
-    /// BalanceManager owner and `TradeCap` owners can generate a `TradeProof`.
+    /// BalanceManager owner and authorized traders can generate a `TradeProof`.
     /// `TradeProof` is used to validate the balance_manager when trading on DeepBook.
     public struct TradeProof has drop {
         balance_manager_id: ID,
@@ -51,7 +45,7 @@ module deepbook::balance_manager {
             id: object::new(ctx),
             owner: ctx.sender(),
             balances: bag::new(ctx),
-            allow_listed: vector[],
+            authorized_traders: vec_set::empty(),
         }
     }
 
@@ -71,32 +65,28 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
-    public fun mint_trade_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
+    /// Authorize a trader. Only the owner can authorize.
+    public fun authorize_trader(
+        balance_manager: &mut BalanceManager,
+        authorize_address: address,
+        ctx: &mut TxContext
+    ) {
         balance_manager.validate_owner(ctx);
-        assert!(balance_manager.allow_listed.length() < MAX_TRADE_CAPS, EMaxTradeCapsReached);
+        assert!(balance_manager.authorized_traders.size() < MAX_TRADERS, EMaxTraderReached);
 
-        let id = object::new(ctx);
-        balance_manager.allow_listed.push_back(id.to_inner());
-
-        TradeCap {
-            id,
-            balance_manager_id: object::id(balance_manager),
-        }
+        balance_manager.authorized_traders.insert(authorize_address);
     }
 
-    /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
-    public fun revoke_trade_cap(balance_manager: &mut BalanceManager, trade_cap_id: &ID, ctx: &TxContext) {
+    /// Revoke an authorized_trader. Only the owner can revoke.
+    public fun remove_trader(balance_manager: &mut BalanceManager, trader_address: address, ctx: &TxContext) {
         balance_manager.validate_owner(ctx);
 
-        let (exists, idx) = balance_manager.allow_listed.index_of(trade_cap_id);
-        assert!(exists, ETradeCapNotInList);
-        balance_manager.allow_listed.swap_remove(idx);
+        assert!(balance_manager.authorized_traders.contains(&trader_address), ETraderNotInList);
+        balance_manager.authorized_traders.remove(&trader_address);
     }
 
-    /// Generate a `TradeProof` by the owner. The owner does not require a capability
-    /// and can generate TradeProofs without the risk of equivocation.
-    public fun generate_proof_as_owner(balance_manager: &mut BalanceManager, ctx: &TxContext): TradeProof {
+    /// Generate a `TradeProof` by the owner
+    public fun generate_proof_as_owner(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
         balance_manager.validate_owner(ctx);
 
         TradeProof {
@@ -105,10 +95,9 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Generate a `TradeProof` with a `TradeCap`.
-    /// Risk of equivocation since `TradeCap` is an owned object.
-    public fun generate_proof_as_trader(balance_manager: &mut BalanceManager, trade_cap: &TradeCap, ctx: &TxContext): TradeProof {
-        balance_manager.validate_trader(trade_cap);
+    /// Generate a `TradeProof` by the trader
+    public fun generate_proof_as_trader(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
+        balance_manager.validate_trader(ctx);
 
         TradeProof {
             balance_manager_id: object::id(balance_manager),
@@ -218,7 +207,7 @@ module deepbook::balance_manager {
             id,
             owner: _,
             balances,
-            allow_listed: _,
+            authorized_traders: _,
         } = balance_manager;
 
         id.delete();
@@ -233,7 +222,7 @@ module deepbook::balance_manager {
         assert!(ctx.sender() == balance_manager.owner(), EInvalidOwner);
     }
 
-    fun validate_trader(balance_manager: &BalanceManager, trade_cap: &TradeCap) {
-        assert!(balance_manager.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
+    fun validate_trader(balance_manager: &BalanceManager, ctx: &TxContext) {
+        assert!(balance_manager.authorized_traders.contains(&ctx.sender()), EInvalidTrader);
     }
 }
