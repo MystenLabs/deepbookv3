@@ -26,6 +26,11 @@ module deepbook::deep_price {
         cumulative_quote: u64,
     }
 
+    public struct OrderDeepPrice has store, drop {
+        deep_per_asset: u64,
+        asset_is_base: u64,
+    }
+
     public(package) fun empty(): DeepPrice {
         DeepPrice {
             base_prices: vector[],

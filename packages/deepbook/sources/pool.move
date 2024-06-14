@@ -464,19 +464,6 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_stable(stable);
     }
 
-    /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
-    fun set_whitelist<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        ctx: &TxContext,
-    ) {
-        let base = type_name::get<BaseAsset>();
-        let quote = type_name::get<QuoteAsset>();
-        let deep_type = type_name::get<DEEP>();
-        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
-
-        self.state.governance_mut(ctx).set_whitelist(true);
-    }
-
     public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
@@ -569,6 +556,20 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
     ): &BigVector<Order> {
         self.book.asks()
+    }
+
+    /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
+    /// Only called by admin during pool creation
+    fun set_whitelist<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
+    ) {
+        let base = type_name::get<BaseAsset>();
+        let quote = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+
+        self.state.governance_mut(ctx).set_whitelist(true);
     }
 
     fun place_order_int<BaseAsset, QuoteAsset>(
