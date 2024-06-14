@@ -14,6 +14,12 @@ module deepbook::vault {
         deep_balance: Balance<DEEP>,
     }
 
+    public(package) fun balances<BaseAsset, QuoteAsset>(
+        self: &Vault<BaseAsset, QuoteAsset>
+    ): (u64, u64, u64) {
+        (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
+    }
+
     public(package) fun empty<BaseAsset, QuoteAsset>(): Vault<BaseAsset, QuoteAsset> {
         Vault {
             base_balance: balance::zero(),

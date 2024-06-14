@@ -9,6 +9,7 @@ module deepbook::registry {
     };
 
     const EPoolAlreadyExists: u64 = 1;
+    const EPoolDoesNotExist: u64 = 2;
 
     public struct REGISTRY has drop {}
 
@@ -27,10 +28,23 @@ module deepbook::registry {
         quote: TypeName,
     }
 
+    fun init(_: REGISTRY, ctx: &mut TxContext) {
+        let registry = Registry {
+            id: object::new(ctx),
+            pools: bag::new(ctx),
+        };
+        transfer::share_object(registry);
+        let admin = DeepbookAdminCap {
+            id: object::new(ctx),
+        };
+        transfer::public_transfer(admin, ctx.sender());
+    }
+
     /// Register a new pool in the registry.
     /// Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
     public(package) fun register_pool<BaseAsset, QuoteAsset>(
         self: &mut Registry,
+        pool_id: ID,
     ) {
         let key = PoolKey {
             base: type_name::get<QuoteAsset>(),
@@ -44,19 +58,32 @@ module deepbook::registry {
         };
         assert!(!self.pools.contains(key), EPoolAlreadyExists);
 
-        self.pools.add(key, true);
+        self.pools.add(key, pool_id);
     }
 
-    fun init(_: REGISTRY, ctx: &mut TxContext) {
-        let registry = Registry {
-            id: object::new(ctx),
-            pools: bag::new(ctx),
+    /// Only admin can call this function
+    public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
+        self: &mut Registry,
+    ) {
+        let key = PoolKey {
+            base: type_name::get<BaseAsset>(),
+            quote: type_name::get<QuoteAsset>(),
         };
-        transfer::share_object(registry);
-        let admin = DeepbookAdminCap {
-            id: object::new(ctx),
+        assert!(self.pools.contains(key), EPoolDoesNotExist);
+        self.pools.remove<PoolKey, ID>(key);
+    }
+
+    /// Get the pool id for the given base and quote assets.
+    public(package) fun get_pool_id<BaseAsset, QuoteAsset>(
+        self: &Registry
+    ): ID {
+        let key = PoolKey {
+            base: type_name::get<BaseAsset>(),
+            quote: type_name::get<QuoteAsset>(),
         };
-        transfer::public_transfer(admin, ctx.sender());
+        assert!(self.pools.contains(key), EPoolDoesNotExist);
+
+        *self.pools.borrow<PoolKey, ID>(key)
     }
 
     #[test_only]

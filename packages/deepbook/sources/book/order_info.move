@@ -346,8 +346,13 @@ module deepbook::order_info {
 
             return true
         };
+        if (self.remaining_quantity() == 0) {
+            self.status = constants::filled();
 
-        false
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns the remaining quantity for the order.
