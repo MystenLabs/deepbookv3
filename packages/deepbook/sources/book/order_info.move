@@ -281,13 +281,12 @@ module deepbook::order_info {
 
         let remaining_quantity = self.remaining_quantity();
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
-            let mut maker_deep_in = math::mul(
-                self.order_deep_price.deep_per_asset(),
-                math::mul(remaining_quantity, maker_fee)
-            );
-            if (!self.order_deep_price.asset_is_base()) {
-                maker_deep_in = math::mul(maker_deep_in, self.price());
-            };
+            let maker_deep_in = math::mul(
+                maker_fee,
+                self.order_deep_price.quantity_in_deep(
+                remaining_quantity,
+                math::mul(remaining_quantity, self.price())
+            ));
             owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));

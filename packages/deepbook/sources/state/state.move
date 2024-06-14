@@ -58,18 +58,11 @@ module deepbook::state {
             let quote_volume = fill.quote_quantity();
             self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let fee_volume = if (fill.maker_deep_price().asset_is_base()) {
-                base_volume
-            } else {
-                quote_volume
-            };
+            let fee_volume = fill.maker_deep_price().quantity_in_deep(base_volume, quote_volume);
             let order_maker_fee = if (whitelisted) {
                 0
             } else {
-                math::mul(
-                    math::mul(fee_volume, historic_maker_fee),
-                    fill.maker_deep_price().deep_per_asset()
-                )
+                math::mul(fee_volume, historic_maker_fee)
             };
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 

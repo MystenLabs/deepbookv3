@@ -167,18 +167,11 @@ Update taker settled balances and volumes.
         <b>let</b> quote_volume = <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
         self.<a href="history.md#0x0_history">history</a>.add_volume(base_volume, <a href="account.md#0x0_account">account</a>.active_stake());
         <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
-        <b>let</b> fee_volume = <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.maker_deep_price().asset_is_base()) {
-            base_volume
-        } <b>else</b> {
-            quote_volume
-        };
+        <b>let</b> fee_volume = <a href="fill.md#0x0_fill">fill</a>.maker_deep_price().quantity_in_deep(base_volume, quote_volume);
         <b>let</b> order_maker_fee = <b>if</b> (whitelisted) {
             0
         } <b>else</b> {
-            math::mul(
-                math::mul(fee_volume, historic_maker_fee),
-                <a href="fill.md#0x0_fill">fill</a>.maker_deep_price().deep_per_asset()
-            )
+            math::mul(fee_volume, historic_maker_fee)
         };
         self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
 

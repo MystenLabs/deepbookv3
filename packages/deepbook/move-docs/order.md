@@ -459,10 +459,14 @@ quantity and whether the order is a bid.
     } <b>else</b> {
         self.quantity - self.filled_quantity
     };
-    <b>let</b> <b>mut</b> deep_out = math::mul(cancel_quantity, math::mul(self.order_deep_price.deep_per_asset(), maker_fee));
-    <b>if</b> (!self.order_deep_price.asset_is_base()) {
-        deep_out = math::mul(deep_out, self.<a href="order.md#0x0_order_price">price</a>());
-    };
+    <b>let</b> deep_out = math::mul(
+        maker_fee,
+        math::mul(
+            cancel_quantity,
+            self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().quantity_in_deep(cancel_quantity, math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>()))
+        )
+    );
+
     <b>let</b> <b>mut</b> base_out = 0;
     <b>let</b> <b>mut</b> quote_out = 0;
     <b>if</b> (self.<a href="order.md#0x0_order_is_bid">is_bid</a>()) {
