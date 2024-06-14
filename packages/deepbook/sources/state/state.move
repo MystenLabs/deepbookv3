@@ -53,23 +53,13 @@ module deepbook::state {
             let account = &mut self.accounts[maker];
             account.process_maker_fill(fill);
 
-            let base_volume = fill.base_quantity();
-            let quote_volume = fill.quote_quantity();
-            self.history.add_volume(base_volume, account.active_stake());
+            let volume = fill.base_quantity();
+            self.history.add_volume(volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let fee_volume = if (fill.maker_conversion_is_base()) {
-                base_volume
-            } else {
-                quote_volume
-            };
-            let order_maker_fee = if (fill.maker_is_whitelisted()) {
-                0
-            } else {
-                math::mul(
-                    math::mul(fee_volume, historic_maker_fee),
-                    fill.maker_deep_per_asset()
-                )
-            };
+            let order_maker_fee = math::mul(
+                math::mul(volume, historic_maker_fee),
+                fill.maker_deep_per_base()
+            );
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 
             i = i + 1;
@@ -77,34 +67,15 @@ module deepbook::state {
 
         self.update_account(order_info.balance_manager_id(), ctx);
         let account = &mut self.accounts[order_info.balance_manager_id()];
-        let account_volume = account.total_volume();
-        let account_stake = account.active_stake();
-
-        let volume_in_deep = if (order_info.conversion_is_base()) {
-            math::mul(account_volume, order_info.deep_per_asset())
-        } else if (order_info.executed_quantity() > 0) {
-            let avg_executed_price = math::div(
-                order_info.cumulative_quote_quantity(),
-                order_info.executed_quantity()
-            );
-            math::mul(
-                avg_executed_price,
-                math::mul(account_volume, order_info.deep_per_asset())
-            )
-        } else {
-            math::mul(
-                order_info.price(),
-                math::mul(account_volume, order_info.deep_per_asset())
-            )
-        };
-
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, volume_in_deep);
-        let maker_fee = self.governance.trade_params().maker_fee();
-
-        if (order_info.remaining_quantity() > 0) {
+        if (order_info.remaining_quantity() >= 0) {
             account.add_order(order_info.order_id());
         };
         account.add_taker_volume(order_info.executed_quantity());
+
+        let account_volume = account.total_volume();
+        let account_stake = account.active_stake();
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
+        let maker_fee = self.governance.trade_params().maker_fee();
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();
@@ -300,7 +271,7 @@ module deepbook::state {
         let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-            account.add_rebates(balances::new(0, 0, rebates));
+            account.add_rebates(rebates);
         }
     }
 }
