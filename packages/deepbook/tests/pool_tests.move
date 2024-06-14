@@ -473,7 +473,6 @@ module deepbook::pool_tests {
         set_whitelist<BaseAsset, QuoteAsset>(
             sender,
             reference_pool_id,
-            true,
             test,
         );
 
@@ -616,7 +615,6 @@ module deepbook::pool_tests {
     public(package) fun set_whitelist<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
-        is_whitelisted: bool,
         test: &mut Scenario,
     ){
         test.next_tx(sender);
@@ -626,7 +624,6 @@ module deepbook::pool_tests {
             pool::set_whitelist<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &admin_cap,
-                is_whitelisted,
                 test.ctx()
             );
             test_utils::destroy(admin_cap);

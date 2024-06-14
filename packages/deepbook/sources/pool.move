@@ -462,20 +462,18 @@ module deepbook::pool {
     }
 
     /// Set a pool as a whitelist pool. Whitelist pools have zero fees.
-    /// Only Admin can set a pool as whitelist.
+    /// Only Admin can set a pool as whitelist. One of the asset must be DEEP.
     public fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         _cap: &DeepbookAdminCap,
-        whitelist: bool,
         ctx: &TxContext,
     ) {
-        // TODO: remove the below for testing as needed
         let base = type_name::get<BaseAsset>();
         let quote = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
         assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
-        self.state.governance_mut(ctx).set_whitelist(whitelist);
+        self.state.governance_mut(ctx).set_whitelist(true);
     }
 
     public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(

@@ -169,7 +169,6 @@ module deepbook::master_tests {
         pool_tests::set_whitelist<SUI, DEEP>(
             OWNER,
             pool1_id,
-            true,
             &mut test
         );
 
@@ -178,7 +177,6 @@ module deepbook::master_tests {
             pool_tests::set_whitelist<SPAM, SUI>(
                 OWNER,
                 pool2_id,
-                true,
                 &mut test
             );
         };
