@@ -15,13 +15,12 @@
 -  [Function `taker_is_bid`](#0x0_fill_taker_is_bid)
 -  [Function `quote_quantity`](#0x0_fill_quote_quantity)
 -  [Function `maker_epoch`](#0x0_fill_maker_epoch)
--  [Function `maker_deep_per_asset`](#0x0_fill_maker_deep_per_asset)
--  [Function `maker_conversion_is_base`](#0x0_fill_maker_conversion_is_base)
--  [Function `maker_is_whitelisted`](#0x0_fill_maker_is_whitelisted)
+-  [Function `maker_deep_price`](#0x0_fill_maker_deep_price)
 -  [Function `get_settled_maker_quantities`](#0x0_fill_get_settled_maker_quantities)
 
 
 <pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="dependencies/sui-framework/object.md#0x2_object">0x2::object</a>;
 </code></pre>
 
@@ -94,19 +93,7 @@ It is used to update the state.
 
 </dd>
 <dt>
-<code>maker_deep_per_asset: u64</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>maker_conversion_is_base: bool</code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>maker_is_whitelisted: bool</code>
+<code>maker_deep_price: <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a></code>
 </dt>
 <dd>
 
@@ -122,7 +109,7 @@ It is used to update the state.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(maker_order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool, maker_epoch: u64, maker_deep_per_asset: u64, maker_conversion_is_base: bool, maker_is_whitelisted: bool): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_new">new</a>(maker_order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, expired: bool, completed: bool, base_quantity: u64, quote_quantity: u64, taker_is_bid: bool, maker_epoch: u64, maker_deep_price: <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>): <a href="fill.md#0x0_fill_Fill">fill::Fill</a>
 </code></pre>
 
 
@@ -140,9 +127,7 @@ It is used to update the state.
     quote_quantity: u64,
     taker_is_bid: bool,
     maker_epoch: u64,
-    maker_deep_per_asset: u64,
-    maker_conversion_is_base: bool,
-    maker_is_whitelisted: bool,
+    maker_deep_price: OrderDeepPrice,
 ): <a href="fill.md#0x0_fill_Fill">Fill</a> {
     <a href="fill.md#0x0_fill_Fill">Fill</a> {
         maker_order_id,
@@ -153,9 +138,7 @@ It is used to update the state.
         quote_quantity,
         taker_is_bid,
         maker_epoch,
-        maker_deep_per_asset,
-        maker_conversion_is_base,
-        maker_is_whitelisted,
+        maker_deep_price,
     }
 }
 </code></pre>
@@ -360,13 +343,13 @@ It is used to update the state.
 
 </details>
 
-<a name="0x0_fill_maker_deep_per_asset"></a>
+<a name="0x0_fill_maker_deep_price"></a>
 
-## Function `maker_deep_per_asset`
+## Function `maker_deep_price`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_asset">maker_deep_per_asset</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_price">maker_deep_price</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>
 </code></pre>
 
 
@@ -375,56 +358,8 @@ It is used to update the state.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_per_asset">maker_deep_per_asset</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): u64 {
-    self.maker_deep_per_asset
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_fill_maker_conversion_is_base"></a>
-
-## Function `maker_conversion_is_base`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_conversion_is_base">maker_conversion_is_base</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_conversion_is_base">maker_conversion_is_base</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): bool {
-    self.maker_conversion_is_base
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_fill_maker_is_whitelisted"></a>
-
-## Function `maker_is_whitelisted`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_maker_is_whitelisted">maker_is_whitelisted</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_is_whitelisted">maker_is_whitelisted</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): bool {
-    self.maker_is_whitelisted
+<pre><code><b>public</b>(package) <b>fun</b> <a href="fill.md#0x0_fill_maker_deep_price">maker_deep_price</a>(self: &<a href="fill.md#0x0_fill_Fill">Fill</a>): OrderDeepPrice {
+    self.maker_deep_price
 }
 </code></pre>
 

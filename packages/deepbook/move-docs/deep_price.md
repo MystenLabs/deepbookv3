@@ -7,14 +7,21 @@
 
 -  [Struct `Price`](#0x0_deep_price_Price)
 -  [Struct `DeepPrice`](#0x0_deep_price_DeepPrice)
+-  [Struct `OrderDeepPrice`](#0x0_deep_price_OrderDeepPrice)
 -  [Constants](#@Constants_0)
 -  [Function `empty`](#0x0_deep_price_empty)
--  [Function `add_price_point`](#0x0_deep_price_add_price_point)
+-  [Function `new_order_deep_price`](#0x0_deep_price_new_order_deep_price)
+-  [Function `get_order_deep_price`](#0x0_deep_price_get_order_deep_price)
 -  [Function `deep_per_asset`](#0x0_deep_price_deep_per_asset)
+-  [Function `asset_is_base`](#0x0_deep_price_asset_is_base)
+-  [Function `quantity_in_deep`](#0x0_deep_price_quantity_in_deep)
+-  [Function `add_price_point`](#0x0_deep_price_add_price_point)
+-  [Function `calculate_order_deep_price`](#0x0_deep_price_calculate_order_deep_price)
 -  [Function `last_insert_timestamp`](#0x0_deep_price_last_insert_timestamp)
 
 
-<pre><code><b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
+<pre><code><b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
+<b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
 </code></pre>
 
 
@@ -90,6 +97,39 @@ DEEP price points used for trading fee calculations.
 </dd>
 <dt>
 <code>cumulative_quote: u64</code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
+<a name="0x0_deep_price_OrderDeepPrice"></a>
+
+## Struct `OrderDeepPrice`
+
+
+
+<pre><code><b>struct</b> <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a> <b>has</b> <b>copy</b>, drop, store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>asset_is_base: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>deep_per_asset: u64</code>
 </dt>
 <dd>
 
@@ -178,6 +218,153 @@ DEEP price points used for trading fee calculations.
 
 </details>
 
+<a name="0x0_deep_price_new_order_deep_price"></a>
+
+## Function `new_order_deep_price`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new_order_deep_price">new_order_deep_price</a>(asset_is_base: bool, deep_per_asset: u64): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_new_order_deep_price">new_order_deep_price</a>(
+    asset_is_base: bool,
+    deep_per_asset: u64,
+): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a> {
+    <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a> {
+        asset_is_base: asset_is_base,
+        deep_per_asset: deep_per_asset,
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deep_price_get_order_deep_price"></a>
+
+## Function `get_order_deep_price`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_get_order_deep_price">get_order_deep_price</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, whitelisted: bool): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_get_order_deep_price">get_order_deep_price</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
+    whitelisted: bool,
+): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a> {
+    <b>let</b> (asset_is_base, deep_per_asset) = self.<a href="deep_price.md#0x0_deep_price_calculate_order_deep_price">calculate_order_deep_price</a>(whitelisted);
+
+    <a href="deep_price.md#0x0_deep_price_new_order_deep_price">new_order_deep_price</a>(asset_is_base, deep_per_asset)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deep_price_deep_per_asset"></a>
+
+## Function `deep_per_asset`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_asset">deep_per_asset</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_asset">deep_per_asset</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a>,
+): u64 {
+    self.deep_per_asset
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deep_price_asset_is_base"></a>
+
+## Function `asset_is_base`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_asset_is_base">asset_is_base</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_asset_is_base">asset_is_base</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a>,
+): bool {
+    self.asset_is_base
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_deep_price_quantity_in_deep"></a>
+
+## Function `quantity_in_deep`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, base_quantity: u64, quote_quantity: u64, price: u64): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(
+    self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a>,
+    base_quantity: u64,
+    quote_quantity: u64,
+    price: u64,
+): u64 {
+    <b>if</b> (self.asset_is_base) {
+        math::mul(base_quantity, self.deep_per_asset)
+    } <b>else</b> {
+        math::mul(
+            math::mul(quote_quantity, price),
+            self.deep_per_asset
+        )
+    }
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_deep_price_add_price_point"></a>
 
 ## Function `add_price_point`
@@ -238,15 +425,15 @@ Remove all data points older than MAX_DATA_POINT_AGE_MS.
 
 </details>
 
-<a name="0x0_deep_price_deep_per_asset"></a>
+<a name="0x0_deep_price_calculate_order_deep_price"></a>
 
-## Function `deep_per_asset`
+## Function `calculate_order_deep_price`
 
 Returns the conversion rate of DEEP per asset token.
 Base will be used by default, if there are no base data then quote will be used
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_asset">deep_per_asset</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, whitelisted: bool): (bool, u64)
+<pre><code><b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_order_deep_price">calculate_order_deep_price</a>(self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">deep_price::DeepPrice</a>, whitelisted: bool): (bool, u64)
 </code></pre>
 
 
@@ -255,12 +442,12 @@ Base will be used by default, if there are no base data then quote will be used
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_per_asset">deep_per_asset</a>(
+<pre><code><b>fun</b> <a href="deep_price.md#0x0_deep_price_calculate_order_deep_price">calculate_order_deep_price</a>(
     self: &<a href="deep_price.md#0x0_deep_price_DeepPrice">DeepPrice</a>,
     whitelisted: bool,
 ): (bool, u64) {
     <b>if</b> (whitelisted) {
-        <b>return</b> (<b>true</b>, 0) // no fees for whitelist
+        <b>return</b> (<b>false</b>, 0) // no fees for whitelist
     };
     <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>true</b>) &gt; 0 || self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>false</b>) &gt; 0, <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>);
 
