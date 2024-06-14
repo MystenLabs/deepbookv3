@@ -600,7 +600,6 @@ module deepbook::pool {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            self.whitelisted(),
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());

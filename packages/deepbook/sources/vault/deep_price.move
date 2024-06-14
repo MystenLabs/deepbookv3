@@ -82,7 +82,7 @@ module deepbook::deep_price {
         whitelisted: bool,
     ): (bool, u64) {
         if (whitelisted) {
-            return (true, 0) // no fees for whitelist
+            return (false, 0) // no fees for whitelist
         };
         assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
 

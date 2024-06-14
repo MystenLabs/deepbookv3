@@ -218,7 +218,6 @@ module deepbook::order_info {
         expire_timestamp: u64,
         deep_per_asset: u64,
         conversion_is_base: bool,
-        whitelisted: bool,
         market_order: bool,
     ): OrderInfo {
         OrderInfo {
