@@ -1022,7 +1022,7 @@ Allows for the calculation of deep price per base asset.
     <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
     <b>let</b> timestamp = <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms();
 
-    <b>assert</b>!((reference_base_type == deep_type || reference_quote_type == deep_type), <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+    <b>assert</b>!(reference_base_type == deep_type || reference_quote_type == deep_type, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
 
     <b>let</b> reference_deep_is_base = reference_base_type == deep_type;
     <b>let</b> reference_other_type = <b>if</b> (reference_deep_is_base) {

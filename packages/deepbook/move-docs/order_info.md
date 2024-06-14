@@ -1196,17 +1196,12 @@ Emitted when a maker order is injected into the order book.
     taker_fee: u64,
     maker_fee: u64,
 ): (Balances, Balances) {
-    <b>let</b> taker_deep_in = <b>if</b> (self.order_deep_price.asset_is_base()) {
-        math::mul(
-            self.order_deep_price.deep_per_asset(),
-            math::mul(self.executed_quantity, taker_fee)
-        )
-    } <b>else</b> {
-        math::mul(
-            self.order_deep_price.deep_per_asset(),
-            math::mul(self.cumulative_quote_quantity, taker_fee)
-        )
-    };
+    <b>let</b> taker_deep_in = math::mul(
+        self.order_deep_price.quantity_in_deep(
+            self.executed_quantity,
+            self.cumulative_quote_quantity
+        ), taker_fee
+    );
     self.paid_fees = taker_deep_in;
 
     <b>let</b> <b>mut</b> settled_balances = <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, 0);

@@ -259,17 +259,12 @@ module deepbook::order_info {
         taker_fee: u64,
         maker_fee: u64,
     ): (Balances, Balances) {
-        let taker_deep_in = if (self.order_deep_price.asset_is_base()) {
-            math::mul(
-                self.order_deep_price.deep_per_asset(),
-                math::mul(self.executed_quantity, taker_fee)
-            )
-        } else {
-            math::mul(
-                self.order_deep_price.deep_per_asset(),
-                math::mul(self.cumulative_quote_quantity, taker_fee)
-            )
-        };
+        let taker_deep_in = math::mul(
+            self.order_deep_price.quantity_in_deep(
+                self.executed_quantity,
+                self.cumulative_quote_quantity
+            ), taker_fee
+        );
         self.paid_fees = taker_deep_in;
 
         let mut settled_balances = balances::new(0, 0, 0);

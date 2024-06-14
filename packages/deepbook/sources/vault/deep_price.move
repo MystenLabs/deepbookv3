@@ -75,17 +75,13 @@ module deepbook::deep_price {
 
     public(package) fun quantity_in_deep(
         self: &OrderDeepPrice,
-        base_quantity: u64,
-        quote_quantity: u64,
-        price: u64,
+        executed_quantity: u64,
+        cumulative_quote_quantity: u64,
     ): u64 {
         if (self.asset_is_base) {
-            math::mul(base_quantity, self.deep_per_asset)
+            math::mul(executed_quantity, self.deep_per_asset)
         } else {
-            math::mul(
-                math::mul(quote_quantity, price),
-                self.deep_per_asset
-            )
+            math::mul(cumulative_quote_quantity, self.deep_per_asset)
         }
     }
 

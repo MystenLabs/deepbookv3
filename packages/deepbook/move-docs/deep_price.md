@@ -335,7 +335,7 @@ DEEP price points used for trading fee calculations.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, base_quantity: u64, quote_quantity: u64, price: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, executed_quantity: u64, cumulative_quote_quantity: u64): u64
 </code></pre>
 
 
@@ -346,17 +346,13 @@ DEEP price points used for trading fee calculations.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(
     self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a>,
-    base_quantity: u64,
-    quote_quantity: u64,
-    price: u64,
+    executed_quantity: u64,
+    cumulative_quote_quantity: u64,
 ): u64 {
     <b>if</b> (self.asset_is_base) {
-        math::mul(base_quantity, self.deep_per_asset)
+        math::mul(executed_quantity, self.deep_per_asset)
     } <b>else</b> {
-        math::mul(
-            math::mul(quote_quantity, price),
-            self.deep_per_asset
-        )
+        math::mul(cumulative_quote_quantity, self.deep_per_asset)
     }
 }
 </code></pre>

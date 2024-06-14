@@ -412,7 +412,7 @@ module deepbook::pool {
         let deep_type = type_name::get<DEEP>();
         let timestamp = clock.timestamp_ms();
 
-        assert!((reference_base_type == deep_type || reference_quote_type == deep_type), EIneligibleTargetPool);
+        assert!(reference_base_type == deep_type || reference_quote_type == deep_type, EIneligibleTargetPool);
 
         let reference_deep_is_base = reference_base_type == deep_type;
         let reference_other_type = if (reference_deep_is_base) {
