@@ -134,7 +134,6 @@ module deepbook::order_tests {
         let epoch = 1;
         let expire_timestamp = test.ctx().epoch_timestamp_ms();
         let conversion_is_base = true;
-        let whitelisted = false;
         let mut order = create_order(
             price,
             quantity,
@@ -143,7 +142,6 @@ module deepbook::order_tests {
             balance_manager_id,
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             epoch,
             expire_timestamp,
         );
@@ -274,7 +272,6 @@ module deepbook::order_tests {
         let epoch = 1;
         let expire_timestamp = test.ctx().epoch_timestamp_ms() + 1000;
         let conversion_is_base = true;
-        let whitelisted = false;
         let mut order = create_order(
             price,
             quantity,
@@ -283,7 +280,6 @@ module deepbook::order_tests {
             balance_manager_id,
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             epoch,
             expire_timestamp,
         );
@@ -305,7 +301,6 @@ module deepbook::order_tests {
         let epoch = 1;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
-        let whitelisted = false;
 
         create_order(
             price,
@@ -315,7 +310,6 @@ module deepbook::order_tests {
             balance_manager_id,
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             epoch,
             expire_timestamp,
         )
@@ -329,7 +323,6 @@ module deepbook::order_tests {
         balance_manager_id: ID,
         deep_per_asset: u64,
         conversion_is_base: bool,
-        whitelisted: bool,
         epoch: u64,
         expire_timestamp: u64,
     ): Order {
@@ -343,7 +336,6 @@ module deepbook::order_tests {
             constants::fee_is_deep(),
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             epoch,
             constants::live(),
             expire_timestamp,

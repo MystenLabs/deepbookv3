@@ -29,7 +29,6 @@ module deepbook::order {
         fee_is_deep: bool,
         deep_per_asset: u64,
         conversion_is_base: bool,
-        whitelisted: bool,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -71,7 +70,6 @@ module deepbook::order {
         fee_is_deep: bool,
         deep_per_asset: u64,
         conversion_is_base: bool,
-        whitelisted: bool,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -85,7 +83,6 @@ module deepbook::order {
             fee_is_deep,
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             epoch,
             status,
             expire_timestamp,
@@ -126,7 +123,6 @@ module deepbook::order {
             self.epoch,
             self.deep_per_asset,
             self.conversion_is_base,
-            self.whitelisted
         )
     }
 

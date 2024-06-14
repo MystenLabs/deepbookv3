@@ -55,8 +55,6 @@ module deepbook::order_info {
         deep_per_asset: u64,
         // Conversion is base
         conversion_is_base: bool,
-        // Whitelisted order
-        whitelisted: bool,
         // Expiration timestamp in ms
         expire_timestamp: u64,
         // Quantity executed so far
@@ -236,7 +234,6 @@ module deepbook::order_info {
             original_quantity: quantity,
             deep_per_asset,
             conversion_is_base,
-            whitelisted,
             expire_timestamp,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
@@ -329,7 +326,6 @@ module deepbook::order_info {
             self.fee_is_deep,
             self.deep_per_asset,
             self.conversion_is_base,
-            self.whitelisted,
             self.epoch,
             self.status,
             self.expire_timestamp,

@@ -39,6 +39,7 @@ module deepbook::state {
     public(package) fun process_create(
         self: &mut State,
         order_info: &mut OrderInfo,
+        whitelisted: bool,
         ctx: &TxContext,
     ): (Balances, Balances) {
         self.governance.update(ctx);
@@ -62,7 +63,7 @@ module deepbook::state {
             } else {
                 quote_volume
             };
-            let order_maker_fee = if (fill.maker_is_whitelisted()) {
+            let order_maker_fee = if (whitelisted) {
                 0
             } else {
                 math::mul(
