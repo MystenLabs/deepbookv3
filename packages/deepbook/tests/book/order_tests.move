@@ -13,6 +13,7 @@ module deepbook::order_tests {
         utils,
         balances,
         constants,
+        deep_price::Self,
     };
 
     const OWNER: address = @0xF;
@@ -334,8 +335,7 @@ module deepbook::order_tests {
             1,
             quantity,
             constants::fee_is_deep(),
-            deep_per_asset,
-            conversion_is_base,
+            deep_price::new_order_deep_price(conversion_is_base, deep_per_asset),
             epoch,
             constants::live(),
             expire_timestamp,

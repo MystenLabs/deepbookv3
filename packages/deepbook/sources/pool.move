@@ -588,9 +588,8 @@ module deepbook::pool {
         market_order: bool,
         ctx: &TxContext,
     ): OrderInfo {
-        assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let whitelisted = self.whitelisted();
-        let (conversion_is_base, deep_per_asset) = self.deep_price.deep_per_asset(whitelisted);
+        let whitelist = self.whitelisted();
+        assert!(pay_with_deep || whitelist, EFeeTypeNotSupported);
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -605,14 +604,13 @@ module deepbook::pool {
             pay_with_deep,
             ctx.epoch(),
             expire_timestamp,
-            deep_per_asset,
-            conversion_is_base,
+            self.deep_price.get_order_deep_price(self.whitelisted()),
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         let (settled, owed) = self.state.process_create(
             &mut order_info,
-            whitelisted,
+            whitelist,
             ctx
         );
         self.vault.settle_balance_manager(settled, owed, balance_manager, proof);

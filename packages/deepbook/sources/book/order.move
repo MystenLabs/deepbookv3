@@ -12,6 +12,7 @@ module deepbook::order {
         fill::{Self, Fill},
         constants,
         balances::{Self, Balances},
+        deep_price::OrderDeepPrice,
     };
 
     // === Errors ===
@@ -27,8 +28,7 @@ module deepbook::order {
         quantity: u64,
         filled_quantity: u64,
         fee_is_deep: bool,
-        deep_per_asset: u64,
-        conversion_is_base: bool,
+        order_deep_price: OrderDeepPrice,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -68,8 +68,7 @@ module deepbook::order {
         client_order_id: u64,
         quantity: u64,
         fee_is_deep: bool,
-        deep_per_asset: u64,
-        conversion_is_base: bool,
+        order_deep_price: OrderDeepPrice,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -81,8 +80,7 @@ module deepbook::order {
             quantity,
             filled_quantity: 0,
             fee_is_deep,
-            deep_per_asset,
-            conversion_is_base,
+            order_deep_price,
             epoch,
             status,
             expire_timestamp,
@@ -121,8 +119,7 @@ module deepbook::order {
             quote_quantity,
             is_bid,
             self.epoch,
-            self.deep_per_asset,
-            self.conversion_is_base,
+            self.order_deep_price
         )
     }
 
@@ -147,8 +144,8 @@ module deepbook::order {
         } else {
             self.quantity - self.filled_quantity
         };
-        let mut deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_asset, maker_fee));
-        if (!self.conversion_is_base) {
+        let mut deep_out = math::mul(cancel_quantity, math::mul(self.order_deep_price.deep_per_asset(), maker_fee));
+        if (!self.order_deep_price.asset_is_base()) {
             deep_out = math::mul(deep_out, self.price());
         };
         let mut base_out = 0;
@@ -241,8 +238,8 @@ module deepbook::order {
         self.filled_quantity
     }
 
-    public(package) fun deep_per_asset(self: &Order): u64 {
-        self.deep_per_asset
+    public(package) fun order_deep_price(self: &Order): OrderDeepPrice {
+        self.order_deep_price
     }
 
     public(package) fun epoch(self: &Order): u64 {

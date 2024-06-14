@@ -58,7 +58,7 @@ module deepbook::state {
             let quote_volume = fill.quote_quantity();
             self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let fee_volume = if (fill.maker_conversion_is_base()) {
+            let fee_volume = if (fill.maker_deep_price().asset_is_base()) {
                 base_volume
             } else {
                 quote_volume
@@ -68,7 +68,7 @@ module deepbook::state {
             } else {
                 math::mul(
                     math::mul(fee_volume, historic_maker_fee),
-                    fill.maker_deep_per_asset()
+                    fill.maker_deep_price().deep_per_asset()
                 )
             };
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
@@ -81,8 +81,8 @@ module deepbook::state {
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
 
-        let volume_in_deep = if (order_info.conversion_is_base()) {
-            math::mul(account_volume, order_info.deep_per_asset())
+        let volume_in_deep = if (order_info.order_deep_price().asset_is_base()) {
+            math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
         } else if (order_info.executed_quantity() > 0) {
             let avg_executed_price = math::div(
                 order_info.cumulative_quote_quantity(),
@@ -90,12 +90,12 @@ module deepbook::state {
             );
             math::mul(
                 avg_executed_price,
-                math::mul(account_volume, order_info.deep_per_asset())
+                math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
             )
         } else {
             math::mul(
                 order_info.price(),
-                math::mul(account_volume, order_info.deep_per_asset())
+                math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
             )
         };
 

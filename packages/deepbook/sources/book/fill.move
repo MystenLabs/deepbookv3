@@ -3,6 +3,7 @@
 
 module deepbook::fill {
     use deepbook::balances::{Self, Balances};
+    use deepbook::deep_price::OrderDeepPrice;
     /// Fill struct represents the results of a match between two orders.
     /// It is used to update the state.
     public struct Fill has store, drop, copy {
@@ -22,10 +23,8 @@ module deepbook::fill {
         taker_is_bid: bool,
         // Maker epoch
         maker_epoch: u64,
-        // Maker deep per base
-        maker_deep_per_asset: u64,
-        // Deep conversion is base
-        maker_conversion_is_base: bool,
+        // Maker deep price
+        maker_deep_price: OrderDeepPrice,
     }
 
     public(package) fun new(
@@ -37,8 +36,7 @@ module deepbook::fill {
         quote_quantity: u64,
         taker_is_bid: bool,
         maker_epoch: u64,
-        maker_deep_per_asset: u64,
-        maker_conversion_is_base: bool,
+        maker_deep_price: OrderDeepPrice,
     ): Fill {
         Fill {
             maker_order_id,
@@ -49,8 +47,7 @@ module deepbook::fill {
             quote_quantity,
             taker_is_bid,
             maker_epoch,
-            maker_deep_per_asset,
-            maker_conversion_is_base,
+            maker_deep_price,
         }
     }
 
@@ -90,12 +87,8 @@ module deepbook::fill {
         self.maker_epoch
     }
 
-    public(package) fun maker_deep_per_asset(self: &Fill): u64 {
-        self.maker_deep_per_asset
-    }
-
-    public(package) fun maker_conversion_is_base(self: &Fill): bool {
-        self.maker_conversion_is_base
+    public(package) fun maker_deep_price(self: &Fill): OrderDeepPrice {
+        self.maker_deep_price
     }
 
     public(package) fun get_settled_maker_quantities(self: &Fill): Balances {

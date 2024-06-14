@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::deep_price {
+    use deepbook::math;
+
     // Minimum of 1 minutes between data points
     const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60;
     // Price points older than 1 day will be removed
@@ -26,9 +28,9 @@ module deepbook::deep_price {
         cumulative_quote: u64,
     }
 
-    public struct OrderDeepPrice has store, drop {
+    public struct OrderDeepPrice has copy, store, drop {
+        asset_is_base: bool,
         deep_per_asset: u64,
-        asset_is_base: u64,
     }
 
     public(package) fun empty(): DeepPrice {
@@ -37,6 +39,53 @@ module deepbook::deep_price {
             cumulative_base: 0,
             quote_prices: vector[],
             cumulative_quote: 0,
+        }
+    }
+
+    public(package) fun new_order_deep_price(
+        asset_is_base: bool,
+        deep_per_asset: u64,
+    ): OrderDeepPrice {
+        OrderDeepPrice {
+            asset_is_base: asset_is_base,
+            deep_per_asset: deep_per_asset,
+        }
+    }
+
+    public(package) fun get_order_deep_price(
+        self: &DeepPrice,
+        whitelisted: bool,
+    ): OrderDeepPrice {
+        let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(whitelisted);
+
+        new_order_deep_price(asset_is_base, deep_per_asset)
+    }
+
+    public(package) fun deep_per_asset(
+        self: &OrderDeepPrice,
+    ): u64 {
+        self.deep_per_asset
+    }
+
+    public(package) fun asset_is_base(
+        self: &OrderDeepPrice,
+    ): bool {
+        self.asset_is_base
+    }
+
+    public(package) fun quantity_in_deep(
+        self: &OrderDeepPrice,
+        base_quantity: u64,
+        quote_quantity: u64,
+        price: u64,
+    ): u64 {
+        if (self.asset_is_base) {
+            math::mul(base_quantity, self.deep_per_asset)
+        } else {
+            math::mul(
+                math::mul(quote_quantity, price),
+                self.deep_per_asset
+            )
         }
     }
 
@@ -82,7 +131,7 @@ module deepbook::deep_price {
 
     /// Returns the conversion rate of DEEP per asset token.
     /// Base will be used by default, if there are no base data then quote will be used
-    public(package) fun deep_per_asset(
+    fun calculate_order_deep_price(
         self: &DeepPrice,
         whitelisted: bool,
     ): (bool, u64) {

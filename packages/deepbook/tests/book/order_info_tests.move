@@ -13,6 +13,7 @@ module deepbook::order_info_tests {
         utils,
         balances,
         constants,
+        deep_price
     };
 
     const OWNER: address = @0xF;
@@ -577,6 +578,7 @@ module deepbook::order_info_tests {
     ): OrderInfo {
         let pool_id = id_from_address(@0x2);
         let client_order_id = 1;
+        let order_deep_price = deep_price::new_order_deep_price(conversion_is_base, deep_per_asset);
         let mut order_info = order_info::new(
             pool_id,
             balance_manager_id,
@@ -590,8 +592,7 @@ module deepbook::order_info_tests {
             fee_is_deep,
             epoch,
             expire_timestamp,
-            deep_per_asset,
-            conversion_is_base,
+            order_deep_price,
             market_order,
         );
 
