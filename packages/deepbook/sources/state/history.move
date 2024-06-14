@@ -3,6 +3,7 @@ module deepbook::history {
     use deepbook::{
         math,
         constants,
+        balances::{Self, Balances}
     };
     use deepbook::trade_params::TradeParams;
 
@@ -13,7 +14,7 @@ module deepbook::history {
     public struct Volumes has store, copy, drop {
         total_volume: u64,
         total_staked_volume: u64,
-        total_fees_collected: u64,
+        total_fees_collected: Balances,
         historic_median: u64,
         trade_params: TradeParams,
     }
@@ -34,7 +35,7 @@ module deepbook::history {
         let volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
-            total_fees_collected: 0,
+            total_fees_collected: balances::empty(),
             historic_median: 0,
             trade_params,
         };
@@ -77,7 +78,7 @@ module deepbook::history {
         self.volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
-            total_fees_collected: 0,
+            total_fees_collected: balances::empty(),
             historic_median: 0,
             trade_params,
         };
@@ -106,7 +107,7 @@ module deepbook::history {
         } else {
             0
         };
-        let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
+        let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.deep());
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;
 
@@ -179,9 +180,9 @@ module deepbook::history {
 
     public(package) fun add_total_fees_collected(
         self: &mut History,
-        fees: u64,
+        fees: Balances,
     ) {
-        self.volumes.total_fees_collected = self.volumes.total_fees_collected + fees;
+        self.volumes.total_fees_collected.add_balances(fees);
     }
 
     #[test_only]
@@ -189,7 +190,7 @@ module deepbook::history {
         history: &mut History,
         total_volume: u64,
         total_staked_volume: u64,
-        total_fees_collected: u64,
+        total_fees_collected: Balances,
     ) {
         let volumes = &mut history.volumes;
         volumes.total_volume = total_volume;
