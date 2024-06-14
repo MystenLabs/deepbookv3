@@ -1263,14 +1263,14 @@ Emitted when a maker order is injected into the order book.
 
     <b>let</b> remaining_quantity = self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>();
     <b>if</b> (remaining_quantity &gt; 0 && !(self.<a href="order_info.md#0x0_order_info_order_type">order_type</a>() == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>())) {
-        <b>let</b> <b>mut</b> deep_in = math::mul(
+        <b>let</b> <b>mut</b> maker_deep_in = math::mul(
             self.deep_per_asset,
             math::mul(remaining_quantity, maker_fee)
         );
         <b>if</b> (!self.<a href="order_info.md#0x0_order_info_conversion_is_base">conversion_is_base</a>()) {
-            deep_in = math::mul(deep_in, self.<a href="order_info.md#0x0_order_info_price">price</a>());
+            maker_deep_in = math::mul(maker_deep_in, self.<a href="order_info.md#0x0_order_info_price">price</a>());
         };
-        owed_balances.add_deep(deep_in);
+        owed_balances.add_deep(maker_deep_in);
         <b>if</b> (self.is_bid) {
             owed_balances.add_quote(math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));
         } <b>else</b> {

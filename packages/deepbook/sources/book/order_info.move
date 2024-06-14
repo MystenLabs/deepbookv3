@@ -297,14 +297,14 @@ module deepbook::order_info {
 
         let remaining_quantity = self.remaining_quantity();
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
-            let mut deep_in = math::mul(
+            let mut maker_deep_in = math::mul(
                 self.deep_per_asset,
                 math::mul(remaining_quantity, maker_fee)
             );
             if (!self.conversion_is_base()) {
-                deep_in = math::mul(deep_in, self.price());
+                maker_deep_in = math::mul(maker_deep_in, self.price());
             };
-            owed_balances.add_deep(deep_in);
+            owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
             } else {

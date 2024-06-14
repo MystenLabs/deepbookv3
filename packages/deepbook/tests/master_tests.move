@@ -45,8 +45,7 @@ module deepbook::master_tests {
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
     const ECannotSetWhitelist: u64 = 6;
-    const EEmptyPool: u64 = 7;
-    const EDataRecentlyAdded: u64 = 8;
+    const EDataRecentlyAdded: u64 = 7;
 
     #[test]
     fun test_master_ok(){
@@ -83,20 +82,15 @@ module deepbook::master_tests {
         test_master_2(NoError)
     }
 
-    // #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
-    // fun test_master_2_cannot_set_whitelist_e(){
-    //     test_master_2(ECannotSetWhitelist)
-    // }
+    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
+    fun test_master_2_cannot_set_whitelist_e(){
+        test_master_2(ECannotSetWhitelist)
+    }
 
-    // #[test, expected_failure(abort_code = ::deepbook::book::EEmptyOrderbook)]
-    // fun test_master_2_empty_pool_e(){
-    //     test_master_2(EEmptyPool)
-    // }
-
-    // #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
-    // fun test_master_2_recently_added_e(){
-    //     test_master_2(EDataRecentlyAdded)
-    // }
+    #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
+    fun test_master_2_recently_added_e(){
+        test_master_2(EDataRecentlyAdded)
+    }
 
     fun test_master_2(
         error_code: u64,
@@ -229,6 +223,8 @@ module deepbook::master_tests {
         );
         alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
 
+        pool_tests::set_time(100_000, &mut test);
+
         // Bob stakes 100 deep into pool 2
         stake<SPAM, SUI>(
             BOB,
@@ -238,16 +234,6 @@ module deepbook::master_tests {
             &mut test
         );
         bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
-
-        if (error_code == EEmptyPool) {
-            // SUI/DEEP pool has no orders, cannot add price point
-            pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
-                OWNER,
-                pool2_id,
-                pool1_id,
-                &mut test
-            );
-        };
 
         // Alice places a bid order in pool 1 with quantity 1, price 125
         let price = 125 * constants::float_scaling();
@@ -305,7 +291,7 @@ module deepbook::master_tests {
         // Stakes in pool 2 for both Alice and Bob are in effect
         test.next_epoch(OWNER);
         assert!(test.ctx().epoch() == 1, 0);
-        pool_tests::set_time(100_000, &mut test);
+        pool_tests::set_time(200_000, &mut test);
 
         // New deep per quote is 125, the average of 100 and 150.
         pool_tests::add_deep_price_point<SPAM, SUI, SUI, DEEP>(
@@ -314,6 +300,7 @@ module deepbook::master_tests {
             pool1_id,
             &mut test
         );
+
         // Check data added is 150
         check_mid_price<SUI, DEEP>(
             pool1_id,
