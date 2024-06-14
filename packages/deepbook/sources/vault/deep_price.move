@@ -136,7 +136,7 @@ module deepbook::deep_price {
         };
         assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
 
-        let is_base_conversion = self.last_insert_timestamp(true) > 0;
+        let is_base_conversion = self.last_insert_timestamp(false) == 0;
 
         let cumulative_asset = if (is_base_conversion) {
             self.cumulative_base

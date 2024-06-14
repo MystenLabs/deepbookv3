@@ -447,7 +447,7 @@ Base will be used by default, if there are no base data then quote will be used
     };
     <b>assert</b>!(self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>true</b>) &gt; 0 || self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>false</b>) &gt; 0, <a href="deep_price.md#0x0_deep_price_ENoDataPoints">ENoDataPoints</a>);
 
-    <b>let</b> is_base_conversion = self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>true</b>) &gt; 0;
+    <b>let</b> is_base_conversion = self.<a href="deep_price.md#0x0_deep_price_last_insert_timestamp">last_insert_timestamp</a>(<b>false</b>) == 0;
 
     <b>let</b> cumulative_asset = <b>if</b> (is_base_conversion) {
         self.cumulative_base
