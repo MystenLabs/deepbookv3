@@ -44,8 +44,7 @@ module deepbook::master_tests {
     const EIncorrectStakeOwner: u64 = 3;
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
-    const ECannotSetWhitelist: u64 = 6;
-    const EDataRecentlyAdded: u64 = 7;
+    const EDataRecentlyAdded: u64 = 6;
 
     #[test]
     fun test_master_ok(){
@@ -82,11 +81,6 @@ module deepbook::master_tests {
         test_master_2(NoError)
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleWhitelist)]
-    fun test_master_2_cannot_set_whitelist_e(){
-        test_master_2(ECannotSetWhitelist)
-    }
-
     #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
     fun test_master_2_recently_added_e(){
         test_master_2(EDataRecentlyAdded)
@@ -108,7 +102,7 @@ module deepbook::master_tests {
 
         // Create two pools, pool 1 will be used as reference pool
         let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, false, &mut test);
 
         // Default price point of 10 deep per base (SPAM) will be added
         pool_tests::set_time(0, &mut test);
@@ -162,24 +156,9 @@ module deepbook::master_tests {
             usdt: starting_balance,
         };
 
-        // Epoch 0
+        // Epoch 0. Pool 1 is whitelisted, which means 0 trading fees.
         assert!(test.ctx().epoch() == 0, 0);
 
-        // Set pool 1 as whitelisted, which means 0 trading fees
-        pool_tests::set_whitelist<SUI, DEEP>(
-            OWNER,
-            pool1_id,
-            &mut test
-        );
-
-        // Cannot set pool 2 as whitelisted because DEEP is not an asset
-        if (error_code == ECannotSetWhitelist) {
-            pool_tests::set_whitelist<SPAM, SUI>(
-                OWNER,
-                pool2_id,
-                &mut test
-            );
-        };
         // Trading within pool 1 should have no fees
         // Alice should get 2 more sui, Bob should lose 2 sui
         // Alice should get 200 less deep, Bob should get 200 deep
@@ -486,11 +465,11 @@ module deepbook::master_tests {
         let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
         if (error_code == EDuplicatePool) {
-            pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, &mut test);
+            pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, false, &mut test);
         };
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
 
         // Default price point of 10 deep per base will be added
         pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(

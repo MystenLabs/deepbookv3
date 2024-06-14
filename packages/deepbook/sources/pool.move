@@ -56,6 +56,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
+        whitelisted_pool: bool,
     }
 
     /// Create a new pool. The pool is registered in the registry.
@@ -68,6 +69,7 @@ module deepbook::pool {
         lot_size: u64,
         min_size: u64,
         creation_fee: Coin<SUI>,
+        whitelisted_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
     ): ID {
@@ -77,6 +79,7 @@ module deepbook::pool {
             lot_size,
             min_size,
             creation_fee,
+            whitelisted_pool,
             ctx,
         )
     }
@@ -461,11 +464,9 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_stable(stable);
     }
 
-    /// Set a pool as a whitelist pool. Whitelist pools have zero fees.
-    /// Only Admin can set a pool as whitelist. One of the asset must be DEEP.
-    public fun set_whitelist<BaseAsset, QuoteAsset>(
+    /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
+    fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepbookAdminCap,
         ctx: &TxContext,
     ) {
         let base = type_name::get<BaseAsset>();
@@ -512,6 +513,7 @@ module deepbook::pool {
         lot_size: u64,
         min_size: u64,
         creation_fee: Coin<SUI>,
+        whitelisted_pool: bool,
         ctx: &mut TxContext,
     ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
@@ -523,7 +525,7 @@ module deepbook::pool {
         let pool_uid = object::new(ctx);
         let pool_id = pool_uid.to_inner();
 
-        let pool = Pool<BaseAsset, QuoteAsset> {
+        let mut pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(ctx),
@@ -532,6 +534,9 @@ module deepbook::pool {
         };
 
         registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
+        if (whitelisted_pool) {
+            pool.set_whitelist(ctx);
+        };
 
         let params = pool.state.governance().trade_params();
         let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
@@ -542,6 +547,7 @@ module deepbook::pool {
             tick_size,
             lot_size,
             min_size,
+            whitelisted_pool,
         });
 
         // TODO: reconsider sending the Coin here. User pays gas;

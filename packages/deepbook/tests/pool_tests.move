@@ -354,8 +354,8 @@ module deepbook::pool_tests {
     fun test_get_pool_id_by_asset(){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
-        let pool_id_2 = setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, &mut test);
+        let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        let pool_id_2 = setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
         let pool_id_1_returned = get_pool_id_by_asset<SUI, USDC>(registry_id, &mut test);
         let pool_id_2_returned = get_pool_id_by_asset<SPAM, USDC>(registry_id, &mut test);
 
@@ -383,11 +383,11 @@ module deepbook::pool_tests {
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
+        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
         if (unregister) {
             unregister_pool<SUI, USDC>(registry_id, &mut test);
         };
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, &mut test);
+        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
 
         end(test);
     }
@@ -416,6 +416,7 @@ module deepbook::pool_tests {
         let target_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
             OWNER,
             registry_id,
+            false,
             test,
         );
         let reference_pool_id = setup_reference_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(
@@ -467,12 +468,7 @@ module deepbook::pool_tests {
         let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
             sender,
             registry_id,
-            test,
-        );
-
-        set_whitelist<BaseAsset, QuoteAsset>(
-            sender,
-            reference_pool_id,
+            true,
             test,
         );
 
@@ -512,6 +508,7 @@ module deepbook::pool_tests {
     public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
         sender: address,
         registry_id: ID,
+        whitelisted_pool: bool,
         test: &mut Scenario,
     ): ID {
         setup_pool<BaseAsset, QuoteAsset>(
@@ -519,6 +516,7 @@ module deepbook::pool_tests {
             constants::lot_size(), // lot size
             constants::min_size(), // min size
             registry_id,
+            whitelisted_pool,
             test,
             sender,
         )
@@ -609,25 +607,6 @@ module deepbook::pool_tests {
             return_shared(balance_manager);
 
             order_info
-        }
-    }
-
-    public(package) fun set_whitelist<BaseAsset, QuoteAsset>(
-        sender: address,
-        pool_id: ID,
-        test: &mut Scenario,
-    ){
-        test.next_tx(sender);
-        {
-            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            pool::set_whitelist<BaseAsset, QuoteAsset>(
-                &mut pool,
-                &admin_cap,
-                test.ctx()
-            );
-            test_utils::destroy(admin_cap);
-            return_shared(pool);
         }
     }
 
@@ -2394,6 +2373,7 @@ module deepbook::pool_tests {
         lot_size: u64,
         min_size: u64,
         registry_id: ID,
+        whitelisted_pool: bool,
         test: &mut Scenario,
         sender: address,
     ): ID {
@@ -2408,6 +2388,7 @@ module deepbook::pool_tests {
                 lot_size,
                 min_size,
                 coin::mint_for_testing(constants::pool_creation_fee(), test.ctx()),
+                whitelisted_pool,
                 &admin_cap,
                 test.ctx()
             );
