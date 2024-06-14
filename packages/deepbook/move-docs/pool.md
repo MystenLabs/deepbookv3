@@ -32,6 +32,9 @@ Public-facing interface for the package.
 -  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
 -  [Function `withdraw_settled_amounts`](#0x0_pool_withdraw_settled_amounts)
+-  [Function `vault_balances`](#0x0_pool_vault_balances)
+-  [Function `unregister_pool_admin`](#0x0_pool_unregister_pool_admin)
+-  [Function `get_pool_id_by_asset`](#0x0_pool_get_pool_id_by_asset)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
@@ -213,6 +216,15 @@ Public-facing interface for the package.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>: u64 = 11;
+</code></pre>
+
+
+
+<a name="0x0_pool_EIneligibleWhitelist"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>: u64 = 7;
 </code></pre>
 
 
@@ -1115,11 +1127,11 @@ Only Admin can set a pool as whitelist.
     whitelist: bool,
     ctx: &TxContext,
 ) {
-    // TODO: remove comment out section after testing
-    // <b>let</b> base = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
-    // <b>let</b> quote = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
-    // <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
-    // <b>assert</b>!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+    // TODO: remove the below for testing <b>as</b> needed
+    <b>let</b> base = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> quote = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
+    <b>assert</b>!(base == deep_type || quote == deep_type, <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>);
 
     self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(whitelist);
 }
@@ -1160,6 +1172,85 @@ Only Admin can set a pool as whitelist.
 
 </details>
 
+<a name="0x0_pool_vault_balances"></a>
+
+## Function `vault_balances`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+): (u64, u64, u64) {
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="balances.md#0x0_balances">balances</a>()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_unregister_pool_admin"></a>
+
+## Function `unregister_pool_admin`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unregister_pool_admin">unregister_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unregister_pool_admin">unregister_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> Registry,
+    _cap: &DeepbookAdminCap,
+) {
+    <a href="registry.md#0x0_registry">registry</a>.unregister_pool&lt;BaseAsset, QuoteAsset&gt;();
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_get_pool_id_by_asset"></a>
+
+## Function `get_pool_id_by_asset`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<a href="registry.md#0x0_registry_Registry">registry::Registry</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="registry.md#0x0_registry">registry</a>: &Registry,
+): ID {
+    <a href="registry.md#0x0_registry">registry</a>.get_pool_id&lt;BaseAsset, QuoteAsset&gt;()
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_pool_create_pool"></a>
 
 ## Function `create_pool`
@@ -1189,8 +1280,6 @@ Only Admin can set a pool as whitelist.
     <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
 
     <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
-    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;();
-
     <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
     <b>let</b> pool_id = pool_uid.to_inner();
 
@@ -1201,6 +1290,8 @@ Only Admin can set a pool as whitelist.
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
         <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
     };
+
+    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;(pool_id);
 
     <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
     <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());

@@ -1343,8 +1343,13 @@ Assert order types after partial fill against the order book.
 
         <b>return</b> <b>true</b>
     };
+    <b>if</b> (self.<a href="order_info.md#0x0_order_info_remaining_quantity">remaining_quantity</a>() == 0) {
+        self.status = <a href="constants.md#0x0_constants_filled">constants::filled</a>();
 
-    <b>false</b>
+        <b>true</b>
+    } <b>else</b> {
+        <b>false</b>
+    }
 }
 </code></pre>
 

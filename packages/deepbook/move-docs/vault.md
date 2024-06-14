@@ -7,6 +7,7 @@
 
 -  [Struct `DEEP`](#0x0_vault_DEEP)
 -  [Struct `Vault`](#0x0_vault_Vault)
+-  [Function `balances`](#0x0_vault_balances)
 -  [Function `empty`](#0x0_vault_empty)
 -  [Function `settle_balance_manager`](#0x0_vault_settle_balance_manager)
 
@@ -80,6 +81,32 @@
 
 </dd>
 </dl>
+
+
+</details>
+
+<a name="0x0_vault_balances"></a>
+
+## Function `balances`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances">balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;): (u64, u64, u64)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances">balances</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;
+): (u64, u64, u64) {
+    (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
+}
+</code></pre>
+
 
 
 </details>

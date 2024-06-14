@@ -20,7 +20,8 @@
 -  [Function `add_total_fees_collected`](#0x0_history_add_total_fees_collected)
 
 
-<pre><code><b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="dependencies/sui-framework/table.md#0x2_table">0x2::table</a>;
@@ -59,7 +60,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 </dd>
 <dt>
-<code>total_fees_collected: u64</code>
+<code>total_fees_collected: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
@@ -170,7 +171,7 @@ Error codes
     <b>let</b> volumes = <a href="history.md#0x0_history_Volumes">Volumes</a> {
         total_volume: 0,
         total_staked_volume: 0,
-        total_fees_collected: 0,
+        total_fees_collected: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
         historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
@@ -253,7 +254,7 @@ If there are accounts with rebates, add the current epoch's volume data to the h
     self.volumes = <a href="history.md#0x0_history_Volumes">Volumes</a> {
         total_volume: 0,
         total_staked_volume: 0,
-        total_fees_collected: 0,
+        total_fees_collected: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
         historic_median: 0,
         <a href="trade_params.md#0x0_trade_params">trade_params</a>,
     };
@@ -302,7 +303,7 @@ calculate and returns rebate amount, updates the burn amount
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected);
+    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.deep());
     <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
@@ -484,7 +485,7 @@ Increments the total volume and total staked volume.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_total_fees_collected">add_total_fees_collected</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, fees: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_add_total_fees_collected">add_total_fees_collected</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, fees: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -495,9 +496,9 @@ Increments the total volume and total staked volume.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="history.md#0x0_history_add_total_fees_collected">add_total_fees_collected</a>(
     self: &<b>mut</b> <a href="history.md#0x0_history_History">History</a>,
-    fees: u64,
+    fees: Balances,
 ) {
-    self.volumes.total_fees_collected = self.volumes.total_fees_collected + fees;
+    self.volumes.total_fees_collected.add_balances(fees);
 }
 </code></pre>
 

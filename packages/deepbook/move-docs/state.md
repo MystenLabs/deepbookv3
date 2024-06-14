@@ -168,14 +168,16 @@ Update taker settled balances and volumes.
             math::mul(volume, historic_maker_fee),
             <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
         );
-        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(order_maker_fee);
+        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
 
         i = i + 1;
     };
 
     self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx);
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
-    <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt;= 0) {
+        <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
+    };
     <a href="account.md#0x0_account">account</a>.add_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
 
     <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
@@ -185,7 +187,7 @@ Update taker settled balances and volumes.
 
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();
-    self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="order_info.md#0x0_order_info">order_info</a>.paid_fees());
+    self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, <a href="order_info.md#0x0_order_info">order_info</a>.paid_fees()));
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
