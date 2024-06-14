@@ -1,10 +1,18 @@
 module deepbook::vault {
-    use sui::balance::{Self, Balance};
+    use sui::{
+        balance::{Self, Balance},
+        coin::Coin,
+    };
 
     use deepbook::{
         balance_manager::{BalanceManager, TradeProof},
         balances::Balances,
     };
+
+    const ENotEnoughBase: u64 = 1;
+    const ENotEnoughQuote: u64 = 2;
+    const ENotEnoughDeep: u64 = 3;
+    const EIncorrectSender: u64 = 4;
 
     public struct DEEP has store {}
 
@@ -60,5 +68,61 @@ module deepbook::vault {
             let balance = balance_manager.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
             self.deep_balance.join(balance);
         };
+    }
+
+    public struct FlashloanHotPotato {
+        borrower: address,
+        base_amount: u64,
+        quote_amount: u64,
+        deep_amount: u64,
+    }
+
+    public(package) fun borrow_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+        deep_amount: u64,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>, FlashloanHotPotato) {
+        assert!(self.base_balance.value() >= base_amount, ENotEnoughBase);
+        assert!(self.quote_balance.value() >= quote_amount, ENotEnoughQuote);
+        assert!(self.deep_balance.value() >= deep_amount, ENotEnoughDeep);
+
+        let base = self.base_balance.split(base_amount).into_coin(ctx);
+        let quote = self.quote_balance.split(quote_amount).into_coin(ctx);
+        let deep = self.deep_balance.split(deep_amount).into_coin(ctx);
+        let hot_potato = FlashloanHotPotato {
+            borrower: ctx.sender(),
+            base_amount,
+            quote_amount,
+            deep_amount,
+        };
+
+        (base, quote, deep, hot_potato)
+    }
+
+    public(package) fun return_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        base: Coin<BaseAsset>,
+        quote: Coin<QuoteAsset>,
+        deep: Coin<DEEP>,
+        hot_potato: FlashloanHotPotato,
+        ctx: &TxContext,
+    ) {
+        assert!(ctx.sender() == hot_potato.borrower, EIncorrectSender);
+        assert!(base.value() == hot_potato.base_amount);
+        assert!(quote.value() == hot_potato.quote_amount);
+        assert!(deep.value() == hot_potato.deep_amount);
+        
+        self.base_balance.join(base.into_balance());
+        self.quote_balance.join(quote.into_balance());
+        self.deep_balance.join(deep.into_balance());
+
+        let FlashloanHotPotato {
+            borrower: _,
+            base_amount: _,
+            quote_amount: _,
+            deep_amount: _,
+        } = hot_potato;
     }
 }
