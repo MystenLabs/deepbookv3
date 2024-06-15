@@ -260,7 +260,7 @@ module deepbook::order_info {
         maker_fee: u64,
     ): (Balances, Balances) {
         let taker_deep_in = math::mul(
-            self.order_deep_price.quantity_in_deep(
+            self.order_deep_price.deep_quantity(
                 self.executed_quantity,
                 self.cumulative_quote_quantity
             ), taker_fee
@@ -283,7 +283,7 @@ module deepbook::order_info {
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
             let maker_deep_in = math::mul(
                 maker_fee,
-                self.order_deep_price.quantity_in_deep(
+                self.order_deep_price.deep_quantity(
                 remaining_quantity,
                 math::mul(remaining_quantity, self.price())
             ));

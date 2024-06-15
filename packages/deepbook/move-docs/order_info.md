@@ -1197,7 +1197,7 @@ Emitted when a maker order is injected into the order book.
     maker_fee: u64,
 ): (Balances, Balances) {
     <b>let</b> taker_deep_in = math::mul(
-        self.order_deep_price.quantity_in_deep(
+        self.order_deep_price.deep_quantity(
             self.executed_quantity,
             self.cumulative_quote_quantity
         ), taker_fee
@@ -1220,7 +1220,7 @@ Emitted when a maker order is injected into the order book.
     <b>if</b> (remaining_quantity &gt; 0 && !(self.<a href="order_info.md#0x0_order_info_order_type">order_type</a>() == <a href="constants.md#0x0_constants_immediate_or_cancel">constants::immediate_or_cancel</a>())) {
         <b>let</b> maker_deep_in = math::mul(
             maker_fee,
-            self.order_deep_price.quantity_in_deep(
+            self.order_deep_price.deep_quantity(
             remaining_quantity,
             math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>())
         ));

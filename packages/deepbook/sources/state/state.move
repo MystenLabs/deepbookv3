@@ -58,7 +58,7 @@ module deepbook::state {
             let quote_volume = fill.quote_quantity();
             self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let fee_volume = fill.maker_deep_price().quantity_in_deep(base_volume, quote_volume);
+            let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
             let order_maker_fee = if (whitelisted) {
                 0
             } else {
@@ -74,25 +74,16 @@ module deepbook::state {
         let account_volume = account.total_volume();
         let account_stake = account.active_stake();
 
-        let volume_in_deep = if (order_info.order_deep_price().asset_is_base()) {
-            math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
-        } else if (order_info.executed_quantity() > 0) {
-            let avg_executed_price = math::div(
-                order_info.cumulative_quote_quantity(),
-                order_info.executed_quantity()
-            );
-            math::mul(
-                avg_executed_price,
-                math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
-            )
-        } else {
-            math::mul(
-                order_info.price(),
-                math::mul(account_volume, order_info.order_deep_price().deep_per_asset())
-            )
-        };
+        // avg exucuted price for taker
+        let avg_executed_price = if (order_info.executed_quantity() > 0) {math::div(
+            order_info.cumulative_quote_quantity(),
+            order_info.executed_quantity()
+        )} else {0};
+        let account_volume_in_deep =
+            order_info.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, volume_in_deep);
+        // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume_in_deep);
         let maker_fee = self.governance.trade_params().maker_fee();
 
         if (order_info.remaining_quantity() > 0) {

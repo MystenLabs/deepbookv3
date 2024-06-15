@@ -73,7 +73,7 @@ module deepbook::deep_price {
         self.asset_is_base
     }
 
-    public(package) fun quantity_in_deep(
+    public(package) fun deep_quantity(
         self: &OrderDeepPrice,
         base_quantity: u64,
         quote_quantity: u64,

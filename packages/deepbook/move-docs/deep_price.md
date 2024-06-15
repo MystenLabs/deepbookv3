@@ -14,7 +14,7 @@
 -  [Function `get_order_deep_price`](#0x0_deep_price_get_order_deep_price)
 -  [Function `deep_per_asset`](#0x0_deep_price_deep_per_asset)
 -  [Function `asset_is_base`](#0x0_deep_price_asset_is_base)
--  [Function `quantity_in_deep`](#0x0_deep_price_quantity_in_deep)
+-  [Function `deep_quantity`](#0x0_deep_price_deep_quantity)
 -  [Function `add_price_point`](#0x0_deep_price_add_price_point)
 -  [Function `calculate_order_deep_price`](#0x0_deep_price_calculate_order_deep_price)
 -  [Function `last_insert_timestamp`](#0x0_deep_price_last_insert_timestamp)
@@ -329,13 +329,13 @@ DEEP price points used for trading fee calculations.
 
 </details>
 
-<a name="0x0_deep_price_quantity_in_deep"></a>
+<a name="0x0_deep_price_deep_quantity"></a>
 
-## Function `quantity_in_deep`
+## Function `deep_quantity`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, base_quantity: u64, quote_quantity: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_quantity">deep_quantity</a>(self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, base_quantity: u64, quote_quantity: u64): u64
 </code></pre>
 
 
@@ -344,7 +344,7 @@ DEEP price points used for trading fee calculations.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_quantity_in_deep">quantity_in_deep</a>(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="deep_price.md#0x0_deep_price_deep_quantity">deep_quantity</a>(
     self: &<a href="deep_price.md#0x0_deep_price_OrderDeepPrice">OrderDeepPrice</a>,
     base_quantity: u64,
     quote_quantity: u64,

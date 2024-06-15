@@ -463,7 +463,7 @@ quantity and whether the order is a bid.
         maker_fee,
         math::mul(
             cancel_quantity,
-            self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().quantity_in_deep(cancel_quantity, math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>()))
+            self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().deep_quantity(cancel_quantity, math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>()))
         )
     );
 
