@@ -7,7 +7,6 @@ module deepbook::pool {
 
     use sui::{
         coin::Coin,
-        sui::SUI,
         clock::Clock,
         event,
         vec_set::VecSet,
@@ -39,8 +38,6 @@ module deepbook::pool {
     const EInvalidOrderBalanceManager: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
 
-    const TREASURY_ADDRESS: address = @0x0; // TODO: if different per pool, move to pool struct
-
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         book: Book,
@@ -57,6 +54,7 @@ module deepbook::pool {
         lot_size: u64,
         min_size: u64,
         whitelisted_pool: bool,
+        treasury_address: address,
     }
 
     /// Create a new pool. The pool is registered in the registry.
@@ -68,7 +66,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        creation_fee: Coin<SUI>,
+        creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
@@ -479,7 +477,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        creation_fee: Coin<SUI>,
+        creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
         ctx: &mut TxContext,
     ): ID {
@@ -507,6 +505,7 @@ module deepbook::pool {
 
         let params = pool.state.governance().trade_params();
         let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+        let treasury_address = registry.treasury_address();
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id,
             taker_fee,
@@ -515,11 +514,10 @@ module deepbook::pool {
             lot_size,
             min_size,
             whitelisted_pool,
+            treasury_address,
         });
 
-        // TODO: reconsider sending the Coin here. User pays gas;
-        // TODO: depending on the frequency of the event;
-        transfer::public_transfer(creation_fee, TREASURY_ADDRESS);
+        transfer::public_transfer(creation_fee, treasury_address);
         let pool_id = object::id(&pool);
         transfer::share_object(pool);
 

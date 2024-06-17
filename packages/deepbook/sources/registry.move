@@ -21,6 +21,7 @@ module deepbook::registry {
     public struct Registry has key, store {
         id: UID,
         pools: Bag,
+        treasury_address: address,
     }
 
     public struct PoolKey has copy, drop, store {
@@ -32,12 +33,21 @@ module deepbook::registry {
         let registry = Registry {
             id: object::new(ctx),
             pools: bag::new(ctx),
+            treasury_address: ctx.sender(),
         };
         transfer::share_object(registry);
         let admin = DeepbookAdminCap {
             id: object::new(ctx),
         };
         transfer::public_transfer(admin, ctx.sender());
+    }
+
+    public fun set_treasury_address(
+        self: &mut Registry,
+        treasury_address: address,
+        _cap: &DeepbookAdminCap,
+    ) {
+        self.treasury_address = treasury_address;
     }
 
     /// Register a new pool in the registry.
@@ -86,11 +96,17 @@ module deepbook::registry {
         *self.pools.borrow<PoolKey, ID>(key)
     }
 
+    /// Get the treasury address
+    public(package) fun treasury_address(self: &Registry): address {
+        self.treasury_address
+    }
+
     #[test_only]
     public fun test_registry(ctx: &mut TxContext): ID {
         let registry = Registry {
             id: object::new(ctx),
             pools: bag::new(ctx),
+            treasury_address: ctx.sender(),
         };
         let id = object::id(&registry);
         transfer::share_object(registry);

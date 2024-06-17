@@ -1,5 +1,5 @@
 module deepbook::constants {
-    const POOL_CREATION_FEE: u64 = 100 * 1_000_000_000; // 100 SUI, can be updated
+    const POOL_CREATION_FEE: u64 = 10000 * 1_000_000_000; // 10000 DEEP
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
     const MIN_PRICE: u64 = 1;

@@ -214,7 +214,7 @@
 
 
 
-<pre><code><b>const</b> <a href="constants.md#0x0_constants_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 100000000000;
+<pre><code><b>const</b> <a href="constants.md#0x0_constants_POOL_CREATION_FEE">POOL_CREATION_FEE</a>: u64 = 10000000000000;
 </code></pre>
 
 
