@@ -95,6 +95,9 @@ module deepbook::master_tests {
         // Treasury address is by default OWNER
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
 
+        let (_, fee_id) = pool_tests::setup_pool_with_default_fees_return_fee<SPAM, SUI>(OWNER, registry_id, false, &mut test);
+        check_fee(OWNER, fee_id, &mut test);
+
         // Set the treasury address to ALICE
         set_treasury_address(
             OWNER,
@@ -116,8 +119,8 @@ module deepbook::master_tests {
         );
 
         // Second pool creation fee is sent to BOB
-        let (_, fee_id_2) = pool_tests::setup_pool_with_default_fees_return_fee<SPAM, USDC>(OWNER, registry_id, false, &mut test);
-        check_fee(BOB, fee_id_2, &mut test);
+        let (_, fee_id) = pool_tests::setup_pool_with_default_fees_return_fee<SPAM, USDC>(OWNER, registry_id, false, &mut test);
+        check_fee(BOB, fee_id, &mut test);
 
         end(test);
     }
