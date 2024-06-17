@@ -89,6 +89,134 @@ module deepbook::master_tests {
     }
 
     #[test]
+    fun test_master_update_treasury_address_ok(){
+        test_master_update_treasury_address()
+    }
+
+    #[test]
+    fun test_master_both_conversion_available_ok(){
+        test_master_both_conversion_available()
+    }
+
+    // Test when there are 2 reference pools, and price points are added to both, the quote conversion is used
+    fun test_master_both_conversion_available(){
+        let mut test = begin(OWNER);
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+
+        let starting_balance = 10000 * constants::float_scaling();
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 95 * constants::float_scaling(), &mut test);
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, SPAM>(OWNER, registry_id, false, &mut test);
+
+        // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
+        pool_tests::add_deep_price_point<SUI, SPAM, SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            pool1_reference_id,
+            &mut test,
+        );
+        pool_tests::add_deep_price_point<SUI, SPAM, SPAM, DEEP>(
+            OWNER,
+            pool1_id,
+            pool2_reference_id,
+            &mut test,
+        );
+
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            ALICE,
+            starting_balance,
+            &mut test
+        );
+        let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            BOB,
+            starting_balance,
+            &mut test
+        );
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+        let mut bob_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let is_bid = true;
+        let pay_with_deep = true;
+        let expire_timestamp = constants::max_u64();
+
+        // Since both price points are available, SPAM (quote) conversion should be used
+        // Alice and Bob execute cross trading in pool 1
+        // Alice should have 4 less SPAM, Bob should have 4 more SPAM
+        // Alice should have 2 more SUI, Bob should have 2 less SUI
+        // DEEP fees will be calculated using the SPAM conversion of 95
+        execute_cross_trading<SUI, SPAM>(
+            pool1_id,
+            alice_balance_manager_id,
+            bob_balance_manager_id,
+            client_order_id,
+            order_type,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test
+        );
+        alice_balance.spam = alice_balance.spam - 4 * quantity;
+        alice_balance.sui = alice_balance.sui + 2 * quantity;
+        bob_balance.spam = bob_balance.spam + 4 * quantity;
+        bob_balance.sui = bob_balance.sui - 2 * quantity;
+
+        let taker_quantity = 1 * constants::float_scaling();
+        let maker_quantity = 1 * constants::float_scaling();
+        let maker_fee = math::mul(
+            math::mul(constants::maker_fee(), math::mul(price, maker_quantity)),
+            95 * constants::float_scaling()
+        );
+        let taker_fee = math::mul(
+            math::mul(constants::taker_fee(), math::mul(price, taker_quantity)),
+            95 * constants::float_scaling()
+        );
+
+        alice_balance.deep = alice_balance.deep - maker_fee - taker_fee;
+        bob_balance.deep = bob_balance.deep - maker_fee - taker_fee;
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
+
+        end(test);
+    }
+
     fun test_master_update_treasury_address(){
         let mut test = begin(OWNER);
 
@@ -172,7 +300,7 @@ module deepbook::master_tests {
         );
 
         // Create two pools, pool 1 will be used as reference pool
-        let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
+        let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, false, &mut test);
 
         // Default price point of 10 deep per base (SPAM) will be added
@@ -532,8 +660,8 @@ module deepbook::master_tests {
         );
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
-        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, &mut test);
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
         let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
@@ -542,7 +670,7 @@ module deepbook::master_tests {
         };
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
 
-        // Default price point of 10 deep per base will be added
+        // Default price point of 100 deep per base will be added
         pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
             OWNER,
             pool1_id,
