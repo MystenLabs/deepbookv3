@@ -423,6 +423,7 @@ module deepbook::pool_tests {
             sender,
             registry_id,
             balance_manager_id,
+            100 * constants::float_scaling(),
             test,
         );
         set_time(0, test);
@@ -463,6 +464,7 @@ module deepbook::pool_tests {
         sender: address,
         registry_id: ID,
         balance_manager_id: ID,
+        mid_price: u64,
         test: &mut Scenario,
     ): ID {
         let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
@@ -479,7 +481,7 @@ module deepbook::pool_tests {
             1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            1 * constants::float_scaling(),
+            mid_price - 80 * constants::float_scaling(),
             1 * constants::float_scaling(),
             true,
             true,
@@ -494,7 +496,7 @@ module deepbook::pool_tests {
             1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            199 * constants::float_scaling(),
+            mid_price + 80 * constants::float_scaling(),
             1 * constants::float_scaling(),
             false,
             true,
