@@ -3,10 +3,11 @@
 
 # Module `0x0::balance_manager`
 
-The BalanceManager is a shared object that holds all of the balances for different assets. A combination of <code><a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a></code> and
-<code>TradeProof</code> are passed into a pool to perform trades. A <code>TradeProof</code> can be generated in two ways: by the
-owner directly, or by any trader in the authorized_traders list. Either the owner or trader can generate a <code>TradeProof</code>
-without the risk of equivocation.
+The <code><a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a></code> is a shared object that holds all of the balances for different assets. Users must pass in
+a <code><a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a></code> to perform trades. The transaction sender is asserted to perform the necessary validation. Capabilities
+are not used to avoid equivocation.
+The owner can add traders to the account. Traders can perform the same action as an owner can except for deposits,
+withdrawals, and addition / removals of traders.
 
 
 -  [Resource `BalanceManager`](#0x0_balance_manager_BalanceManager)
@@ -14,16 +15,16 @@ without the risk of equivocation.
 -  [Constants](#@Constants_0)
 -  [Function `new`](#0x0_balance_manager_new)
 -  [Function `share`](#0x0_balance_manager_share)
--  [Function `balance`](#0x0_balance_manager_balance)
 -  [Function `authorize_trader`](#0x0_balance_manager_authorize_trader)
 -  [Function `remove_trader`](#0x0_balance_manager_remove_trader)
 -  [Function `deposit`](#0x0_balance_manager_deposit)
--  [Function `deposit_protected`](#0x0_balance_manager_deposit_protected)
 -  [Function `withdraw`](#0x0_balance_manager_withdraw)
 -  [Function `withdraw_all`](#0x0_balance_manager_withdraw_all)
--  [Function `withdraw_protected`](#0x0_balance_manager_withdraw_protected)
+-  [Function `balance`](#0x0_balance_manager_balance)
 -  [Function `owner`](#0x0_balance_manager_owner)
 -  [Function `id`](#0x0_balance_manager_id)
+-  [Function `deposit_protected`](#0x0_balance_manager_deposit_protected)
+-  [Function `withdraw_protected`](#0x0_balance_manager_withdraw_protected)
 -  [Function `delete`](#0x0_balance_manager_delete)
 -  [Function `validate_owner`](#0x0_balance_manager_validate_owner)
 -  [Function `validate_trader`](#0x0_balance_manager_validate_trader)
@@ -226,38 +227,6 @@ Balance identifier.
 
 </details>
 
-<a name="0x0_balance_manager_balance"></a>
-
-## Function `balance`
-
-Returns the balance of a Coin in an balance_manager.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>): u64 {
-    <b>let</b> key = <a href="balance_manager.md#0x0_balance_manager_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-
-    <b>if</b> (!<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
-        0
-    } <b>else</b> {
-        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.<a href="balances.md#0x0_balances">balances</a>[key];
-        acc_balance.value()
-    }
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_balance_manager_authorize_trader"></a>
 
 ## Function `authorize_trader`
@@ -320,7 +289,7 @@ Remove an authorized_trader. Only the owner can remove.
 
 ## Function `deposit`
 
-Deposit funds to an balance_manager. Only owner can call this directly.
+Deposit funds to an balance_manager. Only owner can deposit.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_deposit">deposit</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, <a href="dependencies/sui-framework/coin.md#0x2_coin">coin</a>: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -346,50 +315,11 @@ Deposit funds to an balance_manager. Only owner can call this directly.
 
 </details>
 
-<a name="0x0_balance_manager_deposit_protected"></a>
-
-## Function `deposit_protected`
-
-Deposit funds to an balance_manager. Pool will call this to deposit funds.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_deposit_protected">deposit_protected</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, deposit_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_deposit_protected">deposit_protected</a>&lt;T&gt;(
-    self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>,
-    deposit_balance: Balance&lt;T&gt;,
-    ctx: &TxContext,
-) {
-    self.<a href="balance_manager.md#0x0_balance_manager_validate_trader">validate_trader</a>(ctx);
-
-    <b>let</b> key = <a href="balance_manager.md#0x0_balance_manager_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>if</b> (self.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> self.<a href="balances.md#0x0_balances">balances</a>[key];
-        <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>.join(deposit_balance);
-    } <b>else</b> {
-        self.<a href="balances.md#0x0_balances">balances</a>.add(key, deposit_balance);
-    }
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_balance_manager_withdraw"></a>
 
 ## Function `withdraw`
 
-Withdraw funds from an balance_manager. Only owner can call this directly.
-If withdraw_all is true, amount is ignored and full balance withdrawn.
-If withdraw_all is false, withdraw_amount will be withdrawn.
+Withdraw some balance of a single Coin from the balance_manager. Only owner can withdraw.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw">withdraw</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, withdraw_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
@@ -420,6 +350,7 @@ If withdraw_all is false, withdraw_amount will be withdrawn.
 
 ## Function `withdraw_all`
 
+Withdraw entire balance of a single Coin from the balance_manager. Only owner can withdraw.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw_all">withdraw_all</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;T&gt;
@@ -445,13 +376,14 @@ If withdraw_all is false, withdraw_amount will be withdrawn.
 
 </details>
 
-<a name="0x0_balance_manager_withdraw_protected"></a>
+<a name="0x0_balance_manager_balance"></a>
 
-## Function `withdraw_protected`
+## Function `balance`
+
+Returns the balance of a Coin in the balance_manager.
 
 
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw_protected">withdraw_protected</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, withdraw_amount: u64, withdraw_all: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>): u64
 </code></pre>
 
 
@@ -460,32 +392,14 @@ If withdraw_all is false, withdraw_amount will be withdrawn.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw_protected">withdraw_protected</a>&lt;T&gt;(
-    self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>,
-    withdraw_amount: u64,
-    withdraw_all: bool,
-    ctx: &TxContext,
-): Balance&lt;T&gt; {
-    self.<a href="balance_manager.md#0x0_balance_manager_validate_trader">validate_trader</a>(ctx);
-
+<pre><code><b>public</b> <b>fun</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>&lt;T&gt;(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>): u64 {
     <b>let</b> key = <a href="balance_manager.md#0x0_balance_manager_BalanceKey">BalanceKey</a>&lt;T&gt; {};
-    <b>let</b> key_exists = self.<a href="balances.md#0x0_balances">balances</a>.contains(key);
-    <b>if</b> (withdraw_all) {
-        <b>if</b> (key_exists) {
-            self.<a href="balances.md#0x0_balances">balances</a>.remove(key)
-        } <b>else</b> {
-            <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>()
-        }
+
+    <b>if</b> (!<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
+        0
     } <b>else</b> {
-        <b>assert</b>!(key_exists, <a href="balance_manager.md#0x0_balance_manager_EBalanceManagerBalanceTooLow">EBalanceManagerBalanceTooLow</a>);
-        <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> self.<a href="balances.md#0x0_balances">balances</a>[key];
-        <b>let</b> acc_value = acc_balance.value();
-        <b>assert</b>!(acc_value &gt;= withdraw_amount, <a href="balance_manager.md#0x0_balance_manager_EBalanceManagerBalanceTooLow">EBalanceManagerBalanceTooLow</a>);
-        <b>if</b> (withdraw_amount == acc_value) {
-            self.<a href="balances.md#0x0_balances">balances</a>.remove(key)
-        } <b>else</b> {
-            acc_balance.split(withdraw_amount)
-        }
+        <b>let</b> acc_balance: &Balance&lt;T&gt; = &<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.<a href="balances.md#0x0_balances">balances</a>[key];
+        acc_balance.value()
     }
 }
 </code></pre>
@@ -544,11 +458,98 @@ Returns the owner of the balance_manager.
 
 </details>
 
+<a name="0x0_balance_manager_deposit_protected"></a>
+
+## Function `deposit_protected`
+
+Deposit funds to an balance_manager. Pool will call this to deposit funds.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_deposit_protected">deposit_protected</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, deposit_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_deposit_protected">deposit_protected</a>&lt;T&gt;(
+    self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>,
+    deposit_balance: Balance&lt;T&gt;,
+    ctx: &TxContext,
+) {
+    self.<a href="balance_manager.md#0x0_balance_manager_validate_trader">validate_trader</a>(ctx);
+
+    <b>let</b> key = <a href="balance_manager.md#0x0_balance_manager_BalanceKey">BalanceKey</a>&lt;T&gt; {};
+    <b>if</b> (self.<a href="balances.md#0x0_balances">balances</a>.contains(key)) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> self.<a href="balances.md#0x0_balances">balances</a>[key];
+        <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>.join(deposit_balance);
+    } <b>else</b> {
+        self.<a href="balances.md#0x0_balances">balances</a>.add(key, deposit_balance);
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_balance_manager_withdraw_protected"></a>
+
+## Function `withdraw_protected`
+
+Withdraw funds from the balance_manager. Pool will call this to withdraw funds.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw_protected">withdraw_protected</a>&lt;T&gt;(self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, withdraw_amount: u64, withdraw_all: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;T&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_withdraw_protected">withdraw_protected</a>&lt;T&gt;(
+    self: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">BalanceManager</a>,
+    withdraw_amount: u64,
+    withdraw_all: bool,
+    ctx: &TxContext,
+): Balance&lt;T&gt; {
+    self.<a href="balance_manager.md#0x0_balance_manager_validate_trader">validate_trader</a>(ctx);
+
+    <b>let</b> key = <a href="balance_manager.md#0x0_balance_manager_BalanceKey">BalanceKey</a>&lt;T&gt; {};
+    <b>let</b> key_exists = self.<a href="balances.md#0x0_balances">balances</a>.contains(key);
+    <b>if</b> (withdraw_all) {
+        <b>if</b> (key_exists) {
+            self.<a href="balances.md#0x0_balances">balances</a>.remove(key)
+        } <b>else</b> {
+            <a href="dependencies/sui-framework/balance.md#0x2_balance_zero">balance::zero</a>()
+        }
+    } <b>else</b> {
+        <b>assert</b>!(key_exists, <a href="balance_manager.md#0x0_balance_manager_EBalanceManagerBalanceTooLow">EBalanceManagerBalanceTooLow</a>);
+        <b>let</b> acc_balance: &<b>mut</b> Balance&lt;T&gt; = &<b>mut</b> self.<a href="balances.md#0x0_balances">balances</a>[key];
+        <b>let</b> acc_value = acc_balance.value();
+        <b>assert</b>!(acc_value &gt;= withdraw_amount, <a href="balance_manager.md#0x0_balance_manager_EBalanceManagerBalanceTooLow">EBalanceManagerBalanceTooLow</a>);
+        <b>if</b> (withdraw_amount == acc_value) {
+            self.<a href="balances.md#0x0_balances">balances</a>.remove(key)
+        } <b>else</b> {
+            acc_balance.split(withdraw_amount)
+        }
+    }
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_balance_manager_delete"></a>
 
 ## Function `delete`
 
-Deletes an balance_manager.
+Deletes the balance_manager.
 This is used for deleting temporary balance_managers for direct swap with pool.
 
 
@@ -582,6 +583,7 @@ This is used for deleting temporary balance_managers for direct swap with pool.
 
 ## Function `validate_owner`
 
+Validate that the transaction sender is the owner.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_validate_owner">validate_owner</a>(self: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -606,6 +608,7 @@ This is used for deleting temporary balance_managers for direct swap with pool.
 
 ## Function `validate_trader`
 
+Validate that the transaction sender is either the owner of a trader.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balance_manager.md#0x0_balance_manager_validate_trader">validate_trader</a>(self: &<a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
