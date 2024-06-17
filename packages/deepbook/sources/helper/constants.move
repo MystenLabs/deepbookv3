@@ -37,6 +37,9 @@ module deepbook::constants {
     // History constants
     const PHASE_OUT_EPOCHS: u64 = 28;
 
+    // Fee type constants
+    const FEE_IS_DEEP: bool = true;
+
     // Constants for testing
     #[test_only]
     const MAKER_FEE: u64 = 500000;
@@ -49,7 +52,7 @@ module deepbook::constants {
     #[test_only]
     const MIN_SIZE: u64 = 10000;
     #[test_only]
-    const DEEP_MULTIPLIER: u64 = 10 * FLOAT_SCALING;
+    const DEEP_MULTIPLIER: u64 = 100 * FLOAT_SCALING;
     #[test_only]
     const TAKER_DISCOUNT: u64 = 500_000_000;
     #[test_only]
@@ -64,6 +67,8 @@ module deepbook::constants {
     const EBookOrderMismatch: u64 = 1;
     #[test_only]
     const EIncorrectMidPrice: u64 = 2;
+    #[test_only]
+    const EIncorrectPoolId: u64 = 3;
 
     public fun pool_creation_fee(): u64 {
         POOL_CREATION_FEE
@@ -149,6 +154,10 @@ module deepbook::constants {
         HALF
     }
 
+    public fun fee_is_deep(): bool {
+        FEE_IS_DEEP
+    }
+
     #[test_only]
     public fun maker_fee(): u64 {
         MAKER_FEE
@@ -207,5 +216,10 @@ module deepbook::constants {
     #[test_only]
     public fun sui_unit(): u64 {
         SUI_UNIT
+    }
+
+    #[test_only]
+    public fun e_incorrect_pool_id(): u64 {
+        EIncorrectPoolId
     }
 }

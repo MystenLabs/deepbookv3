@@ -26,6 +26,7 @@
 
 <pre><code><b>use</b> <a href="account.md#0x0_account">0x0::account</a>;
 <b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
+<b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="governance.md#0x0_governance">0x0::governance</a>;
 <b>use</b> <a href="history.md#0x0_history">0x0::history</a>;
@@ -135,7 +136,7 @@ Update all maker settled balances and volumes.
 Update taker settled balances and volumes.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, whitelisted: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -147,6 +148,7 @@ Update taker settled balances and volumes.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(
     self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
     <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> OrderInfo,
+    whitelisted: bool,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
@@ -161,13 +163,16 @@ Update taker settled balances and volumes.
         <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
         <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
 
-        <b>let</b> volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
-        self.<a href="history.md#0x0_history">history</a>.add_volume(volume, <a href="account.md#0x0_account">account</a>.active_stake());
+        <b>let</b> base_volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
+        <b>let</b> quote_volume = <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
+        self.<a href="history.md#0x0_history">history</a>.add_volume(base_volume, <a href="account.md#0x0_account">account</a>.active_stake());
         <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
-        <b>let</b> order_maker_fee = math::mul(
-            math::mul(volume, historic_maker_fee),
-            <a href="fill.md#0x0_fill">fill</a>.maker_deep_per_base()
-        );
+        <b>let</b> fee_volume = <a href="fill.md#0x0_fill">fill</a>.maker_deep_price().deep_quantity(base_volume, quote_volume);
+        <b>let</b> order_maker_fee = <b>if</b> (whitelisted) {
+            0
+        } <b>else</b> {
+            math::mul(fee_volume, historic_maker_fee)
+        };
         self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
 
         i = i + 1;
@@ -175,15 +180,29 @@ Update taker settled balances and volumes.
 
     self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx);
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
-    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt;= 0) {
+    <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
+    <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
+
+    // avg exucuted price for taker
+    <b>let</b> avg_executed_price = <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity() &gt; 0) {
+        math::div(
+            <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity(),
+            <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()
+        )
+    } <b>else</b> {
+        0
+    };
+    <b>let</b> account_volume_in_deep =
+        <a href="order_info.md#0x0_order_info">order_info</a>.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
+
+    // taker fee will almost be calculated <b>as</b> 0 for whitelisted pools by default, <b>as</b> account_volume_in_deep is 0
+    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, account_volume_in_deep);
+    <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
+
+    <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.remaining_quantity() &gt; 0) {
         <a href="account.md#0x0_account">account</a>.add_order(<a href="order_info.md#0x0_order_info">order_info</a>.order_id());
     };
     <a href="account.md#0x0_account">account</a>.add_taker_volume(<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity());
-
-    <b>let</b> account_volume = <a href="account.md#0x0_account">account</a>.total_volume();
-    <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
-    <b>let</b> taker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().taker_fee_for_user(account_stake, math::mul(account_volume, <a href="order_info.md#0x0_order_info">order_info</a>.deep_per_base()));
-    <b>let</b> maker_fee = self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>().maker_fee();
 
     <b>let</b> (<b>mut</b> settled, <b>mut</b> owed) = <a href="order_info.md#0x0_order_info">order_info</a>.calculate_partial_fill_balances(taker_fee, maker_fee);
     <b>let</b> (old_settled, old_owed) = <a href="account.md#0x0_account">account</a>.settle();

@@ -39,6 +39,7 @@ module deepbook::state {
     public(package) fun process_create(
         self: &mut State,
         order_info: &mut OrderInfo,
+        whitelisted: bool,
         ctx: &TxContext,
     ): (Balances, Balances) {
         self.governance.update(ctx);
@@ -53,13 +54,16 @@ module deepbook::state {
             let account = &mut self.accounts[maker];
             account.process_maker_fill(fill);
 
-            let volume = fill.base_quantity();
-            self.history.add_volume(volume, account.active_stake());
+            let base_volume = fill.base_quantity();
+            let quote_volume = fill.quote_quantity();
+            self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let order_maker_fee = math::mul(
-                math::mul(volume, historic_maker_fee),
-                fill.maker_deep_per_base()
-            );
+            let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
+            let order_maker_fee = if (whitelisted) {
+                0
+            } else {
+                math::mul(fee_volume, historic_maker_fee)
+            };
             self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
 
             i = i + 1;
@@ -67,15 +71,29 @@ module deepbook::state {
 
         self.update_account(order_info.balance_manager_id(), ctx);
         let account = &mut self.accounts[order_info.balance_manager_id()];
-        if (order_info.remaining_quantity() >= 0) {
+        let account_volume = account.total_volume();
+        let account_stake = account.active_stake();
+
+        // avg exucuted price for taker
+        let avg_executed_price = if (order_info.executed_quantity() > 0) {
+            math::div(
+                order_info.cumulative_quote_quantity(),
+                order_info.executed_quantity()
+            )
+        } else {
+            0
+        };
+        let account_volume_in_deep =
+            order_info.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
+
+        // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
+        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume_in_deep);
+        let maker_fee = self.governance.trade_params().maker_fee();
+
+        if (order_info.remaining_quantity() > 0) {
             account.add_order(order_info.order_id());
         };
         account.add_taker_volume(order_info.executed_quantity());
-
-        let account_volume = account.total_volume();
-        let account_stake = account.active_stake();
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, math::mul(account_volume, order_info.deep_per_base()));
-        let maker_fee = self.governance.trade_params().maker_fee();
 
         let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
         let (old_settled, old_owed) = account.settle();

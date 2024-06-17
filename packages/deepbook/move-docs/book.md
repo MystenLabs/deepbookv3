@@ -623,7 +623,7 @@ Mutates the order and the maker order as necessary.
     <b>while</b> (i &lt; fills.length()) {
         <b>let</b> <a href="fill.md#0x0_fill">fill</a> = fills[i];
         <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
-            book_side.remove(<a href="fill.md#0x0_fill">fill</a>.order_id());
+            book_side.remove(<a href="fill.md#0x0_fill">fill</a>.maker_order_id());
         };
         i = i + 1;
     };

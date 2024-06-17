@@ -273,7 +273,7 @@ Given the epoch's volume data and the account's volume data,
 calculate and returns rebate amount, updates the burn amount
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -287,10 +287,10 @@ calculate and returns rebate amount, updates the burn amount
     prev_epoch: u64,
     maker_volume: u64,
     account_stake: u64,
-): u64 {
+): Balances {
     <b>assert</b>!(self.historic_volumes.contains(prev_epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
     <b>let</b> volumes = &<b>mut</b> self.historic_volumes[prev_epoch];
-    <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> 0;
+    <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> <a href="balances.md#0x0_balances_empty">balances::empty</a>();
 
     <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
     <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
@@ -309,7 +309,7 @@ calculate and returns rebate amount, updates the burn amount
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-    maker_rebate
+    <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, maker_rebate)
 }
 </code></pre>
 

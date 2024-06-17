@@ -12,26 +12,76 @@ module deepbook::deep_price {
     const MAX_DATA_POINTS: u64 = 100;
 
     const EDataPointRecentlyAdded: u64 = 1;
-    // const ENoDataPoints: u64 = 2;
+    const ENoDataPoints: u64 = 2;
 
     /// DEEP price point.
     public struct Price has store, drop {
+        conversion_rate: u64,
         timestamp: u64,
-        base_conversion_rate: u64,
     }
 
     /// DEEP price points used for trading fee calculations.
     public struct DeepPrice has store, drop {
-        prices: vector<Price>,
-        index_to_replace: u64,
+        base_prices: vector<Price>,
         cumulative_base: u64,
+        quote_prices: vector<Price>,
+        cumulative_quote: u64,
+    }
+
+    public struct OrderDeepPrice has copy, store, drop {
+        asset_is_base: bool,
+        deep_per_asset: u64,
     }
 
     public(package) fun empty(): DeepPrice {
         DeepPrice {
-            prices: vector[],
-            index_to_replace: 0,
+            base_prices: vector[],
             cumulative_base: 0,
+            quote_prices: vector[],
+            cumulative_quote: 0,
+        }
+    }
+
+    public(package) fun new_order_deep_price(
+        asset_is_base: bool,
+        deep_per_asset: u64,
+    ): OrderDeepPrice {
+        OrderDeepPrice {
+            asset_is_base: asset_is_base,
+            deep_per_asset: deep_per_asset,
+        }
+    }
+
+    public(package) fun get_order_deep_price(
+        self: &DeepPrice,
+        whitelisted: bool,
+    ): OrderDeepPrice {
+        let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(whitelisted);
+
+        new_order_deep_price(asset_is_base, deep_per_asset)
+    }
+
+    public(package) fun deep_per_asset(
+        self: &OrderDeepPrice,
+    ): u64 {
+        self.deep_per_asset
+    }
+
+    public(package) fun asset_is_base(
+        self: &OrderDeepPrice,
+    ): bool {
+        self.asset_is_base
+    }
+
+    public(package) fun deep_quantity(
+        self: &OrderDeepPrice,
+        base_quantity: u64,
+        quote_quantity: u64,
+    ): u64 {
+        if (self.asset_is_base) {
+            math::mul(base_quantity, self.deep_per_asset)
+        } else {
+            math::mul(quote_quantity, self.deep_per_asset)
         }
     }
 
@@ -39,47 +89,81 @@ module deepbook::deep_price {
     /// Remove all data points older than MAX_DATA_POINT_AGE_MS.
     public(package) fun add_price_point(
         self: &mut DeepPrice,
+        conversion_rate: u64,
         timestamp: u64,
-        base_conversion_rate: u64,
+        is_base_conversion: bool,
     ) {
-        assert!(self.last_insert_timestamp() + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
-        self.prices.push_back(Price {
-            timestamp: timestamp,
-            base_conversion_rate: base_conversion_rate,
-        });
-        self.cumulative_base = self.cumulative_base + base_conversion_rate;
-
-        let idx = self.index_to_replace;
-        if (self.prices.length() == MAX_DATA_POINTS + 1) {
-            self.cumulative_base = self.cumulative_base - self.prices[idx].base_conversion_rate;
-            self.prices.swap_remove(idx);
-            self.prices.swap_remove(idx);
-            self.index_to_replace = self.index_to_replace + 1 % MAX_DATA_POINTS;
+        assert!(self.last_insert_timestamp(is_base_conversion) + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
+        let asset_prices = if (is_base_conversion) {
+            &mut self.base_prices
+        } else {
+            &mut self.quote_prices
         };
 
-        let mut idx = self.index_to_replace;
-        while (self.prices[idx].timestamp + MAX_DATA_POINT_AGE_MS < timestamp) {
-            self.cumulative_base = self.cumulative_base - self.prices[idx].base_conversion_rate;
-            self.prices.remove(idx);
-            self.index_to_replace = self.index_to_replace + 1 % MAX_DATA_POINTS;
-            idx = self.index_to_replace;
-        }
+        asset_prices.push_back(Price {
+            timestamp: timestamp,
+            conversion_rate: conversion_rate,
+        });
+        if (is_base_conversion) {
+            self.cumulative_base = self.cumulative_base + conversion_rate;
+            while (
+                asset_prices.length() == MAX_DATA_POINTS + 1 ||
+                asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
+            ) {
+                self.cumulative_base = self.cumulative_base - asset_prices[0].conversion_rate;
+                asset_prices.remove(0);
+            }
+        } else {
+            self.cumulative_quote = self.cumulative_quote + conversion_rate;
+            while (
+                asset_prices.length() == MAX_DATA_POINTS + 1 ||
+                asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
+            ) {
+                self.cumulative_quote = self.cumulative_quote - asset_prices[0].conversion_rate;
+                asset_prices.remove(0);
+            }
+        };
     }
 
-    /// Returns the conversion rate of DEEP per base token.
-    public(package) fun conversion_rate(
+    /// Returns the conversion rate of DEEP per asset token.
+    /// Base will be used by default, if there are no base data then quote will be used
+    fun calculate_order_deep_price(
         self: &DeepPrice,
-    ): u64 {
-        // TODO: Add assert, assert!(self.last_insert_timestamp() > 0, ENoDataPoints);
-        if (self.last_insert_timestamp() == 0) return 10 * 1_000_000_000; // Default deep conversion rate to 10, remove after testing
-        let deep_per_base = math::div(self.cumulative_base, self.prices.length());
+        whitelisted: bool,
+    ): (bool, u64) {
+        if (whitelisted) {
+            return (false, 0) // no fees for whitelist
+        };
+        assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
 
-        deep_per_base
+        let is_base_conversion = self.last_insert_timestamp(false) == 0;
+
+        let cumulative_asset = if (is_base_conversion) {
+            self.cumulative_base
+        } else {
+            self.cumulative_quote
+        };
+        let asset_length = if (is_base_conversion) {
+            self.base_prices.length()
+        } else {
+            self.quote_prices.length()
+        };
+        let deep_per_asset = cumulative_asset / asset_length;
+
+        (is_base_conversion, deep_per_asset)
     }
 
-    fun last_insert_timestamp(self: &DeepPrice): u64 {
-        if (self.prices.length() > 0) {
-            self.prices[self.prices.length() - 1].timestamp
+    fun last_insert_timestamp(
+        self: &DeepPrice,
+        is_base_conversion: bool,
+    ): u64 {
+        let prices = if (is_base_conversion) {
+            &self.base_prices
+        } else {
+            &self.quote_prices
+        };
+        if (prices.length() > 0) {
+            prices[prices.length() - 1].timestamp
         } else {
             0
         }
