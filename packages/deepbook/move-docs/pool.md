@@ -180,6 +180,12 @@ Public-facing interface for the package.
 <dd>
 
 </dd>
+<dt>
+<code>treasury_address: <b>address</b></code>
+</dt>
+<dd>
+
+</dd>
 </dl>
 
 
@@ -285,15 +291,6 @@ Public-facing interface for the package.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>: u64 = 2;
-</code></pre>
-
-
-
-<a name="0x0_pool_TREASURY_ADDRESS"></a>
-
-
-
-<pre><code><b>const</b> <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>: <b>address</b> = 0;
 </code></pre>
 
 
@@ -1275,6 +1272,7 @@ Only Admin can set a pool as stable.
 
     <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
     <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+    <b>let</b> treasury_address = <a href="registry.md#0x0_registry">registry</a>.treasury_address();
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -1283,11 +1281,10 @@ Only Admin can set a pool as stable.
         lot_size,
         min_size,
         whitelisted_pool,
+        treasury_address,
     });
 
-    // TODO: reconsider sending the Coin here. User pays gas;
-    // TODO: depending on the frequency of the <a href="dependencies/sui-framework/event.md#0x2_event">event</a>;
-    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, <a href="pool.md#0x0_pool_TREASURY_ADDRESS">TREASURY_ADDRESS</a>);
+    <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, treasury_address);
     <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(&<a href="pool.md#0x0_pool">pool</a>);
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="pool.md#0x0_pool">pool</a>);
 

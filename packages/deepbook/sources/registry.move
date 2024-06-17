@@ -42,7 +42,6 @@ module deepbook::registry {
         transfer::public_transfer(admin, ctx.sender());
     }
 
-
     public fun update_treasury_address(
         self: &mut Registry,
         treasury_address: address,
