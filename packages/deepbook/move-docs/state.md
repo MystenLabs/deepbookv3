@@ -189,7 +189,9 @@ Update taker settled balances and volumes.
             <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity(),
             <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()
         )
-    } <b>else</b> {0};
+    } <b>else</b> {
+        0
+    };
     <b>let</b> account_volume_in_deep =
         <a href="order_info.md#0x0_order_info">order_info</a>.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 

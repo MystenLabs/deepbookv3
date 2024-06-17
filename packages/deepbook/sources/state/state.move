@@ -80,7 +80,9 @@ module deepbook::state {
                 order_info.cumulative_quote_quantity(),
                 order_info.executed_quantity()
             )
-        } else {0};
+        } else {
+            0
+        };
         let account_volume_in_deep =
             order_info.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 
