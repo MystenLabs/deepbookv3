@@ -55,7 +55,7 @@ module deepbook::master_tests {
         test_master(ENotEnoughFunds)
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
     fun test_master_incorrect_stake_owner_e(){
         test_master(EIncorrectStakeOwner)
     }
@@ -65,7 +65,7 @@ module deepbook::master_tests {
         test_master(ECannotPropose)
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
     fun test_master_incorrect_rebate_claimer_e(){
         test_master(EIncorrectRebateClaimer)
     }
@@ -425,7 +425,7 @@ module deepbook::master_tests {
 
         if (error_code == EIncorrectRebateClaimer) {
             claim_rebates<SUI, USDC>(
-                BOB,
+                @0xdddd,
                 pool1_id,
                 alice_balance_manager_id,
                 &mut test
@@ -709,11 +709,9 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            let proof = my_manager.generate_proof_as_owner(test.ctx());
             pool::claim_rebates<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
-                &proof,
                 test.ctx()
             );
             return_shared(pool);
@@ -731,13 +729,10 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            // Get Proof from BalanceManager
-            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::unstake<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
-                &trade_proof,
                 test.ctx()
             );
             return_shared(pool);
@@ -755,11 +750,10 @@ module deepbook::master_tests {
         {
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            let proof = my_manager.generate_proof_as_owner(test.ctx());
             pool::withdraw_settled_amounts<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
-                &proof
+                test.ctx(),
             );
             return_shared(my_manager);
             return_shared(pool);
@@ -825,13 +819,10 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            // Get Proof from BalanceManager
-            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::stake<SUI, USDC>(
                 &mut pool,
                 &mut my_manager,
-                &trade_proof,
                 amount,
                 test.ctx()
             );
@@ -853,13 +844,10 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            // Get Proof from BalanceManager
-            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::submit_proposal<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
-                &trade_proof,
                 taker_fee,
                 maker_fee,
                 stake_required,
