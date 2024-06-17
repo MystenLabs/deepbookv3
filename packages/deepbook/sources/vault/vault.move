@@ -36,6 +36,7 @@ module deepbook::vault {
         balance_manager: &mut BalanceManager,
         ctx: &TxContext,
     ) {
+        balance_manager.validate_trader(ctx);
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
             balance_manager.deposit_protected(balance, ctx);
