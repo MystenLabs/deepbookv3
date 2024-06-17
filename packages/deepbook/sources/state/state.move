@@ -75,10 +75,12 @@ module deepbook::state {
         let account_stake = account.active_stake();
 
         // avg exucuted price for taker
-        let avg_executed_price = if (order_info.executed_quantity() > 0) {math::div(
-            order_info.cumulative_quote_quantity(),
-            order_info.executed_quantity()
-        )} else {0};
+        let avg_executed_price = if (order_info.executed_quantity() > 0) {
+            math::div(
+                order_info.cumulative_quote_quantity(),
+                order_info.executed_quantity()
+            )
+        } else {0};
         let account_volume_in_deep =
             order_info.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 
@@ -285,7 +287,7 @@ module deepbook::state {
         let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
             let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-            account.add_rebates(balances::new(0, 0, rebates));
+            account.add_rebates(rebates);
         }
     }
 }

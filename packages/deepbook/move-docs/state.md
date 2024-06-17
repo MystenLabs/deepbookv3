@@ -184,10 +184,12 @@ Update taker settled balances and volumes.
     <b>let</b> account_stake = <a href="account.md#0x0_account">account</a>.active_stake();
 
     // avg exucuted price for taker
-    <b>let</b> avg_executed_price = <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity() &gt; 0) {math::div(
-        <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity(),
-        <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()
-    )} <b>else</b> {0};
+    <b>let</b> avg_executed_price = <b>if</b> (<a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity() &gt; 0) {
+        math::div(
+            <a href="order_info.md#0x0_order_info">order_info</a>.cumulative_quote_quantity(),
+            <a href="order_info.md#0x0_order_info">order_info</a>.executed_quantity()
+        )
+    } <b>else</b> {0};
     <b>let</b> account_volume_in_deep =
         <a href="order_info.md#0x0_order_info">order_info</a>.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 
@@ -654,7 +656,7 @@ Remove order from account orders.
     <b>let</b> (prev_epoch, maker_volume, active_stake) = <a href="account.md#0x0_account">account</a>.<b>update</b>(ctx);
     <b>if</b> (prev_epoch &gt; 0 && maker_volume &gt; 0 && active_stake &gt; 0) {
         <b>let</b> rebates = self.<a href="history.md#0x0_history">history</a>.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
-        <a href="account.md#0x0_account">account</a>.add_rebates(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, rebates));
+        <a href="account.md#0x0_account">account</a>.add_rebates(rebates);
     }
 }
 </code></pre>

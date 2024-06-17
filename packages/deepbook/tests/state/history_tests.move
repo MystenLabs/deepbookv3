@@ -61,7 +61,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 180_000_000, EWrongRebateAmount);
+        assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -110,21 +110,21 @@ module deepbook::history_tests {
             0, // maker_volume
             1_000_000 // stake
         );
-        assert!(rebate_epoch_0_alice == 0, EWrongRebateAmount);
+        assert!(rebate_epoch_0_alice.deep() == 0, EWrongRebateAmount);
 
         let rebate_epoch_1_alice = history.calculate_rebate_amount(
             28, // epoch
             0, // maker_volume
             1_000_000 // stake
         );
-        assert!(rebate_epoch_1_alice == 0, EWrongRebateAmount);
+        assert!(rebate_epoch_1_alice.deep() == 0, EWrongRebateAmount);
 
         let rebate_epoch_1_bob = history.calculate_rebate_amount(
             29,
             3 * FLOAT_SCALING,
             1_000_000 // stake
         );
-        assert!(rebate_epoch_1_bob == 180_000_000, EWrongRebateAmount);
+        assert!(rebate_epoch_1_bob.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -171,7 +171,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 0, EWrongRebateAmount);
+        assert!(rebate.deep() == 0, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -208,7 +208,7 @@ module deepbook::history_tests {
                 3 * FLOAT_SCALING,
                 1_000_000
             );
-            assert!(rebate == 300_000_000, EWrongRebateAmount);
+            assert!(rebate.deep() == 300_000_000, EWrongRebateAmount);
             epochs_to_advance = epochs_to_advance - 1;
         };
 
@@ -231,7 +231,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 180_000_000, EWrongRebateAmount);
+        assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);

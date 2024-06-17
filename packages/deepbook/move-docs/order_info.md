@@ -1221,9 +1221,10 @@ Emitted when a maker order is injected into the order book.
         <b>let</b> maker_deep_in = math::mul(
             maker_fee,
             self.order_deep_price.deep_quantity(
-            remaining_quantity,
-            math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>())
-        ));
+                remaining_quantity,
+                math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>())
+            )
+        );
         owed_balances.add_deep(maker_deep_in);
         <b>if</b> (self.is_bid) {
             owed_balances.add_quote(math::mul(remaining_quantity, self.<a href="order_info.md#0x0_order_info_price">price</a>()));

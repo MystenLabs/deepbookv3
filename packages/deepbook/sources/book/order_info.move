@@ -284,9 +284,10 @@ module deepbook::order_info {
             let maker_deep_in = math::mul(
                 maker_fee,
                 self.order_deep_price.deep_quantity(
-                remaining_quantity,
-                math::mul(remaining_quantity, self.price())
-            ));
+                    remaining_quantity,
+                    math::mul(remaining_quantity, self.price())
+                )
+            );
             owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
