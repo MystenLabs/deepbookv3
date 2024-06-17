@@ -21,7 +21,7 @@ module deepbook::account {
         active_stake: u64,
         inactive_stake: u64,
         voted_proposal: Option<ID>,
-        unclaimed_rebates: u64,
+        unclaimed_rebates: Balances,
         settled_balances: Balances,
         owed_balances: Balances,
     }
@@ -38,7 +38,7 @@ module deepbook::account {
             active_stake: 0,
             inactive_stake: 0,
             voted_proposal: option::none(),
-            unclaimed_rebates: 0,
+            unclaimed_rebates: balances::empty(),
             settled_balances: balances::empty(),
             owed_balances: balances::empty(),
         }
@@ -97,7 +97,7 @@ module deepbook::account {
             self.maker_volume = self.maker_volume + fill.base_quantity();
         };
         if (fill.expired() || fill.completed()) {
-            self.open_orders.remove(&fill.order_id());
+            self.open_orders.remove(&fill.maker_order_id());
         }
     }
 
@@ -148,16 +148,16 @@ module deepbook::account {
 
     public(package) fun add_rebates(
         self: &mut Account,
-        rebates: u64,
+        rebates: Balances,
     ) {
-        self.unclaimed_rebates = self.unclaimed_rebates + rebates;
+        self.unclaimed_rebates.add_balances(rebates);
     }
 
     public(package) fun claim_rebates(
         self: &mut Account,
     ) {
-        self.settled_balances.add_deep(self.unclaimed_rebates);
-        self.unclaimed_rebates = 0;
+        self.settled_balances.add_balances(self.unclaimed_rebates);
+        self.unclaimed_rebates.reset();
     }
 
     public(package) fun add_order(

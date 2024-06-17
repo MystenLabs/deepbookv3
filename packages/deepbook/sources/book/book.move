@@ -242,7 +242,7 @@ module deepbook::book {
         while (i < fills.length()) {
             let fill = fills[i];
             if (fill.expired() || fill.completed()) {
-                book_side.remove(fill.order_id());
+                book_side.remove(fill.maker_order_id());
             };
             i = i + 1;
         };

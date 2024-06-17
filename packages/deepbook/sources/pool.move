@@ -56,6 +56,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
+        whitelisted_pool: bool,
     }
 
     /// Create a new pool. The pool is registered in the registry.
@@ -68,6 +69,7 @@ module deepbook::pool {
         lot_size: u64,
         min_size: u64,
         creation_fee: Coin<SUI>,
+        whitelisted_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
     ): ID {
@@ -77,6 +79,7 @@ module deepbook::pool {
             lot_size,
             min_size,
             creation_fee,
+            whitelisted_pool,
             ctx,
         )
     }
@@ -377,42 +380,47 @@ module deepbook::pool {
 
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
-    public fun add_deep_price_point<BaseAsset, QuoteAsset, DEEPBaseAsset, DEEPQuoteAsset>(
+    public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
         target_pool: &mut Pool<BaseAsset, QuoteAsset>,
-        reference_pool: &Pool<DEEPBaseAsset, DEEPQuoteAsset>,
+        reference_pool: &Pool<ReferenceBaseAsset, ReferenceQuoteAsset>,
         clock: &Clock,
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
-        let deep_price = reference_pool.mid_price(clock);
-        let pool_price = target_pool.mid_price(clock);
-        let deep_base_type = type_name::get<DEEPBaseAsset>();
-        let deep_quote_type = type_name::get<DEEPQuoteAsset>();
-        let base_type = type_name::get<BaseAsset>();
-        let quote_type = type_name::get<QuoteAsset>();
+        let reference_pool_price = reference_pool.mid_price(clock);
+        let reference_base_type = type_name::get<ReferenceBaseAsset>();
+        let reference_quote_type = type_name::get<ReferenceQuoteAsset>();
+        let target_base_type = type_name::get<BaseAsset>();
+        let target_quote_type = type_name::get<QuoteAsset>();
         let deep_type = type_name::get<DEEP>();
         let timestamp = clock.timestamp_ms();
-        if (base_type == deep_type) {
-            return target_pool.deep_price.add_price_point(1, timestamp)
-        };
-        if (quote_type == deep_type) {
-            return target_pool.deep_price.add_price_point(pool_price, timestamp)
-        };
 
-        assert!((base_type == deep_base_type || base_type == deep_quote_type) ||
-                (quote_type == deep_base_type || quote_type == deep_quote_type), EIneligibleTargetPool);
-        assert!(!(base_type == deep_base_type && quote_type == deep_quote_type), EIneligibleTargetPool);
+        assert!(reference_base_type == deep_type || reference_quote_type == deep_type, EIneligibleTargetPool);
 
-        let deep_per_base = if (base_type == deep_base_type) {
-            deep_price
-        } else if (base_type == deep_quote_type) {
-            math::div(1_000_000_000, deep_price)
-        } else if (quote_type == deep_base_type) {
-            math::mul(deep_price, pool_price)
+        let reference_deep_is_base = reference_base_type == deep_type;
+        let reference_other_type = if (reference_deep_is_base) {
+            reference_quote_type
         } else {
-            math::div(deep_price, pool_price)
+            reference_base_type
+        };
+        let reference_other_is_target_base = reference_other_type == target_base_type;
+        let reference_other_is_target_quote = reference_other_type == target_quote_type;
+        assert!(reference_other_is_target_base || reference_other_is_target_quote, EIneligibleTargetPool);
+
+        // For DEEP/USDC pool, reference_deep_is_base is true, DEEP per USDC is reference_pool_price
+        // For USDC/DEEP pool, reference_deep_is_base is false, USDC per DEEP is reference_pool_price
+        let deep_per_reference_other_price = if (reference_deep_is_base) {
+            math::div(1_000_000_000, reference_pool_price)
+        } else {
+            reference_pool_price
         };
 
-        target_pool.deep_price.add_price_point(deep_per_base, timestamp)
+        // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
+        // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
+        if (reference_other_is_target_base){
+            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
+        } else {
+            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, false);
+        }
     }
 
     /// Burns DEEP tokens from the pool. Amount to burn is within history
@@ -436,23 +444,6 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         self.state.governance_mut(ctx).set_stable(stable);
-    }
-
-    /// Set a pool as a whitelist pool. Whitelist pools have zero fees.
-    /// Only Admin can set a pool as whitelist.
-    public fun set_whitelist<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepbookAdminCap,
-        whitelist: bool,
-        ctx: &TxContext,
-    ) {
-        // TODO: remove the below for testing as needed
-        let base = type_name::get<BaseAsset>();
-        let quote = type_name::get<QuoteAsset>();
-        let deep_type = type_name::get<DEEP>();
-        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
-
-        self.state.governance_mut(ctx).set_whitelist(whitelist);
     }
 
     public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
@@ -489,6 +480,7 @@ module deepbook::pool {
         lot_size: u64,
         min_size: u64,
         creation_fee: Coin<SUI>,
+        whitelisted_pool: bool,
         ctx: &mut TxContext,
     ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
@@ -500,7 +492,7 @@ module deepbook::pool {
         let pool_uid = object::new(ctx);
         let pool_id = pool_uid.to_inner();
 
-        let pool = Pool<BaseAsset, QuoteAsset> {
+        let mut pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(ctx),
@@ -509,6 +501,9 @@ module deepbook::pool {
         };
 
         registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
+        if (whitelisted_pool) {
+            pool.set_whitelist(ctx);
+        };
 
         let params = pool.state.governance().trade_params();
         let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
@@ -519,6 +514,7 @@ module deepbook::pool {
             tick_size,
             lot_size,
             min_size,
+            whitelisted_pool,
         });
 
         // TODO: reconsider sending the Coin here. User pays gas;
@@ -542,6 +538,20 @@ module deepbook::pool {
         self.book.asks()
     }
 
+    /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
+    /// Only called by admin during pool creation
+    fun set_whitelist<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        ctx: &TxContext,
+    ) {
+        let base = type_name::get<BaseAsset>();
+        let quote = type_name::get<QuoteAsset>();
+        let deep_type = type_name::get<DEEP>();
+        assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
+
+        self.state.governance_mut(ctx).set_whitelist(true);
+    }
+
     fun place_order_int<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
@@ -557,8 +567,8 @@ module deepbook::pool {
         market_order: bool,
         ctx: &TxContext,
     ): OrderInfo {
-        assert!(pay_with_deep || self.whitelisted(), EFeeTypeNotSupported);
-        let deep_per_base = self.deep_price.conversion_rate();
+        let whitelist = self.whitelisted();
+        assert!(pay_with_deep || whitelist, EFeeTypeNotSupported);
 
         let mut order_info = order_info::new(
             self.id.to_inner(),
@@ -573,11 +583,15 @@ module deepbook::pool {
             pay_with_deep,
             ctx.epoch(),
             expire_timestamp,
-            deep_per_base,
+            self.deep_price.get_order_deep_price(self.whitelisted()),
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());
-        let (settled, owed) = self.state.process_create(&mut order_info, ctx);
+        let (settled, owed) = self.state.process_create(
+            &mut order_info,
+            whitelist,
+            ctx
+        );
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 

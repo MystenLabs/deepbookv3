@@ -91,10 +91,10 @@ module deepbook::history {
         prev_epoch: u64,
         maker_volume: u64,
         account_stake: u64,
-    ): u64 {
+    ): Balances {
         assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
         let volumes = &mut self.historic_volumes[prev_epoch];
-        if (volumes.trade_params.stake_required() > account_stake) return 0;
+        if (volumes.trade_params.stake_required() > account_stake) return balances::empty();
 
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = if (volumes.historic_median > 0) {
@@ -113,7 +113,7 @@ module deepbook::history {
 
         self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-        maker_rebate
+        balances::new(0, 0, maker_rebate)
     }
 
     /// Updates the historic_median for past 28 epochs

@@ -25,7 +25,7 @@ All order matching happens in this module.
 -  [Function `is_bid`](#0x0_order_is_bid)
 -  [Function `quantity`](#0x0_order_quantity)
 -  [Function `filled_quantity`](#0x0_order_filled_quantity)
--  [Function `deep_per_base`](#0x0_order_deep_per_base)
+-  [Function `order_deep_price`](#0x0_order_order_deep_price)
 -  [Function `epoch`](#0x0_order_epoch)
 -  [Function `status`](#0x0_order_status)
 -  [Function `expire_timestamp`](#0x0_order_expire_timestamp)
@@ -33,6 +33,7 @@ All order matching happens in this module.
 
 <pre><code><b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="utils.md#0x0_utils">0x0::utils</a>;
@@ -91,7 +92,13 @@ Order struct represents the order in the order book. It is optimized for space.
 
 </dd>
 <dt>
-<code>deep_per_base: u64</code>
+<code>fee_is_deep: bool</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>order_deep_price: <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a></code>
 </dt>
 <dd>
 
@@ -301,7 +308,7 @@ Emitted when a maker order is modified.
 initialize the order struct.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, deep_per_base: u64, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_new">new</a>(order_id: u128, balance_manager_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, client_order_id: u64, quantity: u64, fee_is_deep: bool, order_deep_price: <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, epoch: u64, status: u8, expire_timestamp: u64): <a href="order.md#0x0_order_Order">order::Order</a>
 </code></pre>
 
 
@@ -315,7 +322,8 @@ initialize the order struct.
     balance_manager_id: ID,
     client_order_id: u64,
     quantity: u64,
-    deep_per_base: u64,
+    fee_is_deep: bool,
+    order_deep_price: OrderDeepPrice,
     epoch: u64,
     status: u8,
     expire_timestamp: u64,
@@ -326,7 +334,8 @@ initialize the order struct.
         client_order_id,
         quantity,
         filled_quantity: 0,
-        deep_per_base,
+        fee_is_deep,
+        order_deep_price,
         epoch,
         status,
         expire_timestamp,
@@ -385,7 +394,7 @@ quantity and whether the order is a bid.
         quote_quantity,
         is_bid,
         self.epoch,
-        self.deep_per_base,
+        self.order_deep_price
     )
 }
 </code></pre>
@@ -450,7 +459,17 @@ quantity and whether the order is a bid.
     } <b>else</b> {
         self.quantity - self.filled_quantity
     };
-    <b>let</b> deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_base, maker_fee));
+    <b>let</b> deep_out = math::mul(
+        maker_fee,
+        math::mul(
+            cancel_quantity,
+            self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().deep_quantity(
+                cancel_quantity,
+                math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>())
+            )
+        )
+    );
+
     <b>let</b> <b>mut</b> base_out = 0;
     <b>let</b> <b>mut</b> quote_out = 0;
     <b>if</b> (self.<a href="order.md#0x0_order_is_bid">is_bid</a>()) {
@@ -746,13 +765,13 @@ Update the order status to canceled.
 
 </details>
 
-<a name="0x0_order_deep_per_base"></a>
+<a name="0x0_order_order_deep_price"></a>
 
-## Function `deep_per_base`
+## Function `order_deep_price`
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_deep_per_base">deep_per_base</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_order_deep_price">order_deep_price</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>): <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>
 </code></pre>
 
 
@@ -761,8 +780,8 @@ Update the order status to canceled.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_deep_per_base">deep_per_base</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): u64 {
-    self.deep_per_base
+<pre><code><b>public</b>(package) <b>fun</b> <a href="order.md#0x0_order_order_deep_price">order_deep_price</a>(self: &<a href="order.md#0x0_order_Order">Order</a>): OrderDeepPrice {
+    self.order_deep_price
 }
 </code></pre>
 
