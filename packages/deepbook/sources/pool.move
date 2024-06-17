@@ -7,7 +7,6 @@ module deepbook::pool {
 
     use sui::{
         coin::Coin,
-        sui::SUI,
         clock::Clock,
         event,
         vec_set::VecSet,
@@ -67,7 +66,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        creation_fee: Coin<SUI>,
+        creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
@@ -498,7 +497,7 @@ module deepbook::pool {
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
-        creation_fee: Coin<SUI>,
+        creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
         ctx: &mut TxContext,
     ): ID {

@@ -511,15 +511,39 @@ module deepbook::pool_tests {
         whitelisted_pool: bool,
         test: &mut Scenario,
     ): ID {
+        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
         setup_pool<BaseAsset, QuoteAsset>(
+            sender,
             constants::tick_size(), // tick size
             constants::lot_size(), // lot size
             constants::min_size(), // min size
             registry_id,
             whitelisted_pool,
+            creation_fee,
             test,
-            sender,
         )
+    }
+
+    public(package) fun setup_pool_with_default_fees_return_fee<BaseAsset, QuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        whitelisted_pool: bool,
+        test: &mut Scenario,
+    ): (ID, ID) {
+        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
+        let fee_id = object::id(&creation_fee);
+        let pool_id = setup_pool<BaseAsset, QuoteAsset>(
+            sender,
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
+            registry_id,
+            whitelisted_pool,
+            creation_fee,
+            test,
+        );
+
+        (pool_id, fee_id)
     }
 
     /// Place a limit order
@@ -2369,13 +2393,14 @@ module deepbook::pool_tests {
     }
 
     fun setup_pool<BaseAsset, QuoteAsset>(
+        sender: address,
         tick_size: u64,
         lot_size: u64,
         min_size: u64,
         registry_id: ID,
         whitelisted_pool: bool,
+        creation_fee: Coin<DEEP>,
         test: &mut Scenario,
-        sender: address,
     ): ID {
         test.next_tx(sender);
         let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
@@ -2387,7 +2412,7 @@ module deepbook::pool_tests {
                 tick_size,
                 lot_size,
                 min_size,
-                coin::mint_for_testing(constants::pool_creation_fee(), test.ctx()),
+                creation_fee,
                 whitelisted_pool,
                 &admin_cap,
                 test.ctx()

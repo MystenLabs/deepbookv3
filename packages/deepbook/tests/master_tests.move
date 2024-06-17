@@ -13,6 +13,7 @@ module deepbook::master_tests {
         sui::SUI,
         test_utils,
         clock::{Clock},
+        coin::Coin,
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
@@ -23,7 +24,7 @@ module deepbook::master_tests {
         balance_manager_tests::{Self, USDC, SPAM, USDT},
         math,
         balances::{Self, Balances},
-        registry::{Self},
+        registry::{Self, Registry},
     };
 
     public struct ExpectedBalances has drop {
@@ -45,6 +46,7 @@ module deepbook::master_tests {
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
     const EDataRecentlyAdded: u64 = 6;
+    const EIncorrectCreationFee: u64 = 7;
 
     #[test]
     fun test_master_ok(){
@@ -84,6 +86,72 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
     fun test_master_2_recently_added_e(){
         test_master_2(EDataRecentlyAdded)
+    }
+
+    #[test]
+    fun test_master_update_treasury_address(){
+        let mut test = begin(OWNER);
+
+        // Treasury address is by default OWNER
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+
+        // Set the treasury address to ALICE
+        set_treasury_address(
+            OWNER,
+            registry_id,
+            ALICE,
+            &mut test
+        );
+
+        // First pool creation fee is sent to ALICE
+        let (_, fee_id) = pool_tests::setup_pool_with_default_fees_return_fee<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        check_fee(ALICE, fee_id, &mut test);
+
+        // Set the treasury address to BOB
+        set_treasury_address(
+            OWNER,
+            registry_id,
+            BOB,
+            &mut test
+        );
+
+        // Second pool creation fee is sent to BOB
+        let (_, fee_id_2) = pool_tests::setup_pool_with_default_fees_return_fee<SPAM, USDC>(OWNER, registry_id, false, &mut test);
+        check_fee(BOB, fee_id_2, &mut test);
+
+        end(test);
+    }
+
+    fun check_fee(
+        sender: address,
+        fee_id: ID,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        let fee = test.take_from_sender_by_id<Coin<DEEP>>(fee_id);
+        assert!(fee.value() == constants::pool_creation_fee(), EIncorrectCreationFee);
+        fee.burn_for_testing();
+    }
+
+    fun set_treasury_address(
+        sender: address,
+        registry_id: ID,
+        treasury_address: address,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+            let mut registry = test.take_shared_by_id<Registry>(registry_id);
+
+            registry::set_treasury_address(
+                &mut registry,
+                treasury_address,
+                &admin_cap,
+            );
+            test_utils::destroy(admin_cap);
+            return_shared(registry);
+        }
     }
 
     fun test_master_2(

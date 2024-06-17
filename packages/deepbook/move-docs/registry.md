@@ -11,7 +11,7 @@
 -  [Struct `PoolKey`](#0x0_registry_PoolKey)
 -  [Constants](#@Constants_0)
 -  [Function `init`](#0x0_registry_init)
--  [Function `update_treasury_address`](#0x0_registry_update_treasury_address)
+-  [Function `set_treasury_address`](#0x0_registry_set_treasury_address)
 -  [Function `register_pool`](#0x0_registry_register_pool)
 -  [Function `unregister_pool`](#0x0_registry_unregister_pool)
 -  [Function `get_pool_id`](#0x0_registry_get_pool_id)
@@ -210,13 +210,13 @@ DeepbookAdminCap is used to call admin functions.
 
 </details>
 
-<a name="0x0_registry_update_treasury_address"></a>
+<a name="0x0_registry_set_treasury_address"></a>
 
-## Function `update_treasury_address`
+## Function `set_treasury_address`
 
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="registry.md#0x0_registry_update_treasury_address">update_treasury_address</a>(self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, treasury_address: <b>address</b>, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="registry.md#0x0_registry_set_treasury_address">set_treasury_address</a>(self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, treasury_address: <b>address</b>, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>)
 </code></pre>
 
 
@@ -225,7 +225,7 @@ DeepbookAdminCap is used to call admin functions.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="registry.md#0x0_registry_update_treasury_address">update_treasury_address</a>(
+<pre><code><b>public</b> <b>fun</b> <a href="registry.md#0x0_registry_set_treasury_address">set_treasury_address</a>(
     self: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">Registry</a>,
     treasury_address: <b>address</b>,
     _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">DeepbookAdminCap</a>,
