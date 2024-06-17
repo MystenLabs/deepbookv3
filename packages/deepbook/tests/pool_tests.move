@@ -543,13 +543,9 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            // Get Proof from BalanceManager
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
-
             // Place order in pool
             let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
-                &proof,
                 client_order_id,
                 order_type,
                 self_matching_option,
@@ -587,13 +583,9 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            // Get Proof from BalanceManager
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
-
             // Place order in pool
             let order_info = pool.place_market_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
-                &proof,
                 client_order_id,
                 self_matching_option,
                 quantity,
@@ -2306,10 +2298,8 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
             pool.cancel_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
-                &proof,
                 order_id,
                 &clock,
                 test.ctx()
@@ -2332,10 +2322,8 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            let proof = balance_manager.generate_proof_as_owner(test.ctx());
             pool.cancel_all_orders<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
-                &proof,
                 &clock,
                 test.ctx()
             );

@@ -1,10 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The BalanceManager is a shared object that holds all of the balances for different assets. A combination of `BalanceManager` and
-/// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
-/// owner directly, or by any trader in the authorized_traders list. Either the owner or trader can generate a `TradeProof`
-/// without the risk of equivocation.
+/// The `BalanceManager` is a shared object that holds all of the balances for different assets. Users must pass in
+/// a `BalanceManager` to perform trades. The transaction sender is asserted to perform the necessary validation. Capabilities
+/// are not used to avoid equivocation. 
+/// The owner can add traders to the account. Traders can perform the same action as an owner can except for deposits,
+/// withdrawals, and addition / removals of traders.
 module deepbook::balance_manager {
     use sui::{
         bag::{Self, Bag},
@@ -13,15 +14,17 @@ module deepbook::balance_manager {
         vec_set::{Self, VecSet},
     };
 
+    // === Errors ===
     const EInvalidOwner: u64 = 0;
     const EInvalidTrader: u64 = 1;
-    const EInvalidProof: u64 = 2;
     const EBalanceManagerBalanceTooLow: u64 = 3;
     const EMaxTraderReached: u64 = 4;
     const ETraderNotInList: u64 = 5;
 
+    // === Constants ===
     const MAX_TRADERS: u64 = 1000;
 
+    // === Structs ===
     /// A shared object that is passed into pools for placing orders.
     public struct BalanceManager has key {
         id: UID,
@@ -33,13 +36,7 @@ module deepbook::balance_manager {
     /// Balance identifier.
     public struct BalanceKey<phantom T> has store, copy, drop {}
 
-    /// BalanceManager owner and authorized traders can generate a `TradeProof`.
-    /// `TradeProof` is used to validate the balance_manager when trading on DeepBook.
-    public struct TradeProof has drop {
-        balance_manager_id: ID,
-        trader: address,
-    }
-
+    // === Public-Mutative Functions ===
     public fun new(ctx: &mut TxContext): BalanceManager {
         BalanceManager {
             id: object::new(ctx),
@@ -54,17 +51,6 @@ module deepbook::balance_manager {
         transfer::share_object(balance_manager);
     }
 
-    /// Returns the balance of a Coin in an balance_manager.
-    public fun balance<T>(balance_manager: &BalanceManager): u64 {
-        let key = BalanceKey<T> {};
-        if (!balance_manager.balances.contains(key)) {
-            0
-        } else {
-            let acc_balance: &Balance<T> = &balance_manager.balances[key];
-            acc_balance.value()
-        }
-    }
-
     /// Authorize a trader. Only the owner can authorize.
     public fun authorize_trader(
         balance_manager: &mut BalanceManager,
@@ -73,73 +59,58 @@ module deepbook::balance_manager {
     ) {
         balance_manager.validate_owner(ctx);
         assert!(balance_manager.authorized_traders.size() < MAX_TRADERS, EMaxTraderReached);
-
         balance_manager.authorized_traders.insert(authorize_address);
     }
 
-    /// Revoke an authorized_trader. Only the owner can revoke.
+    /// Remove an authorized_trader. Only the owner can remove.
     public fun remove_trader(balance_manager: &mut BalanceManager, trader_address: address, ctx: &TxContext) {
         balance_manager.validate_owner(ctx);
-
         assert!(balance_manager.authorized_traders.contains(&trader_address), ETraderNotInList);
         balance_manager.authorized_traders.remove(&trader_address);
     }
 
-    /// Generate a `TradeProof` by the owner
-    public fun generate_proof_as_owner(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
-        balance_manager.validate_owner(ctx);
-
-        TradeProof {
-            balance_manager_id: object::id(balance_manager),
-            trader: ctx.sender(),
-        }
-    }
-
-    /// Generate a `TradeProof` by the trader
-    public fun generate_proof_as_trader(balance_manager: &BalanceManager, ctx: &TxContext): TradeProof {
-        balance_manager.validate_trader(ctx);
-
-        TradeProof {
-            balance_manager_id: object::id(balance_manager),
-            trader: ctx.sender(),
-        }
-    }
-
-    /// Deposit funds to an balance_manager. Only owner can call this directly.
+    /// Deposit funds to an balance_manager. Only owner can deposit.
     public fun deposit<T>(
-        balance_manager: &mut BalanceManager,
+        self: &mut BalanceManager,
         coin: Coin<T>,
         ctx: &mut TxContext,
     ) {
-        let proof = generate_proof_as_owner(balance_manager, ctx);
-
-        balance_manager.deposit_with_proof(&proof, coin.into_balance());
+        self.validate_owner(ctx);
+        self.deposit_protected(coin.into_balance(), ctx);
     }
 
-    /// Withdraw funds from an balance_manager. Only owner can call this directly.
-    /// If withdraw_all is true, amount is ignored and full balance withdrawn.
-    /// If withdraw_all is false, withdraw_amount will be withdrawn.
+    /// Withdraw some balance of a single Coin from the balance_manager. Only owner can withdraw.
     public fun withdraw<T>(
-        balance_manager: &mut BalanceManager,
+        self: &mut BalanceManager,
         withdraw_amount: u64,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let proof = generate_proof_as_owner(balance_manager, ctx);
+        self.validate_owner(ctx);
 
-        balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx)
+        self.withdraw_protected(withdraw_amount, false, ctx).into_coin(ctx)
     }
 
+    /// Withdraw entire balance of a single Coin from the balance_manager. Only owner can withdraw.
     public fun withdraw_all<T>(
-        balance_manager: &mut BalanceManager,
+        self: &mut BalanceManager,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let proof = generate_proof_as_owner(balance_manager, ctx);
+        self.validate_owner(ctx);
 
-        balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx)
+        self.withdraw_protected(0, true, ctx).into_coin(ctx)
     }
 
-    public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
-        assert!(object::id(balance_manager) == proof.balance_manager_id, EInvalidProof);
+    // === Public-View Functions ===
+    /// Returns the balance of a Coin in the balance_manager.
+    public fun balance<T>(balance_manager: &BalanceManager): u64 {
+        let key = BalanceKey<T> {};
+
+        if (!balance_manager.balances.contains(key)) {
+            0
+        } else {
+            let acc_balance: &Balance<T> = &balance_manager.balances[key];
+            acc_balance.value()
+        }
     }
 
     /// Returns the owner of the balance_manager.
@@ -152,55 +123,55 @@ module deepbook::balance_manager {
         balance_manager.id.to_inner()
     }
 
+    // === Public-Package Functions ===
     /// Deposit funds to an balance_manager. Pool will call this to deposit funds.
-    public(package) fun deposit_with_proof<T>(
-        balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
-        to_deposit: Balance<T>,
+    public(package) fun deposit_protected<T>(
+        self: &mut BalanceManager,
+        deposit_balance: Balance<T>,
+        ctx: &TxContext,
     ) {
-        balance_manager.validate_proof(proof);
+        self.validate_trader(ctx);
 
         let key = BalanceKey<T> {};
-
-        if (balance_manager.balances.contains(key)) {
-            let balance: &mut Balance<T> = &mut balance_manager.balances[key];
-            balance.join(to_deposit);
+        if (self.balances.contains(key)) {
+            let balance: &mut Balance<T> = &mut self.balances[key];
+            balance.join(deposit_balance);
         } else {
-            balance_manager.balances.add(key, to_deposit);
+            self.balances.add(key, deposit_balance);
         }
     }
 
-    /// Withdraw funds from an balance_manager. Pool will call this to withdraw funds.
-    public(package) fun withdraw_with_proof<T>(
-        balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
+    /// Withdraw funds from the balance_manager. Pool will call this to withdraw funds.
+    public(package) fun withdraw_protected<T>(
+        self: &mut BalanceManager,
         withdraw_amount: u64,
         withdraw_all: bool,
+        ctx: &TxContext,
     ): Balance<T> {
-        balance_manager.validate_proof(proof);
+        self.validate_trader(ctx);
 
         let key = BalanceKey<T> {};
-        let key_exists = balance_manager.balances.contains(key);
+        let key_exists = self.balances.contains(key);
         if (withdraw_all) {
             if (key_exists) {
-                balance_manager.balances.remove(key)
+                self.balances.remove(key)
             } else {
                 balance::zero()
             }
         } else {
             assert!(key_exists, EBalanceManagerBalanceTooLow);
-            let acc_balance: &mut Balance<T> = &mut balance_manager.balances[key];
+            let acc_balance: &mut Balance<T> = &mut self.balances[key];
             let acc_value = acc_balance.value();
             assert!(acc_value >= withdraw_amount, EBalanceManagerBalanceTooLow);
             if (withdraw_amount == acc_value) {
-                balance_manager.balances.remove(key)
+                self.balances.remove(key)
             } else {
                 acc_balance.split(withdraw_amount)
             }
         }
     }
 
-    /// Deletes an balance_manager.
+    /// Deletes the balance_manager.
     /// This is used for deleting temporary balance_managers for direct swap with pool.
     public(package) fun delete(balance_manager: BalanceManager) {
         let BalanceManager {
@@ -214,15 +185,16 @@ module deepbook::balance_manager {
         balances.destroy_empty();
     }
 
-    public(package) fun trader(trade_proof: &TradeProof): address {
-        trade_proof.trader
+    /// Validate that the transaction sender is the owner.
+    public(package) fun validate_owner(self: &BalanceManager, ctx: &TxContext) {
+        assert!(ctx.sender() == self.owner(), EInvalidOwner);
     }
 
-    fun validate_owner(balance_manager: &BalanceManager, ctx: &TxContext) {
-        assert!(ctx.sender() == balance_manager.owner(), EInvalidOwner);
-    }
-
-    fun validate_trader(balance_manager: &BalanceManager, ctx: &TxContext) {
-        assert!(balance_manager.authorized_traders.contains(&ctx.sender()), EInvalidTrader);
+    /// Validate that the transaction sender is either the owner of a trader.
+    public(package) fun validate_trader(self: &BalanceManager, ctx: &TxContext) {
+        assert!(
+            self.authorized_traders.contains(&ctx.sender()) ||
+            ctx.sender() == self.owner(), EInvalidTrader
+        );
     }
 }

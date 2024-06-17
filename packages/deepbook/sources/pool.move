@@ -16,7 +16,7 @@ module deepbook::pool {
     use deepbook::{
         math,
         constants,
-        balance_manager::{Self, BalanceManager, TradeProof},
+        balance_manager::{Self, BalanceManager},
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
@@ -96,7 +96,6 @@ module deepbook::pool {
     public fun place_limit_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         client_order_id: u64,
         order_type: u8,
         self_matching_option: u8,
@@ -110,7 +109,6 @@ module deepbook::pool {
     ): OrderInfo {
         self.place_order_int(
             balance_manager,
-            proof,
             client_order_id,
             order_type,
             self_matching_option,
@@ -130,7 +128,6 @@ module deepbook::pool {
     public fun place_market_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         client_order_id: u64,
         self_matching_option: u8,
         quantity: u64,
@@ -141,7 +138,6 @@ module deepbook::pool {
     ): OrderInfo {
         self.place_order_int(
             balance_manager,
-            proof,
             client_order_id,
             constants::immediate_or_cancel(),
             self_matching_option,
@@ -181,11 +177,9 @@ module deepbook::pool {
         temp_balance_manager.deposit(base_in, ctx);
         temp_balance_manager.deposit(quote_in, ctx);
         temp_balance_manager.deposit(deep_in, ctx);
-        let proof = temp_balance_manager.generate_proof_as_owner(ctx);
 
         self.place_market_order(
             &mut temp_balance_manager,
-            &proof,
             0,
             constants::self_matching_allowed(),
             base_quantity,
@@ -195,9 +189,9 @@ module deepbook::pool {
             ctx
         );
 
-        let base_out = temp_balance_manager.withdraw_with_proof<BaseAsset>(&proof, 0, true).into_coin(ctx);
-        let quote_out = temp_balance_manager.withdraw_with_proof<QuoteAsset>(&proof, 0, true).into_coin(ctx);
-        let deep_out = temp_balance_manager.withdraw_with_proof<DEEP>(&proof, 0, true).into_coin(ctx);
+        let base_out = temp_balance_manager.withdraw_protected<BaseAsset>(0, true, ctx).into_coin(ctx);
+        let quote_out = temp_balance_manager.withdraw_protected<QuoteAsset>(0, true, ctx).into_coin(ctx);
+        let deep_out = temp_balance_manager.withdraw_protected<DEEP>(0, true, ctx).into_coin(ctx);
 
         temp_balance_manager.delete();
 
@@ -210,7 +204,6 @@ module deepbook::pool {
     public fun modify_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         order_id: u128,
         new_quantity: u64,
         clock: &Clock,
@@ -219,9 +212,9 @@ module deepbook::pool {
         let (cancel_quantity, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = self.state.process_modify(balance_manager.id(), cancel_quantity, order, ctx);
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
 
-        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     /// Cancel an order. The order must be owned by the balance_manager.
@@ -231,7 +224,6 @@ module deepbook::pool {
     public fun cancel_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         order_id: u128,
         clock: &Clock,
         ctx: &TxContext,
@@ -239,16 +231,15 @@ module deepbook::pool {
         let mut order = self.book.cancel_order(order_id);
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = self.state.process_cancel(&mut order, balance_manager.id(), ctx);
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
 
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), proof.trader(), clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
     }
 
     /// Cancel all open orders placed by the balance manager in the pool.
     public fun cancel_all_orders<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         clock: &Clock,
         ctx: &TxContext,
     ) {
@@ -256,7 +247,7 @@ module deepbook::pool {
         let mut i = 0;
         while (i < open_orders.length()) {
             let order_id = open_orders[i];
-            self.cancel_order(balance_manager, proof, order_id, clock, ctx);
+            self.cancel_order(balance_manager, order_id, clock, ctx);
             i = i + 1;
         }
     }
@@ -266,12 +257,11 @@ module deepbook::pool {
     public fun stake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         amount: u64,
         ctx: &TxContext,
     ) {
         let (settled, owed) = self.state.process_stake(balance_manager.id(), amount, ctx);
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
     /// Unstake DEEP tokens from the pool. The balance_manager must have enough staked DEEP tokens.
@@ -280,13 +270,10 @@ module deepbook::pool {
     public fun unstake<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         ctx: &TxContext,
     ) {
-        balance_manager.validate_proof(proof);
-
         let (settled, owed) = self.state.process_unstake(balance_manager.id(), ctx);
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
     /// Submit a proposal to change the taker fee, maker fee, and stake required.
@@ -297,14 +284,12 @@ module deepbook::pool {
     public fun submit_proposal<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
         ctx: &TxContext,
     ) {
-        balance_manager.validate_proof(proof);
-
+        balance_manager.validate_trader(ctx);
         self.state.process_proposal(balance_manager.id(), taker_fee, maker_fee, stake_required, ctx);
     }
 
@@ -314,12 +299,10 @@ module deepbook::pool {
     public fun vote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         proposal_id: ID,
         ctx: &TxContext,
     ) {
-        balance_manager.validate_proof(proof);
-
+        balance_manager.validate_trader(ctx);
         self.state.process_vote(balance_manager.id(), proposal_id, ctx);
     }
 
@@ -328,11 +311,10 @@ module deepbook::pool {
     public fun claim_rebates<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         ctx: &TxContext,
     ) {
         let (settled, owed) = self.state.process_claim_rebates(balance_manager.id(), ctx);
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
     // GETTERS
@@ -467,12 +449,10 @@ module deepbook::pool {
     public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
+        ctx: &TxContext,
     ) {
-        balance_manager.validate_proof(proof);
-
         let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
     public fun vault_balances<BaseAsset, QuoteAsset>(
@@ -575,7 +555,6 @@ module deepbook::pool {
     fun place_order_int<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
         client_order_id: u64,
         order_type: u8,
         self_matching_option: u8,
@@ -595,7 +574,7 @@ module deepbook::pool {
             self.id.to_inner(),
             balance_manager.id(),
             client_order_id,
-            proof.trader(),
+            ctx.sender(),
             order_type,
             self_matching_option,
             price,
@@ -613,7 +592,7 @@ module deepbook::pool {
             whitelist,
             ctx
         );
-        self.vault.settle_balance_manager(settled, owed, balance_manager, proof);
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
         if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
         order_info
