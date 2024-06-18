@@ -1079,7 +1079,7 @@ Burns DEEP tokens from the pool. Amount to burn is within history
 ): u64 {
     <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
     <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>);
-    <b>let</b> deep_to_burn = <a href="dependencies/sui-framework/coin.md#0x2_coin_from_balance">coin::from_balance</a>(self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn), ctx);
+    <b>let</b> deep_to_burn = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
     <b>let</b> amount_burned = deep_to_burn.value();
     token::deep::burn(treasury_cap, deep_to_burn);
 
