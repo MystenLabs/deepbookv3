@@ -6,7 +6,7 @@ module deepbook::pool {
     use std::type_name;
 
     use sui::{
-        coin::Coin,
+        coin::{Self, Coin},
         clock::Clock,
         event,
         vec_set::VecSet,
@@ -150,50 +150,40 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact amount without needing an balance_manager.
-    public fun swap_exact_amount<BaseAsset, QuoteAsset>(
+    public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let quote_in = coin::zero(ctx);
+        swap_exact_amount(
+            self,
+            base_in,
+            quote_in,
+            deep_in,
+            clock,
+            ctx,
+        )
+    }
+
+    public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
-        let mut base_quantity = base_in.value();
-        let quote_quantity = quote_in.value();
-        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
-        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
-
-        let pay_with_deep = deep_in.value() > 0;
-        let is_bid = quote_quantity > 0;
-        if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
-        };
-        base_quantity = base_quantity - base_quantity % self.book.lot_size();
-
-        let mut temp_balance_manager = balance_manager::new(ctx);
-        temp_balance_manager.deposit(base_in, ctx);
-        temp_balance_manager.deposit(quote_in, ctx);
-        temp_balance_manager.deposit(deep_in, ctx);
-
-        self.place_market_order(
-            &mut temp_balance_manager,
-            0,
-            constants::self_matching_allowed(),
-            base_quantity,
-            is_bid,
-            pay_with_deep,
+        let base_in = coin::zero(ctx);
+        swap_exact_amount(
+            self,
+            base_in,
+            quote_in,
+            deep_in,
             clock,
-            ctx
-        );
-
-        let base_out = temp_balance_manager.withdraw_protected<BaseAsset>(0, true, ctx).into_coin(ctx);
-        let quote_out = temp_balance_manager.withdraw_protected<QuoteAsset>(0, true, ctx).into_coin(ctx);
-        let deep_out = temp_balance_manager.withdraw_protected<DEEP>(0, true, ctx).into_coin(ctx);
-
-        temp_balance_manager.delete();
-
-        (base_out, quote_out, deep_out)
+            ctx,
+        )
     }
 
     /// Modifies an order given order_id and new_quantity.
@@ -548,6 +538,52 @@ module deepbook::pool {
         assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(true);
+    }
+
+    /// Swap exact amount without needing an balance_manager.
+    fun swap_exact_amount<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base_in: Coin<BaseAsset>,
+        quote_in: Coin<QuoteAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let mut base_quantity = base_in.value();
+        let quote_quantity = quote_in.value();
+        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
+        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+
+        let pay_with_deep = deep_in.value() > 0;
+        let is_bid = quote_quantity > 0;
+        if (is_bid) {
+            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
+        };
+        base_quantity = base_quantity - base_quantity % self.book.lot_size();
+
+        let mut temp_balance_manager = balance_manager::new(ctx);
+        temp_balance_manager.deposit(base_in, ctx);
+        temp_balance_manager.deposit(quote_in, ctx);
+        temp_balance_manager.deposit(deep_in, ctx);
+
+        self.place_market_order(
+            &mut temp_balance_manager,
+            0,
+            constants::self_matching_allowed(),
+            base_quantity,
+            is_bid,
+            pay_with_deep,
+            clock,
+            ctx
+        );
+
+        let base_out = temp_balance_manager.withdraw_protected<BaseAsset>(0, true, ctx).into_coin(ctx);
+        let quote_out = temp_balance_manager.withdraw_protected<QuoteAsset>(0, true, ctx).into_coin(ctx);
+        let deep_out = temp_balance_manager.withdraw_protected<DEEP>(0, true, ctx).into_coin(ctx);
+
+        temp_balance_manager.delete();
+
+        (base_out, quote_out, deep_out)
     }
 
     fun place_order_int<BaseAsset, QuoteAsset>(

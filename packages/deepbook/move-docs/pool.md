@@ -13,7 +13,8 @@ Public-facing interface for the package.
 -  [Function `whitelisted`](#0x0_pool_whitelisted)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
--  [Function `swap_exact_amount`](#0x0_pool_swap_exact_amount)
+-  [Function `swap_exact_base_for_quote`](#0x0_pool_swap_exact_base_for_quote)
+-  [Function `swap_exact_quote_for_base`](#0x0_pool_swap_exact_quote_for_base)
 -  [Function `modify_order`](#0x0_pool_modify_order)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
 -  [Function `cancel_all_orders`](#0x0_pool_cancel_all_orders)
@@ -38,6 +39,7 @@ Public-facing interface for the package.
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
+-  [Function `swap_exact_amount`](#0x0_pool_swap_exact_amount)
 -  [Function `place_order_int`](#0x0_pool_place_order_int)
 
 
@@ -467,14 +469,13 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 
 </details>
 
-<a name="0x0_pool_swap_exact_amount"></a>
+<a name="0x0_pool_swap_exact_base_for_quote"></a>
 
-## Function `swap_exact_amount`
-
-Swap exact amount without needing an balance_manager.
+## Function `swap_exact_base_for_quote`
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;)
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_base_for_quote">swap_exact_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;)
 </code></pre>
 
 
@@ -483,49 +484,60 @@ Swap exact amount without needing an balance_manager.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>&lt;BaseAsset, QuoteAsset&gt;(
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_base_for_quote">swap_exact_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     base_in: Coin&lt;BaseAsset&gt;,
+    deep_in: Coin&lt;DEEP&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, Coin&lt;DEEP&gt;) {
+    <b>let</b> quote_in = <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx);
+    <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>(
+        self,
+        base_in,
+        quote_in,
+        deep_in,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx,
+    )
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_swap_exact_quote_for_base"></a>
+
+## Function `swap_exact_quote_for_base`
+
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_quote_for_base">swap_exact_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_quote_for_base">swap_exact_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     quote_in: Coin&lt;QuoteAsset&gt;,
     deep_in: Coin&lt;DEEP&gt;,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &<b>mut</b> TxContext,
 ): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, Coin&lt;DEEP&gt;) {
-    <b>let</b> <b>mut</b> base_quantity = base_in.value();
-    <b>let</b> quote_quantity = quote_in.value();
-    <b>assert</b>!(base_quantity &gt; 0 || quote_quantity &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
-    <b>assert</b>!(!(base_quantity &gt; 0 && quote_quantity &gt; 0), <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
-
-    <b>let</b> pay_with_deep = deep_in.value() &gt; 0;
-    <b>let</b> is_bid = quote_quantity &gt; 0;
-    <b>if</b> (is_bid) {
-        (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
-    };
-    base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
-
-    <b>let</b> <b>mut</b> temp_balance_manager = <a href="balance_manager.md#0x0_balance_manager_new">balance_manager::new</a>(ctx);
-    temp_balance_manager.deposit(base_in, ctx);
-    temp_balance_manager.deposit(quote_in, ctx);
-    temp_balance_manager.deposit(deep_in, ctx);
-
-    self.<a href="pool.md#0x0_pool_place_market_order">place_market_order</a>(
-        &<b>mut</b> temp_balance_manager,
-        0,
-        <a href="constants.md#0x0_constants_self_matching_allowed">constants::self_matching_allowed</a>(),
-        base_quantity,
-        is_bid,
-        pay_with_deep,
+    <b>let</b> base_in = <a href="dependencies/sui-framework/coin.md#0x2_coin_zero">coin::zero</a>(ctx);
+    <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>(
+        self,
+        base_in,
+        quote_in,
+        deep_in,
         <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
-        ctx
-    );
-
-    <b>let</b> base_out = temp_balance_manager.withdraw_protected&lt;BaseAsset&gt;(0, <b>true</b>, ctx).into_coin(ctx);
-    <b>let</b> quote_out = temp_balance_manager.withdraw_protected&lt;QuoteAsset&gt;(0, <b>true</b>, ctx).into_coin(ctx);
-    <b>let</b> deep_out = temp_balance_manager.withdraw_protected&lt;DEEP&gt;(0, <b>true</b>, ctx).into_coin(ctx);
-
-    temp_balance_manager.delete();
-
-    (base_out, quote_out, deep_out)
+        ctx,
+    )
 }
 </code></pre>
 
@@ -1354,6 +1366,72 @@ Only called by admin during pool creation
     <b>assert</b>!(base == deep_type || quote == deep_type, <a href="pool.md#0x0_pool_EIneligibleWhitelist">EIneligibleWhitelist</a>);
 
     self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(<b>true</b>);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_swap_exact_amount"></a>
+
+## Function `swap_exact_amount`
+
+Swap exact amount without needing an balance_manager.
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_swap_exact_amount">swap_exact_amount</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base_in: Coin&lt;BaseAsset&gt;,
+    quote_in: Coin&lt;QuoteAsset&gt;,
+    deep_in: Coin&lt;DEEP&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, Coin&lt;DEEP&gt;) {
+    <b>let</b> <b>mut</b> base_quantity = base_in.value();
+    <b>let</b> quote_quantity = quote_in.value();
+    <b>assert</b>!(base_quantity &gt; 0 || quote_quantity &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
+    <b>assert</b>!(!(base_quantity &gt; 0 && quote_quantity &gt; 0), <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
+
+    <b>let</b> pay_with_deep = deep_in.value() &gt; 0;
+    <b>let</b> is_bid = quote_quantity &gt; 0;
+    <b>if</b> (is_bid) {
+        (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    };
+    base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
+
+    <b>let</b> <b>mut</b> temp_balance_manager = <a href="balance_manager.md#0x0_balance_manager_new">balance_manager::new</a>(ctx);
+    temp_balance_manager.deposit(base_in, ctx);
+    temp_balance_manager.deposit(quote_in, ctx);
+    temp_balance_manager.deposit(deep_in, ctx);
+
+    self.<a href="pool.md#0x0_pool_place_market_order">place_market_order</a>(
+        &<b>mut</b> temp_balance_manager,
+        0,
+        <a href="constants.md#0x0_constants_self_matching_allowed">constants::self_matching_allowed</a>(),
+        base_quantity,
+        is_bid,
+        pay_with_deep,
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>,
+        ctx
+    );
+
+    <b>let</b> base_out = temp_balance_manager.withdraw_protected&lt;BaseAsset&gt;(0, <b>true</b>, ctx).into_coin(ctx);
+    <b>let</b> quote_out = temp_balance_manager.withdraw_protected&lt;QuoteAsset&gt;(0, <b>true</b>, ctx).into_coin(ctx);
+    <b>let</b> deep_out = temp_balance_manager.withdraw_protected&lt;DEEP&gt;(0, <b>true</b>, ctx).into_coin(ctx);
+
+    temp_balance_manager.delete();
+
+    (base_out, quote_out, deep_out)
 }
 </code></pre>
 
