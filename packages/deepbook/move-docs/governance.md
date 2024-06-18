@@ -11,7 +11,6 @@
 -  [Function `empty`](#0x0_governance_empty)
 -  [Function `set_whitelist`](#0x0_governance_set_whitelist)
 -  [Function `whitelisted`](#0x0_governance_whitelisted)
--  [Function `set_stable`](#0x0_governance_set_stable)
 -  [Function `update`](#0x0_governance_update)
 -  [Function `add_proposal`](#0x0_governance_add_proposal)
 -  [Function `adjust_vote`](#0x0_governance_adjust_vote)
@@ -307,7 +306,7 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(stable_pool: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
 </code></pre>
 
 
@@ -317,15 +316,18 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(
+    stable_pool: bool,
     ctx: &TxContext,
 ): <a href="governance.md#0x0_governance_Governance">Governance</a> {
+    <b>let</b> default_taker = <b>if</b> (stable_pool) { <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a> } <b>else</b> { <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a> };
+    <b>let</b> default_maker = <b>if</b> (stable_pool) { <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a> } <b>else</b> { <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a> };
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
         epoch: ctx.epoch(),
         whitelisted: <b>false</b>,
-        stable: <b>false</b>,
+        stable: stable_pool,
         proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
-        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
-        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
+        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(default_taker, default_maker, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
+        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(default_taker, default_maker, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
         voting_power: 0,
         quorum: 0,
     }
@@ -384,39 +386,6 @@ other pools. This pool will have zero fees.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_whitelisted">whitelisted</a>(self: &<a href="governance.md#0x0_governance_Governance">Governance</a>): bool {
     self.whitelisted
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_governance_set_stable"></a>
-
-## Function `set_stable`
-
-Set the pool to stable or volatile. If stable, the fees are set to
-stable fees. If volatile, the fees are set to volatile fees.
-This resets governance. A whitelisted pool cannot be set to stable.
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_stable">set_stable</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stable: bool)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_set_stable">set_stable</a>(
-    self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
-    stable: bool,
-) {
-    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
-
-    self.stable = stable;
-    self.<a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>();
 }
 </code></pre>
 
