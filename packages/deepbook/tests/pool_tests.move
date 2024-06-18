@@ -19,7 +19,6 @@ module deepbook::pool_tests {
 
     use deepbook::{
         pool::{Self, Pool},
-        vault::DEEP,
         balance_manager::{BalanceManager},
         order::{Order},
         order_info::OrderInfo,
@@ -30,6 +29,8 @@ module deepbook::pool_tests {
         utils,
         balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds as create_acct_and_share_with_funds},
     };
+
+    use token::deep::DEEP;
 
     const OWNER: address = @0x1;
     const ALICE: address = @0xAAAA;

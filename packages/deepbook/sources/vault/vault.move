@@ -6,7 +6,7 @@ module deepbook::vault {
         balances::Balances,
     };
 
-    public struct DEEP has store {}
+    use token::deep::DEEP;
 
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
         base_balance: Balance<BaseAsset>,
@@ -61,5 +61,12 @@ module deepbook::vault {
             let balance = balance_manager.withdraw_protected(balances_in.deep() - balances_out.deep(), false, ctx);
             self.deep_balance.join(balance);
         };
+    }
+
+    public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        amount_to_burn: u64,
+    ): Balance<DEEP> {
+        self.deep_balance.split(amount_to_burn)
     }
 }
