@@ -31,16 +31,8 @@ because the expectation is that indices are sparsely distributed.
 -  [Function `depth`](#0x0_big_vector_depth)
 -  [Function `borrow`](#0x0_big_vector_borrow)
 -  [Function `borrow_mut`](#0x0_big_vector_borrow_mut)
--  [Function `valid_next`](#0x0_big_vector_valid_next)
--  [Function `borrow_next`](#0x0_big_vector_borrow_next)
--  [Function `borrow_next_mut`](#0x0_big_vector_borrow_next_mut)
--  [Function `valid_prev`](#0x0_big_vector_valid_prev)
--  [Function `borrow_prev`](#0x0_big_vector_borrow_prev)
--  [Function `borrow_prev_mut`](#0x0_big_vector_borrow_prev_mut)
 -  [Function `insert`](#0x0_big_vector_insert)
--  [Function `insert_batch`](#0x0_big_vector_insert_batch)
 -  [Function `remove`](#0x0_big_vector_remove)
--  [Function `remove_range`](#0x0_big_vector_remove_range)
 -  [Function `remove_batch`](#0x0_big_vector_remove_batch)
 -  [Function `slice_around`](#0x0_big_vector_slice_around)
 -  [Function `slice_following`](#0x0_big_vector_slice_following)
@@ -461,7 +453,7 @@ the maximum size of its leaf nodes, and <code>max_fan_out</code> contains
 the maximum fan-out of its interior nodes.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_empty">empty</a>&lt;E: store&gt;(max_slice_size: u64, max_fan_out: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_empty">empty</a>&lt;E: store&gt;(max_slice_size: u64, max_fan_out: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;
 </code></pre>
 
 
@@ -470,7 +462,7 @@ the maximum fan-out of its interior nodes.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_empty">empty</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_empty">empty</a>&lt;E: store&gt;(
     max_slice_size: u64,
     max_fan_out: u64,
     ctx: &<b>mut</b> TxContext,
@@ -507,7 +499,7 @@ Destroy <code>self</code> as long as it is empty, even if its elements
 are not droppable. Fails if <code>self</code> is not empty.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_destroy_empty">destroy_empty</a>&lt;E: store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_destroy_empty">destroy_empty</a>&lt;E: store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;)
 </code></pre>
 
 
@@ -516,7 +508,7 @@ are not droppable. Fails if <code>self</code> is not empty.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_destroy_empty">destroy_empty</a>&lt;E: store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_destroy_empty">destroy_empty</a>&lt;E: store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;) {
     <b>let</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a> {
         id,
 
@@ -546,7 +538,7 @@ Destroy <code>self</code>, even if it contains elements, as long as they
 are droppable.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_drop">drop</a>&lt;E: drop, store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_drop">drop</a>&lt;E: drop, store&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;)
 </code></pre>
 
 
@@ -555,7 +547,7 @@ are droppable.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_drop">drop</a>&lt;E: store + drop&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_drop">drop</a>&lt;E: store + drop&gt;(self: <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;) {
     <b>let</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a> {
         <b>mut</b> id,
 
@@ -584,7 +576,7 @@ are droppable.
 Whether <code>self</code> contains no elements or not.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_is_empty">is_empty</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_is_empty">is_empty</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): bool
 </code></pre>
 
 
@@ -593,7 +585,7 @@ Whether <code>self</code> contains no elements or not.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_is_empty">is_empty</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_is_empty">is_empty</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): bool {
     self.length == 0
 }
 </code></pre>
@@ -609,7 +601,7 @@ Whether <code>self</code> contains no elements or not.
 The number of elements contained in <code>self</code>.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_length">length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_length">length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): u64
 </code></pre>
 
 
@@ -618,7 +610,7 @@ The number of elements contained in <code>self</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_length">length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_length">length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): u64 {
     self.length
 }
 </code></pre>
@@ -636,7 +628,7 @@ This is within a constant factor of log base <code>max_fan_out</code> of
 the length.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_depth">depth</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): u8
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_depth">depth</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): u8
 </code></pre>
 
 
@@ -645,7 +637,7 @@ the length.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_depth">depth</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): u8 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_depth">depth</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;): u8 {
     self.depth
 }
 </code></pre>
@@ -661,7 +653,7 @@ the length.
 Access the element at index <code>ix</code> in <code>self</code>.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow">borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ix: u128): &E
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow">borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ix: u128): &E
 </code></pre>
 
 
@@ -670,10 +662,10 @@ Access the element at index <code>ix</code> in <code>self</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow">borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ix: u128): &E {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow">borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ix: u128): &E {
     <b>let</b> (ref, offset) = self.<a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>(ix);
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
-    &slice[offset]
+    <a href="big_vector.md#0x0_big_vector_slice_borrow">slice_borrow</a>(slice, offset)
 }
 </code></pre>
 
@@ -688,7 +680,7 @@ Access the element at index <code>ix</code> in <code>self</code>.
 Access the element at index <code>ix</code> in <code>self</code>, mutably.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut">borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ix: u128): &<b>mut</b> E
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut">borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ix: u128): &<b>mut</b> E
 </code></pre>
 
 
@@ -697,204 +689,10 @@ Access the element at index <code>ix</code> in <code>self</code>, mutably.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut">borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ix: u128): &<b>mut</b> E {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_mut">borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ix: u128): &<b>mut</b> E {
     <b>let</b> (ref, offset) = self.<a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>(ix);
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
-    &<b>mut</b> slice[offset]
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_valid_next"></a>
-
-## Function `valid_next`
-
-Return whether there is a valid next value in BigVector
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_valid_next">valid_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_valid_next">valid_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): bool {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
-    (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() || !slice.next().is_null())
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_borrow_next"></a>
-
-## Function `borrow_next`
-
-Gets the next value within slice if exists, if at maximum gets the next element of the next slice
-Assumes valid_next is true
-Returns the next slice reference, the offset within the slice, and the immutable reference to the value
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next">borrow_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &E)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next">borrow_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &E) {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
-    <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
-        (ref, offset + 1, &slice[offset + 1])
-    } <b>else</b> {
-        <b>let</b> next_ref = slice.next();
-        <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(next_ref);
-
-        (next_ref, 0, &next_slice.vals[0])
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_borrow_next_mut"></a>
-
-## Function `borrow_next_mut`
-
-Gets the next value within slice if exists, if at maximum gets the next element of the next slice
-Assumes valid_next is true
-Returns the next slice reference, the offset within the slice, and the mutable reference to the value
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_next_mut">borrow_next_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
-    <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
-        (ref, offset + 1, &<b>mut</b> slice[offset + 1])
-    } <b>else</b> {
-        <b>let</b> next_ref = slice.next();
-        <b>let</b> next_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(next_ref);
-
-        (next_ref, 0, &<b>mut</b> next_slice.vals[0])
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_valid_prev"></a>
-
-## Function `valid_prev`
-
-Return whether there is a valid prev value in BigVector
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_valid_prev">valid_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_valid_prev">valid_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): bool {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
-    (offset &gt; 0 || !slice.prev().is_null())
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_borrow_prev"></a>
-
-## Function `borrow_prev`
-
-Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
-Assumes valid_prev is true
-Returns the prev slice reference, the offset within the slice, and the immutable reference to the value
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev">borrow_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &E)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev">borrow_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &E) {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
-    <b>if</b> (offset &gt; 0) {
-        (ref, offset - 1, &slice[offset - 1])
-    } <b>else</b> {
-        <b>let</b> prev_ref = slice.prev();
-        <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(prev_ref);
-        <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
-
-        (prev_ref, last_index, &prev_slice[last_index])
-    }
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_big_vector_borrow_prev_mut"></a>
-
-## Function `borrow_prev_mut`
-
-Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
-Assumes valid_prev is true
-Returns the prev slice reference, the offset within the slice, and the mutable reference to the value
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64, &<b>mut</b> E)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_prev_mut">borrow_prev_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64, &<b>mut</b> E) {
-    <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(ref);
-    <b>if</b> (offset &gt; 0) {
-        (ref, offset - 1, &<b>mut</b> slice[offset - 1])
-    } <b>else</b> {
-        <b>let</b> prev_ref = slice.prev();
-        <b>let</b> prev_slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>(prev_ref);
-        <b>let</b> last_index = prev_slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() - 1;
-
-        (prev_ref, last_index, &<b>mut</b> prev_slice[last_index])
-    }
+    <a href="big_vector.md#0x0_big_vector_slice_borrow_mut">slice_borrow_mut</a>(slice, offset)
 }
 </code></pre>
 
@@ -910,7 +708,7 @@ Add <code>val</code> to <code>self</code> at index <code>key</code>. Aborts if <
 present in <code>self</code>.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert">insert</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128, val: E)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert">insert</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128, val: E)
 </code></pre>
 
 
@@ -919,7 +717,7 @@ present in <code>self</code>.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert">insert</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, key: u128, val: E) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert">insert</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, key: u128, val: E) {
     self.length = self.length + 1;
 
     <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
@@ -941,40 +739,6 @@ present in <code>self</code>.
 
 </details>
 
-<a name="0x0_big_vector_insert_batch"></a>
-
-## Function `insert_batch`
-
-Adds key value pairs from <code>keys</code> and <code>vals</code> to <code>self</code>.
-Requires that <code>keys</code> and <code>vals</code> have the same length, and that
-<code>keys</code> is in sorted order.
-
-Aborts if any of the keys are already present in <code>self</code>, or
-the requirements on <code>keys</code> and <code>vals</code> are not met.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert_batch">insert_batch</a>&lt;E: store&gt;(_self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, _keys: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u128&gt;, _vals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;E&gt;)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_insert_batch">insert_batch</a>&lt;E: store&gt;(
-    _self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
-    _keys: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u128&gt;,
-    _vals: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;E&gt;,
-) {
-    <b>abort</b> 0
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_big_vector_remove"></a>
 
 ## Function `remove`
@@ -983,7 +747,7 @@ Remove the element with key <code>key</code> from <code>self</code>, returning i
 value. Aborts if <code>key</code> is not found.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove">remove</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): E
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove">remove</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): E
 </code></pre>
 
 
@@ -992,7 +756,7 @@ value. Aborts if <code>key</code> is not found.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove">remove</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, key: u128): E {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove">remove</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, key: u128): E {
     <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
         <b>abort</b> <a href="big_vector.md#0x0_big_vector_ENotFound">ENotFound</a>
     };
@@ -1040,36 +804,6 @@ value. Aborts if <code>key</code> is not found.
 
 </details>
 
-<a name="0x0_big_vector_remove_range"></a>
-
-## Function `remove_range`
-
-Remove the elements between <code>lo</code> (inclusive) and <code>hi</code>
-(exclusive) from <code>self</code>.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_range">remove_range</a>&lt;E: drop, store&gt;(_self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, _lo: u128, _hi: u128)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_range">remove_range</a>&lt;E: store + drop&gt;(
-    _self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
-    _lo: u128,
-    _hi: u128,
-) {
-    <b>abort</b> 0
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_big_vector_remove_batch"></a>
 
 ## Function `remove_batch`
@@ -1080,7 +814,7 @@ returning the associated values.
 Aborts if any of the keys are not found.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_batch">remove_batch</a>&lt;E: store&gt;(_self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, _keys: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u128&gt;): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;E&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_batch">remove_batch</a>&lt;E: store&gt;(_self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, _keys: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u128&gt;): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;E&gt;
 </code></pre>
 
 
@@ -1089,7 +823,7 @@ Aborts if any of the keys are not found.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_batch">remove_batch</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_remove_batch">remove_batch</a>&lt;E: store&gt;(
     _self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     _keys: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u128&gt;,
 ): <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;E&gt; {
@@ -1111,7 +845,7 @@ reference to the slice and the local offset within the slice
 if it exists, aborts with <code><a href="big_vector.md#0x0_big_vector_ENotFound">ENotFound</a></code> otherwise.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1120,7 +854,7 @@ if it exists, aborts with <code><a href="big_vector.md#0x0_big_vector_ENotFound"
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_around">slice_around</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     key: u128,
 ): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
@@ -1155,7 +889,7 @@ if it exists, or (NO_SLICE, 0), if there is no matching
 key-value pair.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_following">slice_following</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_following">slice_following</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1164,7 +898,7 @@ key-value pair.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_following">slice_following</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_following">slice_following</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     key: u128,
 ): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
@@ -1195,7 +929,7 @@ and the local offset within the slice if it exists, or (NO_SLICE, 0),
 if there is no matching key-value pair.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_before">slice_before</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_before">slice_before</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, key: u128): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1204,7 +938,7 @@ if there is no matching key-value pair.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_before">slice_before</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_before">slice_before</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     key: u128,
 ): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
@@ -1241,7 +975,7 @@ slice and the local offset within the slice if it exists, or
 (NO_SLICE, 0), if there is no matching key-value pair.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1250,7 +984,7 @@ slice and the local offset within the slice if it exists, or
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_min_slice">min_slice</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
 ): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
     <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
@@ -1276,7 +1010,7 @@ slice and the local offset within the slice if it exists, or
 (NO_SLICE, 0), if there is no matching key-value pair.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1285,7 +1019,7 @@ slice and the local offset within the slice if it exists, or
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_max_slice">max_slice</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
 ): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
     <b>if</b> (self.root_id == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>) {
@@ -1308,7 +1042,7 @@ slice and the local offset within the slice if it exists, or
 Given the current slice and offset, get the next slice and offset. Can be null.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1317,7 +1051,7 @@ Given the current slice and offset, get the next slice and offset. Can be null.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_next_slice">next_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
     <b>if</b> (offset + 1 &lt; slice.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()) {
         (ref, offset + 1)
@@ -1338,7 +1072,7 @@ Given the current slice and offset, get the next slice and offset. Can be null.
 Given the current slice and offset, get the previous slice and offset. Can be null.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>, u64)
 </code></pre>
 
 
@@ -1347,7 +1081,7 @@ Given the current slice and offset, get the previous slice and offset. Can be nu
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_prev_slice">prev_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, offset: u64): (<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>, u64) {
     <b>let</b> slice = self.<a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>(ref);
     <b>if</b> (offset &gt; 0) {
         (ref, offset - 1)
@@ -1374,7 +1108,7 @@ Given the current slice and offset, get the previous slice and offset. Can be nu
 Borrow a slice from this vector.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;
 </code></pre>
 
 
@@ -1383,7 +1117,7 @@ Borrow a slice from this vector.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice">borrow_slice</a>&lt;E: store&gt;(
     self: &<a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>,
 ): &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt; {
@@ -1402,7 +1136,7 @@ Borrow a slice from this vector.
 Borrow a slice from this vector, mutably.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;E&gt;, ref: <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;
 </code></pre>
 
 
@@ -1411,7 +1145,7 @@ Borrow a slice from this vector, mutably.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_borrow_slice_mut">borrow_slice_mut</a>&lt;E: store&gt;(
     self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a>&lt;E&gt;,
     ref: <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>,
 ): &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt; {
@@ -1432,7 +1166,7 @@ Returns whether the SliceRef points to an actual slice, or the
 slice from a <code><a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a></code> if it doesn't exist.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_null">slice_is_null</a>(self: &<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_null">slice_is_null</a>(self: &<a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>): bool
 </code></pre>
 
 
@@ -1441,7 +1175,7 @@ slice from a <code><a href="big_vector.md#0x0_big_vector_BigVector">BigVector</a
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_null">slice_is_null</a>(self: &<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_null">slice_is_null</a>(self: &<a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a>): bool {
     self.ix == <a href="big_vector.md#0x0_big_vector_NO_SLICE">NO_SLICE</a>
 }
 </code></pre>
@@ -1458,7 +1192,7 @@ Returns whether the slice is a leaf node or not. Leaf nodes
 have as many keys as values.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_leaf">slice_is_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): bool
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_leaf">slice_is_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): bool
 </code></pre>
 
 
@@ -1467,7 +1201,7 @@ have as many keys as values.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_leaf">slice_is_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): bool {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_is_leaf">slice_is_leaf</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): bool {
     self.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>() == self.keys.<a href="big_vector.md#0x0_big_vector_length">length</a>()
 }
 </code></pre>
@@ -1483,7 +1217,7 @@ have as many keys as values.
 Reference to the next (neighbouring) slice to this one.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_next">slice_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_next">slice_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>
 </code></pre>
 
 
@@ -1492,7 +1226,7 @@ Reference to the next (neighbouring) slice to this one.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_next">slice_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_next">slice_next</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> {
     <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: self.next }
 }
 </code></pre>
@@ -1508,7 +1242,7 @@ Reference to the next (neighbouring) slice to this one.
 Reference to the previous (neighbouring) slice to this one.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_prev">slice_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_prev">slice_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">big_vector::SliceRef</a>
 </code></pre>
 
 
@@ -1517,7 +1251,7 @@ Reference to the previous (neighbouring) slice to this one.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_prev">slice_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_prev">slice_prev</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> {
     <a href="big_vector.md#0x0_big_vector_SliceRef">SliceRef</a> { ix: self.prev }
 }
 </code></pre>
@@ -1533,7 +1267,7 @@ Reference to the previous (neighbouring) slice to this one.
 Number of children (values) in this slice.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_length">slice_length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_length">slice_length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;): u64
 </code></pre>
 
 
@@ -1542,7 +1276,7 @@ Number of children (values) in this slice.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_length">slice_length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): u64 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_length">slice_length</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;): u64 {
     self.vals.<a href="big_vector.md#0x0_big_vector_length">length</a>()
 }
 </code></pre>
@@ -1559,7 +1293,7 @@ Access a key from this slice, referenced by its offset, local
 to the slice.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_key">slice_key</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): u128
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_key">slice_key</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): u128
 </code></pre>
 
 
@@ -1568,7 +1302,7 @@ to the slice.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_key">slice_key</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, ix: u64): u128 {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_key">slice_key</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, ix: u64): u128 {
     self.keys[ix]
 }
 </code></pre>
@@ -1585,7 +1319,7 @@ Access a value from this slice, referenced by its offset,
 local to the slice.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow">slice_borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): &E
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow">slice_borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): &E
 </code></pre>
 
 
@@ -1594,7 +1328,7 @@ local to the slice.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow">slice_borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, ix: u64): &E {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow">slice_borrow</a>&lt;E: store&gt;(self: &<a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;, ix: u64): &E {
     &self.vals[ix]
 }
 </code></pre>
@@ -1611,7 +1345,7 @@ Access a value from this slice, mutably, referenced by its
 offset, local to the slice.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow_mut">slice_borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): &<b>mut</b> E
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow_mut">slice_borrow_mut</a>&lt;E: store&gt;(self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">big_vector::Slice</a>&lt;E&gt;, ix: u64): &<b>mut</b> E
 </code></pre>
 
 
@@ -1620,7 +1354,7 @@ offset, local to the slice.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow_mut">slice_borrow_mut</a>&lt;E: store&gt;(
+<pre><code><b>public</b>(package) <b>fun</b> <a href="big_vector.md#0x0_big_vector_slice_borrow_mut">slice_borrow_mut</a>&lt;E: store&gt;(
     self: &<b>mut</b> <a href="big_vector.md#0x0_big_vector_Slice">Slice</a>&lt;E&gt;,
     ix: u64,
 ): &<b>mut</b> E {

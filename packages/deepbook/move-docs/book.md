@@ -275,7 +275,7 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
 
     <b>while</b> (!ref.is_null() && amount_in_left &gt; 0) {
-        <b>let</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+        <b>let</b> <a href="order.md#0x0_order">order</a> = slice_borrow(book_side.borrow_slice(ref), offset);
         <b>let</b> cur_price = <a href="order.md#0x0_order">order</a>.price();
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
@@ -415,14 +415,14 @@ Returns the mid price of the order book.
     <b>let</b> <b>mut</b> best_bid_price = 0;
 
     <b>while</b> (!ask_ref.is_null()) {
-        <b>let</b> best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+        <b>let</b> best_ask_order = slice_borrow(self.asks.borrow_slice(ask_ref), ask_offset);
         best_ask_price = best_ask_order.price();
         <b>if</b> (best_ask_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
         (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
     };
 
     <b>while</b> (!bid_ref.is_null()) {
-        <b>let</b> best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+        <b>let</b> best_bid_order = slice_borrow(self.bids.borrow_slice(bid_ref), bid_offset);
         best_bid_price = best_bid_order.price();
         <b>if</b> (best_bid_order.expire_timestamp() &gt; current_timestamp) <b>break</b>;
         (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
@@ -479,7 +479,7 @@ The price_low and price_high are the range of prices to return.
     <b>let</b> <b>mut</b> cur_quantity = 0;
 
     <b>while</b> (!ref.is_null() && ticks_left &gt; 0) {
-        <b>let</b> <a href="order.md#0x0_order">order</a> = &book_side.borrow_slice(ref)[offset];
+        <b>let</b> <a href="order.md#0x0_order">order</a> = slice_borrow(book_side.borrow_slice(ref), offset);
         <b>let</b> (_, order_price, _) = <a href="utils.md#0x0_utils_decode_order_id">utils::decode_order_id</a>(<a href="order.md#0x0_order">order</a>.order_id());
         <b>if</b> ((is_bid && order_price &gt;= price_low) || (!is_bid && order_price &lt;= price_high)) <b>break</b>;
         <b>if</b> (cur_price == 0) cur_price = order_price;
@@ -613,7 +613,7 @@ Mutates the order and the maker order as necessary.
     <b>let</b> (<b>mut</b> ref, <b>mut</b> offset) = <b>if</b> (is_bid) book_side.min_slice() <b>else</b> book_side.max_slice();
 
     <b>while</b> (!ref.is_null()) {
-        <b>let</b> maker_order = &<b>mut</b> book_side.borrow_slice_mut(ref)[offset];
+        <b>let</b> maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
         <b>if</b> (!<a href="order_info.md#0x0_order_info">order_info</a>.match_maker(maker_order, timestamp)) <b>break</b>;
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
     };
