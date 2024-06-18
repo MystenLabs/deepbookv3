@@ -1,4 +1,10 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// The book module contains the `Book` struct which represents the order book.
+/// All order book operations are defined in this module.
 module deepbook::book {
+    // === Imports ===
     use deepbook::{
         big_vector::{Self, BigVector},
         utils,
@@ -8,9 +14,7 @@ module deepbook::book {
         constants,
     };
 
-    const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
-    const START_ASK_ORDER_ID: u64 = 1;
-
+    // === Errors ===
     const EInvalidAmountIn: u64 = 1;
     const EEmptyOrderbook: u64 = 2;
     const EInvalidPriceRange: u64 = 3;
@@ -18,6 +22,11 @@ module deepbook::book {
     const EOrderBelowMinimumSize: u64 = 5;
     const EOrderInvalidLotSize: u64 = 6;
 
+    // === Constants ===
+    const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
+    const START_ASK_ORDER_ID: u64 = 1;
+
+    // === Structs ===
     public struct Book has store {
         tick_size: u64,
         lot_size: u64,
@@ -26,6 +35,19 @@ module deepbook::book {
         asks: BigVector<Order>,
         next_bid_order_id: u64,
         next_ask_order_id: u64,
+    }
+
+    // === Public-Package Functions ===
+    public(package) fun bids(self: &Book): &BigVector<Order> {
+        &self.bids
+    }
+
+    public(package) fun asks(self: &Book): &BigVector<Order> {
+        &self.asks
+    }
+
+    public(package) fun lot_size(self: &Book): u64 {
+        self.lot_size
     }
 
     public(package) fun empty(tick_size: u64, lot_size: u64, min_size: u64, ctx: &mut TxContext): Book {
@@ -118,10 +140,6 @@ module deepbook::book {
         (cancel_quantity, order)
     }
 
-    public(package) fun lot_size(self: &Book): u64 {
-        self.lot_size
-    }
-
     /// Returns the mid price of the order book.
     public(package) fun mid_price(
         self: &Book,
@@ -201,14 +219,7 @@ module deepbook::book {
         (price_vec, quantity_vec)
     }
 
-    public(package) fun bids(self: &Book): &BigVector<Order> {
-        &self.bids
-    }
-
-    public(package) fun asks(self: &Book): &BigVector<Order> {
-        &self.asks
-    }
-
+    // === Private Functions ===
     // Access side of book where order_id belongs
     fun book_side(self: &mut Book, order_id: u128): &mut BigVector<Order> {
         let (is_bid, _, _) = utils::decode_order_id(order_id);

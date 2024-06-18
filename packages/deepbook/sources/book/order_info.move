@@ -254,6 +254,10 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
+    /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
+    /// placing the order, calculate all of the balances that need to be settled and
+    /// the balances that are owed. The executed quantity is multiplied by the taker_fee
+    /// and the remaining quantity is multiplied by the maker_fee to get the DEEP fee.
     public(package) fun calculate_partial_fill_balances(
         self: &mut OrderInfo,
         taker_fee: u64,
@@ -432,6 +436,7 @@ module deepbook::order_info {
         });
     }
 
+    // === Private Functions ===
     fun emit_order_filled(
         self: &OrderInfo,
         maker: &Order,

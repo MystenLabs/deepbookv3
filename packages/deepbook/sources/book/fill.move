@@ -1,9 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// `Fill` struct represents the results of a match between two orders.
 module deepbook::fill {
-    use deepbook::balances::{Self, Balances};
-    use deepbook::deep_price::OrderDeepPrice;
+    // === Imports ===
+    use deepbook::{
+        balances::{Self, Balances},
+        deep_price::OrderDeepPrice,
+    };
+
+    // === Structs ===
     /// Fill struct represents the results of a match between two orders.
     /// It is used to update the state.
     public struct Fill has store, drop, copy {
@@ -27,6 +33,7 @@ module deepbook::fill {
         maker_deep_price: OrderDeepPrice,
     }
 
+    // === Public-Package Functions ===
     public(package) fun new(
         maker_order_id: u128,
         balance_manager_id: ID,
@@ -91,6 +98,7 @@ module deepbook::fill {
         self.maker_deep_price
     }
 
+    /// Calculate the quantities to settle for the maker.
     public(package) fun get_settled_maker_quantities(self: &Fill): Balances {
         let (base, quote) = if (self.expired) {
             if (self.taker_is_bid) {
