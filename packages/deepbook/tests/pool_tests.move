@@ -698,14 +698,23 @@ module deepbook::pool_tests {
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) =
-            place_swap_exact_amount_order<SUI, USDC>(
-                pool_id,
-                BOB,
-                base_in,
-                quote_in,
-                deep_in,
-                &mut test,
-            );
+            if (is_bid) {
+                place_swap_exact_base_for_quote<SUI, USDC>(
+                    pool_id,
+                    BOB,
+                    base_in,
+                    deep_in,
+                    &mut test,
+                )
+            } else {
+                place_swap_exact_quote_for_base<SUI, USDC>(
+                    pool_id,
+                    BOB,
+                    quote_in,
+                    deep_in,
+                    &mut test,
+                )
+            };
 
         if (is_bid) {
             assert!(base_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
@@ -1447,14 +1456,23 @@ module deepbook::pool_tests {
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) =
-            place_swap_exact_amount_order<SUI, USDC>(
-                pool_id,
-                BOB,
-                base_in,
-                quote_in,
-                deep_in,
-                &mut test,
-            );
+            if (is_bid) {
+                place_swap_exact_base_for_quote<SUI, USDC>(
+                    pool_id,
+                    BOB,
+                    base_in,
+                    deep_in,
+                    &mut test,
+                )
+            } else {
+                place_swap_exact_quote_for_base<SUI, USDC>(
+                    pool_id,
+                    BOB,
+                    quote_in,
+                    deep_in,
+                    &mut test,
+                )
+            };
 
         if (is_bid) {
             assert!(base_out.value() == residual, constants::e_order_info_mismatch());
@@ -2281,10 +2299,36 @@ module deepbook::pool_tests {
     }
 
     /// Place swap exact amount order
-    fun place_swap_exact_amount_order<BaseAsset, QuoteAsset>(
+    fun place_swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         pool_id: ID,
         trader: address,
         base_in: u64,
+        deep_in: u64,
+        test: &mut Scenario,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            // Place order in pool
+            let (base_out, quote_out, deep_out) =
+                pool.swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
+                    mint_for_testing<BaseAsset>(base_in, test.ctx()),
+                    mint_for_testing<DEEP>(deep_in, test.ctx()),
+                    &clock,
+                    test.ctx()
+                );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_out)
+        }
+    }
+
+    fun place_swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        trader: address,
         quote_in: u64,
         deep_in: u64,
         test: &mut Scenario,
@@ -2296,8 +2340,7 @@ module deepbook::pool_tests {
 
             // Place order in pool
             let (base_out, quote_out, deep_out) =
-                pool.swap_exact_amount<BaseAsset, QuoteAsset>(
-                    mint_for_testing<BaseAsset>(base_in, test.ctx()),
+                pool.swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
                     mint_for_testing<QuoteAsset>(quote_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
                     &clock,
