@@ -1,6 +1,11 @@
 module deepbook::book {
     use deepbook::{
-        big_vector::{Self, BigVector},
+        big_vector::{
+            Self,
+            BigVector,
+            slice_borrow as slice_borrow,
+            slice_borrow_mut as slice_borrow_mut
+        },
         utils,
         math,
         order::Order,
@@ -73,7 +78,7 @@ module deepbook::book {
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
         while (!ref.is_null() && amount_in_left > 0) {
-            let order = &book_side.borrow_slice(ref)[offset];
+            let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
@@ -133,14 +138,14 @@ module deepbook::book {
         let mut best_bid_price = 0;
 
         while (!ask_ref.is_null()) {
-            let best_ask_order = &self.asks.borrow_slice(ask_ref)[ask_offset];
+            let best_ask_order = slice_borrow(self.asks.borrow_slice(ask_ref), ask_offset);
             best_ask_price = best_ask_order.price();
             if (best_ask_order.expire_timestamp() > current_timestamp) break;
             (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
         };
 
         while (!bid_ref.is_null()) {
-            let best_bid_order = &self.bids.borrow_slice(bid_ref)[bid_offset];
+            let best_bid_order = slice_borrow(self.bids.borrow_slice(bid_ref), bid_offset);
             best_bid_price = best_bid_order.price();
             if (best_bid_order.expire_timestamp() > current_timestamp) break;
             (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
@@ -177,7 +182,7 @@ module deepbook::book {
         let mut cur_quantity = 0;
 
         while (!ref.is_null() && ticks_left > 0) {
-            let order = &book_side.borrow_slice(ref)[offset];
+            let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let (_, order_price, _) = utils::decode_order_id(order.order_id());
             if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
             if (cur_price == 0) cur_price = order_price;
@@ -232,7 +237,7 @@ module deepbook::book {
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
         while (!ref.is_null()) {
-            let maker_order = &mut book_side.borrow_slice_mut(ref)[offset];
+            let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };

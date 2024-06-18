@@ -235,20 +235,18 @@ module deepbook::big_vector {
         self.depth
     }
 
-    #[syntax(index)]
     /// Access the element at index `ix` in `self`.
-    public fun borrow<E: store>(self: &BigVector<E>, ix: u128): &E {
+    public(package) fun borrow<E: store>(self: &BigVector<E>, ix: u128): &E {
         let (ref, offset) = self.slice_around(ix);
         let slice = self.borrow_slice(ref);
-        &slice[offset]
+        slice_borrow(slice, offset)
     }
 
-    #[syntax(index)]
     /// Access the element at index `ix` in `self`, mutably.
-    public fun borrow_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
+    public(package) fun borrow_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
         let (ref, offset) = self.slice_around(ix);
         let slice = self.borrow_slice_mut(ref);
-        &mut slice[offset]
+        slice_borrow_mut(slice, offset)
     }
 
     // === BigVector Mutators ===
@@ -522,17 +520,15 @@ module deepbook::big_vector {
         self.keys[ix]
     }
 
-    #[syntax(index)]
     /// Access a value from this slice, referenced by its offset,
     /// local to the slice.
-    public fun slice_borrow<E: store>(self: &Slice<E>, ix: u64): &E {
+    public(package) fun slice_borrow<E: store>(self: &Slice<E>, ix: u64): &E {
         &self.vals[ix]
     }
 
-    #[syntax(index)]
     /// Access a value from this slice, mutably, referenced by its
     /// offset, local to the slice.
-    public fun slice_borrow_mut<E: store>(
+    public(package) fun slice_borrow_mut<E: store>(
         self: &mut Slice<E>,
         ix: u64,
     ): &mut E {

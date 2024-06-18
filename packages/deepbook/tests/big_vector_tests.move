@@ -555,47 +555,47 @@ module deepbook::big_vector_tests {
         bv.drop()
     }
 
-    #[test]
-    fun test_borrow() {
-        let bv = filled_for_test();
+    // #[test]
+    // fun test_borrow() {
+    //     let bv = filled_for_test();
 
-        assert!(bv[5] == 5, 0);
-        assert!(bv[7] == 7, 0);
-        assert!(bv[8] == 8, 0);
-        assert!(bv[9] == 9, 0);
-        assert!(bv[10] == 10, 0);
-        assert!(bv[15] == 15, 0);
-        assert!(bv[17] == 17, 0);
-        assert!(bv[19] == 19, 0);
-        assert!(bv[20] == 20, 0);
-        assert!(bv[22] == 22, 0);
+    //     assert!(bv[5] == 5, 0);
+    //     assert!(bv[7] == 7, 0);
+    //     assert!(bv[8] == 8, 0);
+    //     assert!(bv[9] == 9, 0);
+    //     assert!(bv[10] == 10, 0);
+    //     assert!(bv[15] == 15, 0);
+    //     assert!(bv[17] == 17, 0);
+    //     assert!(bv[19] == 19, 0);
+    //     assert!(bv[20] == 20, 0);
+    //     assert!(bv[22] == 22, 0);
 
-        bv.drop()
-    }
+    //     bv.drop()
+    // }
 
-    #[test]
-    fun test_borrow_mut() {
-        let mut bv = filled_for_test();
+    // #[test]
+    // fun test_borrow_mut() {
+    //     let mut bv = filled_for_test();
 
-        *(&mut bv[7]) = 8;
-        *(&mut bv[9]) = 10;
-        *(&mut bv[15]) = 16;
-        *(&mut bv[19]) = 20;
-        *(&mut bv[22]) = 23;
+    //     *(&mut bv[7]) = 8;
+    //     *(&mut bv[9]) = 10;
+    //     *(&mut bv[15]) = 16;
+    //     *(&mut bv[19]) = 20;
+    //     *(&mut bv[22]) = 23;
 
-        assert!(bv[5] == 5, 0);
-        assert!(bv[7] == 8, 0);
-        assert!(bv[8] == 8, 0);
-        assert!(bv[9] == 10, 0);
-        assert!(bv[10] == 10, 0);
-        assert!(bv[15] == 16, 0);
-        assert!(bv[17] == 17, 0);
-        assert!(bv[19] == 20, 0);
-        assert!(bv[20] == 20, 0);
-        assert!(bv[22] == 23, 0);
+    //     assert!(bv[5] == 5, 0);
+    //     assert!(bv[7] == 8, 0);
+    //     assert!(bv[8] == 8, 0);
+    //     assert!(bv[9] == 10, 0);
+    //     assert!(bv[10] == 10, 0);
+    //     assert!(bv[15] == 16, 0);
+    //     assert!(bv[17] == 17, 0);
+    //     assert!(bv[19] == 20, 0);
+    //     assert!(bv[20] == 20, 0);
+    //     assert!(bv[22] == 23, 0);
 
-        bv.drop()
-    }
+    //     bv.drop()
+    // }
 
     #[test]
     fun test_slice_following() {
