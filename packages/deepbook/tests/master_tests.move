@@ -47,6 +47,7 @@ module deepbook::master_tests {
     const EIncorrectRebateClaimer: u64 = 5;
     const EDataRecentlyAdded: u64 = 6;
     const ENoAmountToBurn: u64 = 7;
+    const ENoAmountToBurn2: u64 = 8;
 
     #[test]
     fun test_master_ok(){
@@ -81,6 +82,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
     fun test_no_amount_to_burn(){
         test_master(ENoAmountToBurn)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
+    fun test_no_amount_to_burn_2(){
+        test_master(ENoAmountToBurn2)
     }
 
     #[test]
@@ -1274,6 +1280,16 @@ module deepbook::master_tests {
             expected_amount_burned,
             &mut test
         );
+
+        // Trying to burn again will fail
+        if (error_code == ENoAmountToBurn2) {
+            burn_deep<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                0,
+                &mut test
+            );
+        };
 
         end(test);
     }
