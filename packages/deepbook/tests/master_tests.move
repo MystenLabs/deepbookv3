@@ -25,7 +25,7 @@ module deepbook::master_tests {
         balances::{Self, Balances},
         registry::{Self, Registry},
     };
-    use token::deep::DEEP;
+    use token::deep::{Self, DEEP, ProtectedTreasury};
 
     public struct ExpectedBalances has drop {
         sui: u64,
@@ -46,7 +46,7 @@ module deepbook::master_tests {
     const ECannotPropose: u64 = 4;
     const EIncorrectRebateClaimer: u64 = 5;
     const EDataRecentlyAdded: u64 = 6;
-    const EIncorrectCreationFee: u64 = 7;
+    const ENoAmountToBurn: u64 = 7;
 
     #[test]
     fun test_master_ok(){
@@ -76,6 +76,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
     fun test_master_incorrect_rebate_claimer_e(){
         test_master(EIncorrectRebateClaimer)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
+    fun test_no_amount_to_burn(){
+        test_master(ENoAmountToBurn)
     }
 
     #[test]
@@ -260,7 +265,7 @@ module deepbook::master_tests {
     ){
         test.next_tx(sender);
         let fee = test.take_from_sender_by_id<Coin<DEEP>>(fee_id);
-        assert!(fee.value() == constants::pool_creation_fee(), EIncorrectCreationFee);
+        assert!(fee.value() == constants::pool_creation_fee(), 0);
         fee.burn_for_testing();
     }
 
@@ -1028,7 +1033,7 @@ module deepbook::master_tests {
 
         if (error_code == EIncorrectRebateClaimer) {
             claim_rebates<SUI, USDC>(
-                @0xdddd,
+                BOB,
                 pool1_id,
                 alice_balance_manager_id,
                 &mut test
@@ -1139,10 +1144,11 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
-        alice_balance.deep = alice_balance.deep + math::mul(
+        let alice_rebates = math::mul(
             math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
+        alice_balance.deep = alice_balance.deep + alice_rebates;
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -1156,15 +1162,26 @@ module deepbook::master_tests {
             bob_balance_manager_id,
             &mut test
         );
-        bob_balance.deep = bob_balance.deep + math::mul(
+        let bob_rebates = math::mul(
             math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
             deep_multiplier
         );
+        bob_balance.deep = bob_balance.deep + bob_rebates;
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
             &mut test
         );
+
+        // Since all rebates are to be claimed, there are no amounts to burn
+        if (error_code == ENoAmountToBurn) {
+            burn_deep<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                0,
+                &mut test
+            );
+        };
 
         // Same cross trading happens during epoch 28
         // quantity being traded is halved, each person will make 0.5 quantity and take 0.5 quantity
@@ -1238,6 +1255,7 @@ module deepbook::master_tests {
         let maker_volume_proportion = 500_000_000;
         let maker_fee_proportion = math::mul(maker_volume_proportion, fees_generated); // 4000000
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion); // 3000000
+        let expected_amount_burned = fees_generated - 2 * maker_rebate; // 1000000
         alice_balance.deep = alice_balance.deep + maker_rebate;
         check_balance(
             alice_balance_manager_id,
@@ -1250,8 +1268,39 @@ module deepbook::master_tests {
             &bob_balance,
             &mut test
         );
+        burn_deep<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            expected_amount_burned,
+            &mut test
+        );
 
         end(test);
+    }
+
+    fun burn_deep<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        expected_amount_burned: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            deep::share_treasury_for_testing(test.ctx());
+        };
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let mut treasury = test.take_shared<ProtectedTreasury>();
+            let amount_burned = pool::burn_deep<BaseAsset, QuoteAsset>(
+                &mut pool,
+                &mut treasury,
+                test.ctx()
+            );
+            assert!(amount_burned == expected_amount_burned, 0);
+            return_shared(pool);
+            return_shared(treasury);
+        }
     }
 
     fun execute_cross_trading<BaseAsset, QuoteAsset>(
