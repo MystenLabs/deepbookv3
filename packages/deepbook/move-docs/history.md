@@ -303,7 +303,7 @@ calculate and returns rebate amount, updates the burn amount
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.deep());
+    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>());
     <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
