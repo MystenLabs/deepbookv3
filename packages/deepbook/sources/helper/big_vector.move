@@ -154,7 +154,7 @@ module deepbook::big_vector {
     /// Construct a new, empty `BigVector`. `max_slice_size` contains
     /// the maximum size of its leaf nodes, and `max_fan_out` contains
     /// the maximum fan-out of its interior nodes.
-    public fun empty<E: store>(
+    public(package) fun empty<E: store>(
         max_slice_size: u64,
         max_fan_out: u64,
         ctx: &mut TxContext,
@@ -180,7 +180,7 @@ module deepbook::big_vector {
 
     /// Destroy `self` as long as it is empty, even if its elements
     /// are not droppable. Fails if `self` is not empty.
-    public fun destroy_empty<E: store>(self: BigVector<E>) {
+    public(package) fun destroy_empty<E: store>(self: BigVector<E>) {
         let BigVector {
             id,
 
@@ -199,7 +199,7 @@ module deepbook::big_vector {
 
     /// Destroy `self`, even if it contains elements, as long as they
     /// are droppable.
-    public fun drop<E: store + drop>(self: BigVector<E>) {
+    public(package) fun drop<E: store + drop>(self: BigVector<E>) {
         let BigVector {
             mut id,
 
@@ -219,19 +219,19 @@ module deepbook::big_vector {
     // === BigVector Accessors ===
 
     /// Whether `self` contains no elements or not.
-    public fun is_empty<E: store>(self: &BigVector<E>): bool {
+    public(package) fun is_empty<E: store>(self: &BigVector<E>): bool {
         self.length == 0
     }
 
     /// The number of elements contained in `self`.
-    public fun length<E: store>(self: &BigVector<E>): u64 {
+    public(package) fun length<E: store>(self: &BigVector<E>): u64 {
         self.length
     }
 
     /// The number of nodes between the root and the leaves in `self`.
     /// This is within a constant factor of log base `max_fan_out` of
     /// the length.
-    public fun depth<E: store>(self: &BigVector<E>): u8 {
+    public(package) fun depth<E: store>(self: &BigVector<E>): u8 {
         self.depth
     }
 
@@ -251,85 +251,11 @@ module deepbook::big_vector {
         &mut slice[offset]
     }
 
-    /// Return whether there is a valid next value in BigVector
-    public fun valid_next<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): bool {
-        let slice = self.borrow_slice(ref);
-        (offset + 1 < slice.vals.length() || !slice.next().is_null())
-    }
-
-    /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
-    /// Assumes valid_next is true
-    /// Returns the next slice reference, the offset within the slice, and the immutable reference to the value
-    public fun borrow_next<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
-        let slice = self.borrow_slice(ref);
-        if (offset + 1 < slice.vals.length()) {
-            (ref, offset + 1, &slice[offset + 1])
-        } else {
-            let next_ref = slice.next();
-            let next_slice = self.borrow_slice(next_ref);
-
-            (next_ref, 0, &next_slice.vals[0])
-        }
-    }
-
-    /// Gets the next value within slice if exists, if at maximum gets the next element of the next slice
-    /// Assumes valid_next is true
-    /// Returns the next slice reference, the offset within the slice, and the mutable reference to the value
-    public fun borrow_next_mut<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
-        let slice = self.borrow_slice_mut(ref);
-        if (offset + 1 < slice.vals.length()) {
-            (ref, offset + 1, &mut slice[offset + 1])
-        } else {
-            let next_ref = slice.next();
-            let next_slice = self.borrow_slice_mut(next_ref);
-
-            (next_ref, 0, &mut next_slice.vals[0])
-        }
-    }
-
-    /// Return whether there is a valid prev value in BigVector
-    public fun valid_prev<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): bool {
-        let slice = self.borrow_slice(ref);
-        (offset > 0 || !slice.prev().is_null())
-    }
-
-    /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
-    /// Assumes valid_prev is true
-    /// Returns the prev slice reference, the offset within the slice, and the immutable reference to the value
-    public fun borrow_prev<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &E) {
-        let slice = self.borrow_slice(ref);
-        if (offset > 0) {
-            (ref, offset - 1, &slice[offset - 1])
-        } else {
-            let prev_ref = slice.prev();
-            let prev_slice = self.borrow_slice(prev_ref);
-            let last_index = prev_slice.vals.length() - 1;
-
-            (prev_ref, last_index, &prev_slice[last_index])
-        }
-    }
-
-    /// Gets the prev value within slice if exists, if at minimum gets the last element of the prev slice
-    /// Assumes valid_prev is true
-    /// Returns the prev slice reference, the offset within the slice, and the mutable reference to the value
-    public fun borrow_prev_mut<E: store>(self: &mut BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64, &mut E) {
-        let slice = self.borrow_slice_mut(ref);
-        if (offset > 0) {
-            (ref, offset - 1, &mut slice[offset - 1])
-        } else {
-            let prev_ref = slice.prev();
-            let prev_slice = self.borrow_slice_mut(prev_ref);
-            let last_index = prev_slice.vals.length() - 1;
-
-            (prev_ref, last_index, &mut prev_slice[last_index])
-        }
-    }
-
     // === BigVector Mutators ===
 
     /// Add `val` to `self` at index `key`. Aborts if `key` is already
     /// present in `self`.
-    public fun insert<E: store>(self: &mut BigVector<E>, key: u128, val: E) {
+    public(package) fun insert<E: store>(self: &mut BigVector<E>, key: u128, val: E) {
         self.length = self.length + 1;
 
         if (self.root_id == NO_SLICE) {
@@ -346,23 +272,9 @@ module deepbook::big_vector {
         }
     }
 
-    /// Adds key value pairs from `keys` and `vals` to `self`.
-    /// Requires that `keys` and `vals` have the same length, and that
-    /// `keys` is in sorted order.
-    ///
-    /// Aborts if any of the keys are already present in `self`, or
-    /// the requirements on `keys` and `vals` are not met.
-    public fun insert_batch<E: store>(
-        _self: &mut BigVector<E>,
-        _keys: vector<u128>,
-        _vals: vector<E>,
-    ) {
-        abort 0
-    }
-
     /// Remove the element with key `key` from `self`, returning its
     /// value. Aborts if `key` is not found.
-    public fun remove<E: store>(self: &mut BigVector<E>, key: u128): E {
+    public(package) fun remove<E: store>(self: &mut BigVector<E>, key: u128): E {
         if (self.root_id == NO_SLICE) {
             abort ENotFound
         };
@@ -405,21 +317,11 @@ module deepbook::big_vector {
         val
     }
 
-    /// Remove the elements between `lo` (inclusive) and `hi`
-    /// (exclusive) from `self`.
-    public fun remove_range<E: store + drop>(
-        _self: &mut BigVector<E>,
-        _lo: u128,
-        _hi: u128,
-    ) {
-        abort 0
-    }
-
     /// Remove elements from `self` at the indices in `keys`,
     /// returning the associated values.
     ///
     /// Aborts if any of the keys are not found.
-    public fun remove_batch<E: store>(
+    public(package) fun remove_batch<E: store>(
         _self: &mut BigVector<E>,
         _keys: vector<u128>,
     ): vector<E> {
@@ -432,7 +334,7 @@ module deepbook::big_vector {
     /// assuming it exists in the data structure. Returns the
     /// reference to the slice and the local offset within the slice
     /// if it exists, aborts with `ENotFound` otherwise.
-    public fun slice_around<E: store>(
+    public(package) fun slice_around<E: store>(
         self: &BigVector<E>,
         key: u128,
     ): (SliceRef, u64) {
@@ -456,7 +358,7 @@ module deepbook::big_vector {
     /// reference to the slice and the local offset within the slice
     /// if it exists, or (NO_SLICE, 0), if there is no matching
     /// key-value pair.
-    public fun slice_following<E: store>(
+    public(package) fun slice_following<E: store>(
         self: &BigVector<E>,
         key: u128,
     ): (SliceRef, u64) {
@@ -476,7 +378,7 @@ module deepbook::big_vector {
     /// to the previous key in `self`. Returns the reference to the slice
     /// and the local offset within the slice if it exists, or (NO_SLICE, 0),
     /// if there is no matching key-value pair.
-    public fun slice_before<E: store>(
+    public(package) fun slice_before<E: store>(
         self: &BigVector<E>,
         key: u128,
     ): (SliceRef, u64) {
@@ -502,7 +404,7 @@ module deepbook::big_vector {
     /// to the minimum key in `self`. Returns the reference to the
     /// slice and the local offset within the slice if it exists, or
     /// (NO_SLICE, 0), if there is no matching key-value pair.
-    public fun min_slice<E: store>(
+    public(package) fun min_slice<E: store>(
         self: &BigVector<E>,
     ): (SliceRef, u64) {
         if (self.root_id == NO_SLICE) {
@@ -517,7 +419,7 @@ module deepbook::big_vector {
     /// to the maximum key in `self`. Returns the reference to the
     /// slice and the local offset within the slice if it exists, or
     /// (NO_SLICE, 0), if there is no matching key-value pair.
-    public fun max_slice<E: store>(
+    public(package) fun max_slice<E: store>(
         self: &BigVector<E>,
     ): (SliceRef, u64) {
         if (self.root_id == NO_SLICE) {
@@ -529,7 +431,7 @@ module deepbook::big_vector {
     }
 
     /// Given the current slice and offset, get the next slice and offset. Can be null.
-    public fun next_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
+    public(package) fun next_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
         let slice = self.borrow_slice(ref);
         if (offset + 1 < slice.vals.length()) {
             (ref, offset + 1)
@@ -539,7 +441,7 @@ module deepbook::big_vector {
     }
 
     /// Given the current slice and offset, get the previous slice and offset. Can be null.
-    public fun prev_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
+    public(package) fun prev_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
         let slice = self.borrow_slice(ref);
         if (offset > 0) {
             (ref, offset - 1)
@@ -555,7 +457,7 @@ module deepbook::big_vector {
     }
 
     /// Borrow a slice from this vector.
-    public fun borrow_slice<E: store>(
+    public(package) fun borrow_slice<E: store>(
         self: &BigVector<E>,
         ref: SliceRef,
     ): &Slice<E> {
@@ -563,7 +465,7 @@ module deepbook::big_vector {
     }
 
     /// Borrow a slice from this vector, mutably.
-    public fun borrow_slice_mut<E: store>(
+    public(package) fun borrow_slice_mut<E: store>(
         self: &mut BigVector<E>,
         ref: SliceRef,
     ): &mut Slice<E> {
@@ -589,34 +491,34 @@ module deepbook::big_vector {
     /// Returns whether the SliceRef points to an actual slice, or the
     /// `NO_SLICE` sentinel. It is an error to attempt to borrow a
     /// slice from a `BigVector` if it doesn't exist.
-    public fun slice_is_null(self: &SliceRef): bool {
+    public(package) fun slice_is_null(self: &SliceRef): bool {
         self.ix == NO_SLICE
     }
 
     /// Returns whether the slice is a leaf node or not. Leaf nodes
     /// have as many keys as values.
-    public fun slice_is_leaf<E: store>(self: &Slice<E>): bool {
+    public(package) fun slice_is_leaf<E: store>(self: &Slice<E>): bool {
         self.vals.length() == self.keys.length()
     }
 
     /// Reference to the next (neighbouring) slice to this one.
-    public fun slice_next<E: store>(self: &Slice<E>): SliceRef {
+    public(package) fun slice_next<E: store>(self: &Slice<E>): SliceRef {
         SliceRef { ix: self.next }
     }
 
     /// Reference to the previous (neighbouring) slice to this one.
-    public fun slice_prev<E: store>(self: &Slice<E>): SliceRef {
+    public(package) fun slice_prev<E: store>(self: &Slice<E>): SliceRef {
         SliceRef { ix: self.prev }
     }
 
     /// Number of children (values) in this slice.
-    public fun slice_length<E: store>(self: &Slice<E>): u64 {
+    public(package) fun slice_length<E: store>(self: &Slice<E>): u64 {
         self.vals.length()
     }
 
     /// Access a key from this slice, referenced by its offset, local
     /// to the slice.
-    public fun slice_key<E: store>(self: &Slice<E>, ix: u64): u128 {
+    public(package) fun slice_key<E: store>(self: &Slice<E>, ix: u64): u128 {
         self.keys[ix]
     }
 
@@ -1368,7 +1270,7 @@ module deepbook::big_vector {
 
     #[test_only]
     /// Returns the keys from `self`, in pre-order.
-    public fun preorder_keys<E: store>(self: &BigVector<E>): vector<vector<u128>> {
+    public(package) fun preorder_keys<E: store>(self: &BigVector<E>): vector<vector<u128>> {
         let mut keys = vector[];
         let (slice_id, depth) = (self.root_id, self.depth);
         self.preorder_key_traversal(&mut keys, slice_id, depth);
@@ -1405,7 +1307,7 @@ module deepbook::big_vector {
 
     #[test_only]
     /// Returns the values from `self`, in-order.
-    public fun inorder_values<E: store + copy>(
+    public(package) fun inorder_values<E: store + copy>(
         self: &BigVector<E>,
     ): vector<vector<E>> {
         let mut vals = vector[];
