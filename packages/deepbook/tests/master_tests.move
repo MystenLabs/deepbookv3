@@ -17,7 +17,6 @@ module deepbook::master_tests {
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
-        vault::{DEEP},
         constants,
         pool_tests::{Self},
         pool::{Self, Pool},
@@ -26,6 +25,7 @@ module deepbook::master_tests {
         balances::{Self, Balances},
         registry::{Self, Registry},
     };
+    use token::deep::DEEP;
 
     public struct ExpectedBalances has drop {
         sui: u64,

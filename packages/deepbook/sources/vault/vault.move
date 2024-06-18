@@ -6,7 +6,7 @@ module deepbook::vault {
         balances::Balances,
     };
 
-    public struct DEEP has store {}
+    use token::deep::DEEP;
 
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
         base_balance: Balance<BaseAsset>,

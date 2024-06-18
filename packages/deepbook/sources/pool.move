@@ -19,12 +19,14 @@ module deepbook::pool {
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
-        vault::{Self, Vault, DEEP},
+        vault::{Self, Vault},
         deep_price::{Self, DeepPrice},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
     };
+
+    use token::deep::DEEP;
 
     const EInvalidFee: u64 = 1;
     const ESameBaseAndQuote: u64 = 2;
