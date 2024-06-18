@@ -26,7 +26,7 @@ module deepbook::pool {
         order::Order,
     };
 
-    use token::deep::DEEP;
+    use token::deep::{DEEP, ProtectedTreasury};
 
     const EInvalidFee: u64 = 1;
     const ESameBaseAndQuote: u64 = 2;
@@ -39,6 +39,7 @@ module deepbook::pool {
     const EFeeTypeNotSupported: u64 = 9;
     const EInvalidOrderBalanceManager: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
+    const ENoAmountToBurn: u64 = 12;
 
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -416,11 +417,16 @@ module deepbook::pool {
     /// Burns DEEP tokens from the pool. Amount to burn is within history
     public fun burn_deep<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-    ) {
+        treasury_cap: &mut ProtectedTreasury,
+        ctx: &mut TxContext,
+    ): u64 {
         let balance_to_burn = self.state.history_mut().reset_balance_to_burn();
-        assert!(balance_to_burn > 0, EInvalidAmountIn);
-        // TODO: burn deep balance
-        // let deep_balance = self.vault.withdraw_deep(balance_to_burn);
+        assert!(balance_to_burn > 0, ENoAmountToBurn);
+        let deep_to_burn = coin::from_balance(self.vault.withdraw_deep_to_burn(balance_to_burn), ctx);
+        let amount_burned = deep_to_burn.value();
+        token::deep::burn(treasury_cap, deep_to_burn);
+
+        amount_burned
     }
 
     // OPERATIONAL OWNER

@@ -62,4 +62,11 @@ module deepbook::vault {
             self.deep_balance.join(balance);
         };
     }
+
+    public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        amount_to_burn: u64,
+    ): Balance<DEEP> {
+        self.deep_balance.split(amount_to_burn)
+    }
 }

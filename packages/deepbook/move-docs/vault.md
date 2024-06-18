@@ -9,6 +9,7 @@
 -  [Function `balances`](#0x0_vault_balances)
 -  [Function `empty`](#0x0_vault_empty)
 -  [Function `settle_balance_manager`](#0x0_vault_settle_balance_manager)
+-  [Function `withdraw_deep_to_burn`](#0x0_vault_withdraw_deep_to_burn)
 
 
 <pre><code><b>use</b> <a href="balance_manager.md#0x0_balance_manager">0x0::balance_manager</a>;
@@ -161,6 +162,33 @@ Transfer any settled amounts for the balance_manager.
         <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.withdraw_protected(balances_in.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>() - balances_out.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>(), <b>false</b>, ctx);
         self.deep_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_vault_withdraw_deep_to_burn"></a>
+
+## Function `withdraw_deep_to_burn`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_withdraw_deep_to_burn">withdraw_deep_to_burn</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, amount_to_burn: u64): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="vault.md#0x0_vault_withdraw_deep_to_burn">withdraw_deep_to_burn</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
+    amount_to_burn: u64,
+): Balance&lt;DEEP&gt; {
+    self.deep_balance.split(amount_to_burn)
 }
 </code></pre>
 

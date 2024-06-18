@@ -288,6 +288,15 @@ Public-facing interface for the package.
 
 
 
+<a name="0x0_pool_ENoAmountToBurn"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>: u64 = 12;
+</code></pre>
+
+
+
 <a name="0x0_pool_ESameBaseAndQuote"></a>
 
 
@@ -1054,7 +1063,7 @@ Allows for the calculation of deep price per base asset.
 Burns DEEP tokens from the pool. Amount to burn is within history
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, treasury_cap: &<b>mut</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_ProtectedTreasury">deep::ProtectedTreasury</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
 </code></pre>
 
 
@@ -1065,11 +1074,16 @@ Burns DEEP tokens from the pool. Amount to burn is within history
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-) {
+    treasury_cap: &<b>mut</b> ProtectedTreasury,
+    ctx: &<b>mut</b> TxContext,
+): u64 {
     <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
-    <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>);
-    // TODO: burn <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>
-    // <b>let</b> deep_balance = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep(balance_to_burn);
+    <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>);
+    <b>let</b> deep_to_burn = <a href="dependencies/sui-framework/coin.md#0x2_coin_from_balance">coin::from_balance</a>(self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn), ctx);
+    <b>let</b> amount_burned = deep_to_burn.value();
+    token::deep::burn(treasury_cap, deep_to_burn);
+
+    amount_burned
 }
 </code></pre>
 
