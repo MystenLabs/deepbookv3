@@ -5,14 +5,12 @@
 module deepbook::pool {
     // === Imports ===
     use std::type_name;
-
     use sui::{
         coin::{Self, Coin},
         clock::Clock,
         event,
         vec_set::VecSet,
     };
-
     use deepbook::{
         math,
         constants,
@@ -26,7 +24,6 @@ module deepbook::pool {
         big_vector::BigVector,
         order::Order,
     };
-
     use token::deep::{DEEP, ProtectedTreasury};
 
     // === Errors ===
