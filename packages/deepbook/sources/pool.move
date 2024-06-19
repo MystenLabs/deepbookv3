@@ -18,7 +18,7 @@ module deepbook::pool {
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
-        vault::{Self, Vault},
+        vault::{Self, Vault, FlashloanHotPotato},
         deep_price::{Self, DeepPrice},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
@@ -319,6 +319,32 @@ module deepbook::pool {
     ) {
         let (settled, owed) = self.state.process_claim_rebates(balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
+    }
+
+    // === Public-Mutative Functions * FLASHLOAN * ===
+    /// Borrow base and quote assets from the Pool. A hot potato is returned,
+    /// forcing the borrower to return the assets within the same transaction.
+    public fun borrow_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashloanHotPotato) {
+        let pool_id = object::id(self);
+        
+        self.vault.borrow_flashloan(pool_id, base_amount, quote_amount, ctx)
+    }
+
+    /// Return the flashloaned base and quote assets to the Pool.
+    public fun return_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base: Coin<BaseAsset>,
+        quote: Coin<QuoteAsset>,
+        potato: FlashloanHotPotato,
+        ctx: &TxContext,
+    ) {
+        let pool_id = object::id(self);
+        self.vault.return_flashloan(pool_id, base, quote, potato, ctx);
     }
 
     // === Public-Mutative Functions * OPERATIONAL * ===
