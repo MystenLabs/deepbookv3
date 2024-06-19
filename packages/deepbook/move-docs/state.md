@@ -3,6 +3,9 @@
 
 # Module `0x0::state`
 
+State module represents the current state of the pool. It maintains all
+the accounts, history, and governance information. It also processes all
+the transactions and updates the state accordingly.
 
 
 -  [Struct `State`](#0x0_state_State)
@@ -21,6 +24,7 @@
 -  [Function `governance_mut`](#0x0_state_governance_mut)
 -  [Function `account`](#0x0_state_account)
 -  [Function `history_mut`](#0x0_state_history_mut)
+-  [Function `process_fills`](#0x0_state_process_fills)
 -  [Function `update_account`](#0x0_state_update_account)
 
 
@@ -131,9 +135,12 @@
 
 ## Function `process_create`
 
-Process order fills.
-Update all maker settled balances and volumes.
-Update taker settled balances and volumes.
+Up until this point, an OrderInfo object has been created and potentially filled.
+The OrderInfo object contains all of the necessary information to update the state
+of the pool. This includes the volumes for the taker and potentially multiple makers.
+First, fills are iterated and processed, updating the appropriate user's volumes.
+Funds are settled for those makers. Then, the taker's trading fee is calculated
+and the taker's volumes are updated. Finally, the taker's balances are settled.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_create">process_create</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, <a href="order_info.md#0x0_order_info">order_info</a>: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, whitelisted: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -154,29 +161,7 @@ Update taker settled balances and volumes.
     self.<a href="governance.md#0x0_governance">governance</a>.<b>update</b>(ctx);
     self.<a href="history.md#0x0_history">history</a>.<b>update</b>(self.<a href="governance.md#0x0_governance">governance</a>.<a href="trade_params.md#0x0_trade_params">trade_params</a>(), ctx);
     <b>let</b> fills = <a href="order_info.md#0x0_order_info">order_info</a>.fills();
-    <b>let</b> <b>mut</b> i = 0;
-
-    <b>while</b> (i &lt; fills.length()) {
-        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = &fills[i];
-        <b>let</b> maker = <a href="fill.md#0x0_fill">fill</a>.balance_manager_id();
-        self.<a href="state.md#0x0_state_update_account">update_account</a>(maker, ctx);
-        <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
-        <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
-
-        <b>let</b> base_volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
-        <b>let</b> quote_volume = <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
-        self.<a href="history.md#0x0_history">history</a>.add_volume(base_volume, <a href="account.md#0x0_account">account</a>.active_stake());
-        <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
-        <b>let</b> fee_volume = <a href="fill.md#0x0_fill">fill</a>.maker_deep_price().deep_quantity(base_volume, quote_volume);
-        <b>let</b> order_maker_fee = <b>if</b> (whitelisted) {
-            0
-        } <b>else</b> {
-            math::mul(fee_volume, historic_maker_fee)
-        };
-        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
-
-        i = i + 1;
-    };
+    self.<a href="state.md#0x0_state_process_fills">process_fills</a>(&fills, whitelisted, ctx);
 
     self.<a href="state.md#0x0_state_update_account">update_account</a>(<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id(), ctx);
     <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[<a href="order_info.md#0x0_order_info">order_info</a>.balance_manager_id()];
@@ -295,6 +280,7 @@ Remove order from account orders.
 
 ## Function `process_modify`
 
+Given the modified quantity, update account settled balances and volumes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_modify">process_modify</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, cancel_quantity: u64, <a href="order.md#0x0_order">order</a>: &<a href="order.md#0x0_order_Order">order::Order</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -335,6 +321,7 @@ Remove order from account orders.
 
 ## Function `process_stake`
 
+Process stake transaction. Add stake to account and update governance.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_stake">process_stake</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, new_stake: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -371,6 +358,7 @@ Remove order from account orders.
 
 ## Function `process_unstake`
 
+Process unstake transaction. Remove stake from account and update governance.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_unstake">process_unstake</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -411,6 +399,7 @@ Remove order from account orders.
 
 ## Function `process_proposal`
 
+Process proposal transaction. Add proposal to governance and update account.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_proposal">process_proposal</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, taker_fee: u64, maker_fee: u64, stake_required: u64, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -450,6 +439,7 @@ Remove order from account orders.
 
 ## Function `process_vote`
 
+Process vote transaction. Update account voted proposal and governance.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_vote">process_vote</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, proposal_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -491,6 +481,7 @@ Remove order from account orders.
 
 ## Function `process_claim_rebates`
 
+Process claim rebates transaction. Update account rebates and settle balances.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="state.md#0x0_state_process_claim_rebates">process_claim_rebates</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -630,10 +621,63 @@ Remove order from account orders.
 
 </details>
 
+<a name="0x0_state_process_fills"></a>
+
+## Function `process_fills`
+
+Process fills for all makers. Update maker accounts and history.
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_process_fills">process_fills</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, fills: &<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;<a href="fill.md#0x0_fill_Fill">fill::Fill</a>&gt;, whitelisted: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>fun</b> <a href="state.md#0x0_state_process_fills">process_fills</a>(
+    self: &<b>mut</b> <a href="state.md#0x0_state_State">State</a>,
+    fills: &<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;Fill&gt;,
+    whitelisted: bool,
+    ctx: &TxContext,
+) {
+    <b>let</b> <b>mut</b> i = 0;
+
+    <b>while</b> (i &lt; fills.length()) {
+        <b>let</b> <a href="fill.md#0x0_fill">fill</a> = &fills[i];
+        <b>let</b> maker = <a href="fill.md#0x0_fill">fill</a>.balance_manager_id();
+        self.<a href="state.md#0x0_state_update_account">update_account</a>(maker, ctx);
+        <b>let</b> <a href="account.md#0x0_account">account</a> = &<b>mut</b> self.accounts[maker];
+        <a href="account.md#0x0_account">account</a>.process_maker_fill(<a href="fill.md#0x0_fill">fill</a>);
+
+        <b>let</b> base_volume = <a href="fill.md#0x0_fill">fill</a>.base_quantity();
+        <b>let</b> quote_volume = <a href="fill.md#0x0_fill">fill</a>.quote_quantity();
+        self.<a href="history.md#0x0_history">history</a>.add_volume(base_volume, <a href="account.md#0x0_account">account</a>.active_stake());
+        <b>let</b> historic_maker_fee = self.<a href="history.md#0x0_history">history</a>.historic_maker_fee(<a href="fill.md#0x0_fill">fill</a>.maker_epoch());
+        <b>let</b> fee_volume = <a href="fill.md#0x0_fill">fill</a>.maker_deep_price().deep_quantity(base_volume, quote_volume);
+        <b>let</b> order_maker_fee = <b>if</b> (whitelisted) {
+            0
+        } <b>else</b> {
+            math::mul(fee_volume, historic_maker_fee)
+        };
+        self.<a href="history.md#0x0_history">history</a>.add_total_fees_collected(<a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, order_maker_fee));
+
+        i = i + 1;
+    };
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_state_update_account"></a>
 
 ## Function `update_account`
 
+If account doesn't exist, create it. Update account volumes and rebates.
 
 
 <pre><code><b>fun</b> <a href="state.md#0x0_state_update_account">update_account</a>(self: &<b>mut</b> <a href="state.md#0x0_state_State">state::State</a>, account_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)

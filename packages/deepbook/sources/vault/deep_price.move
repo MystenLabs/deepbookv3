@@ -1,9 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// DEEP price module. This module maintains the conversion rate 
+/// between DEEP and the base and quote assets.
 module deepbook::deep_price {
+    // === Imports ===
     use deepbook::math;
 
+    // === Errors ===
+    const EDataPointRecentlyAdded: u64 = 1;
+    const ENoDataPoints: u64 = 2;
+
+    // === Constants ===
     // Minimum of 1 minutes between data points
     const MIN_DURATION_BETWEEN_DATA_POINTS_MS: u64 = 1000 * 60;
     // Price points older than 1 day will be removed
@@ -11,9 +19,7 @@ module deepbook::deep_price {
     // Maximum number of data points to maintan
     const MAX_DATA_POINTS: u64 = 100;
 
-    const EDataPointRecentlyAdded: u64 = 1;
-    const ENoDataPoints: u64 = 2;
-
+    // === Structs ===
     /// DEEP price point.
     public struct Price has store, drop {
         conversion_rate: u64,
@@ -33,6 +39,7 @@ module deepbook::deep_price {
         deep_per_asset: u64,
     }
 
+    // === Public-Package Functions ===
     public(package) fun empty(): DeepPrice {
         DeepPrice {
             base_prices: vector[],
@@ -125,6 +132,7 @@ module deepbook::deep_price {
         };
     }
 
+    // === Private Functions ===
     /// Returns the conversion rate of DEEP per asset token.
     /// Base will be used by default, if there are no base data then quote will be used
     fun calculate_order_deep_price(

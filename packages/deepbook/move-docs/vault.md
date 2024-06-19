@@ -3,6 +3,8 @@
 
 # Module `0x0::vault`
 
+The vault holds all of the assets for this pool. At the end of all
+transaction processing, the vault is used to settle the balances for the user.
 
 
 -  [Struct `Vault`](#0x0_vault_Vault)
@@ -118,7 +120,7 @@
 
 ## Function `settle_balance_manager`
 
-Transfer any settled amounts for the balance_manager.
+Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balance_manager">balance_manager</a></code>.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_settle_balance_manager">settle_balance_manager</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, balances_out: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>, balances_in: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)

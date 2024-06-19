@@ -3,6 +3,7 @@
 
 # Module `0x0::fill`
 
+<code><a href="fill.md#0x0_fill_Fill">Fill</a></code> struct represents the results of a match between two orders.
 
 
 -  [Struct `Fill`](#0x0_fill_Fill)
@@ -371,6 +372,7 @@ It is used to update the state.
 
 ## Function `get_settled_maker_quantities`
 
+Calculate the quantities to settle for the maker.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="fill.md#0x0_fill_get_settled_maker_quantities">get_settled_maker_quantities</a>(self: &<a href="fill.md#0x0_fill_Fill">fill::Fill</a>): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>

@@ -472,9 +472,9 @@ previous proposal.
 
 ## Function `settle`
 
-Settle the account balances.
-Returns the settled and owed balances by this account.
-Vault uses these values to perform any necessary transfers.
+Settle the account balances. Returns the settled and
+owed balances by this account. Vault uses these values
+to perform any necessary transfers.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_settle">settle</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)

@@ -3,6 +3,8 @@
 
 # Module `0x0::balances`
 
+<code><a href="balances.md#0x0_balances_Balances">Balances</a></code> represents the three assets make up a pool: base, quote, and deep.
+Whenever funds are moved, they are moved in the form of <code><a href="balances.md#0x0_balances_Balances">Balances</a></code>.
 
 
 -  [Struct `Balances`](#0x0_balances_Balances)

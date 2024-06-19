@@ -3,20 +3,22 @@
 
 # Module `0x0::book`
 
+The book module contains the <code><a href="book.md#0x0_book_Book">Book</a></code> struct which represents the order book.
+All order book operations are defined in this module.
 
 
 -  [Struct `Book`](#0x0_book_Book)
 -  [Constants](#@Constants_0)
+-  [Function `bids`](#0x0_book_bids)
+-  [Function `asks`](#0x0_book_asks)
+-  [Function `lot_size`](#0x0_book_lot_size)
 -  [Function `empty`](#0x0_book_empty)
 -  [Function `create_order`](#0x0_book_create_order)
 -  [Function `get_amount_out`](#0x0_book_get_amount_out)
 -  [Function `cancel_order`](#0x0_book_cancel_order)
 -  [Function `modify_order`](#0x0_book_modify_order)
--  [Function `lot_size`](#0x0_book_lot_size)
 -  [Function `mid_price`](#0x0_book_mid_price)
 -  [Function `get_level2_range_and_ticks`](#0x0_book_get_level2_range_and_ticks)
--  [Function `bids`](#0x0_book_bids)
--  [Function `asks`](#0x0_book_asks)
 -  [Function `book_side`](#0x0_book_book_side)
 -  [Function `match_against_book`](#0x0_book_match_against_book)
 -  [Function `get_order_id`](#0x0_book_get_order_id)
@@ -174,6 +176,78 @@
 </code></pre>
 
 
+
+<a name="0x0_book_bids"></a>
+
+## Function `bids`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.bids
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_asks"></a>
+
+## Function `asks`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
+    &self.asks
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_book_lot_size"></a>
+
+## Function `lot_size`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_lot_size">lot_size</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_lot_size">lot_size</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): u64 {
+    self.lot_size
+}
+</code></pre>
+
+
+
+</details>
 
 <a name="0x0_book_empty"></a>
 
@@ -365,30 +439,6 @@ Order must not have already expired.
 
 </details>
 
-<a name="0x0_book_lot_size"></a>
-
-## Function `lot_size`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_lot_size">lot_size</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): u64
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_lot_size">lot_size</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): u64 {
-    self.lot_size
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_book_mid_price"></a>
 
 ## Function `mid_price`
@@ -501,54 +551,6 @@ The price_low and price_high are the range of prices to return.
     quantity_vec.push_back(cur_quantity);
 
     (price_vec, quantity_vec)
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_book_bids"></a>
-
-## Function `bids`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_bids">bids</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
-    &self.bids
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_book_asks"></a>
-
-## Function `asks`
-
-
-
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b>(package) <b>fun</b> <a href="book.md#0x0_book_asks">asks</a>(self: &<a href="book.md#0x0_book_Book">Book</a>): &BigVector&lt;Order&gt; {
-    &self.asks
 }
 </code></pre>
 

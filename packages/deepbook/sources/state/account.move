@@ -134,9 +134,9 @@ module deepbook::account {
         self.owed_balances.add_balances(balances);
     }
 
-    /// Settle the account balances.
-    /// Returns the settled and owed balances by this account.
-    /// Vault uses these values to perform any necessary transfers.
+    /// Settle the account balances. Returns the settled and 
+    /// owed balances by this account. Vault uses these values 
+    /// to perform any necessary transfers.
     public(package) fun settle(
         self: &mut Account,
     ): (Balances, Balances) {

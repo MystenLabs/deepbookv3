@@ -303,7 +303,7 @@ module deepbook::order_info {
         (settled_balances, owed_balances)
     }
 
-    /// OrderInfo is converted to an Order before being injected into the order book.
+    /// `OrderInfo` is converted to an `Order` before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(
@@ -381,8 +381,8 @@ module deepbook::order_info {
         !self.is_bid && self.price <= maker_price))
     }
 
-    /// Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
-    /// If the book order is expired, the Fill will have the expired flag set to true.
+    /// Matches an `OrderInfo` with an `Order` from the book. Appends a `Fill` to fills.
+    /// If the book order is expired, the `Fill` will have the expired flag set to true.
     /// Funds for the match or an expired order are returned to the maker as settled.
     public(package) fun match_maker(
         self: &mut OrderInfo,

@@ -10,7 +10,6 @@ Public-facing interface for the package.
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Constants](#@Constants_0)
 -  [Function `create_pool_admin`](#0x0_pool_create_pool_admin)
--  [Function `whitelisted`](#0x0_pool_whitelisted)
 -  [Function `place_limit_order`](#0x0_pool_place_limit_order)
 -  [Function `place_market_order`](#0x0_pool_place_market_order)
 -  [Function `swap_exact_base_for_quote`](#0x0_pool_swap_exact_base_for_quote)
@@ -18,23 +17,24 @@ Public-facing interface for the package.
 -  [Function `modify_order`](#0x0_pool_modify_order)
 -  [Function `cancel_order`](#0x0_pool_cancel_order)
 -  [Function `cancel_all_orders`](#0x0_pool_cancel_all_orders)
+-  [Function `withdraw_settled_amounts`](#0x0_pool_withdraw_settled_amounts)
 -  [Function `stake`](#0x0_pool_stake)
 -  [Function `unstake`](#0x0_pool_unstake)
 -  [Function `submit_proposal`](#0x0_pool_submit_proposal)
 -  [Function `vote`](#0x0_pool_vote)
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
+-  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
+-  [Function `burn_deep`](#0x0_pool_burn_deep)
+-  [Function `whitelisted`](#0x0_pool_whitelisted)
 -  [Function `get_amount_out`](#0x0_pool_get_amount_out)
 -  [Function `mid_price`](#0x0_pool_mid_price)
 -  [Function `account_open_orders`](#0x0_pool_account_open_orders)
 -  [Function `get_level2_range`](#0x0_pool_get_level2_range)
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
--  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
--  [Function `burn_deep`](#0x0_pool_burn_deep)
--  [Function `set_stable`](#0x0_pool_set_stable)
--  [Function `withdraw_settled_amounts`](#0x0_pool_withdraw_settled_amounts)
 -  [Function `vault_balances`](#0x0_pool_vault_balances)
--  [Function `unregister_pool_admin`](#0x0_pool_unregister_pool_admin)
 -  [Function `get_pool_id_by_asset`](#0x0_pool_get_pool_id_by_asset)
+-  [Function `set_stable`](#0x0_pool_set_stable)
+-  [Function `unregister_pool_admin`](#0x0_pool_unregister_pool_admin)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
@@ -351,33 +351,6 @@ Returns the id of the pool created
 
 </details>
 
-<a name="0x0_pool_whitelisted"></a>
-
-## Function `whitelisted`
-
-Accessor to check if the pool is whitelisted.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): bool
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-): bool {
-    self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_pool_place_limit_order"></a>
 
 ## Function `place_limit_order`
@@ -483,6 +456,10 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 
 ## Function `swap_exact_base_for_quote`
 
+Swap exact base amount without needing a <code><a href="balance_manager.md#0x0_balance_manager">balance_manager</a></code>.
+DEEP quantity can be overestimated. Returns three <code>Coin</code> objects:
+base, quote, and deep. Some base amount may be left over, if the
+input quantity is not divisible by lot size.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_base_for_quote">swap_exact_base_for_quote</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;)
@@ -521,6 +498,10 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 
 ## Function `swap_exact_quote_for_base`
 
+Swap exact quote amount without needing a <code><a href="balance_manager.md#0x0_balance_manager">balance_manager</a></code>.
+DEEP quantity can be overestimated. Returns three <code>Coin</code> objects:
+base, quote, and deep. Some quote amount may be left over if the
+input quantity is not divisible by lot size.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_swap_exact_quote_for_base">swap_exact_quote_for_base</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, quote_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, deep_in: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;)
@@ -560,8 +541,8 @@ a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is
 ## Function `modify_order`
 
 Modifies an order given order_id and new_quantity.
-New quantity must be less than the original quantity.
-Order must not have already expired.
+New quantity must be less than the original quantity and more
+than the filled quantity. Order must not have already expired.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_modify_order">modify_order</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, order_id: u128, new_quantity: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -662,6 +643,36 @@ Cancel all open orders placed by the balance manager in the pool.
         self.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, order_id, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>, ctx);
         i = i + 1;
     }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_withdraw_settled_amounts"></a>
+
+## Function `withdraw_settled_amounts`
+
+Withdraw settled amounts to the <code><a href="balance_manager.md#0x0_balance_manager">balance_manager</a></code>.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
+    ctx: &TxContext,
+) {
+    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id());
+    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 }
 </code></pre>
 
@@ -834,6 +845,133 @@ The balance_manager's data is updated with the claimed rewards.
 
 </details>
 
+<a name="0x0_pool_add_deep_price_point"></a>
+
+## Function `add_deep_price_point`
+
+Adds a price point along with a timestamp to the deep price.
+Allows for the calculation of deep price per base asset.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset&gt;(target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;ReferenceBaseAsset, ReferenceQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset&gt;(
+    target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    reference_pool: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;ReferenceBaseAsset, ReferenceQuoteAsset&gt;,
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+) {
+    <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
+    <b>let</b> reference_pool_price = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
+    <b>let</b> reference_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceBaseAsset&gt;();
+    <b>let</b> reference_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceQuoteAsset&gt;();
+    <b>let</b> target_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
+    <b>let</b> target_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
+    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
+    <b>let</b> timestamp = <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms();
+
+    <b>assert</b>!(reference_base_type == deep_type || reference_quote_type == deep_type, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+
+    <b>let</b> reference_deep_is_base = reference_base_type == deep_type;
+    <b>let</b> reference_other_type = <b>if</b> (reference_deep_is_base) {
+        reference_quote_type
+    } <b>else</b> {
+        reference_base_type
+    };
+    <b>let</b> reference_other_is_target_base = reference_other_type == target_base_type;
+    <b>let</b> reference_other_is_target_quote = reference_other_type == target_quote_type;
+    <b>assert</b>!(reference_other_is_target_base || reference_other_is_target_quote, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
+
+    // For DEEP/USDC <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>true</b>, DEEP per USDC is reference_pool_price
+    // For USDC/DEEP <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>false</b>, USDC per DEEP is reference_pool_price
+    <b>let</b> deep_per_reference_other_price = <b>if</b> (reference_deep_is_base) {
+        math::div(1_000_000_000, reference_pool_price)
+    } <b>else</b> {
+        reference_pool_price
+    };
+
+    // For USDC/SUI <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>true</b>, add price point <b>to</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> per base
+    // For SUI/USDC <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>false</b>, add price point <b>to</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> per quote
+    <b>if</b> (reference_other_is_target_base){
+        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>true</b>);
+    } <b>else</b> {
+        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>false</b>);
+    }
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_burn_deep"></a>
+
+## Function `burn_deep`
+
+Burns DEEP tokens from the pool. Amount to burn is within history
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, treasury_cap: &<b>mut</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_ProtectedTreasury">deep::ProtectedTreasury</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    treasury_cap: &<b>mut</b> ProtectedTreasury,
+    ctx: &<b>mut</b> TxContext,
+): u64 {
+    <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
+    <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>);
+    <b>let</b> deep_to_burn = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
+    <b>let</b> amount_burned = deep_to_burn.value();
+    token::deep::burn(treasury_cap, deep_to_burn);
+
+    amount_burned
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_whitelisted"></a>
+
+## Function `whitelisted`
+
+Accessor to check if the pool is whitelisted.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): bool
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+): bool {
+    self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_pool_get_amount_out"></a>
 
 ## Function `get_amount_out`
@@ -991,15 +1129,14 @@ The price vectors are sorted in descending order for bids and ascending order fo
 
 </details>
 
-<a name="0x0_pool_add_deep_price_point"></a>
+<a name="0x0_pool_vault_balances"></a>
 
-## Function `add_deep_price_point`
+## Function `vault_balances`
 
-Adds a price point along with a timestamp to the deep price.
-Allows for the calculation of deep price per base asset.
+Get all balances held in this pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset&gt;(target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, reference_pool: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;ReferenceBaseAsset, ReferenceQuoteAsset&gt;, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (u64, u64, u64)
 </code></pre>
 
 
@@ -1008,47 +1145,10 @@ Allows for the calculation of deep price per base asset.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_add_deep_price_point">add_deep_price_point</a>&lt;BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset&gt;(
-    target_pool: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    reference_pool: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;ReferenceBaseAsset, ReferenceQuoteAsset&gt;,
-    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
-) {
-    <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
-    <b>let</b> reference_pool_price = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
-    <b>let</b> reference_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceBaseAsset&gt;();
-    <b>let</b> reference_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceQuoteAsset&gt;();
-    <b>let</b> target_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
-    <b>let</b> target_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;();
-    <b>let</b> deep_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;DEEP&gt;();
-    <b>let</b> timestamp = <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms();
-
-    <b>assert</b>!(reference_base_type == deep_type || reference_quote_type == deep_type, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
-
-    <b>let</b> reference_deep_is_base = reference_base_type == deep_type;
-    <b>let</b> reference_other_type = <b>if</b> (reference_deep_is_base) {
-        reference_quote_type
-    } <b>else</b> {
-        reference_base_type
-    };
-    <b>let</b> reference_other_is_target_base = reference_other_type == target_base_type;
-    <b>let</b> reference_other_is_target_quote = reference_other_type == target_quote_type;
-    <b>assert</b>!(reference_other_is_target_base || reference_other_is_target_quote, <a href="pool.md#0x0_pool_EIneligibleTargetPool">EIneligibleTargetPool</a>);
-
-    // For DEEP/USDC <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>true</b>, DEEP per USDC is reference_pool_price
-    // For USDC/DEEP <a href="pool.md#0x0_pool">pool</a>, reference_deep_is_base is <b>false</b>, USDC per DEEP is reference_pool_price
-    <b>let</b> deep_per_reference_other_price = <b>if</b> (reference_deep_is_base) {
-        math::div(1_000_000_000, reference_pool_price)
-    } <b>else</b> {
-        reference_pool_price
-    };
-
-    // For USDC/SUI <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>true</b>, add price point <b>to</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> per base
-    // For SUI/USDC <a href="pool.md#0x0_pool">pool</a>, reference_other_is_target_base is <b>false</b>, add price point <b>to</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> per quote
-    <b>if</b> (reference_other_is_target_base){
-        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>true</b>);
-    } <b>else</b> {
-        target_pool.<a href="deep_price.md#0x0_deep_price">deep_price</a>.add_price_point(deep_per_reference_other_price, timestamp, <b>false</b>);
-    }
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+): (u64, u64, u64) {
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="balances.md#0x0_balances">balances</a>()
 }
 </code></pre>
 
@@ -1056,14 +1156,14 @@ Allows for the calculation of deep price per base asset.
 
 </details>
 
-<a name="0x0_pool_burn_deep"></a>
+<a name="0x0_pool_get_pool_id_by_asset"></a>
 
-## Function `burn_deep`
+## Function `get_pool_id_by_asset`
 
-Burns DEEP tokens from the pool. Amount to burn is within history
+Get the ID of the pool given the asset types.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, treasury_cap: &<b>mut</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_ProtectedTreasury">deep::ProtectedTreasury</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): u64
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<a href="registry.md#0x0_registry_Registry">registry::Registry</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -1072,18 +1172,10 @@ Burns DEEP tokens from the pool. Amount to burn is within history
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_burn_deep">burn_deep</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    treasury_cap: &<b>mut</b> ProtectedTreasury,
-    ctx: &<b>mut</b> TxContext,
-): u64 {
-    <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
-    <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>);
-    <b>let</b> deep_to_burn = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
-    <b>let</b> amount_burned = deep_to_burn.value();
-    token::deep::burn(treasury_cap, deep_to_burn);
-
-    amount_burned
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(
+    <a href="registry.md#0x0_registry">registry</a>: &Registry,
+): ID {
+    <a href="registry.md#0x0_registry">registry</a>.get_pool_id&lt;BaseAsset, QuoteAsset&gt;()
 }
 </code></pre>
 
@@ -1122,65 +1214,11 @@ Only Admin can set a pool as stable.
 
 </details>
 
-<a name="0x0_pool_withdraw_settled_amounts"></a>
-
-## Function `withdraw_settled_amounts`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> <a href="balance_manager.md#0x0_balance_manager_BalanceManager">balance_manager::BalanceManager</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
-    ctx: &TxContext,
-) {
-    <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id());
-    self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_vault_balances"></a>
-
-## Function `vault_balances`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): (u64, u64, u64)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-): (u64, u64, u64) {
-    self.<a href="vault.md#0x0_vault">vault</a>.<a href="balances.md#0x0_balances">balances</a>()
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_pool_unregister_pool_admin"></a>
 
 ## Function `unregister_pool_admin`
 
+Unregister a pool in case it needs to be manually redeployed.
 
 
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_unregister_pool_admin">unregister_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>)
@@ -1197,32 +1235,6 @@ Only Admin can set a pool as stable.
     _cap: &DeepbookAdminCap,
 ) {
     <a href="registry.md#0x0_registry">registry</a>.unregister_pool&lt;BaseAsset, QuoteAsset&gt;();
-}
-</code></pre>
-
-
-
-</details>
-
-<a name="0x0_pool_get_pool_id_by_asset"></a>
-
-## Function `get_pool_id_by_asset`
-
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<a href="registry.md#0x0_registry_Registry">registry::Registry</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_pool_id_by_asset">get_pool_id_by_asset</a>&lt;BaseAsset, QuoteAsset&gt;(
-    <a href="registry.md#0x0_registry">registry</a>: &Registry,
-): ID {
-    <a href="registry.md#0x0_registry">registry</a>.get_pool_id&lt;BaseAsset, QuoteAsset&gt;()
 }
 </code></pre>
 

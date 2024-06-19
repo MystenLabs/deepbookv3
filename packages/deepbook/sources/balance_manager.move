@@ -7,6 +7,7 @@
 /// The owner can add traders to the account. Traders can perform the same action as an owner can except for deposits,
 /// withdrawals, and addition / removals of traders.
 module deepbook::balance_manager {
+    // === Imports ===
     use sui::{
         bag::{Self, Bag},
         balance::{Self, Balance},
