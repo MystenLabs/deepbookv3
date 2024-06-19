@@ -99,7 +99,7 @@ One Account struct per BalanceManager object.
 
 </dd>
 <dt>
-<code>unclaimed_rebates: u64</code>
+<code>unclaimed_rebates: <a href="balances.md#0x0_balances_Balances">balances::Balances</a></code>
 </dt>
 <dd>
 
@@ -147,7 +147,7 @@ One Account struct per BalanceManager object.
         active_stake: 0,
         inactive_stake: 0,
         voted_proposal: <a href="dependencies/move-stdlib/option.md#0x1_option_none">option::none</a>(),
-        unclaimed_rebates: 0,
+        unclaimed_rebates: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
         settled_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
         owed_balances: <a href="balances.md#0x0_balances_empty">balances::empty</a>(),
     }
@@ -346,7 +346,7 @@ Given a fill, update the account balances and volumes as the maker.
         self.maker_volume = self.maker_volume + <a href="fill.md#0x0_fill">fill</a>.base_quantity();
     };
     <b>if</b> (<a href="fill.md#0x0_fill">fill</a>.expired() || <a href="fill.md#0x0_fill">fill</a>.completed()) {
-        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.order_id());
+        self.open_orders.remove(&<a href="fill.md#0x0_fill">fill</a>.maker_order_id());
     }
 }
 </code></pre>
@@ -472,9 +472,9 @@ previous proposal.
 
 ## Function `settle`
 
-Settle the account balances.
-Returns the settled and owed balances by this account.
-Vault uses these values to perform any necessary transfers.
+Settle the account balances. Returns the settled and
+owed balances by this account. Vault uses these values
+to perform any necessary transfers.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_settle">settle</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -506,7 +506,7 @@ Vault uses these values to perform any necessary transfers.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_rebates">add_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, rebates: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="account.md#0x0_account_add_rebates">add_rebates</a>(self: &<b>mut</b> <a href="account.md#0x0_account_Account">account::Account</a>, rebates: <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
 </code></pre>
 
 
@@ -517,9 +517,9 @@ Vault uses these values to perform any necessary transfers.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_add_rebates">add_rebates</a>(
     self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
-    rebates: u64,
+    rebates: Balances,
 ) {
-    self.unclaimed_rebates = self.unclaimed_rebates + rebates;
+    self.unclaimed_rebates.add_balances(rebates);
 }
 </code></pre>
 
@@ -545,8 +545,8 @@ Vault uses these values to perform any necessary transfers.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="account.md#0x0_account_claim_rebates">claim_rebates</a>(
     self: &<b>mut</b> <a href="account.md#0x0_account_Account">Account</a>,
 ) {
-    self.settled_balances.add_deep(self.unclaimed_rebates);
-    self.unclaimed_rebates = 0;
+    self.settled_balances.add_balances(self.unclaimed_rebates);
+    self.unclaimed_rebates.reset();
 }
 </code></pre>
 

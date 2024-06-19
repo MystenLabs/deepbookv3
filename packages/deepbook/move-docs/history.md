@@ -3,6 +3,9 @@
 
 # Module `0x0::history`
 
+History module tracks the volume data for the current epoch and past epochs.
+It also tracks past trade params. Past maker fees are used to calculate fills for
+old orders. The historic median is used to calculate rebates and burns.
 
 
 -  [Struct `Volumes`](#0x0_history_Volumes)
@@ -34,7 +37,7 @@
 
 ## Struct `Volumes`
 
-Overall volume for the current epoch. Used to calculate rebates and burns.
+<code><a href="history.md#0x0_history_Volumes">Volumes</a></code> represents volume data for a single epoch.
 
 
 <pre><code><b>struct</b> <a href="history.md#0x0_history_Volumes">Volumes</a> <b>has</b> <b>copy</b>, drop, store
@@ -86,6 +89,7 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 ## Struct `History`
 
+<code><a href="history.md#0x0_history_History">History</a></code> represents the volume data for the current epoch and past epochs.
 
 
 <pre><code><b>struct</b> <a href="history.md#0x0_history_History">History</a> <b>has</b> store
@@ -140,7 +144,6 @@ Overall volume for the current epoch. Used to calculate rebates and burns.
 
 <a name="0x0_history_EHistoricVolumesNotFound"></a>
 
-Error codes
 
 
 <pre><code><b>const</b> <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>: u64 = 0;
@@ -152,6 +155,8 @@ Error codes
 
 ## Function `empty`
 
+Create a new <code><a href="history.md#0x0_history_History">History</a></code> instance. Called once upon pool creation. A single blank
+<code><a href="history.md#0x0_history_Volumes">Volumes</a></code> instance is created and added to the historic_volumes table.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_empty">empty</a>(<a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, epoch_created: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="history.md#0x0_history_History">history::History</a>
@@ -196,8 +201,8 @@ Error codes
 
 ## Function `update`
 
-Update the epoch if it has changed.
-If there are accounts with rebates, add the current epoch's volume data to the historic volumes.
+Update the epoch if it has changed. If there are accounts with rebates,
+add the current epoch's volume data to the historic volumes.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -236,6 +241,7 @@ If there are accounts with rebates, add the current epoch's volume data to the h
 
 ## Function `reset_volumes`
 
+Reset the current epoch's volume data.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_reset_volumes">reset_volumes</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>)
@@ -270,10 +276,10 @@ If there are accounts with rebates, add the current epoch's volume data to the h
 ## Function `calculate_rebate_amount`
 
 Given the epoch's volume data and the account's volume data,
-calculate and returns rebate amount, updates the burn amount
+calculate and returns rebate amount, updates the burn amount.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_calculate_rebate_amount">calculate_rebate_amount</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>, prev_epoch: u64, maker_volume: u64, account_stake: u64): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -287,10 +293,10 @@ calculate and returns rebate amount, updates the burn amount
     prev_epoch: u64,
     maker_volume: u64,
     account_stake: u64,
-): u64 {
+): Balances {
     <b>assert</b>!(self.historic_volumes.contains(prev_epoch), <a href="history.md#0x0_history_EHistoricVolumesNotFound">EHistoricVolumesNotFound</a>);
     <b>let</b> volumes = &<b>mut</b> self.historic_volumes[prev_epoch];
-    <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> 0;
+    <b>if</b> (volumes.<a href="trade_params.md#0x0_trade_params">trade_params</a>.stake_required() &gt; account_stake) <b>return</b> <a href="balances.md#0x0_balances_empty">balances::empty</a>();
 
     <b>let</b> other_maker_liquidity = volumes.total_volume - maker_volume;
     <b>let</b> maker_rebate_percentage = <b>if</b> (volumes.historic_median &gt; 0) {
@@ -303,13 +309,13 @@ calculate and returns rebate amount, updates the burn amount
     } <b>else</b> {
         0
     };
-    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.deep());
+    <b>let</b> maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>());
     <b>let</b> maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
     <b>let</b> maker_burn = maker_fee_proportion - maker_rebate;
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-    maker_rebate
+    <a href="balances.md#0x0_balances_new">balances::new</a>(0, 0, maker_rebate)
 }
 </code></pre>
 
@@ -321,7 +327,7 @@ calculate and returns rebate amount, updates the burn amount
 
 ## Function `update_historic_median`
 
-Updates the historic_median for past 28 epochs
+Updates the historic_median for past 28 epochs.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="history.md#0x0_history_update_historic_median">update_historic_median</a>(self: &<b>mut</b> <a href="history.md#0x0_history_History">history::History</a>)

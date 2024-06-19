@@ -12,6 +12,7 @@ module deepbook::order {
         fill::{Self, Fill},
         constants,
         balances::{Self, Balances},
+        deep_price::OrderDeepPrice,
     };
 
     // === Errors ===
@@ -26,7 +27,8 @@ module deepbook::order {
         client_order_id: u64,
         quantity: u64,
         filled_quantity: u64,
-        deep_per_base: u64,
+        fee_is_deep: bool,
+        order_deep_price: OrderDeepPrice,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -65,7 +67,8 @@ module deepbook::order {
         balance_manager_id: ID,
         client_order_id: u64,
         quantity: u64,
-        deep_per_base: u64,
+        fee_is_deep: bool,
+        order_deep_price: OrderDeepPrice,
         epoch: u64,
         status: u8,
         expire_timestamp: u64,
@@ -76,7 +79,8 @@ module deepbook::order {
             client_order_id,
             quantity,
             filled_quantity: 0,
-            deep_per_base,
+            fee_is_deep,
+            order_deep_price,
             epoch,
             status,
             expire_timestamp,
@@ -115,10 +119,13 @@ module deepbook::order {
             quote_quantity,
             is_bid,
             self.epoch,
-            self.deep_per_base,
+            self.order_deep_price
         )
     }
 
+    /// Modify the order with a new quantity. The new quantity must be greater 
+    /// than the filled quantity and less than the original quantity. The 
+    /// timestamp must be less than the expire timestamp.
     public(package) fun modify(
         self: &mut Order,
         new_quantity: u64,
@@ -130,6 +137,11 @@ module deepbook::order {
         self.quantity = new_quantity;
     }
 
+    /// Calculate the refund for a canceled order. The refund is any
+    /// unfilled quantity and the maker fee. If the cancel quantity is
+    /// not provided, the remaining quantity is used. Cancel quantity is
+    /// provided when modifying an order, so that the refund can be calculated
+    /// based on the quantity that's reduced.
     public(package) fun calculate_cancel_refund(
         self: &Order,
         maker_fee: u64,
@@ -140,7 +152,17 @@ module deepbook::order {
         } else {
             self.quantity - self.filled_quantity
         };
-        let deep_out = math::mul(cancel_quantity, math::mul(self.deep_per_base, maker_fee));
+        let deep_out = math::mul(
+            maker_fee,
+            math::mul(
+                cancel_quantity,
+                self.order_deep_price().deep_quantity(
+                    cancel_quantity,
+                    math::mul(cancel_quantity, self.price())
+                )
+            )
+        );
+
         let mut base_out = 0;
         let mut quote_out = 0;
         if (self.is_bid()) {
@@ -231,8 +253,8 @@ module deepbook::order {
         self.filled_quantity
     }
 
-    public(package) fun deep_per_base(self: &Order): u64 {
-        self.deep_per_base
+    public(package) fun order_deep_price(self: &Order): OrderDeepPrice {
+        self.order_deep_price
     }
 
     public(package) fun epoch(self: &Order): u64 {
