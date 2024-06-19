@@ -3,6 +3,8 @@
 
 # Module `0x0::deep_price`
 
+DEEP price module. This module maintains the conversion rate
+between DEEP and the base and quote assets.
 
 
 -  [Struct `Price`](#0x0_deep_price_Price)

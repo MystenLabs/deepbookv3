@@ -407,6 +407,9 @@ quantity and whether the order is a bid.
 
 ## Function `modify`
 
+Modify the order with a new quantity. The new quantity must be greater
+than the filled quantity and less than the original quantity. The
+timestamp must be less than the expire timestamp.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_modify">modify</a>(self: &<b>mut</b> <a href="order.md#0x0_order_Order">order::Order</a>, new_quantity: u64, timestamp: u64)

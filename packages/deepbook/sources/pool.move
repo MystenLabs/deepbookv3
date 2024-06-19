@@ -3,6 +3,7 @@
 
 /// Public-facing interface for the package.
 module deepbook::pool {
+    // === Imports ===
     use std::type_name;
 
     use sui::{
@@ -28,6 +29,7 @@ module deepbook::pool {
 
     use token::deep::{DEEP, ProtectedTreasury};
 
+    // === Errors ===
     const EInvalidFee: u64 = 1;
     const ESameBaseAndQuote: u64 = 2;
     const EInvalidTickSize: u64 = 3;
@@ -41,6 +43,7 @@ module deepbook::pool {
     const EIneligibleTargetPool: u64 = 11;
     const ENoAmountToBurn: u64 = 12;
 
+    // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
         book: Book,
@@ -85,13 +88,7 @@ module deepbook::pool {
         )
     }
 
-    /// Accessor to check if the pool is whitelisted.
-    public fun whitelisted<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-    ): bool {
-        self.state.governance().whitelisted()
-    }
-
+    // === Public-Mutative Functions * EXCHANGE * ===
     /// Place a limit order. Quantity is in base asset terms.
     /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
     public fun place_limit_order<BaseAsset, QuoteAsset>(
@@ -153,6 +150,10 @@ module deepbook::pool {
         )
     }
 
+    /// Swap exact base amount without needing a `balance_manager`.
+    /// DEEP quantity can be overestimated. Returns three `Coin` objects:
+    /// base, quote, and deep. Some base amount may be left over, if the
+    /// input quantity is not divisible by lot size.
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
@@ -171,6 +172,10 @@ module deepbook::pool {
         )
     }
 
+    /// Swap exact quote amount without needing a `balance_manager`.
+    /// DEEP quantity can be overestimated. Returns three `Coin` objects:
+    /// base, quote, and deep. Some quote amount may be left over if the
+    /// input quantity is not divisible by lot size.
     public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         quote_in: Coin<QuoteAsset>,
@@ -190,8 +195,8 @@ module deepbook::pool {
     }
 
     /// Modifies an order given order_id and new_quantity.
-    /// New quantity must be less than the original quantity.
-    /// Order must not have already expired.
+    /// New quantity must be less than the original quantity and more
+    /// than the filled quantity. Order must not have already expired.
     public fun modify_order<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
@@ -243,6 +248,17 @@ module deepbook::pool {
         }
     }
 
+    /// Withdraw settled amounts to the `balance_manager`.
+    public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &mut BalanceManager,
+        ctx: &TxContext,
+    ) {
+        let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
+    }
+
+    // === Public-Mutative Functions * GOVERNANCE * ===
     /// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP tokens.
     /// The balance_manager's data is updated with the staked amount.
     public fun stake<BaseAsset, QuoteAsset>(
@@ -308,67 +324,7 @@ module deepbook::pool {
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
-    // GETTERS
-
-    /// Dry run to determine the amount out for a given base or quote amount.
-    /// Only one out of base or quote amount should be non-zero.
-    public fun get_amount_out<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        base_amount: u64,
-        quote_amount: u64,
-        current_timestamp: u64,
-    ): (u64, u64) {
-        self.book.get_amount_out(
-            base_amount,
-            quote_amount,
-            current_timestamp,
-        )
-    }
-
-    /// Returns the mid price of the pool.
-    public fun mid_price<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        clock: &Clock,
-    ): u64 {
-        self.book.mid_price(clock.timestamp_ms())
-    }
-
-    /// Returns the order_id for all open order for the balance_manager in the pool.
-    public fun account_open_orders<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        balance_manager: ID,
-    ): VecSet<u128> {
-        self.state.account(balance_manager).open_orders()
-    }
-
-    /// Returns the (price_vec, quantity_vec) for the level2 order book.
-    /// The price_low and price_high are inclusive, all orders within the range are returned.
-    /// is_bid is true for bids and false for asks.
-    public fun get_level2_range<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        price_low: u64,
-        price_high: u64,
-        is_bid: bool,
-    ): (vector<u64>, vector<u64>) {
-        self.book.get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
-    }
-
-    /// Returns the (price_vec, quantity_vec) for the level2 order book.
-    /// Ticks are the maximum number of ticks to return starting from best bid and best ask.
-    /// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
-    /// The price vectors are sorted in descending order for bids and ascending order for asks.
-    public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-        ticks: u64,
-    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
-        let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, true);
-        let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, false);
-
-        (bid_price, bid_quantity, ask_price, ask_quantity)
-    }
-
-    // OPERATIONAL PUBLIC
-
+    // === Public-Mutative Functions * OPERATIONAL * ===
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
@@ -429,8 +385,86 @@ module deepbook::pool {
         amount_burned
     }
 
-    // OPERATIONAL OWNER
+    // === Public-View Functions ===
+    /// Accessor to check if the pool is whitelisted.
+    public fun whitelisted<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): bool {
+        self.state.governance().whitelisted()
+    }
 
+    /// Dry run to determine the amount out for a given base or quote amount.
+    /// Only one out of base or quote amount should be non-zero.
+    public fun get_amount_out<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+        current_timestamp: u64,
+    ): (u64, u64) {
+        self.book.get_amount_out(
+            base_amount,
+            quote_amount,
+            current_timestamp,
+        )
+    }
+
+    /// Returns the mid price of the pool.
+    public fun mid_price<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        clock: &Clock,
+    ): u64 {
+        self.book.mid_price(clock.timestamp_ms())
+    }
+
+    /// Returns the order_id for all open order for the balance_manager in the pool.
+    public fun account_open_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        balance_manager: ID,
+    ): VecSet<u128> {
+        self.state.account(balance_manager).open_orders()
+    }
+
+    /// Returns the (price_vec, quantity_vec) for the level2 order book.
+    /// The price_low and price_high are inclusive, all orders within the range are returned.
+    /// is_bid is true for bids and false for asks.
+    public fun get_level2_range<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        price_low: u64,
+        price_high: u64,
+        is_bid: bool,
+    ): (vector<u64>, vector<u64>) {
+        self.book.get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
+    }
+
+    /// Returns the (price_vec, quantity_vec) for the level2 order book.
+    /// Ticks are the maximum number of ticks to return starting from best bid and best ask.
+    /// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
+    /// The price vectors are sorted in descending order for bids and ascending order for asks.
+    public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        ticks: u64,
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
+        let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, true);
+        let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, false);
+
+        (bid_price, bid_quantity, ask_price, ask_quantity)
+    }
+
+    /// Get all balances held in this pool.
+    public fun vault_balances<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        self.vault.balances()
+    }
+
+    /// Get the ID of the pool given the asset types.
+    public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
+        registry: &Registry,
+    ): ID {
+        registry.get_pool_id<BaseAsset, QuoteAsset>()
+    }
+
+    // === Admin Functions ===
     /// Set a pool as a stable pool. Stable pools have a lower fee.
     /// Only Admin can set a pool as stable.
     public fun set_stable<BaseAsset, QuoteAsset>(
@@ -442,21 +476,7 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_stable(stable);
     }
 
-    public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        balance_manager: &mut BalanceManager,
-        ctx: &TxContext,
-    ) {
-        let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
-        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
-    }
-
-    public fun vault_balances<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-    ): (u64, u64, u64) {
-        self.vault.balances()
-    }
-
+    /// Unregister a pool in case it needs to be manually redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         _cap: &DeepbookAdminCap,
@@ -464,12 +484,7 @@ module deepbook::pool {
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
-    public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
-        registry: &Registry,
-    ): ID {
-        registry.get_pool_id<BaseAsset, QuoteAsset>()
-    }
-
+    // === Public-Package Functions ===
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         tick_size: u64,
@@ -534,6 +549,7 @@ module deepbook::pool {
         self.book.asks()
     }
 
+    // === Private Functions ===
     /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
     /// Only called by admin during pool creation
     fun set_whitelist<BaseAsset, QuoteAsset>(

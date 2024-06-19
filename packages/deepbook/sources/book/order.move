@@ -123,6 +123,9 @@ module deepbook::order {
         )
     }
 
+    /// Modify the order with a new quantity. The new quantity must be greater 
+    /// than the filled quantity and less than the original quantity. The 
+    /// timestamp must be less than the expire timestamp.
     public(package) fun modify(
         self: &mut Order,
         new_quantity: u64,

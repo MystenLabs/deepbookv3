@@ -1,4 +1,11 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// State module represents the current state of the pool. It maintains all
+/// the accounts, history, and governance information. It also processes all
+/// the transactions and updates the state accordingly.
 module deepbook::state {
+    // === Imports ===
     use sui::{
         table::{Self, Table},
     };
@@ -11,16 +18,20 @@ module deepbook::state {
         governance::{Self, Governance},
         account::{Self, Account},
         balances::{Self, Balances},
+        fill::Fill,
     };
 
+    // === Errors ===
     const ENoStake: u64 = 1;
 
+    // === Structs ===
     public struct State has store {
         accounts: Table<ID, Account>,
         history: History,
         governance: Governance,
     }
 
+    // === Public-Package Functions ===
     public(package) fun empty(ctx: &mut TxContext): State {
         let governance = governance::empty(ctx);
         let trade_params = governance.trade_params();
@@ -33,9 +44,12 @@ module deepbook::state {
         }
     }
 
-    /// Process order fills.
-    /// Update all maker settled balances and volumes.
-    /// Update taker settled balances and volumes.
+    /// Up until this point, an OrderInfo object has been created and potentially filled.
+    /// The OrderInfo object contains all of the necessary information to update the state
+    /// of the pool. This includes the volumes for the taker and potentially multiple makers.
+    /// First, fills are iterated and processed, updating the appropriate user's volumes.
+    /// Funds are settled for those makers. Then, the taker's trading fee is calculated
+    /// and the taker's volumes are updated. Finally, the taker's balances are settled.
     public(package) fun process_create(
         self: &mut State,
         order_info: &mut OrderInfo,
@@ -45,29 +59,7 @@ module deepbook::state {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
         let fills = order_info.fills();
-        let mut i = 0;
-
-        while (i < fills.length()) {
-            let fill = &fills[i];
-            let maker = fill.balance_manager_id();
-            self.update_account(maker, ctx);
-            let account = &mut self.accounts[maker];
-            account.process_maker_fill(fill);
-
-            let base_volume = fill.base_quantity();
-            let quote_volume = fill.quote_quantity();
-            self.history.add_volume(base_volume, account.active_stake());
-            let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
-            let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
-            let order_maker_fee = if (whitelisted) {
-                0
-            } else {
-                math::mul(fee_volume, historic_maker_fee)
-            };
-            self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
-
-            i = i + 1;
-        };
+        self.process_fills(&fills, whitelisted, ctx);
 
         self.update_account(order_info.balance_manager_id(), ctx);
         let account = &mut self.accounts[order_info.balance_manager_id()];
@@ -137,6 +129,7 @@ module deepbook::state {
         account.settle()
     }
 
+    /// Given the modified quantity, update account settled balances and volumes.
     public(package) fun process_modify(
         self: &mut State,
         account_id: ID,
@@ -157,6 +150,7 @@ module deepbook::state {
         self.accounts[account_id].settle()
     }
 
+    /// Process stake transaction. Add stake to account and update governance.
     public(package) fun process_stake(
         self: &mut State,
         account_id: ID,
@@ -173,6 +167,7 @@ module deepbook::state {
         self.accounts[account_id].settle()
     }
 
+    /// Process unstake transaction. Remove stake from account and update governance.
     public(package) fun process_unstake(
         self: &mut State,
         account_id: ID,
@@ -193,6 +188,7 @@ module deepbook::state {
         account.settle()
     }
 
+    /// Process proposal transaction. Add proposal to governance and update account.
     public(package) fun process_proposal(
         self: &mut State,
         account_id: ID,
@@ -212,6 +208,7 @@ module deepbook::state {
         self.process_vote(account_id, account_id, ctx);
     }
 
+    /// Process vote transaction. Update account voted proposal and governance.
     public(package) fun process_vote(
         self: &mut State,
         account_id: ID,
@@ -233,6 +230,7 @@ module deepbook::state {
         );
     }
 
+    /// Process claim rebates transaction. Update account rebates and settle balances.
     public(package) fun process_claim_rebates(
         self: &mut State,
         account_id: ID,
@@ -276,6 +274,40 @@ module deepbook::state {
         &mut self.history
     }
 
+    // === Private Functions ===
+    /// Process fills for all makers. Update maker accounts and history.
+    fun process_fills(
+        self: &mut State,
+        fills: &vector<Fill>,
+        whitelisted: bool,
+        ctx: &TxContext,
+    ) {
+        let mut i = 0;
+
+        while (i < fills.length()) {
+            let fill = &fills[i];
+            let maker = fill.balance_manager_id();
+            self.update_account(maker, ctx);
+            let account = &mut self.accounts[maker];
+            account.process_maker_fill(fill);
+
+            let base_volume = fill.base_quantity();
+            let quote_volume = fill.quote_quantity();
+            self.history.add_volume(base_volume, account.active_stake());
+            let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
+            let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
+            let order_maker_fee = if (whitelisted) {
+                0
+            } else {
+                math::mul(fee_volume, historic_maker_fee)
+            };
+            self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+
+            i = i + 1;
+        };
+    }
+
+    /// If account doesn't exist, create it. Update account volumes and rebates.
     fun update_account(
         self: &mut State,
         account_id: ID,

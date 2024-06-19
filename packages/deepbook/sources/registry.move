@@ -1,18 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Registry holds all created pools.
 module deepbook::registry {
+    // === Imports ===
     use std::type_name::{Self, TypeName};
 
     use sui::{
         bag::{Self, Bag},
     };
 
+    // === Errors ===
     const EPoolAlreadyExists: u64 = 1;
     const EPoolDoesNotExist: u64 = 2;
 
     public struct REGISTRY has drop {}
 
+    // === Structs ===
     /// DeepbookAdminCap is used to call admin functions.
     public struct DeepbookAdminCap has key, store {
         id: UID,
@@ -42,6 +46,7 @@ module deepbook::registry {
         transfer::public_transfer(admin, ctx.sender());
     }
 
+    // === Admin Functions ===
     public fun set_treasury_address(
         self: &mut Registry,
         treasury_address: address,
@@ -50,6 +55,7 @@ module deepbook::registry {
         self.treasury_address = treasury_address;
     }
 
+    // === Public-Package Functions ===
     /// Register a new pool in the registry.
     /// Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
     public(package) fun register_pool<BaseAsset, QuoteAsset>(
@@ -101,6 +107,7 @@ module deepbook::registry {
         self.treasury_address
     }
 
+    // === Test Functions ===
     #[test_only]
     public fun test_registry(ctx: &mut TxContext): ID {
         let registry = Registry {

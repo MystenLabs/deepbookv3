@@ -1,4 +1,10 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// The vault holds all of the assets for this pool. At the end of all
+/// transaction processing, the vault is used to settle the balances for the user.
 module deepbook::vault {
+    // === Imports ===
     use sui::balance::{Self, Balance};
 
     use deepbook::{
@@ -8,12 +14,14 @@ module deepbook::vault {
 
     use token::deep::DEEP;
 
+    // === Structs ===
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
         base_balance: Balance<BaseAsset>,
         quote_balance: Balance<QuoteAsset>,
         deep_balance: Balance<DEEP>,
     }
 
+    // === Public-Package Functions ===
     public(package) fun balances<BaseAsset, QuoteAsset>(
         self: &Vault<BaseAsset, QuoteAsset>
     ): (u64, u64, u64) {
@@ -28,7 +36,7 @@ module deepbook::vault {
         }
     }
 
-    /// Transfer any settled amounts for the balance_manager.
+    /// Transfer any settled amounts for the `balance_manager`.
     public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
         balances_out: Balances,
