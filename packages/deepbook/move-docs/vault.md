@@ -5,47 +5,21 @@
 
 
 
--  [Struct `DEEP`](#0x0_vault_DEEP)
 -  [Struct `Vault`](#0x0_vault_Vault)
 -  [Function `balances`](#0x0_vault_balances)
 -  [Function `empty`](#0x0_vault_empty)
 -  [Function `settle_balance_manager`](#0x0_vault_settle_balance_manager)
+-  [Function `withdraw_deep_to_burn`](#0x0_vault_withdraw_deep_to_burn)
 
 
 <pre><code><b>use</b> <a href="balance_manager.md#0x0_balance_manager">0x0::balance_manager</a>;
 <b>use</b> <a href="balances.md#0x0_balances">0x0::balances</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
+<b>use</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep</a>;
 </code></pre>
 
 
-
-<a name="0x0_vault_DEEP"></a>
-
-## Struct `DEEP`
-
-
-
-<pre><code><b>struct</b> <a href="vault.md#0x0_vault_DEEP">DEEP</a> <b>has</b> store
-</code></pre>
-
-
-
-<details>
-<summary>Fields</summary>
-
-
-<dl>
-<dt>
-<code>dummy_field: bool</code>
-</dt>
-<dd>
-
-</dd>
-</dl>
-
-
-</details>
 
 <a name="0x0_vault_Vault"></a>
 
@@ -76,7 +50,7 @@
 
 </dd>
 <dt>
-<code>deep_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="vault.md#0x0_vault_DEEP">vault::DEEP</a>&gt;</code>
+<code>deep_balance: <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;</code>
 </dt>
 <dd>
 
@@ -172,8 +146,8 @@ Transfer any settled amounts for the balance_manager.
         <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.quote_balance.split(balances_out.quote() - balances_in.quote());
         <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.deposit_protected(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>, ctx);
     };
-    <b>if</b> (balances_out.deep() &gt; balances_in.deep()) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.deep_balance.split(balances_out.deep() - balances_in.deep());
+    <b>if</b> (balances_out.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>() &gt; balances_in.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = self.deep_balance.split(balances_out.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>() - balances_in.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>());
         <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.deposit_protected(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>, ctx);
     };
     <b>if</b> (balances_in.base() &gt; balances_out.base()) {
@@ -184,10 +158,37 @@ Transfer any settled amounts for the balance_manager.
         <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.withdraw_protected(balances_in.quote() - balances_out.quote(), <b>false</b>, ctx);
         self.quote_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
-    <b>if</b> (balances_in.deep() &gt; balances_out.deep()) {
-        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.withdraw_protected(balances_in.deep() - balances_out.deep(), <b>false</b>, ctx);
+    <b>if</b> (balances_in.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>() &gt; balances_out.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>()) {
+        <b>let</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a> = <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.withdraw_protected(balances_in.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>() - balances_out.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>(), <b>false</b>, ctx);
         self.deep_balance.join(<a href="dependencies/sui-framework/balance.md#0x2_balance">balance</a>);
     };
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_vault_withdraw_deep_to_burn"></a>
+
+## Function `withdraw_deep_to_burn`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_withdraw_deep_to_burn">withdraw_deep_to_burn</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, amount_to_burn: u64): <a href="dependencies/sui-framework/balance.md#0x2_balance_Balance">balance::Balance</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="vault.md#0x0_vault_withdraw_deep_to_burn">withdraw_deep_to_burn</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">Vault</a>&lt;BaseAsset, QuoteAsset&gt;,
+    amount_to_burn: u64,
+): Balance&lt;DEEP&gt; {
+    self.deep_balance.split(amount_to_burn)
 }
 </code></pre>
 

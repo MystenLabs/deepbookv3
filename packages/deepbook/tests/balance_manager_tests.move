@@ -10,8 +10,8 @@ module deepbook::balance_manager_tests {
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
-        vault::{DEEP},
     };
+    use token::deep::DEEP;
 
     public struct SPAM has store {}
     public struct USDC has store {}
