@@ -35,7 +35,7 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
-    const EInvalidAmountIn: u64 = 6;
+    const EInvalidQuantityIn: u64 = 6;
     const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
@@ -152,9 +152,9 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact base amount without needing a `balance_manager`.
+    /// Swap exact base quantity without needing a `balance_manager`.
     /// DEEP quantity can be overestimated. Returns three `Coin` objects:
-    /// base, quote, and deep. Some base amount may be left over, if the
+    /// base, quote, and deep. Some base quantity may be left over, if the
     /// input quantity is not divisible by lot size.
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -174,9 +174,9 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact quote amount without needing a `balance_manager`.
+    /// Swap exact quote quantity without needing a `balance_manager`.
     /// DEEP quantity can be overestimated. Returns three `Coin` objects:
-    /// base, quote, and deep. Some quote amount may be left over if the
+    /// base, quote, and deep. Some quote quantity may be left over if the
     /// input quantity is not divisible by lot size.
     public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -562,7 +562,7 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_whitelist(true);
     }
 
-    /// Swap exact amount without needing an balance_manager.
+    /// Swap exact quantity without needing an balance_manager.
     fun swap_exact_quantity<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
@@ -573,8 +573,8 @@ module deepbook::pool {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let mut base_quantity = base_in.value();
         let quote_quantity = quote_in.value();
-        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
-        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidQuantityIn);
+        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidQuantityIn);
 
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
