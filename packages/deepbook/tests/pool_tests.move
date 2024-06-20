@@ -413,29 +413,62 @@ module deepbook::pool_tests {
     }
 
     #[test]
-    fun test_modify_order_ok(){
+    fun test_modify_order_bid_ok(){
         test_modify_order(
             3 * constants::float_scaling(),
             2 * constants::float_scaling(),
             0,
+            true,
+        );
+    }
+
+    #[test]
+    fun test_modify_order_ask_ok(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            0,
+            false,
         );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal)]
-    fun test_modify_order_increase_e(){
+    fun test_modify_order_increase_bid_e(){
         test_modify_order(
             2 * constants::float_scaling(),
             3 * constants::float_scaling(),
             0,
+            true,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal)]
+    fun test_modify_order_increase_ask_e(){
+        test_modify_order(
+            2 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            0,
+            false,
         );
     }
 
     #[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
-    fun test_modify_order_invalid_new_quantity(){
+    fun test_modify_order_invalid_new_quantity_bid_e(){
         test_modify_order(
             3 * constants::float_scaling(),
             2 * constants::float_scaling(),
             2 * constants::float_scaling(),
+            true,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
+    fun test_modify_order_invalid_new_quantity_ask_e(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            false,
         );
     }
 
@@ -453,6 +486,7 @@ module deepbook::pool_tests {
         original_quantity: u64,
         new_quantity: u64,
         filled_quantity: u64,
+        is_bid: bool,
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -463,7 +497,6 @@ module deepbook::pool_tests {
         let base_price = 2 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
-        let is_bid = true;
 
         let order_info = place_limit_order<SUI, USDC>(
             ALICE,
