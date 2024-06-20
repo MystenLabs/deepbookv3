@@ -25,7 +25,8 @@ module deepbook::state_tests {
         let taker_quantity = 10 * constants::sui_unit();
         let mut taker_order = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
 
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let price = 1 * constants::usdc_unit();
         let quantity = 1 * constants::sui_unit();
         let mut order_info1 = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
@@ -116,7 +117,8 @@ module deepbook::state_tests {
             market_order
         );
 
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let price = 13 * constants::usdc_unit();
         let quantity = 13 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
@@ -142,7 +144,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
@@ -176,11 +179,11 @@ module deepbook::state_tests {
     #[test]
     fun process_create_after_raising_steak_req_ok() {
         let mut test = begin(OWNER);
-
         test.next_tx(ALICE);
         // alice and bob stake 100 DEEP each
         // default stake required is 100
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 120 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 100 * constants::sui_unit(), test.ctx());
 
@@ -253,7 +256,8 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         // alice and bob stake 50 DEEP each
         // default stake required is 100
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 60 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 50 * constants::sui_unit(), test.ctx());
 
@@ -336,7 +340,8 @@ module deepbook::state_tests {
         let price = 10 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let (settled, owed) = state.process_create(&mut order_info, false, test.ctx());
 
         assert_eq(settled, balances::new(0, 0, 0));
@@ -361,7 +366,8 @@ module deepbook::state_tests {
         let price = 10 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_create(&mut order_info, false, test.ctx());
 
         test.next_tx(ALICE);
@@ -392,7 +398,8 @@ module deepbook::state_tests {
 
         test.next_tx(ALICE);
         // stake 100 DEEP
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         // place maker order
@@ -433,7 +440,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let (settled, owed) = state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 1 * constants::sui_unit()));
@@ -460,7 +468,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
 
         abort(0)
@@ -472,7 +481,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
 
@@ -484,7 +494,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 250 * constants::sui_unit(), test.ctx());
 

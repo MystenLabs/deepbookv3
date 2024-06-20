@@ -633,29 +633,6 @@ module deepbook::master_tests {
         }
     }
 
-    #[allow(unused_function)]
-    /// TODO: Test setting stable pools
-    fun set_stable<BaseAsset, QuoteAsset>(
-        sender: address,
-        pool_id: ID,
-        stable: bool,
-        test: &mut Scenario,
-    ){
-        test.next_tx(sender);
-        {
-            let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            pool::set_stable<BaseAsset, QuoteAsset>(
-                &mut pool,
-                &admin_cap,
-                stable,
-                test.ctx()
-            );
-            test_utils::destroy(admin_cap);
-            return_shared(pool);
-        }
-    }
-
     fun test_master(
         error_code: u64,
     ) {

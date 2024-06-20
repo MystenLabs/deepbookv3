@@ -310,7 +310,7 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(stable_pool: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="governance.md#0x0_governance_Governance">governance::Governance</a>
 </code></pre>
 
 
@@ -320,15 +320,18 @@ Details of a pool. This is refreshed every epoch by the first
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_empty">empty</a>(
+    stable_pool: bool,
     ctx: &TxContext,
 ): <a href="governance.md#0x0_governance_Governance">Governance</a> {
+    <b>let</b> default_taker = <b>if</b> (stable_pool) { <a href="governance.md#0x0_governance_MAX_TAKER_STABLE">MAX_TAKER_STABLE</a> } <b>else</b> { <a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a> };
+    <b>let</b> default_maker = <b>if</b> (stable_pool) { <a href="governance.md#0x0_governance_MAX_MAKER_STABLE">MAX_MAKER_STABLE</a> } <b>else</b> { <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a> };
     <a href="governance.md#0x0_governance_Governance">Governance</a> {
         epoch: ctx.epoch(),
         whitelisted: <b>false</b>,
-        stable: <b>false</b>,
+        stable: stable_pool,
         proposals: <a href="dependencies/sui-framework/vec_map.md#0x2_vec_map_empty">vec_map::empty</a>(),
-        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
-        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(<a href="governance.md#0x0_governance_MAX_TAKER_VOLATILE">MAX_TAKER_VOLATILE</a>, <a href="governance.md#0x0_governance_MAX_MAKER_VOLATILE">MAX_MAKER_VOLATILE</a>, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
+        <a href="trade_params.md#0x0_trade_params">trade_params</a>: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(default_taker, default_maker, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
+        next_trade_params: <a href="trade_params.md#0x0_trade_params_new">trade_params::new</a>(default_taker, default_maker, <a href="constants.md#0x0_constants_default_stake_required">constants::default_stake_required</a>()),
         voting_power: 0,
         quorum: 0,
     }

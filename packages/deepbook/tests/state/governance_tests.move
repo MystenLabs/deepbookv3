@@ -23,7 +23,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         assert!(gov.proposals().size() == 1, 0);
         let (taker_fee, maker_fee, stake_required) = gov.proposals().get(&id_from_address(alice)).params();
@@ -41,7 +42,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(490000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
@@ -52,7 +54,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(1010000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
@@ -63,7 +66,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 190000, 10000, 1000, id_from_address(alice));
         abort 0
     }
@@ -74,7 +78,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 510000, 10000, 1000, id_from_address(alice));
         abort 0
     }
@@ -85,8 +90,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
-        gov.set_stable(true);
+        let stable_pool = true;
+        let mut gov = governance::empty(stable_pool, test.ctx());
 
         test.next_tx(alice);
         gov.add_proposal(50000, 20000, 10000, 1000, id_from_address(alice));
@@ -102,8 +107,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
-        gov.set_stable(true);
+        let stable_pool = true;
+        let mut gov = governance::empty(stable_pool, test.ctx());
 
         test.next_tx(alice);
         gov.add_proposal(500000, 20000, 10000, 1000, id_from_address(alice));
@@ -116,9 +121,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
-        gov.set_stable(true);
-
+        let stable_pool = true;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         test.next_tx(alice);
         gov.add_proposal(50000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
@@ -130,7 +134,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
 
         test.next_tx(alice);
@@ -139,44 +144,12 @@ module deepbook::governance_tests {
     }
 
     #[test]
-    fun set_stable_ok() {
-        let mut test = begin(OWNER);
-        let alice = ALICE;
-
-        test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
-        gov.set_stable(true);
-        let trade_params = gov.trade_params();
-        assert!(trade_params.taker_fee() == 100000, 0);
-        assert!(trade_params.maker_fee() == 50000, 0);
-        assert_eq(trade_params, gov.next_trade_params());
-        assert!(gov.stable(), 0);
-
-        gov.set_stable(false);
-        let trade_params = gov.trade_params();
-        assert!(trade_params.taker_fee() == 1000000, 0);
-        assert!(trade_params.maker_fee() == 500000, 0);
-        assert_eq(trade_params, gov.next_trade_params());
-        assert!(!gov.stable(), 0);
-
-        test.next_tx(ALICE);
-        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
-        assert!(gov.proposals().size() == 1, 0);
-
-        test.next_tx(OWNER);
-        gov.set_stable(true);
-        assert!(gov.proposals().size() == 0, 0);
-
-        destroy(gov);
-        end(test);
-    }
-
-    #[test]
     fun set_whitelist_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(OWNER));
         assert!(gov.proposals().size() == 1, 0);
 
@@ -202,25 +175,8 @@ module deepbook::governance_tests {
         assert!(trade_params.maker_fee() == 500000, 0);
         assert!(trade_params.stake_required() == 0, 0);
 
-        // Setting whitelist to true sets stable to false.
-        test.next_tx(OWNER);
-        gov.set_stable(true);
-        gov.set_whitelist(true);
-        assert!(!gov.stable(), 0);
-
         destroy(gov);
         end(test);
-    }
-
-    #[test, expected_failure(abort_code = governance::EWhitelistedPoolCannotChange)]
-    fun set_stable_e() {
-        let mut test = begin(OWNER);
-
-        test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
-        gov.set_whitelist(true);
-        gov.set_stable(true);
-        abort 0
     }
 
     #[test, expected_failure(abort_code = governance::EWhitelistedPoolCannotChange)]
@@ -229,7 +185,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.set_whitelist(true);
 
         test.next_tx(ALICE);
@@ -244,7 +201,8 @@ module deepbook::governance_tests {
         let mut alice_stake = 0;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
 
         test.next_tx(alice);
         gov.adjust_voting_power(alice_stake, alice_stake + 1000);
@@ -283,7 +241,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         assert!(gov.voting_power() == 0, 0);
         assert!(gov.quorum() == 0, 0);
         assert!(gov.proposals().size() == 0, 0);
@@ -342,7 +301,8 @@ module deepbook::governance_tests {
         let bob = BOB;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.adjust_voting_power(0, 500);
         assert!(gov.voting_power() == 500, 0);
 
@@ -402,7 +362,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
         abort 0
     }
@@ -414,7 +375,8 @@ module deepbook::governance_tests {
         let bob = BOB;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
         gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
         gov.adjust_vote(option::some(id_from_address(alice)), option::some(id_from_address(bob)), 1000);
@@ -428,7 +390,8 @@ module deepbook::governance_tests {
         let bob = BOB;
 
         test.next_tx(alice);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
         gov.adjust_vote(option::some(id_from_address(bob)), option::some(id_from_address(alice)), 1000);
         assert!(gov.proposals().get(&id_from_address(alice)).votes() == 1000, 0);
@@ -450,7 +413,8 @@ module deepbook::governance_tests {
         let charlie = CHARLIE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.adjust_voting_power(0, 450000);
 
         test.next_epoch(OWNER);
@@ -508,7 +472,8 @@ module deepbook::governance_tests {
         let alice = ALICE;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
 
         let mut i = 0;
         while (i < MAX_PROPOSALS) {
@@ -532,7 +497,8 @@ module deepbook::governance_tests {
         let bob = BOB;
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
         assert!(gov.proposals().get(&id_from_address(alice)).votes() == 1000, 0);
@@ -562,7 +528,8 @@ module deepbook::governance_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(OWNER);
-        let mut gov = governance::empty(test.ctx());
+        let stable_pool = false;
+        let mut gov = governance::empty(stable_pool, test.ctx());
         gov.adjust_voting_power(0, 100_000 * constants::sui_unit());
         assert!(gov.voting_power() == 100_000 * constants::sui_unit(), 0);
         test.next_epoch(OWNER);
