@@ -33,7 +33,7 @@ module deepbook::pool {
     const EInvalidTickSize: u64 = 3;
     const EInvalidLotSize: u64 = 4;
     const EInvalidMinSize: u64 = 5;
-    const EInvalidAmountIn: u64 = 6;
+    const EInvalidQuantityIn: u64 = 6;
     const EIneligibleWhitelist: u64 = 7;
     const EIneligibleReferencePool: u64 = 8;
     const EFeeTypeNotSupported: u64 = 9;
@@ -160,9 +160,9 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact base amount without needing a `balance_manager`.
+    /// Swap exact base quantity without needing a `balance_manager`.
     /// DEEP quantity can be overestimated. Returns three `Coin` objects:
-    /// base, quote, and deep. Some base amount may be left over, if the
+    /// base, quote, and deep. Some base quantity may be left over, if the
     /// input quantity is not divisible by lot size.
     public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -172,7 +172,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let quote_in = coin::zero(ctx);
-        swap_exact_amount(
+        swap_exact_quantity(
             self,
             base_in,
             quote_in,
@@ -182,9 +182,9 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact quote amount without needing a `balance_manager`.
+    /// Swap exact quote quantity without needing a `balance_manager`.
     /// DEEP quantity can be overestimated. Returns three `Coin` objects:
-    /// base, quote, and deep. Some quote amount may be left over if the
+    /// base, quote, and deep. Some quote quantity may be left over if the
     /// input quantity is not divisible by lot size.
     public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -194,7 +194,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let base_in = coin::zero(ctx);
-        swap_exact_amount(
+        swap_exact_quantity(
             self,
             base_in,
             quote_in,
@@ -440,18 +440,27 @@ module deepbook::pool {
         self.load_inner().state.governance().whitelisted()
     }
 
-    /// Dry run to determine the amount out for a given base or quote amount.
-    /// Only one out of base or quote amount should be non-zero.
-    public fun get_amount_out<BaseAsset, QuoteAsset>(
+    /// Dry run to determine the quantity out for a given base or quote quantity.
+    /// Only one out of base or quote quantity should be non-zero.
+    /// Returns the (base_quantity_out, quote_quantity_out, deep_quantity_required)
+    public fun get_quantity_out<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
-        base_amount: u64,
-        quote_amount: u64,
-        current_timestamp: u64,
-    ): (u64, u64) {
-        self.load_inner().book.get_amount_out(
-            base_amount,
-            quote_amount,
-            current_timestamp,
+        base_quantity: u64,
+        quote_quantity: u64,
+        clock: &Clock,
+    ): (u64, u64, u64) {
+        let whitelist = self.whitelisted();
+        let self = self.load_inner();
+        let params = self.state.governance().trade_params();
+        let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+        let deep_price = self.deep_price.get_order_deep_price(whitelist);
+        self.book.get_quantity_out(
+            base_quantity,
+            quote_quantity,
+            taker_fee,
+            deep_price,
+            self.book.lot_size(),
+            clock.timestamp_ms(),
         )
     }
 
@@ -624,8 +633,8 @@ module deepbook::pool {
         self.state.governance_mut(ctx).set_whitelist(true);
     }
 
-    /// Swap exact amount without needing an balance_manager.
-    fun swap_exact_amount<BaseAsset, QuoteAsset>(
+    /// Swap exact quantity without needing an balance_manager.
+    fun swap_exact_quantity<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
         quote_in: Coin<QuoteAsset>,
@@ -635,13 +644,13 @@ module deepbook::pool {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let mut base_quantity = base_in.value();
         let quote_quantity = quote_in.value();
-        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidAmountIn);
-        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidQuantityIn);
+        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidQuantityIn);
 
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
         if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
+            (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
         };
         base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
 

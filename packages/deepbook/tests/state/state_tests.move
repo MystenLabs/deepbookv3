@@ -376,9 +376,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, quantity, false, test.ctx().epoch());
         let mut order = order_info.to_order();
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
-        std::debug::print(&settled);
-        std::debug::print(&owed);
+        state.process_create(&mut taker_order, false, test.ctx());
 
         test.next_tx(ALICE);
         let (settled, owed) = state.process_cancel(&mut order, id_from_address(ALICE), test.ctx());

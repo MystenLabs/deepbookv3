@@ -643,7 +643,7 @@ module deepbook::pool_tests {
 
         let alice_client_order_id = 1;
         let alice_price = 3 * constants::float_scaling();
-        let alice_quantity = 1 * constants::float_scaling();
+        let alice_quantity = 2 * constants::float_scaling();
         let expired_price = if (is_bid) {
             3 * constants::float_scaling()
         } else {
@@ -687,16 +687,23 @@ module deepbook::pool_tests {
         set_time(200, &mut test);
 
         let base_in = if (is_bid) {
-            2 * constants::float_scaling() + residual
+            4 * constants::float_scaling() + residual
         } else {
             0
         };
         let quote_in = if (is_bid) {
             0
         } else {
-            4 * constants::float_scaling() + residual
+            8 * constants::float_scaling() + 3 * residual
         };
-        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
+        let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
+
+        let (base, quote, deep_required) = get_quantity_out<SUI, USDC>(
+            pool_id,
+            base_in,
+            quote_in,
+            &mut test,
+        );
 
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
@@ -718,14 +725,17 @@ module deepbook::pool_tests {
             };
 
         if (is_bid) {
-            assert!(base_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 3 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(base_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
-            assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * constants::float_scaling() + 3 * residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        assert!(base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1452,9 +1462,16 @@ module deepbook::pool_tests {
         let quote_in = if (is_bid) {
             0
         } else {
-            2 * constants::float_scaling() + residual
+            2 * constants::float_scaling() + 2 * residual
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
+
+        let (base, quote, deep_required) = get_quantity_out<SUI, USDC>(
+            pool_id,
+            base_in,
+            quote_in,
+            &mut test,
+        );
 
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
@@ -1480,10 +1497,13 @@ module deepbook::pool_tests {
             assert!(quote_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
             assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        assert!(base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -2464,7 +2484,7 @@ module deepbook::pool_tests {
         pool_id: ID,
         test: &mut Scenario,
     ): u64 {
-        test.next_tx(ALICE);
+        test.next_tx(OWNER);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
@@ -2474,6 +2494,29 @@ module deepbook::pool_tests {
             return_shared(clock);
 
             mid_price
+        }
+    }
+
+    fun get_quantity_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        base_amount: u64,
+        quote_amount: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_quantity_out<BaseAsset, QuoteAsset>(
+                base_amount,
+                quote_amount,
+                &clock,
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
         }
     }
 }
