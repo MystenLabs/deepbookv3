@@ -192,14 +192,14 @@ module deepbook::state_tests {
         let price = 1 * constants::usdc_unit();
         let quantity = 1000 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        state.process_create(&mut order_info, test.ctx());
+        state.process_create(&mut order_info, false, test.ctx());
         let mut order = order_info.to_order();
 
         test.next_tx(BOB);
         let taker_quantity = 100 * constants::sui_unit();
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         // bob's first order
         // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
         assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
@@ -211,7 +211,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 2));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(100 * constants::sui_unit(), 0, 50_000_000));
 
@@ -227,7 +227,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 3));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
 
@@ -237,7 +237,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 4));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
 
@@ -265,14 +265,14 @@ module deepbook::state_tests {
         let price = 1 * constants::usdc_unit();
         let quantity = 1000 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        state.process_create(&mut order_info, test.ctx());
+        state.process_create(&mut order_info, false, test.ctx());
         let mut order = order_info.to_order();
 
         test.next_tx(BOB);
         let taker_quantity = 50 * constants::sui_unit();
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         // bob's first order
         // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
         assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
@@ -284,7 +284,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 2));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
@@ -294,7 +294,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 3));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
@@ -310,7 +310,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 4));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
@@ -320,7 +320,7 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
         taker_order.set_order_id(utils::encode_order_id(false, price, 5));
         taker_order.match_maker(&mut order, 0);
-        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 25_000_000));
 
@@ -362,7 +362,7 @@ module deepbook::state_tests {
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
         let mut state = state::empty(test.ctx());
-        state.process_create(&mut order_info, test.ctx());
+        state.process_create(&mut order_info, false, test.ctx());
 
         test.next_tx(ALICE);
         let price = 1 * constants::usdc_unit();
@@ -370,7 +370,9 @@ module deepbook::state_tests {
         let mut taker_order = create_order_info_base(BOB, price, quantity, false, test.ctx().epoch());
         let mut order = order_info.to_order();
         taker_order.match_maker(&mut order, 0);
-        state.process_create(&mut taker_order, test.ctx());
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        std::debug::print(&settled);
+        std::debug::print(&owed);
 
         test.next_tx(ALICE);
         let (settled, owed) = state.process_cancel(&mut order, id_from_address(ALICE), test.ctx());
@@ -397,7 +399,7 @@ module deepbook::state_tests {
         let price = 10 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        state.process_create(&mut order_info, test.ctx());
+        state.process_create(&mut order_info, false, test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
