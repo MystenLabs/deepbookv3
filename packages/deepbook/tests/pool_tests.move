@@ -1462,7 +1462,7 @@ module deepbook::pool_tests {
         let quote_in = if (is_bid) {
             0
         } else {
-            2 * constants::float_scaling() + residual
+            2 * constants::float_scaling() + 2 * residual
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
@@ -1497,7 +1497,7 @@ module deepbook::pool_tests {
             assert!(quote_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
             assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
