@@ -1201,10 +1201,11 @@ and the remaining quantity is multiplied by the maker_fee to get the DEEP fee.
     maker_fee: u64,
 ): (Balances, Balances) {
     <b>let</b> taker_deep_in = math::mul(
+        taker_fee,
         self.order_deep_price.deep_quantity(
             self.executed_quantity,
             self.cumulative_quote_quantity
-        ), taker_fee
+        )
     );
     self.paid_fees = taker_deep_in;
 

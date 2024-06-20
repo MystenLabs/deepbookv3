@@ -65,15 +65,18 @@ module deepbook::governance {
 
     // === Public-Package Functions ===
     public(package) fun empty(
+        stable_pool: bool,
         ctx: &TxContext,
     ): Governance {
+        let default_taker = if (stable_pool) { MAX_TAKER_STABLE } else { MAX_TAKER_VOLATILE };
+        let default_maker = if (stable_pool) { MAX_MAKER_STABLE } else { MAX_MAKER_VOLATILE };
         Governance {
             epoch: ctx.epoch(),
             whitelisted: false,
-            stable: false,
+            stable: stable_pool,
             proposals: vec_map::empty(),
-            trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, constants::default_stake_required()),
-            next_trade_params: trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, constants::default_stake_required()),
+            trade_params: trade_params::new(default_taker, default_maker, constants::default_stake_required()),
+            next_trade_params: trade_params::new(default_taker, default_maker, constants::default_stake_required()),
             voting_power: 0,
             quorum: 0,
         }
@@ -208,7 +211,7 @@ module deepbook::governance {
         if (stake > VOTING_POWER_THRESHOLD) {
             voting_power = voting_power + math::sqrt(stake) - math::sqrt(VOTING_POWER_THRESHOLD);
         };
-        
+
         voting_power
     }
 

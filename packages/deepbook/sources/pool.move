@@ -71,6 +71,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
+        stable_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
     ): ID {
@@ -81,6 +82,7 @@ module deepbook::pool {
             min_size,
             creation_fee,
             whitelisted_pool,
+            stable_pool,
             ctx,
         )
     }
@@ -487,18 +489,6 @@ module deepbook::pool {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
-    // === Admin Functions ===
-    /// Set a pool as a stable pool. Stable pools have a lower fee.
-    /// Only Admin can set a pool as stable.
-    public fun set_stable<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepbookAdminCap,
-        stable: bool,
-        ctx: &TxContext,
-    ) {
-        self.state.governance_mut(ctx).set_stable(stable);
-    }
-
     /// Unregister a pool in case it needs to be manually redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
@@ -515,6 +505,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
+        stable_pool: bool,
         ctx: &mut TxContext,
     ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
@@ -529,7 +520,7 @@ module deepbook::pool {
         let mut pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_uid,
             book: book::empty(tick_size, lot_size, min_size, ctx),
-            state: state::empty(ctx),
+            state: state::empty(stable_pool, ctx),
             vault: vault::empty(),
             deep_price: deep_price::empty(),
         };

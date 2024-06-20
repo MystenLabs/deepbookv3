@@ -264,10 +264,11 @@ module deepbook::order_info {
         maker_fee: u64,
     ): (Balances, Balances) {
         let taker_deep_in = math::mul(
+            taker_fee,
             self.order_deep_price.deep_quantity(
                 self.executed_quantity,
                 self.cumulative_quote_quantity
-            ), taker_fee
+            )
         );
         self.paid_fees = taker_deep_in;
 

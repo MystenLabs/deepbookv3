@@ -154,12 +154,9 @@ module deepbook::order {
         };
         let deep_out = math::mul(
             maker_fee,
-            math::mul(
+            self.order_deep_price().deep_quantity(
                 cancel_quantity,
-                self.order_deep_price().deep_quantity(
-                    cancel_quantity,
-                    math::mul(cancel_quantity, self.price())
-                )
+                math::mul(cancel_quantity, self.price())
             )
         );
 
