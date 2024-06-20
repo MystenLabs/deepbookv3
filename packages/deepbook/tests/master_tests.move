@@ -13,7 +13,7 @@ module deepbook::master_tests {
         sui::SUI,
         test_utils,
         clock::{Clock},
-        coin::Coin,
+        coin::{Self, Coin},
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
@@ -274,94 +274,44 @@ module deepbook::master_tests {
                 constants::deep_multiplier()
             );
 
-            // // Alice needs to swap 0.5 SUI back to DEEP to pay back the flash loan
-            // loan_pool.place_market_order<SUI, DEEP>(
-            //     &mut alice_balance_manager,
-            //     client_order_id,
-            //     constants::self_matching_allowed(),
-            //     quantity,
-            //     !is_bid,
-            //     pay_with_deep,
-            //     &clock,
-            //     test.ctx(),
-            // );
+            let quantity = 1 * constants::float_scaling();
+            let price = 100 * constants::float_scaling();
 
-            // self_matching_option: u8,
-            // quantity: u64,
-            // is_bid: bool,
-            // pay_with_deep: bool,
-            // clock: &Clock,
-            // ctx: &TxContext,
+            // Alice needs to swap 1 SUI back to 100 DEEP (and match with owner's order in reference pool)
+            // to pay back the flash loan
+            loan_pool.place_market_order<SUI, DEEP>(
+                &mut alice_balance_manager,
+                client_order_id,
+                constants::self_matching_allowed(),
+                quantity,
+                !is_bid,
+                pay_with_deep,
+                &clock,
+                test.ctx(),
+            );
+            alice_balance.sui = alice_balance.sui - quantity;
+            alice_balance.deep = alice_balance.deep + math::mul(quantity, price);
 
-            test_utils::destroy(flash_loan);
+            // Alice withdraws the 1 DEEP she borrowed from balance_manager and returns the loan
+            let base_return = coin::zero<SUI>(test.ctx());
+            let quote_return = alice_balance_manager.withdraw<DEEP>(quote_needed, test.ctx());
+            loan_pool.return_flashloan(base_return, quote_return, flash_loan);
+            alice_balance.deep = alice_balance.deep - quote_needed;
+
             return_shared(alice_balance_manager);
             return_shared(clock);
             return_shared(target_pool);
             return_shared(loan_pool);
-            check_balance_and_print(
-                alice_balance_manager_id,
-                &alice_balance,
-                &mut test
-            );
         };
 
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
         end(test);
-
-        // // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        // let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
-        // let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
-
-        // // Default price point of 100 deep per base will be added
-        // pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
-        //     OWNER,
-        //     pool1_id,
-        //     pool1_reference_id,
-        //     &mut test,
-        // );
-        // pool_tests::add_deep_price_point<SPAM, USDC, SPAM, DEEP>(
-        //     OWNER,
-        //     pool2_id,
-        //     pool2_reference_id,
-        //     &mut test,
-        // );
-
-        // let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
-        //     ALICE,
-        //     starting_balance,
-        //     &mut test
-        // );
-        // let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
-        //     BOB,
-        //     starting_balance,
-        //     &mut test
-        // );
-
-        // // variables to input into order
-        // let client_order_id = 1;
-        // let order_type = constants::no_restriction();
-        // let price = 2 * constants::float_scaling();
-        // let quantity = 1 * constants::float_scaling();
-
     }
-
-    // fun borrow_flashloan<BaseAsset, QuoteAsset>(
-    //     borrower: address,
-    //     pool_id: ID,
-    //     base_amount: u64,
-    //     quote_amount: u64,
-    //     test: &mut Scenario,
-    // ){
-    //     test.next_tx(borrower);
-    //     {
-    //         let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-    //         let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<BaseAsset, QuoteAsset>(
-    //             &mut pool,
-    //             base_amount,
-    //             quote_amount,
-    //             test.ctx(),
-    //         )
-    //     }
-    // }
 
     fun withdraw_and_burn<T>(
         sender: address,
