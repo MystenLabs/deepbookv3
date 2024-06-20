@@ -27,6 +27,7 @@ All order book operations are defined in this module.
 
 <pre><code><b>use</b> <a href="big_vector.md#0x0_big_vector">0x0::big_vector</a>;
 <b>use</b> <a href="constants.md#0x0_constants">0x0::constants</a>;
+<b>use</b> <a href="deep_price.md#0x0_deep_price">0x0::deep_price</a>;
 <b>use</b> <a href="fill.md#0x0_fill">0x0::fill</a>;
 <b>use</b> <a href="math.md#0x0_math">0x0::math</a>;
 <b>use</b> <a href="order.md#0x0_order">0x0::order</a>;
@@ -325,7 +326,7 @@ Given base_amount and quote_amount, calculate the base_amount_out and quote_amou
 Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, base_amount: u64, quote_amount: u64, current_timestamp: u64): (u64, u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="book.md#0x0_book_get_amount_out">get_amount_out</a>(self: &<a href="book.md#0x0_book_Book">book::Book</a>, base_amount: u64, quote_amount: u64, taker_fee: u64, <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_OrderDeepPrice">deep_price::OrderDeepPrice</a>, lot_size: u64, current_timestamp: u64): (u64, u64, u64)
 </code></pre>
 
 
@@ -338,8 +339,11 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
     self: &<a href="book.md#0x0_book_Book">Book</a>,
     base_amount: u64,
     quote_amount: u64,
+    taker_fee: u64,
+    <a href="deep_price.md#0x0_deep_price">deep_price</a>: OrderDeepPrice,
+    lot_size: u64,
     current_timestamp: u64,
-): (u64, u64) {
+): (u64, u64, u64) {
     <b>assert</b>!((base_amount &gt; 0 || quote_amount &gt; 0) && !(base_amount &gt; 0 && quote_amount &gt; 0), <a href="book.md#0x0_book_EInvalidAmountIn">EInvalidAmountIn</a>);
     <b>let</b> is_bid = quote_amount &gt; 0;
     <b>let</b> <b>mut</b> amount_out = 0;
@@ -354,24 +358,41 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
         <b>if</b> (current_timestamp &lt; <a href="order.md#0x0_order">order</a>.expire_timestamp()) {
+            <b>let</b> <b>mut</b> matched_amount;
             <b>if</b> (is_bid) {
-                <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+                matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+                matched_amount = matched_amount - matched_amount % lot_size;
                 amount_out = amount_out + math::div(matched_amount, cur_price);
                 amount_in_left = amount_in_left - matched_amount;
             } <b>else</b> {
-                <b>let</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+                matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+                matched_amount = matched_amount - matched_amount % lot_size;
                 amount_out = amount_out + math::mul(matched_amount, cur_price);
                 amount_in_left = amount_in_left - matched_amount;
             };
+
+            <b>if</b> (matched_amount == 0) <b>break</b>;
         };
 
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);
     };
 
-    <b>if</b> (is_bid) {
-        (amount_out, amount_in_left)
+    <b>let</b> deep_fee = <b>if</b> (is_bid) {
+        math::mul(
+            taker_fee,
+            <a href="deep_price.md#0x0_deep_price">deep_price</a>.deep_quantity(amount_out, quote_amount - amount_in_left)
+        )
     } <b>else</b> {
-        (amount_in_left, amount_out)
+        math::mul(
+            taker_fee,
+            <a href="deep_price.md#0x0_deep_price">deep_price</a>.deep_quantity(base_amount - amount_in_left, amount_out)
+        )
+    };
+
+    <b>if</b> (is_bid) {
+        (amount_out, amount_in_left, deep_fee)
+    } <b>else</b> {
+        (amount_in_left, amount_out, deep_fee)
     }
 }
 </code></pre>

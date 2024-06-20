@@ -1042,9 +1042,10 @@ Accessor to check if the pool is whitelisted.
 
 Dry run to determine the amount out for a given base or quote amount.
 Only one out of base or quote amount should be non-zero.
+Returns the (base_amount_out, quote_amount_out, deep_required)
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, current_timestamp: u64): (u64, u64)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &<a href="dependencies/sui-framework/clock.md#0x2_clock_Clock">clock::Clock</a>): (u64, u64, u64)
 </code></pre>
 
 
@@ -1057,12 +1058,18 @@ Only one out of base or quote amount should be non-zero.
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     base_amount: u64,
     quote_amount: u64,
-    current_timestamp: u64,
-): (u64, u64) {
+    <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
+): (u64, u64, u64) {
+    <b>let</b> params = self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    <b>let</b> <a href="deep_price.md#0x0_deep_price">deep_price</a> = self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.get_order_deep_price(self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>());
     self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(
         base_amount,
         quote_amount,
-        current_timestamp,
+        taker_fee,
+        <a href="deep_price.md#0x0_deep_price">deep_price</a>,
+        self.<a href="book.md#0x0_book">book</a>.lot_size(),
+        <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms(),
     )
 }
 </code></pre>
@@ -1466,7 +1473,7 @@ Swap exact amount without needing an balance_manager.
     <b>let</b> pay_with_deep = deep_in.value() &gt; 0;
     <b>let</b> is_bid = quote_quantity &gt; 0;
     <b>if</b> (is_bid) {
-        (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+        (base_quantity, _, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
     };
     base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
 
