@@ -382,7 +382,7 @@ module deepbook::pool {
     }
 
     /// Return the flashloaned base and quote assets to the Pool.
-    /// FlashLoan object will only be dropped if the assets are returned,
+    /// FlashLoan object will only be unwrapped if the assets are returned,
     /// otherwise the transaction will fail.
     public fun return_flashloan<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
