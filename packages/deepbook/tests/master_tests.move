@@ -48,6 +48,8 @@ module deepbook::master_tests {
     const EDataRecentlyAdded: u64 = 6;
     const ENoAmountToBurn: u64 = 7;
     const ENoAmountToBurn2: u64 = 8;
+    const ENotEnoughBase: u64 = 9;
+    const ENotEnoughQuote: u64 = 10;
 
     #[test]
     fun test_master_ok(){
@@ -111,10 +113,22 @@ module deepbook::master_tests {
 
     #[test]
     fun test_flash_loan_ok(){
-        test_flash_loan()
+        test_flash_loan(NoError)
     }
 
-    fun test_flash_loan(){
+    #[test, expected_failure(abort_code = ::deepbook::vault::ENotEnoughBaseForLoan)]
+    fun test_flash_loan_base_e(){
+        test_flash_loan(ENotEnoughBase)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::vault::ENotEnoughQuoteForLoan)]
+    fun test_flash_loan_quote_e(){
+        test_flash_loan(ENotEnoughQuote)
+    }
+
+    fun test_flash_loan(
+        error_code: u64,
+    ){
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
         pool_tests::set_time(0, &mut test);
@@ -229,8 +243,19 @@ module deepbook::master_tests {
 
             // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
             // Alice will borrow 1 DEEP from the SUI/DEEP pool
-            let base_needed = 0;
-            let quote_needed = 1 * constants::float_scaling();
+
+            // If Alice tries to borrow too much from the pool, there will be an error
+            let base_needed = if (error_code == ENotEnoughBase) {
+                10000 * constants::float_scaling()
+            } else {
+                0
+            };
+
+            let quote_needed = if (error_code == ENotEnoughQuote) {
+                10000 * constants::float_scaling()
+            } else {
+                1 * constants::float_scaling()
+            };
             let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<SUI, DEEP>(
                 &mut loan_pool,
                 base_needed,
