@@ -694,7 +694,7 @@ module deepbook::pool_tests {
         let quote_in = if (is_bid) {
             0
         } else {
-            8 * constants::float_scaling() + residual
+            8 * constants::float_scaling() + 3 * residual
         };
         let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
@@ -729,7 +729,7 @@ module deepbook::pool_tests {
             assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
             assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * constants::float_scaling() + 3 * residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
