@@ -466,23 +466,6 @@ module deepbook::pool {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
-    // === Admin Functions ===
-
-    public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        balance_manager: &mut BalanceManager,
-        ctx: &TxContext,
-    ) {
-        let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
-        self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
-    }
-
-    public fun vault_balances<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-    ): (u64, u64, u64) {
-        self.vault.balances()
-    }
-
     /// Unregister a pool in case it needs to be manually redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,

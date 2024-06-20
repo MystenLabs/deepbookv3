@@ -14,6 +14,7 @@ proposals are used to set the trade parameters for the next epoch.
 -  [Function `empty`](#0x0_governance_empty)
 -  [Function `set_whitelist`](#0x0_governance_set_whitelist)
 -  [Function `whitelisted`](#0x0_governance_whitelisted)
+-  [Function `set_stable`](#0x0_governance_set_stable)
 -  [Function `update`](#0x0_governance_update)
 -  [Function `add_proposal`](#0x0_governance_add_proposal)
 -  [Function `adjust_vote`](#0x0_governance_adjust_vote)
@@ -389,6 +390,39 @@ other pools. This pool will have zero fees.
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_whitelisted">whitelisted</a>(self: &<a href="governance.md#0x0_governance_Governance">Governance</a>): bool {
     self.whitelisted
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_governance_set_stable"></a>
+
+## Function `set_stable`
+
+Set the pool to stable or volatile. If stable, the fees are set to
+stable fees. If volatile, the fees are set to volatile fees.
+This resets governance. A whitelisted pool cannot be set to stable.
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="governance.md#0x0_governance_set_stable">set_stable</a>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, stable: bool)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="governance.md#0x0_governance_set_stable">set_stable</a>(
+    self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">Governance</a>,
+    stable: bool,
+) {
+    <b>assert</b>!(!self.whitelisted, <a href="governance.md#0x0_governance_EWhitelistedPoolCannotChange">EWhitelistedPoolCannotChange</a>);
+
+    self.stable = stable;
+    self.<a href="governance.md#0x0_governance_reset_trade_params">reset_trade_params</a>();
 }
 </code></pre>
 
