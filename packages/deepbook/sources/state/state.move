@@ -9,7 +9,6 @@ module deepbook::state {
     use sui::{
         table::{Self, Table},
     };
-
     use deepbook::{
         math,
         history::{Self, History},
@@ -31,9 +30,14 @@ module deepbook::state {
         governance: Governance,
     }
 
-    // === Public-Package Functions ===
-    public(package) fun empty(ctx: &mut TxContext): State {
-        let governance = governance::empty(ctx);
+    public(package) fun empty(
+        stable_pool: bool,
+        ctx: &mut TxContext
+    ): State {
+        let governance = governance::empty(
+            stable_pool,
+            ctx
+        );
         let trade_params = governance.trade_params();
         let history = history::empty(trade_params, ctx.epoch(), ctx);
 

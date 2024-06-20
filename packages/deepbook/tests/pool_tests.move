@@ -2439,6 +2439,7 @@ module deepbook::pool_tests {
         test.next_tx(sender);
         let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
         let mut registry = test.take_shared_by_id<Registry>(registry_id);
+        let stable_pool = false;
         let pool_id;
         {
             pool_id = pool::create_pool_admin<BaseAsset, QuoteAsset>(
@@ -2448,6 +2449,7 @@ module deepbook::pool_tests {
                 min_size,
                 creation_fee,
                 whitelisted_pool,
+                stable_pool,
                 &admin_cap,
                 test.ctx()
             );

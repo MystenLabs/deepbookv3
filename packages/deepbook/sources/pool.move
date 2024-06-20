@@ -5,7 +5,6 @@
 module deepbook::pool {
     // === Imports ===
     use std::type_name;
-
     use sui::{
         coin::{Self, Coin},
         clock::Clock,
@@ -13,7 +12,6 @@ module deepbook::pool {
         vec_set::VecSet,
         versioned::{Self, Versioned},
     };
-
     use deepbook::{
         math,
         constants,
@@ -21,13 +19,12 @@ module deepbook::pool {
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
-        vault::{Self, Vault},
+        vault::{Self, Vault, FlashLoanHotPotato},
         deep_price::{Self, DeepPrice},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
     };
-
     use token::deep::{DEEP, ProtectedTreasury};
 
     // === Errors ===
@@ -85,6 +82,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
+        stable_pool: bool,
         _cap: &DeepbookAdminCap,
         ctx: &mut TxContext,
     ): ID {
@@ -95,6 +93,7 @@ module deepbook::pool {
             min_size,
             creation_fee,
             whitelisted_pool,
+            stable_pool,
             ctx,
         )
     }
@@ -344,6 +343,31 @@ module deepbook::pool {
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
 
+    // === Public-Mutative Functions * FLASHLOAN * ===
+    /// Borrow base and quote assets from the Pool. A hot potato is returned,
+    /// forcing the borrower to return the assets within the same transaction.
+    public fun borrow_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base_amount: u64,
+        quote_amount: u64,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoanHotPotato) {
+        let pool_id = self.id.to_inner();
+
+        self.load_inner_mut().vault.borrow_flashloan(pool_id, base_amount, quote_amount, ctx)
+    }
+
+    /// Return the flashloaned base and quote assets to the Pool.
+    public fun return_flashloan<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base: Coin<BaseAsset>,
+        quote: Coin<QuoteAsset>,
+        potato: FlashLoanHotPotato,
+    ) {
+        let pool_id = self.id.to_inner();
+        self.load_inner_mut().vault.return_flashloan(pool_id, base, quote, potato);
+    }
+
     // === Public-Mutative Functions * OPERATIONAL * ===
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
@@ -489,17 +513,6 @@ module deepbook::pool {
     }
 
     // === Admin Functions ===
-    /// Set a pool as a stable pool. Stable pools have a lower fee.
-    /// Only Admin can set a pool as stable.
-    public fun set_stable<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        _cap: &DeepbookAdminCap,
-        stable: bool,
-        ctx: &TxContext,
-    ) {
-        self.load_inner_mut().state.governance_mut(ctx).set_stable(stable);
-    }
-
     /// Unregister a pool in case it needs to be manually redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
@@ -516,6 +529,7 @@ module deepbook::pool {
         min_size: u64,
         creation_fee: Coin<DEEP>,
         whitelisted_pool: bool,
+        stable_pool: bool,
         ctx: &mut TxContext,
     ): ID {
         assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
@@ -529,7 +543,7 @@ module deepbook::pool {
             disabled_versions: vector[],
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
-            state: state::empty(ctx),
+            state: state::empty(stable_pool, ctx),
             vault: vault::empty(),
             deep_price: deep_price::empty(),
         };

@@ -5,6 +5,7 @@ module deepbook::state_tests {
         object::id_from_address,
     };
     use deepbook::{
+        utils,
         state::Self,
         balances,
         constants,
@@ -24,7 +25,8 @@ module deepbook::state_tests {
         let taker_quantity = 10 * constants::sui_unit();
         let mut taker_order = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
 
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let price = 1 * constants::usdc_unit();
         let quantity = 1 * constants::sui_unit();
         let mut order_info1 = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
@@ -115,7 +117,8 @@ module deepbook::state_tests {
             market_order
         );
 
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let price = 13 * constants::usdc_unit();
         let quantity = 13 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
@@ -141,55 +144,295 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let taker_price = 1 * constants::usdc_unit();
-        let taker_quantity = 1 * constants::sui_unit();
-        let mut taker_order = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
-        let mut state = state::empty(test.ctx());
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        // change fee structure
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+
+        // place maker with old fee structure
+        test.next_tx(ALICE);
         let price = 1 * constants::usdc_unit();
         let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
         state.process_create(&mut order_info, false, test.ctx());
+
+        // place taker with new fee structure
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        let taker_price = 1 * constants::usdc_unit();
+        let taker_quantity = 1 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
         taker_order.match_maker(&mut order_info.to_order(), 0);
         let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
         assert_eq(settled, balances::new(0, 1 * constants::usdc_unit(), 0));
-        assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 1_000_000));
-
-        // change fee structure
-
-        // process taker order
+        assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 500_000));
 
         destroy(state);
         test.end();
     }
 
     // process create after governance to raise stake required. taker fee 0.001
+    #[test]
+    fun process_create_after_raising_steak_req_ok() {
+        let mut test = begin(OWNER);
+        test.next_tx(ALICE);
+        // alice and bob stake 100 DEEP each
+        // default stake required is 100
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 120 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(BOB), 100 * constants::sui_unit(), test.ctx());
+
+        // to make stakes active
+        test.next_epoch(OWNER);
+
+        // still in the current epoch, bob generates 100 volume then 100 volume again. His second order is exercised with lower taker fees.
+        test.next_tx(ALICE);
+        let price = 1 * constants::usdc_unit();
+        let quantity = 1000 * constants::sui_unit();
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        state.process_create(&mut order_info, false, test.ctx());
+        let mut order = order_info.to_order();
+
+        test.next_tx(BOB);
+        let taker_quantity = 100 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        // bob's first order
+        // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
+        assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(100 * constants::sui_unit(), 0, 100_000_000));
+
+        // bob's second order, gets reduced taker fees
+        test.next_tx(BOB);
+        let taker_quantity = 100 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 2));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(100 * constants::sui_unit(), 0, 50_000_000));
+
+        // alice makes a proposal to raise the stake required to 200 and votes for it
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 1000000, 500000, 200 * constants::sui_unit(), test.ctx());
+
+        // new proposal is active, bob can no longer get reduced fees after trading 200 volume
+        test.next_epoch(OWNER);
+
+        test.next_tx(BOB);
+        let taker_quantity = 200 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 3));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
+
+        // even though bob has 200 volume, since he doesn't have 200 stake, he doesn't get reduced fees
+        test.next_tx(BOB);
+        let taker_quantity = 200 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 4));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
+
+        destroy(state);
+        test.end();
+    }
 
     // process create after gov, then after stake to meet req. taker fee 0.0005
+    #[test]
+    fun process_create_after_lowering_steak_req_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        // alice and bob stake 50 DEEP each
+        // default stake required is 100
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 60 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(BOB), 50 * constants::sui_unit(), test.ctx());
+
+        // to make stakes active
+        test.next_epoch(OWNER);
+
+        // bob generates 50 volume three times, his fees are not reduced.
+        test.next_tx(ALICE);
+        let price = 1 * constants::usdc_unit();
+        let quantity = 1000 * constants::sui_unit();
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        state.process_create(&mut order_info, false, test.ctx());
+        let mut order = order_info.to_order();
+
+        test.next_tx(BOB);
+        let taker_quantity = 50 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        // bob's first order
+        // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
+
+        // bob's second order, still no reduced fees
+        test.next_tx(BOB);
+        let taker_quantity = 50 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 2));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
+
+        // bob's third order, still no reduced fees
+        test.next_tx(BOB);
+        let taker_quantity = 50 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 3));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
+
+        // alice makes a proposal to lower the stake required to 50 and votes for it
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 1000000, 500000, 50 * constants::sui_unit(), test.ctx());
+
+        // new proposal is active, bob can no longer get reduced fees after trading 200 volume
+        test.next_epoch(OWNER);
+
+        test.next_tx(BOB);
+        let taker_quantity = 50 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 4));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
+
+        // bob is now over 50 volume and has the necessary stake, his taker fee is reduced
+        test.next_tx(BOB);
+        let taker_quantity = 50 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, taker_quantity, false, test.ctx().epoch());
+        taker_order.set_order_id(utils::encode_order_id(false, price, 5));
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 25_000_000));
+
+        destroy(state);
+        test.end();
+    }
 
     #[test]
     fun process_cancel_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let price = 11831 * constants::usdc_unit();
-        let quantity = 91932 * constants::sui_unit();
+        let price = 10 * constants::usdc_unit();
+        let quantity = 10 * constants::sui_unit();
         let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let (settled, owed) = state.process_create(&mut order_info, false, test.ctx());
 
         assert_eq(settled, balances::new(0, 0, 0));
-        // 11831 * 91932 = 1,087,647,492
-        // 91932 * 0.0005 = 45.966
-        assert_eq(owed, balances::new(0, 1_087_647_492 * constants::usdc_unit(), 45_966_000_000));
+        // 10 * 10 = 100
+        // 10 * 0.0005 = 0.005
+        assert_eq(owed, balances::new(0, 100 * constants::usdc_unit(), 5_000_000));
+
+        let (settled, owed) = state.process_cancel(&mut order_info.to_order(), id_from_address(ALICE), test.ctx());
+        assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 5_000_000));
+        assert_eq(owed, balances::new(0, 0, 0));
 
         destroy(state);
         test.end();
     }
 
     // process cancel after partial fill
+    #[test]
+    fun process_cancel_after_partial_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 10 * constants::usdc_unit();
+        let quantity = 10 * constants::sui_unit();
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_create(&mut order_info, false, test.ctx());
+
+        test.next_tx(ALICE);
+        let price = 1 * constants::usdc_unit();
+        let quantity = 1 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, price, quantity, false, test.ctx().epoch());
+        let mut order = order_info.to_order();
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, false, test.ctx());
+        std::debug::print(&settled);
+        std::debug::print(&owed);
+
+        test.next_tx(ALICE);
+        let (settled, owed) = state.process_cancel(&mut order, id_from_address(ALICE), test.ctx());
+        // paid 100 USDC to buy 10 SUI. 1 SUI filled.
+        // returns 90 USDC and 1 SUI, along with 4_500_000 in DEEP
+        assert_eq(settled, balances::new(1 * constants::sui_unit(), 90 * constants::usdc_unit(), 4_500_000));
+        assert_eq(owed, balances::new(0, 0, 0));
+
+        destroy(state);
+        test.end();
+    }
 
     // process cancel after modify after epoch change & maker fee change
+    #[test]
+    fun process_canecel_after_modify_epoch_change_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        // stake 100 DEEP
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+
+        // place maker order
+        let price = 10 * constants::usdc_unit();
+        let quantity = 10 * constants::sui_unit();
+        let mut order_info = create_order_info_base(ALICE, price, quantity, true, test.ctx().epoch());
+        state.process_create(&mut order_info, false, test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        // propose to reduce fees
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        // modify maker order
+        let mut order = order_info.to_order();
+        let cancel_quantity = 5 * constants::sui_unit();
+        order.modify(cancel_quantity, constants::max_u64() - 1);
+        let (settled, owed) = state.process_modify(id_from_address(ALICE), 5 * constants::sui_unit(), &order, test.ctx());
+        // reduces quantity from 10 to 5. Get refund of 50 USDC and half of the fees
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 2_500_000));
+        assert_eq(owed, balances::new(0, 0, 0));
+
+        test.next_tx(ALICE);
+        // regardless of the fee change, when canceling the remaining amount, get refund of 50 USDC and rest of the fees (other half)
+        let (settled, owed) = state.process_cancel(&mut order, id_from_address(ALICE), test.ctx());
+        assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 2_500_000));
+        assert_eq(owed, balances::new(0, 0, 0));
+
+        destroy(state);
+        test.end();
+    }
 
     // process stake
     #[test]
@@ -197,7 +440,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         let (settled, owed) = state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 1 * constants::sui_unit()));
@@ -224,7 +468,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
 
         abort(0)
@@ -236,7 +481,8 @@ module deepbook::state_tests {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
 
@@ -244,11 +490,12 @@ module deepbook::state_tests {
     }
 
     #[test]
-    fun process_proposal_ok() {
+    fun process_proposal_vote_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);
-        let mut state = state::empty(test.ctx());
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
         state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
         state.process_stake(id_from_address(BOB), 250 * constants::sui_unit(), test.ctx());
 
@@ -263,9 +510,23 @@ module deepbook::state_tests {
         assert!(state.governance().quorum() == 175 * constants::sui_unit(), 0);
         assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 100 * constants::sui_unit(), 0);
 
+        // bob votes on alice's proposal
+        state.process_vote(id_from_address(BOB), id_from_address(ALICE), test.ctx());
+        assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 350 * constants::sui_unit(), 0);
+
+        // alice unstakes, removing her vote
+        state.process_unstake(id_from_address(ALICE), test.ctx());
+        assert!(state.governance().voting_power() == 250 * constants::sui_unit(), 0);
+        assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 250 * constants::sui_unit(), 0);
+
+        // proposal still goes through since 250 >= 175
+        test.next_epoch(OWNER);
+        state.process_proposal(id_from_address(BOB), 600000, 300000, 200 * constants::sui_unit(), test.ctx());
+        assert!(state.governance().trade_params().maker_fee() == 200000, 0);
+        assert!(state.governance().trade_params().taker_fee() == 500000, 0);
+        assert!(state.governance().trade_params().stake_required() == 100 * constants::sui_unit(), 0);
+
         destroy(state);
         test.end();
     }
-
-    // process vote
 }

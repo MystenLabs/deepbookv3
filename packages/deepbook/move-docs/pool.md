@@ -24,6 +24,8 @@ Public-facing interface for the package.
 -  [Function `submit_proposal`](#0x0_pool_submit_proposal)
 -  [Function `vote`](#0x0_pool_vote)
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
+-  [Function `borrow_flashloan`](#0x0_pool_borrow_flashloan)
+-  [Function `return_flashloan`](#0x0_pool_return_flashloan)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
 -  [Function `burn_deep`](#0x0_pool_burn_deep)
 -  [Function `whitelisted`](#0x0_pool_whitelisted)
@@ -34,7 +36,6 @@ Public-facing interface for the package.
 -  [Function `get_level2_ticks_from_mid`](#0x0_pool_get_level2_ticks_from_mid)
 -  [Function `vault_balances`](#0x0_pool_vault_balances)
 -  [Function `get_pool_id_by_asset`](#0x0_pool_get_pool_id_by_asset)
--  [Function `set_stable`](#0x0_pool_set_stable)
 -  [Function `unregister_pool_admin`](#0x0_pool_unregister_pool_admin)
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
@@ -378,7 +379,7 @@ The creation fee is transferred to the treasury address.
 Returns the id of the pool created
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, whitelisted_pool: bool, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_create_pool_admin">create_pool_admin</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, whitelisted_pool: bool, stable_pool: bool, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -394,6 +395,7 @@ Returns the id of the pool created
     min_size: u64,
     creation_fee: Coin&lt;DEEP&gt;,
     whitelisted_pool: bool,
+    stable_pool: bool,
     _cap: &DeepbookAdminCap,
     ctx: &<b>mut</b> TxContext,
 ): ID {
@@ -404,6 +406,7 @@ Returns the id of the pool created
         min_size,
         creation_fee,
         whitelisted_pool,
+        stable_pool,
         ctx,
     )
 }
@@ -916,6 +919,70 @@ The balance_manager's data is updated with the claimed rewards.
 
 </details>
 
+<a name="0x0_pool_borrow_flashloan"></a>
+
+## Function `borrow_flashloan`
+
+Borrow base and quote assets from the Pool. A hot potato is returned,
+forcing the borrower to return the assets within the same transaction.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base_amount: u64,
+    quote_amount: u64,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, FlashLoanHotPotato) {
+    <b>let</b> pool_id = self.id.to_inner();
+
+    self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>().<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>(pool_id, base_amount, quote_amount, ctx)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_return_flashloan"></a>
+
+## Function `return_flashloan`
+
+Return the flashloaned base and quote assets to the Pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, potato: <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base: Coin&lt;BaseAsset&gt;,
+    quote: Coin&lt;QuoteAsset&gt;,
+    potato: FlashLoanHotPotato,
+) {
+    <b>let</b> pool_id = self.id.to_inner();
+    self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>().<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>(pool_id, base, quote, potato);
+}
+</code></pre>
+
+
+
+</details>
+
 <a name="0x0_pool_add_deep_price_point"></a>
 
 ## Function `add_deep_price_point`
@@ -1258,37 +1325,6 @@ Get the ID of the pool given the asset types.
 
 </details>
 
-<a name="0x0_pool_set_stable"></a>
-
-## Function `set_stable`
-
-Set a pool as a stable pool. Stable pools have a lower fee.
-Only Admin can set a pool as stable.
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_stable">set_stable</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, _cap: &<a href="registry.md#0x0_registry_DeepbookAdminCap">registry::DeepbookAdminCap</a>, stable: bool, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
-</code></pre>
-
-
-
-<details>
-<summary>Implementation</summary>
-
-
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_set_stable">set_stable</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
-    _cap: &DeepbookAdminCap,
-    stable: bool,
-    ctx: &TxContext,
-) {
-    self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>().<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_stable">set_stable</a>(stable);
-}
-</code></pre>
-
-
-
-</details>
-
 <a name="0x0_pool_unregister_pool_admin"></a>
 
 ## Function `unregister_pool_admin`
@@ -1323,7 +1359,7 @@ Unregister a pool in case it needs to be manually redeployed.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, whitelisted_pool: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_create_pool">create_pool</a>&lt;BaseAsset, QuoteAsset&gt;(<a href="registry.md#0x0_registry">registry</a>: &<b>mut</b> <a href="registry.md#0x0_registry_Registry">registry::Registry</a>, tick_size: u64, lot_size: u64, min_size: u64, creation_fee: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep_DEEP">deep::DEEP</a>&gt;, whitelisted_pool: bool, stable_pool: bool, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>
 </code></pre>
 
 
@@ -1339,6 +1375,7 @@ Unregister a pool in case it needs to be manually redeployed.
     min_size: u64,
     creation_fee: Coin&lt;DEEP&gt;,
     whitelisted_pool: bool,
+    stable_pool: bool,
     ctx: &<b>mut</b> TxContext,
 ): ID {
     <b>assert</b>!(creation_fee.value() == <a href="constants.md#0x0_constants_pool_creation_fee">constants::pool_creation_fee</a>(), <a href="pool.md#0x0_pool_EInvalidFee">EInvalidFee</a>);
@@ -1352,7 +1389,7 @@ Unregister a pool in case it needs to be manually redeployed.
         disabled_versions: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         pool_id: pool_id.to_inner(),
         <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
-        <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
+        <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(stable_pool, ctx),
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
         <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
     };
