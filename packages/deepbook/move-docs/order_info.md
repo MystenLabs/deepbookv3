@@ -1180,6 +1180,10 @@ Emitted when a maker order is injected into the order book.
 
 ## Function `calculate_partial_fill_balances`
 
+Given a partially filled <code><a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a></code>, the taker fee and maker fee, for the user
+placing the order, calculate all of the balances that need to be settled and
+the balances that are owed. The executed quantity is multiplied by the taker_fee
+and the remaining quantity is multiplied by the maker_fee to get the DEEP fee.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order_info.md#0x0_order_info_calculate_partial_fill_balances">calculate_partial_fill_balances</a>(self: &<b>mut</b> <a href="order_info.md#0x0_order_info_OrderInfo">order_info::OrderInfo</a>, taker_fee: u64, maker_fee: u64): (<a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="balances.md#0x0_balances_Balances">balances::Balances</a>)
@@ -1245,7 +1249,7 @@ Emitted when a maker order is injected into the order book.
 
 ## Function `to_order`
 
-OrderInfo is converted to an Order before being injected into the order book.
+<code><a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a></code> is converted to an <code>Order</code> before being injected into the order book.
 This is done to save space in the order book. Order contains the minimum
 information required to match orders.
 
@@ -1423,8 +1427,8 @@ Returns true if two opposite orders are overlapping in price.
 
 ## Function `match_maker`
 
-Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
-If the book order is expired, the Fill will have the expired flag set to true.
+Matches an <code><a href="order_info.md#0x0_order_info_OrderInfo">OrderInfo</a></code> with an <code>Order</code> from the book. Appends a <code>Fill</code> to fills.
+If the book order is expired, the <code>Fill</code> will have the expired flag set to true.
 Funds for the match or an expired order are returned to the maker as settled.
 
 

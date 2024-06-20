@@ -1,10 +1,17 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// `Balances` represents the three assets make up a pool: base, quote, and deep.
+/// Whenever funds are moved, they are moved in the form of `Balances`.
 module deepbook::balances {
+    // === Structs ===
     public struct Balances has store, copy, drop {
         base: u64,
         quote: u64,
         deep: u64,
     }
 
+    // === Public-Package Functions ===
     public(package) fun empty(): Balances {
         Balances {
             base: 0,

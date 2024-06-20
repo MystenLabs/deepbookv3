@@ -1,4 +1,11 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// History module tracks the volume data for the current epoch and past epochs.
+/// It also tracks past trade params. Past maker fees are used to calculate fills for
+/// old orders. The historic median is used to calculate rebates and burns.
 module deepbook::history {
+    // === Imports ===
     use sui::table::{Self, Table};
     use deepbook::{
         math,
@@ -7,10 +14,11 @@ module deepbook::history {
     };
     use deepbook::trade_params::TradeParams;
 
-    /// Error codes
+    // === Errors ===
     const EHistoricVolumesNotFound: u64 = 0;
 
-    /// Overall volume for the current epoch. Used to calculate rebates and burns.
+    // === Structs ===
+    /// `Volumes` represents volume data for a single epoch.
     public struct Volumes has store, copy, drop {
         total_volume: u64,
         total_staked_volume: u64,
@@ -19,6 +27,7 @@ module deepbook::history {
         trade_params: TradeParams,
     }
 
+    /// `History` represents the volume data for the current epoch and past epochs.
     public struct History has store {
         epoch: u64,
         epoch_created: u64,
@@ -27,6 +36,9 @@ module deepbook::history {
         balance_to_burn: u64,
     }
 
+    // === Public-Package Functions ===
+    /// Create a new `History` instance. Called once upon pool creation. A single blank
+    /// `Volumes` instance is created and added to the historic_volumes table.
     public(package) fun empty(
         trade_params: TradeParams,
         epoch_created: u64,
@@ -51,8 +63,8 @@ module deepbook::history {
         history
     }
 
-    /// Update the epoch if it has changed.
-    /// If there are accounts with rebates, add the current epoch's volume data to the historic volumes.
+    /// Update the epoch if it has changed. If there are accounts with rebates, 
+    /// add the current epoch's volume data to the historic volumes.
     public(package) fun update(
         self: &mut History,
         trade_params: TradeParams,
@@ -71,6 +83,7 @@ module deepbook::history {
         self.historic_volumes.add(self.epoch, self.volumes);
     }
 
+    /// Reset the current epoch's volume data.
     public(package) fun reset_volumes(
         self: &mut History,
         trade_params: TradeParams,
@@ -85,7 +98,7 @@ module deepbook::history {
     }
 
     /// Given the epoch's volume data and the account's volume data,
-    /// calculate and returns rebate amount, updates the burn amount
+    /// calculate and returns rebate amount, updates the burn amount.
     public(package) fun calculate_rebate_amount(
         self: &mut History,
         prev_epoch: u64,
@@ -116,7 +129,7 @@ module deepbook::history {
         balances::new(0, 0, maker_rebate)
     }
 
-    /// Updates the historic_median for past 28 epochs
+    /// Updates the historic_median for past 28 epochs.
     public(package) fun update_historic_median(
         self: &mut History,
     ) {
@@ -185,6 +198,7 @@ module deepbook::history {
         self.volumes.total_fees_collected.add_balances(fees);
     }
 
+    // === Test Functions ===
     #[test_only]
     public fun set_current_volumes(
         history: &mut History,

@@ -3,6 +3,9 @@
 
 # Module `0x0::governance`
 
+Governance module handles the governance of the <code>Pool</code> that it's attached to.
+Users with non zero stake can create proposals and vote on them. Winning
+proposals are used to set the trade parameters for the next epoch.
 
 
 -  [Struct `Proposal`](#0x0_governance_Proposal)
@@ -397,6 +400,7 @@ other pools. This pool will have zero fees.
 
 ## Function `update`
 
+Update the governance state. This is called at the start of every epoch.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <b>update</b>(self: &<b>mut</b> <a href="governance.md#0x0_governance_Governance">governance::Governance</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
@@ -530,7 +534,7 @@ If <code>to_proposal_id</code> is some, the account is voting for that proposal.
 
 ## Function `adjust_voting_power`
 
-Adjust the total voting power by adding and removing stake. If an account's
+Adjust the total voting power by adding and removing stake. For example, if an account's
 stake goes from 2000 to 3000, then <code>stake_before</code> is 2000 and <code>stake_after</code> is 3000.
 Validation of inputs done in <code>State</code>.
 

@@ -3,6 +3,7 @@
 
 # Module `0x0::registry`
 
+Registry holds all created pools.
 
 
 -  [Struct `REGISTRY`](#0x0_registry_REGISTRY)
