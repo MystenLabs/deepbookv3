@@ -482,80 +482,6 @@ module deepbook::pool_tests {
         share_registry_for_testing(test)
     }
 
-    fun test_modify_order(
-        original_quantity: u64,
-        new_quantity: u64,
-        filled_quantity: u64,
-        is_bid: bool,
-    ){
-        let mut test = begin(OWNER);
-        let registry_id = setup_test(OWNER, &mut test);
-        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
-
-        let client_order_id = 1;
-        let base_price = 2 * constants::float_scaling();
-        let expire_timestamp = constants::max_u64();
-        let pay_with_deep = true;
-
-        let order_info = place_limit_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            client_order_id,
-            constants::no_restriction(),
-            constants::self_matching_allowed(),
-            base_price,
-            original_quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-
-        if (filled_quantity > 0) {
-            place_limit_order<SUI, USDC>(
-                ALICE,
-                pool_id,
-                balance_manager_id_alice,
-                client_order_id,
-                constants::no_restriction(),
-                constants::self_matching_allowed(),
-                base_price,
-                filled_quantity,
-                !is_bid,
-                pay_with_deep,
-                expire_timestamp,
-                &mut test,
-            );
-        };
-
-        modify_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            order_info.order_id(),
-            new_quantity,
-            &mut test,
-        );
-
-        borrow_and_verify_book_order<SUI, USDC>(
-            pool_id,
-            order_info.order_id(),
-            is_bid,
-            client_order_id,
-            new_quantity,
-            0,
-            order_info.order_deep_price().deep_per_asset(),
-            test.ctx().epoch(),
-            constants::live(),
-            expire_timestamp,
-            &mut test,
-        );
-
-        end(test);
-    }
-
     #[test_only]
     public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
         sender: address,
@@ -846,6 +772,80 @@ module deepbook::pool_tests {
             return_shared(balance_manager);
             return_shared(clock);
         }
+    }
+
+    fun test_modify_order(
+        original_quantity: u64,
+        new_quantity: u64,
+        filled_quantity: u64,
+        is_bid: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+
+        let client_order_id = 1;
+        let base_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        let order_info = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            base_price,
+            original_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        if (filled_quantity > 0) {
+            place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                base_price,
+                filled_quantity,
+                !is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+        };
+
+        modify_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            order_info.order_id(),
+            new_quantity,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info.order_id(),
+            is_bid,
+            client_order_id,
+            new_quantity,
+            0,
+            order_info.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
     }
 
     fun test_get_pool_id_by_asset(){
