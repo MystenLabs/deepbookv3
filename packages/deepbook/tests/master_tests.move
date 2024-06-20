@@ -192,7 +192,7 @@ module deepbook::master_tests {
         let client_order_id = 1;
         let order_type = constants::no_restriction();
         let price = 2 * constants::float_scaling();
-        let quantity = 1 * constants::float_scaling();
+        let quantity = 3 * constants::float_scaling();
         let big_quantity = 1_000_000 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
@@ -408,10 +408,10 @@ module deepbook::master_tests {
             &mut test
         );
 
-        let executed_quantity = 1 * constants::float_scaling();
+        let executed_quantity = 3 * constants::float_scaling();
         let quantity = 100 * constants::float_scaling();
 
-        // Bob places market ask order with large size in pool 1, only quantity 1 should be filled with Alice's bid order
+        // Bob places market ask order with large size in pool 1, only quantity 3 should be filled with Alice's bid order
         // Bob will not get discounted fees as even though he's staked, there's volume traded yet
         // Taker fee paid should be 0.06%
         pool_tests::place_market_order<SUI, USDC>(
@@ -512,7 +512,11 @@ module deepbook::master_tests {
             alice_balance_manager_id,
             &mut test
         );
-        alice_balance.deep = alice_balance.deep + math::mul(800_000, deep_multiplier);
+        let quantity = 3 * constants::float_scaling();
+        alice_balance.deep = alice_balance.deep + math::mul(
+            quantity,
+            math::mul(800_000, deep_multiplier)
+        );
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -825,7 +829,7 @@ module deepbook::master_tests {
         let client_order_id = 1;
         let order_type = constants::no_restriction();
         let price = 100 * constants::float_scaling();
-        let quantity = 1 * constants::float_scaling();
+        let quantity = 2 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
         let pay_with_deep = true;
@@ -1037,7 +1041,7 @@ module deepbook::master_tests {
         );
 
         let price = 10 * constants::float_scaling();
-        let quantity = 1 * constants::float_scaling();
+        let quantity = 3 * constants::float_scaling();
         // Alice places a bid order in pool 2 with quantity 1, price 10
         // Bob will take and place an additional quantity 1, price 10 order
         // Then Alice will take
@@ -1447,15 +1451,15 @@ module deepbook::master_tests {
         let client_order_id = 1;
         let order_type = constants::no_restriction();
         let price = 2 * constants::float_scaling();
-        let quantity = 1 * constants::float_scaling();
+        let quantity = 3 * constants::float_scaling();
         let is_bid = true;
         let pay_with_deep = true;
         let expire_timestamp = constants::max_u64();
 
         // Since both price points are available, SPAM (quote) conversion should be used
         // Alice and Bob execute cross trading in pool 1
-        // Alice should have 4 less SPAM, Bob should have 4 more SPAM
-        // Alice should have 2 more SUI, Bob should have 2 less SUI
+        // Alice should have 12 less SPAM, Bob should have 12 more SPAM
+        // Alice should have 6 more SUI, Bob should have 6 less SUI
         // DEEP fees will be calculated using the SPAM conversion of 95
         execute_cross_trading<SUI, SPAM>(
             pool1_id,
@@ -1470,13 +1474,13 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test
         );
-        alice_balance.spam = alice_balance.spam - 4 * quantity;
+        alice_balance.spam = alice_balance.spam - 2 * math::mul(quantity, price);
         alice_balance.sui = alice_balance.sui + 2 * quantity;
-        bob_balance.spam = bob_balance.spam + 4 * quantity;
+        bob_balance.spam = bob_balance.spam + 2 * math::mul(quantity, price);
         bob_balance.sui = bob_balance.sui - 2 * quantity;
 
-        let taker_quantity = 1 * constants::float_scaling();
-        let maker_quantity = 1 * constants::float_scaling();
+        let taker_quantity = quantity;
+        let maker_quantity = quantity;
         let maker_fee = math::mul(
             math::mul(constants::maker_fee(), math::mul(price, maker_quantity)),
             95 * constants::float_scaling()
