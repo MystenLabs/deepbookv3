@@ -27,6 +27,7 @@ module deepbook::book {
     const EInvalidTicks: u64 = 4;
     const EOrderBelowMinimumSize: u64 = 5;
     const EOrderInvalidLotSize: u64 = 6;
+    const ENewQuantityMustBeLessThanOriginal: u64 = 7;
 
     // === Constants ===
     const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
@@ -155,6 +156,7 @@ module deepbook::book {
         assert!(new_quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
         let order = self.book_side(order_id).borrow_mut(order_id);
+        assert!(new_quantity < order.quantity(), ENewQuantityMustBeLessThanOriginal);
         let cancel_quantity = order.quantity() - new_quantity;
         order.modify(new_quantity, timestamp);
 
