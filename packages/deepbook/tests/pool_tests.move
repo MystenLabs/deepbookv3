@@ -59,12 +59,27 @@ module deepbook::pool_tests {
     #[test]
     fun test_place_then_fill_bid_ask() {
         place_then_fill(
+            false,
             true,
             constants::no_restriction(),
             3 * constants::float_scaling(),
             3 * constants::float_scaling(),
             6 * constants::float_scaling(),
             3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_fill_bid_ask_stable() {
+        place_then_fill(
+            true,
+            true,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -73,6 +88,7 @@ module deepbook::pool_tests {
     fun test_place_then_fill_ask_bid() {
         place_then_fill(
             false,
+            false,
             constants::no_restriction(),
             3 * constants::float_scaling(),
             3 * constants::float_scaling(),
@@ -83,8 +99,23 @@ module deepbook::pool_tests {
     }
 
     #[test]
+    fun test_place_then_fill_ask_bid_stable() {
+        place_then_fill(
+            true,
+            false,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
     fun test_place_then_ioc_bid_ask() {
         place_then_fill(
+            false,
             true,
             constants::immediate_or_cancel(),
             3 * constants::float_scaling(),
@@ -96,14 +127,43 @@ module deepbook::pool_tests {
     }
 
     #[test]
+    fun test_place_then_ioc_bid_ask_stable() {
+        place_then_fill(
+            true,
+            true,
+            constants::immediate_or_cancel(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
     fun test_place_then_ioc_ask_bid() {
         place_then_fill(
+            false,
             false,
             constants::immediate_or_cancel(),
             3 * constants::float_scaling(),
             3 * constants::float_scaling(),
             6 * constants::float_scaling(),
             3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_ioc_ask_bid_stable() {
+        place_then_fill(
+            true,
+            false,
+            constants::immediate_or_cancel(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -487,7 +547,7 @@ module deepbook::pool_tests {
     ): (ID, ID) {
         let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
         let fee_id = object::id(&creation_fee);
-        let stable_pool = true;
+        let stable_pool = false;
         let pool_id = setup_pool<BaseAsset, QuoteAsset>(
             sender,
             constants::tick_size(), // tick size
@@ -718,7 +778,7 @@ module deepbook::pool_tests {
         balance_manager_id: ID,
         test: &mut Scenario,
     ): ID {
-        let target_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+        let target_pool_id = setup_pool_with_stable_fees<BaseAsset, QuoteAsset>(
             OWNER,
             registry_id,
             false,
@@ -1926,6 +1986,7 @@ module deepbook::pool_tests {
     /// Place normal ask order, then try to fill full order.
     /// Alice places first order, Bob places second order.
     fun place_then_fill(
+        is_stable: bool,
         is_bid: bool,
         order_type: u8,
         alice_quantity: u64,
@@ -1937,7 +1998,11 @@ module deepbook::pool_tests {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
         let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        let pool_id = if (is_stable) {
+            setup_pool_with_stable_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test)
+        } else {
+            setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test)
+        };
         let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let alice_client_order_id = 1;

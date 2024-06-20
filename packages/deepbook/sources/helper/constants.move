@@ -46,6 +46,10 @@ module deepbook::constants {
     #[test_only]
     const TAKER_FEE: u64 = 1000000;
     #[test_only]
+    const STABLE_MAKER_FEE: u64 = 50000;
+    #[test_only]
+    const STABLE_TAKER_FEE: u64 = 100000;
+    #[test_only]
     const TICK_SIZE: u64 = 1000;
     #[test_only]
     const LOT_SIZE: u64 = 1000;
@@ -166,6 +170,16 @@ module deepbook::constants {
     #[test_only]
     public fun taker_fee(): u64 {
         TAKER_FEE
+    }
+
+    #[test_only]
+    public fun stable_maker_fee(): u64 {
+        STABLE_MAKER_FEE
+    }
+
+    #[test_only]
+    public fun stable_taker_fee(): u64 {
+        STABLE_TAKER_FEE
     }
 
     #[test_only]
