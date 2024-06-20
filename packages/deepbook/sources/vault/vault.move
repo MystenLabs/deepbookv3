@@ -18,9 +18,10 @@ module deepbook::vault {
     // === Errors ===
     const ENotEnoughBaseForLoan: u64 = 1;
     const ENotEnoughQuoteForLoan: u64 = 2;
-    const EIncorrectBaseReturned: u64 = 3;
-    const EIncorrectQuoteReturned: u64 = 4;
-    const EIncorrectLoanPool: u64 = 5;
+    const EInvalidLoanAmounts: u64 = 3;
+    const EIncorrectBaseReturned: u64 = 4;
+    const EIncorrectQuoteReturned: u64 = 5;
+    const EIncorrectLoanPool: u64 = 6;
 
     // === Structs ===
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
@@ -101,6 +102,7 @@ module deepbook::vault {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoan) {
         assert!(self.base_balance.value() >= base_amount, ENotEnoughBaseForLoan);
         assert!(self.quote_balance.value() >= quote_amount, ENotEnoughQuoteForLoan);
+        assert!(base_amount > 0 || quote_amount > 0, EInvalidLoanAmounts);
 
         let base = self.base_balance.split(base_amount).into_coin(ctx);
         let quote = self.quote_balance.split(quote_amount).into_coin(ctx);

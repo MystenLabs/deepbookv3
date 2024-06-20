@@ -109,6 +109,154 @@ module deepbook::master_tests {
         test_master_both_conversion_available()
     }
 
+    #[test]
+    fun test_flash_loan_ok(){
+        test_flash_loan()
+    }
+
+    fun test_flash_loan(){
+        let mut test = begin(OWNER);
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+
+        let starting_balance = 10000 * constants::float_scaling();
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            ALICE,
+            starting_balance,
+            &mut test
+        );
+
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+
+        // Alice now has no DEEP after withdrawal and burn for testing
+        withdraw_and_burn<DEEP>(
+            ALICE,
+            alice_balance_manager_id,
+            10000 * constants::float_scaling(),
+            &mut test
+        );
+        alice_balance.deep = 0;
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Create the DEEP reference pool
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+
+        // Owner places a bid order of 5000 DEEP for 5000 SUI into pool 1, which is a SUI/DEEP pool
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 1 * constants::float_scaling();
+        let quantity = 5000 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = true;
+        let maker_fee = constants::maker_fee();
+        let taker_fee = constants::taker_fee();
+
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+
+        // // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        // let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        // let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
+
+        // // Default price point of 100 deep per base will be added
+        // pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+        //     OWNER,
+        //     pool1_id,
+        //     pool1_reference_id,
+        //     &mut test,
+        // );
+        // pool_tests::add_deep_price_point<SPAM, USDC, SPAM, DEEP>(
+        //     OWNER,
+        //     pool2_id,
+        //     pool2_reference_id,
+        //     &mut test,
+        // );
+
+        // let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+        //     ALICE,
+        //     starting_balance,
+        //     &mut test
+        // );
+        // let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+        //     BOB,
+        //     starting_balance,
+        //     &mut test
+        // );
+
+        // // variables to input into order
+        // let client_order_id = 1;
+        // let order_type = constants::no_restriction();
+        // let price = 2 * constants::float_scaling();
+        // let quantity = 1 * constants::float_scaling();
+
+    }
+
+    // fun borrow_flashloan<BaseAsset, QuoteAsset>(
+    //     borrower: address,
+    //     pool_id: ID,
+    //     base_amount: u64,
+    //     quote_amount: u64,
+    //     test: &mut Scenario,
+    // ){
+    //     test.next_tx(borrower);
+    //     {
+    //         let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    //         let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<BaseAsset, QuoteAsset>(
+    //             &mut pool,
+    //             base_amount,
+    //             quote_amount,
+    //             test.ctx(),
+    //         )
+    //     }
+    // }
+
+    fun withdraw_and_burn<T>(
+        sender: address,
+        balance_manager_id: ID,
+        withdraw_amount: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let coin = balance_manager.withdraw<T>(withdraw_amount, test.ctx());
+
+            coin.burn_for_testing();
+            return_shared(balance_manager);
+        }
+    }
+
     // Test when there are 2 reference pools, and price points are added to both, the quote conversion is used
     fun test_master_both_conversion_available(){
         let mut test = begin(OWNER);
