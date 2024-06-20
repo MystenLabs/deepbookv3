@@ -464,12 +464,9 @@ timestamp must be less than the expire timestamp.
     };
     <b>let</b> deep_out = math::mul(
         maker_fee,
-        math::mul(
+        self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().deep_quantity(
             cancel_quantity,
-            self.<a href="order.md#0x0_order_order_deep_price">order_deep_price</a>().deep_quantity(
-                cancel_quantity,
-                math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>())
-            )
+            math::mul(cancel_quantity, self.<a href="order.md#0x0_order_price">price</a>())
         )
     );
 
