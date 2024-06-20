@@ -43,6 +43,7 @@ module deepbook::pool {
     const EInvalidOrderBalanceManager: u64 = 10;
     const EIneligibleTargetPool: u64 = 11;
     const ENoAmountToBurn: u64 = 12;
+    const EPackageVersionDisabled: u64 = 13;
 
     // === Constants ===
     const CURRENT_VERSION: u64 = 1;
@@ -54,7 +55,7 @@ module deepbook::pool {
     }
 
     public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
-        version: u64,
+        disabled_versions: vector<u64>,
         pool_id: ID,
         book: Book,
         state: State,
@@ -525,7 +526,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            version: CURRENT_VERSION,
+            disabled_versions: vector[],
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(ctx),
@@ -574,19 +575,27 @@ module deepbook::pool {
         self.book.asks()
     }
 
-    // === Private Functions ===
     public(package) fun load_inner<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): &PoolInner<BaseAsset, QuoteAsset> {
-        self.inner.load_value()
+        let inner: &PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value();
+        let package_version = CURRENT_VERSION;
+        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+
+        inner
     }
 
     public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
     ): &mut PoolInner<BaseAsset, QuoteAsset> {
-        self.inner.load_value_mut()
+        let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
+        let package_version = CURRENT_VERSION;
+        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+
+        inner
     }
 
+    // === Private Functions ===
     /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
     /// Only called by admin during pool creation
     fun set_whitelist<BaseAsset, QuoteAsset>(

@@ -63,6 +63,7 @@ Public-facing interface for the package.
 <b>use</b> <a href="trade_params.md#0x0_trade_params">0x0::trade_params</a>;
 <b>use</b> <a href="vault.md#0x0_vault">0x0::vault</a>;
 <b>use</b> <a href="dependencies/move-stdlib/type_name.md#0x1_type_name">0x1::type_name</a>;
+<b>use</b> <a href="dependencies/move-stdlib/vector.md#0x1_vector">0x1::vector</a>;
 <b>use</b> <a href="dependencies/sui-framework/balance.md#0x2_balance">0x2::balance</a>;
 <b>use</b> <a href="dependencies/sui-framework/clock.md#0x2_clock">0x2::clock</a>;
 <b>use</b> <a href="dependencies/sui-framework/coin.md#0x2_coin">0x2::coin</a>;
@@ -127,7 +128,7 @@ Public-facing interface for the package.
 
 <dl>
 <dt>
-<code>version: u64</code>
+<code>disabled_versions: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;</code>
 </dt>
 <dd>
 
@@ -345,6 +346,15 @@ Public-facing interface for the package.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>: u64 = 12;
+</code></pre>
+
+
+
+<a name="0x0_pool_EPackageVersionDisabled"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_EPackageVersionDisabled">EPackageVersionDisabled</a>: u64 = 13;
 </code></pre>
 
 
@@ -1339,7 +1349,7 @@ Unregister a pool in case it needs to be manually redeployed.
 
     <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
     <b>let</b> <b>mut</b> pool_inner = <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
-        version: <a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>,
+        disabled_versions: <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>[],
         pool_id: pool_id.to_inner(),
         <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
         <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
@@ -1451,7 +1461,11 @@ Unregister a pool in case it needs to be manually redeployed.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_load_inner">load_inner</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): &<a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
-    self.inner.load_value()
+    <b>let</b> inner: &<a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; = self.inner.load_value();
+    <b>let</b> package_version = <a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>;
+    <b>assert</b>!(!inner.disabled_versions.contains(&package_version), <a href="pool.md#0x0_pool_EPackageVersionDisabled">EPackageVersionDisabled</a>);
+
+    inner
 }
 </code></pre>
 
@@ -1477,7 +1491,11 @@ Unregister a pool in case it needs to be manually redeployed.
 <pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
-    self.inner.load_value_mut()
+    <b>let</b> inner: &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; = self.inner.load_value_mut();
+    <b>let</b> package_version = <a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>;
+    <b>assert</b>!(!inner.disabled_versions.contains(&package_version), <a href="pool.md#0x0_pool_EPackageVersionDisabled">EPackageVersionDisabled</a>);
+
+    inner
 }
 </code></pre>
 
