@@ -3,8 +3,8 @@ module deepbook::book {
         big_vector::{
             Self,
             BigVector,
-            slice_borrow as slice_borrow,
-            slice_borrow_mut as slice_borrow_mut
+            slice_borrow,
+            slice_borrow_mut,
         },
         utils,
         math,
