@@ -358,19 +358,20 @@ Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amou
         <b>let</b> cur_quantity = <a href="order.md#0x0_order">order</a>.quantity();
 
         <b>if</b> (current_timestamp &lt; <a href="order.md#0x0_order">order</a>.expire_timestamp()) {
+            <b>let</b> <b>mut</b> matched_amount;
             <b>if</b> (is_bid) {
-                <b>let</b> <b>mut</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
+                matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, math::mul(cur_quantity, cur_price));
                 matched_amount = matched_amount - matched_amount % lot_size;
-                <b>if</b> (matched_amount == 0) <b>break</b>;
                 amount_out = amount_out + math::div(matched_amount, cur_price);
                 amount_in_left = amount_in_left - matched_amount;
             } <b>else</b> {
-                <b>let</b> <b>mut</b> matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
+                matched_amount = <a href="dependencies/sui-framework/math.md#0x2_math_min">math::min</a>(amount_in_left, cur_quantity);
                 matched_amount = matched_amount - matched_amount % lot_size;
-                <b>if</b> (matched_amount == 0) <b>break</b>;
                 amount_out = amount_out + math::mul(matched_amount, cur_price);
                 amount_in_left = amount_in_left - matched_amount;
             };
+
+            <b>if</b> (matched_amount == 0) <b>break</b>;
         };
 
         (ref, offset) = <b>if</b> (is_bid) book_side.next_slice(ref, offset) <b>else</b> book_side.prev_slice(ref, offset);

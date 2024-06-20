@@ -109,19 +109,20 @@ module deepbook::book {
             let cur_quantity = order.quantity();
 
             if (current_timestamp < order.expire_timestamp()) {
+                let mut matched_amount;
                 if (is_bid) {
-                    let mut matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                    matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
                     matched_amount = matched_amount - matched_amount % lot_size;
-                    if (matched_amount == 0) break;
                     amount_out = amount_out + math::div(matched_amount, cur_price);
                     amount_in_left = amount_in_left - matched_amount;
                 } else {
-                    let mut matched_amount = math::min(amount_in_left, cur_quantity);
+                    matched_amount = math::min(amount_in_left, cur_quantity);
                     matched_amount = matched_amount - matched_amount % lot_size;
-                    if (matched_amount == 0) break;
                     amount_out = amount_out + math::mul(matched_amount, cur_price);
                     amount_in_left = amount_in_left - matched_amount;
                 };
+
+                if (matched_amount == 0) break;
             };
 
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
