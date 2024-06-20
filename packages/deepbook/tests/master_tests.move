@@ -1795,37 +1795,6 @@ module deepbook::master_tests {
         }
     }
 
-    #[allow(unused_function)]
-    /// Debug function, remove after code completion
-    fun check_balance_and_print(
-        balance_manager_id: ID,
-        expected_balances: &ExpectedBalances,
-        test: &mut Scenario,
-    ) {
-        test.next_tx(OWNER);
-        {
-            let my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            let sui = balance_manager::balance<SUI>(&my_manager);
-            let usdc = balance_manager::balance<USDC>(&my_manager);
-            let spam = balance_manager::balance<SPAM>(&my_manager);
-            let deep = balance_manager::balance<DEEP>(&my_manager);
-            std::debug::print(&sui);
-            std::debug::print(&usdc);
-            std::debug::print(&spam);
-            std::debug::print(&deep);
-            std::debug::print(&expected_balances.sui);
-            std::debug::print(&expected_balances.usdc);
-            std::debug::print(&expected_balances.spam);
-            std::debug::print(&expected_balances.deep);
-            assert!(sui == expected_balances.sui, 0);
-            assert!(usdc == expected_balances.usdc, 0);
-            assert!(spam == expected_balances.spam, 0);
-            assert!(deep == expected_balances.deep, 0);
-
-            return_shared(my_manager);
-        }
-    }
-
     fun stake<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
