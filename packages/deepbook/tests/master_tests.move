@@ -120,6 +120,16 @@ module deepbook::master_tests {
         pool_tests::set_time(0, &mut test);
 
         let starting_balance = 10000 * constants::float_scaling();
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 1 * constants::float_scaling();
+        let quantity = 5000 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = true;
+        let maker_fee = constants::maker_fee();
+        let taker_fee = constants::taker_fee();
+
         let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
             OWNER,
             starting_balance,
@@ -140,37 +150,37 @@ module deepbook::master_tests {
             usdt: starting_balance,
         };
 
-        // Alice now has no DEEP after withdrawal and burn for testing
+        // Create the DEEP reference pool
+        let pool_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        // Create the SUI/USDT pool
+        let pool_id = pool_tests::setup_pool_with_default_fees<SUI, USDT>(OWNER, registry_id, false, &mut test);
+
+        // Alice now has no DEEP and SUI after withdrawal and burn for testing
         withdraw_and_burn<DEEP>(
             ALICE,
             alice_balance_manager_id,
             10000 * constants::float_scaling(),
             &mut test
         );
+        withdraw_and_burn<SUI>(
+            ALICE,
+            alice_balance_manager_id,
+            10000 * constants::float_scaling(),
+            &mut test
+        );
         alice_balance.deep = 0;
+        alice_balance.sui = 0;
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
             &mut test
         );
 
-        // Create the DEEP reference pool
-        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
-
         // Owner places a bid order of 5000 DEEP for 5000 SUI into pool 1, which is a SUI/DEEP pool
-        let client_order_id = 1;
-        let order_type = constants::no_restriction();
-        let price = 1 * constants::float_scaling();
-        let quantity = 5000 * constants::float_scaling();
-        let expire_timestamp = constants::max_u64();
-        let is_bid = true;
-        let pay_with_deep = true;
-        let maker_fee = constants::maker_fee();
-        let taker_fee = constants::taker_fee();
-
+        // This allows for flash loans
         pool_tests::place_limit_order<SUI, DEEP>(
             OWNER,
-            pool1_reference_id,
+            pool_reference_id,
             owner_balance_manager_id,
             client_order_id,
             order_type,
@@ -182,6 +192,86 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
+
+        // Owner adds a price point of default 100 DEEP per SUI to the SUI/USDT pool
+        pool_tests::add_deep_price_point<SUI, USDT, SUI, DEEP>(
+            OWNER,
+            pool_id,
+            pool_reference_id,
+            &mut test,
+        );
+
+        // Owner places a sell order in the SUI/USDC pool
+        let price = 2 * constants::float_scaling();
+        let quantity = 10 * constants::float_scaling();
+
+        pool_tests::place_limit_order<SUI, USDT>(
+            OWNER,
+            pool_id,
+            owner_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
+        // Alice will borrow 1000 DEEP from the SUI/DEEP pool
+        let base_needed = 0;
+        let quote_needed = 1000 * constants::float_scaling();
+
+        test.next_tx(ALICE);
+        {
+            let mut loan_pool = test.take_shared_by_id<Pool<SUI, DEEP>>(pool_reference_id);
+            std::debug::print(&8888);
+            let mut target_pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id);
+            std::debug::print(&8888);
+            let clock = test.take_shared<Clock>();
+            let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(alice_balance_manager_id);
+            std::debug::print(&8888);
+            let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<SUI, DEEP>(
+                &mut loan_pool,
+                base_needed,
+                quote_needed,
+                test.ctx(),
+            );
+
+            assert!(base_borrowed.value() == base_needed, 0);
+            assert!(quote_borrowed.value() == quote_needed, 0);
+
+            // Alice deposits the 1000 DEEP into her balance_manager
+            alice_balance_manager.deposit<SUI>(base_borrowed, test.ctx());
+            alice_balance_manager.deposit<DEEP>(quote_borrowed, test.ctx());
+
+            // Alice places a bid order of 5 SUI at price 2, pays fees in DEEP
+            // This will match with owner's sell order
+            let price = 2 * constants::float_scaling();
+            let quantity = 5 * constants::float_scaling();
+            target_pool.place_limit_order<SUI, USDT>(
+                &mut alice_balance_manager,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &clock,
+                test.ctx(),
+            );
+
+            test_utils::destroy(flash_loan);
+            return_shared(alice_balance_manager);
+            return_shared(clock);
+            return_shared(target_pool);
+            return_shared(loan_pool);
+        };
 
         end(test);
 
