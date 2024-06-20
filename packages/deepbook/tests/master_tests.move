@@ -366,7 +366,7 @@ module deepbook::master_tests {
             usdt: starting_balance,
         };
 
-        // Epoch 0. Pool 1 is whitelisted, which means 0 trading fees.
+        // Epoch 0. PoolInner 1 is whitelisted, which means 0 trading fees.
         assert!(test.ctx().epoch() == 0, 0);
 
         // Trading within pool 1 should have no fees
@@ -472,9 +472,9 @@ module deepbook::master_tests {
         );
 
         // Epoch 1
-        // Pool 2 now uses pool 1 as reference pool
-        // Pool 2 deep per base should be 0 (non functional)
-        // Pool 2 deep per quote should be 150 (150 DEEP per SUI)
+        // PoolInner 2 now uses pool 1 as reference pool
+        // PoolInner 2 deep per base should be 0 (non functional)
+        // PoolInner 2 deep per quote should be 150 (150 DEEP per SUI)
         // Stakes in pool 2 for both Alice and Bob are in effect
         test.next_epoch(OWNER);
         assert!(test.ctx().epoch() == 1, 0);

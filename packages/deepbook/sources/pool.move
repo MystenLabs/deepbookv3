@@ -11,6 +11,7 @@ module deepbook::pool {
         clock::Clock,
         event,
         vec_set::VecSet,
+        versioned::{Self, Versioned},
     };
 
     use deepbook::{
@@ -43,9 +44,18 @@ module deepbook::pool {
     const EIneligibleTargetPool: u64 = 11;
     const ENoAmountToBurn: u64 = 12;
 
+    // === Constants ===
+    const CURRENT_VERSION: u64 = 1;
+
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
+        inner: Versioned,
+    }
+
+    public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
+        version: u64,
+        pool_id: ID,
         book: Book,
         state: State,
         vault: Vault<BaseAsset, QuoteAsset>,
@@ -205,12 +215,13 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let (cancel_quantity, order) = self.book.modify_order(order_id, new_quantity, clock.timestamp_ms());
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = self.state.process_modify(balance_manager.id(), cancel_quantity, order, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
 
-        order.emit_order_modified<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
+        order.emit_order_modified<BaseAsset, QuoteAsset>(self.pool_id, ctx.sender(), clock.timestamp_ms());
     }
 
     /// Cancel an order. The order must be owned by the balance_manager.
@@ -224,12 +235,13 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let mut order = self.book.cancel_order(order_id);
         assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
         let (settled, owed) = self.state.process_cancel(&mut order, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
 
-        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.id.to_inner(), ctx.sender(), clock.timestamp_ms());
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(self.pool_id, ctx.sender(), clock.timestamp_ms());
     }
 
     /// Cancel all open orders placed by the balance manager in the pool.
@@ -239,7 +251,8 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let open_orders = self.state.account(balance_manager.id()).open_orders().into_keys();
+        let inner = self.load_inner();
+        let open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
         let mut i = 0;
         while (i < open_orders.length()) {
             let order_id = open_orders[i];
@@ -254,6 +267,7 @@ module deepbook::pool {
         balance_manager: &mut BalanceManager,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
@@ -267,6 +281,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let (settled, owed) = self.state.process_stake(balance_manager.id(), amount, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
@@ -279,6 +294,7 @@ module deepbook::pool {
         balance_manager: &mut BalanceManager,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let (settled, owed) = self.state.process_unstake(balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
@@ -296,6 +312,7 @@ module deepbook::pool {
         stake_required: u64,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         balance_manager.validate_trader(ctx);
         self.state.process_proposal(balance_manager.id(), taker_fee, maker_fee, stake_required, ctx);
     }
@@ -309,6 +326,7 @@ module deepbook::pool {
         proposal_id: ID,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         balance_manager.validate_trader(ctx);
         self.state.process_vote(balance_manager.id(), proposal_id, ctx);
     }
@@ -320,6 +338,7 @@ module deepbook::pool {
         balance_manager: &mut BalanceManager,
         ctx: &TxContext,
     ) {
+        let self = self.load_inner_mut();
         let (settled, owed) = self.state.process_claim_rebates(balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
     }
@@ -334,6 +353,8 @@ module deepbook::pool {
     ) {
         assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
         let reference_pool_price = reference_pool.mid_price(clock);
+
+        let target_pool = target_pool.load_inner_mut();
         let reference_base_type = type_name::get<ReferenceBaseAsset>();
         let reference_quote_type = type_name::get<ReferenceQuoteAsset>();
         let target_base_type = type_name::get<BaseAsset>();
@@ -376,6 +397,7 @@ module deepbook::pool {
         treasury_cap: &mut ProtectedTreasury,
         ctx: &mut TxContext,
     ): u64 {
+        let self = self.load_inner_mut();
         let balance_to_burn = self.state.history_mut().reset_balance_to_burn();
         assert!(balance_to_burn > 0, ENoAmountToBurn);
         let deep_to_burn = self.vault.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
@@ -390,7 +412,7 @@ module deepbook::pool {
     public fun whitelisted<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): bool {
-        self.state.governance().whitelisted()
+        self.load_inner().state.governance().whitelisted()
     }
 
     /// Dry run to determine the amount out for a given base or quote amount.
@@ -401,7 +423,7 @@ module deepbook::pool {
         quote_amount: u64,
         current_timestamp: u64,
     ): (u64, u64) {
-        self.book.get_amount_out(
+        self.load_inner().book.get_amount_out(
             base_amount,
             quote_amount,
             current_timestamp,
@@ -413,7 +435,7 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         clock: &Clock,
     ): u64 {
-        self.book.mid_price(clock.timestamp_ms())
+        self.load_inner().book.mid_price(clock.timestamp_ms())
     }
 
     /// Returns the order_id for all open order for the balance_manager in the pool.
@@ -421,7 +443,7 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: ID,
     ): VecSet<u128> {
-        self.state.account(balance_manager).open_orders()
+        self.load_inner().state.account(balance_manager).open_orders()
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
@@ -433,7 +455,7 @@ module deepbook::pool {
         price_high: u64,
         is_bid: bool,
     ): (vector<u64>, vector<u64>) {
-        self.book.get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
+        self.load_inner().book.get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
@@ -444,6 +466,7 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
     ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
+        let self = self.load_inner();
         let (bid_price, bid_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, true);
         let (ask_price, ask_quantity) = self.book.get_level2_range_and_ticks(constants::min_price(), constants::max_price(), ticks, false);
 
@@ -454,7 +477,7 @@ module deepbook::pool {
     public fun vault_balances<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): (u64, u64, u64) {
-        self.vault.balances()
+        self.load_inner().vault.balances()
     }
 
     /// Get the ID of the pool given the asset types.
@@ -473,7 +496,7 @@ module deepbook::pool {
         stable: bool,
         ctx: &TxContext,
     ) {
-        self.state.governance_mut(ctx).set_stable(stable);
+        self.load_inner_mut().state.governance_mut(ctx).set_stable(stable);
     }
 
     /// Unregister a pool in case it needs to be manually redeployed.
@@ -498,27 +521,30 @@ module deepbook::pool {
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
-
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
-        let pool_uid = object::new(ctx);
-        let pool_id = pool_uid.to_inner();
 
-        let mut pool = Pool<BaseAsset, QuoteAsset> {
-            id: pool_uid,
+        let pool_id = object::new(ctx);
+        let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
+            version: CURRENT_VERSION,
+            pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(ctx),
             vault: vault::empty(),
             deep_price: deep_price::empty(),
         };
-
-        registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
         if (whitelisted_pool) {
-            pool.set_whitelist(ctx);
+            pool_inner.set_whitelist(ctx);
         };
-
-        let params = pool.state.governance().trade_params();
-        let (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+        let params = pool_inner.state.governance().trade_params();
+        let taker_fee = params.taker_fee();
+        let maker_fee = params.maker_fee();
         let treasury_address = registry.treasury_address();
+        let pool = Pool<BaseAsset, QuoteAsset> {
+            id: pool_id,
+            inner: versioned::create(CURRENT_VERSION, pool_inner, ctx),
+        };
+        let pool_id = object::id(&pool);
+        registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
         event::emit(PoolCreated<BaseAsset, QuoteAsset> {
             pool_id,
             taker_fee,
@@ -531,29 +557,40 @@ module deepbook::pool {
         });
 
         transfer::public_transfer(creation_fee, treasury_address);
-        let pool_id = object::id(&pool);
         transfer::share_object(pool);
 
         pool_id
     }
 
     public(package) fun bids<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
+        self: &PoolInner<BaseAsset, QuoteAsset>,
     ): &BigVector<Order> {
         self.book.bids()
     }
 
     public(package) fun asks<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
+        self: &PoolInner<BaseAsset, QuoteAsset>,
     ): &BigVector<Order> {
         self.book.asks()
     }
 
     // === Private Functions ===
+    public(package) fun load_inner<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): &PoolInner<BaseAsset, QuoteAsset> {
+        self.inner.load_value()
+    }
+
+    public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+    ): &mut PoolInner<BaseAsset, QuoteAsset> {
+        self.inner.load_value_mut()
+    }
+
     /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
     /// Only called by admin during pool creation
     fun set_whitelist<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
+        self: &mut PoolInner<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
     ) {
         let base = type_name::get<BaseAsset>();
@@ -583,7 +620,7 @@ module deepbook::pool {
         if (is_bid) {
             (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
         };
-        base_quantity = base_quantity - base_quantity % self.book.lot_size();
+        base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
 
         let mut temp_balance_manager = balance_manager::new(ctx);
         temp_balance_manager.deposit(base_in, ctx);
@@ -628,8 +665,9 @@ module deepbook::pool {
         let whitelist = self.whitelisted();
         assert!(pay_with_deep || whitelist, EFeeTypeNotSupported);
 
+        let self = self.load_inner_mut();
         let mut order_info = order_info::new(
-            self.id.to_inner(),
+            self.pool_id,
             balance_manager.id(),
             client_order_id,
             ctx.sender(),
@@ -641,7 +679,7 @@ module deepbook::pool {
             pay_with_deep,
             ctx.epoch(),
             expire_timestamp,
-            self.deep_price.get_order_deep_price(self.whitelisted()),
+            self.deep_price.get_order_deep_price(whitelist),
             market_order,
         );
         self.book.create_order(&mut order_info, clock.timestamp_ms());

@@ -2265,9 +2265,9 @@ module deepbook::pool_tests {
         is_bid: bool,
     ): &BigVector<Order>{
         let orderbook = if (is_bid) {
-            pool.bids()
+            pool.load_inner().bids()
         } else {
-            pool.asks()
+            pool.load_inner().asks()
         };
         orderbook
     }

@@ -7,6 +7,7 @@ Public-facing interface for the package.
 
 
 -  [Resource `Pool`](#0x0_pool_Pool)
+-  [Struct `PoolInner`](#0x0_pool_PoolInner)
 -  [Struct `PoolCreated`](#0x0_pool_PoolCreated)
 -  [Constants](#@Constants_0)
 -  [Function `create_pool_admin`](#0x0_pool_create_pool_admin)
@@ -38,6 +39,8 @@ Public-facing interface for the package.
 -  [Function `create_pool`](#0x0_pool_create_pool)
 -  [Function `bids`](#0x0_pool_bids)
 -  [Function `asks`](#0x0_pool_asks)
+-  [Function `load_inner`](#0x0_pool_load_inner)
+-  [Function `load_inner_mut`](#0x0_pool_load_inner_mut)
 -  [Function `set_whitelist`](#0x0_pool_set_whitelist)
 -  [Function `swap_exact_amount`](#0x0_pool_swap_exact_amount)
 -  [Function `place_order_int`](#0x0_pool_place_order_int)
@@ -68,6 +71,7 @@ Public-facing interface for the package.
 <b>use</b> <a href="dependencies/sui-framework/transfer.md#0x2_transfer">0x2::transfer</a>;
 <b>use</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context">0x2::tx_context</a>;
 <b>use</b> <a href="dependencies/sui-framework/vec_set.md#0x2_vec_set">0x2::vec_set</a>;
+<b>use</b> <a href="dependencies/sui-framework/versioned.md#0x2_versioned">0x2::versioned</a>;
 <b>use</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep</a>;
 </code></pre>
 
@@ -91,6 +95,45 @@ Public-facing interface for the package.
 <dl>
 <dt>
 <code>id: <a href="dependencies/sui-framework/object.md#0x2_object_UID">object::UID</a></code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>inner: <a href="dependencies/sui-framework/versioned.md#0x2_versioned_Versioned">versioned::Versioned</a></code>
+</dt>
+<dd>
+
+</dd>
+</dl>
+
+
+</details>
+
+<a name="0x0_pool_PoolInner"></a>
+
+## Struct `PoolInner`
+
+
+
+<pre><code><b>struct</b> <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; <b>has</b> store
+</code></pre>
+
+
+
+<details>
+<summary>Fields</summary>
+
+
+<dl>
+<dt>
+<code>version: u64</code>
+</dt>
+<dd>
+
+</dd>
+<dt>
+<code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
 </dt>
 <dd>
 
@@ -203,6 +246,15 @@ Public-facing interface for the package.
 
 
 <pre><code><b>const</b> <a href="pool.md#0x0_pool_EInvalidAmountIn">EInvalidAmountIn</a>: u64 = 6;
+</code></pre>
+
+
+
+<a name="0x0_pool_CURRENT_VERSION"></a>
+
+
+
+<pre><code><b>const</b> <a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>: u64 = 1;
 </code></pre>
 
 
@@ -562,12 +614,13 @@ than the filled quantity. Order must not have already expired.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> (cancel_quantity, <a href="order.md#0x0_order">order</a>) = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_modify_order">modify_order</a>(order_id, new_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.balance_manager_id() == <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>);
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_modify(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), cancel_quantity, <a href="order.md#0x0_order">order</a>, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 
-    <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <a href="order.md#0x0_order">order</a>.emit_order_modified&lt;BaseAsset, QuoteAsset&gt;(self.pool_id, ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
 </code></pre>
 
@@ -601,12 +654,13 @@ Order canceled event is emitted.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> <b>mut</b> <a href="order.md#0x0_order">order</a> = self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_cancel_order">cancel_order</a>(order_id);
     <b>assert</b>!(<a href="order.md#0x0_order">order</a>.balance_manager_id() == <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), <a href="pool.md#0x0_pool_EInvalidOrderBalanceManager">EInvalidOrderBalanceManager</a>);
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_cancel(&<b>mut</b> <a href="order.md#0x0_order">order</a>, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 
-    <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.id.to_inner(), ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
+    <a href="order.md#0x0_order">order</a>.emit_order_canceled&lt;BaseAsset, QuoteAsset&gt;(self.pool_id, ctx.sender(), <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
 }
 </code></pre>
 
@@ -636,7 +690,8 @@ Cancel all open orders placed by the balance manager in the pool.
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
     ctx: &TxContext,
 ) {
-    <b>let</b> open_orders = self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id()).open_orders().into_keys();
+    <b>let</b> inner = self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>();
+    <b>let</b> open_orders = inner.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id()).open_orders().into_keys();
     <b>let</b> <b>mut</b> i = 0;
     <b>while</b> (i &lt; open_orders.length()) {
         <b>let</b> order_id = open_orders[i];
@@ -671,6 +726,7 @@ Withdraw settled amounts to the <code><a href="balance_manager.md#0x0_balance_ma
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.<a href="pool.md#0x0_pool_withdraw_settled_amounts">withdraw_settled_amounts</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id());
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 }
@@ -703,6 +759,7 @@ The balance_manager's data is updated with the staked amount.
     amount: u64,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_stake(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), amount, ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 }
@@ -735,6 +792,7 @@ Balance is transferred to the balance_manager immediately.
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_unstake(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 }
@@ -772,6 +830,7 @@ If the balance_manager has less voting power than the lowest voted proposal, the
     stake_required: u64,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_trader(ctx);
     self.<a href="state.md#0x0_state">state</a>.process_proposal(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), taker_fee, maker_fee, stake_required, ctx);
 }
@@ -805,6 +864,7 @@ Voting for a new proposal will remove the vote from the previous proposal.
     proposal_id: ID,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.validate_trader(ctx);
     self.<a href="state.md#0x0_state">state</a>.process_vote(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), proposal_id, ctx);
 }
@@ -836,6 +896,7 @@ The balance_manager's data is updated with the claimed rewards.
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: &<b>mut</b> BalanceManager,
     ctx: &TxContext,
 ) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_claim_rebates(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
 }
@@ -869,6 +930,8 @@ Allows for the calculation of deep price per base asset.
 ) {
     <b>assert</b>!(reference_pool.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>(), <a href="pool.md#0x0_pool_EIneligibleReferencePool">EIneligibleReferencePool</a>);
     <b>let</b> reference_pool_price = reference_pool.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>);
+
+    <b>let</b> target_pool = target_pool.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> reference_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceBaseAsset&gt;();
     <b>let</b> reference_quote_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;ReferenceQuoteAsset&gt;();
     <b>let</b> target_base_type = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
@@ -931,6 +994,7 @@ Burns DEEP tokens from the pool. Amount to burn is within history
     treasury_cap: &<b>mut</b> ProtectedTreasury,
     ctx: &<b>mut</b> TxContext,
 ): u64 {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> balance_to_burn = self.<a href="state.md#0x0_state">state</a>.history_mut().reset_balance_to_burn();
     <b>assert</b>!(balance_to_burn &gt; 0, <a href="pool.md#0x0_pool_ENoAmountToBurn">ENoAmountToBurn</a>);
     <b>let</b> deep_to_burn = self.<a href="vault.md#0x0_vault">vault</a>.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
@@ -964,7 +1028,7 @@ Accessor to check if the pool is whitelisted.
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_whitelisted">whitelisted</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): bool {
-    self.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()
 }
 </code></pre>
 
@@ -995,7 +1059,7 @@ Only one out of base or quote amount should be non-zero.
     quote_amount: u64,
     current_timestamp: u64,
 ): (u64, u64) {
-    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(
         base_amount,
         quote_amount,
         current_timestamp,
@@ -1027,7 +1091,7 @@ Returns the mid price of the pool.
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>: &Clock,
 ): u64 {
-    self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms())
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_mid_price">mid_price</a>(<a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms())
 }
 </code></pre>
 
@@ -1055,7 +1119,7 @@ Returns the order_id for all open order for the balance_manager in the pool.
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>: ID,
 ): VecSet&lt;u128&gt; {
-    self.<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>).open_orders()
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="state.md#0x0_state">state</a>.<a href="account.md#0x0_account">account</a>(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>).open_orders()
 }
 </code></pre>
 
@@ -1087,7 +1151,7 @@ is_bid is true for bids and false for asks.
     price_high: u64,
     is_bid: bool,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
-    self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>(), is_bid)
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(price_low, price_high, <a href="constants.md#0x0_constants_max_u64">constants::max_u64</a>(), is_bid)
 }
 </code></pre>
 
@@ -1118,6 +1182,7 @@ The price vectors are sorted in descending order for bids and ascending order fo
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     ticks: u64,
 ): (<a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;, <a href="dependencies/move-stdlib/vector.md#0x1_vector">vector</a>&lt;u64&gt;) {
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>();
     <b>let</b> (bid_price, bid_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>true</b>);
     <b>let</b> (ask_price, ask_quantity) = self.<a href="book.md#0x0_book">book</a>.get_level2_range_and_ticks(<a href="constants.md#0x0_constants_min_price">constants::min_price</a>(), <a href="constants.md#0x0_constants_max_price">constants::max_price</a>(), ticks, <b>false</b>);
 
@@ -1148,7 +1213,7 @@ Get all balances held in this pool.
 <pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_vault_balances">vault_balances</a>&lt;BaseAsset, QuoteAsset&gt;(
     self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): (u64, u64, u64) {
-    self.<a href="vault.md#0x0_vault">vault</a>.<a href="balances.md#0x0_balances">balances</a>()
+    self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="vault.md#0x0_vault">vault</a>.<a href="balances.md#0x0_balances">balances</a>()
 }
 </code></pre>
 
@@ -1206,7 +1271,7 @@ Only Admin can set a pool as stable.
     stable: bool,
     ctx: &TxContext,
 ) {
-    self.<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_stable">set_stable</a>(stable);
+    self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>().<a href="state.md#0x0_state">state</a>.governance_mut(ctx).<a href="pool.md#0x0_pool_set_stable">set_stable</a>(stable);
 }
 </code></pre>
 
@@ -1270,27 +1335,30 @@ Unregister a pool in case it needs to be manually redeployed.
     <b>assert</b>!(tick_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidTickSize">EInvalidTickSize</a>);
     <b>assert</b>!(lot_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidLotSize">EInvalidLotSize</a>);
     <b>assert</b>!(min_size &gt; 0, <a href="pool.md#0x0_pool_EInvalidMinSize">EInvalidMinSize</a>);
-
     <b>assert</b>!(<a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;() != <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;QuoteAsset&gt;(), <a href="pool.md#0x0_pool_ESameBaseAndQuote">ESameBaseAndQuote</a>);
-    <b>let</b> pool_uid = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
-    <b>let</b> pool_id = pool_uid.to_inner();
 
-    <b>let</b> <b>mut</b> <a href="pool.md#0x0_pool">pool</a> = <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
-        id: pool_uid,
+    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_new">object::new</a>(ctx);
+    <b>let</b> <b>mut</b> pool_inner = <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
+        version: <a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>,
+        pool_id: pool_id.to_inner(),
         <a href="book.md#0x0_book">book</a>: <a href="book.md#0x0_book_empty">book::empty</a>(tick_size, lot_size, min_size, ctx),
         <a href="state.md#0x0_state">state</a>: <a href="state.md#0x0_state_empty">state::empty</a>(ctx),
         <a href="vault.md#0x0_vault">vault</a>: <a href="vault.md#0x0_vault_empty">vault::empty</a>(),
         <a href="deep_price.md#0x0_deep_price">deep_price</a>: <a href="deep_price.md#0x0_deep_price_empty">deep_price::empty</a>(),
     };
-
-    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;(pool_id);
     <b>if</b> (whitelisted_pool) {
-        <a href="pool.md#0x0_pool">pool</a>.<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(ctx);
+        pool_inner.<a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>(ctx);
     };
-
-    <b>let</b> params = <a href="pool.md#0x0_pool">pool</a>.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
-    <b>let</b> (taker_fee, maker_fee) = (params.taker_fee(), params.maker_fee());
+    <b>let</b> params = pool_inner.<a href="state.md#0x0_state">state</a>.<a href="governance.md#0x0_governance">governance</a>().<a href="trade_params.md#0x0_trade_params">trade_params</a>();
+    <b>let</b> taker_fee = params.taker_fee();
+    <b>let</b> maker_fee = params.maker_fee();
     <b>let</b> treasury_address = <a href="registry.md#0x0_registry">registry</a>.treasury_address();
+    <b>let</b> <a href="pool.md#0x0_pool">pool</a> = <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt; {
+        id: pool_id,
+        inner: <a href="dependencies/sui-framework/versioned.md#0x2_versioned_create">versioned::create</a>(<a href="pool.md#0x0_pool_CURRENT_VERSION">CURRENT_VERSION</a>, pool_inner, ctx),
+    };
+    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(&<a href="pool.md#0x0_pool">pool</a>);
+    <a href="registry.md#0x0_registry">registry</a>.register_pool&lt;BaseAsset, QuoteAsset&gt;(pool_id);
     <a href="dependencies/sui-framework/event.md#0x2_event_emit">event::emit</a>(<a href="pool.md#0x0_pool_PoolCreated">PoolCreated</a>&lt;BaseAsset, QuoteAsset&gt; {
         pool_id,
         taker_fee,
@@ -1303,7 +1371,6 @@ Unregister a pool in case it needs to be manually redeployed.
     });
 
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_public_transfer">transfer::public_transfer</a>(creation_fee, treasury_address);
-    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(&<a href="pool.md#0x0_pool">pool</a>);
     <a href="dependencies/sui-framework/transfer.md#0x2_transfer_share_object">transfer::share_object</a>(<a href="pool.md#0x0_pool">pool</a>);
 
     pool_id
@@ -1320,7 +1387,7 @@ Unregister a pool in case it needs to be manually redeployed.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_bids">bids</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_bids">bids</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_PoolInner">pool::PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
 </code></pre>
 
 
@@ -1330,7 +1397,7 @@ Unregister a pool in case it needs to be manually redeployed.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_bids">bids</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    self: &<a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): &BigVector&lt;Order&gt; {
     self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_bids">bids</a>()
 }
@@ -1346,7 +1413,7 @@ Unregister a pool in case it needs to be manually redeployed.
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_asks">asks</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_asks">asks</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_PoolInner">pool::PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="big_vector.md#0x0_big_vector_BigVector">big_vector::BigVector</a>&lt;<a href="order.md#0x0_order_Order">order::Order</a>&gt;
 </code></pre>
 
 
@@ -1356,9 +1423,61 @@ Unregister a pool in case it needs to be manually redeployed.
 
 
 <pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_asks">asks</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    self: &<a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;,
 ): &BigVector&lt;Order&gt; {
     self.<a href="book.md#0x0_book">book</a>.<a href="pool.md#0x0_pool_asks">asks</a>()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_load_inner"></a>
+
+## Function `load_inner`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_load_inner">load_inner</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<a href="pool.md#0x0_pool_PoolInner">pool::PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_load_inner">load_inner</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+): &<a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
+    self.inner.load_value()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_load_inner_mut"></a>
+
+## Function `load_inner_mut`
+
+
+
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;): &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">pool::PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b>(package) <b>fun</b> <a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+): &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt; {
+    self.inner.load_value_mut()
 }
 </code></pre>
 
@@ -1374,7 +1493,7 @@ Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
 Only called by admin during pool creation
 
 
-<pre><code><b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">pool::PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
 </code></pre>
 
 
@@ -1384,7 +1503,7 @@ Only called by admin during pool creation
 
 
 <pre><code><b>fun</b> <a href="pool.md#0x0_pool_set_whitelist">set_whitelist</a>&lt;BaseAsset, QuoteAsset&gt;(
-    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_PoolInner">PoolInner</a>&lt;BaseAsset, QuoteAsset&gt;,
     ctx: &TxContext,
 ) {
     <b>let</b> base = <a href="dependencies/move-stdlib/type_name.md#0x1_type_name_get">type_name::get</a>&lt;BaseAsset&gt;();
@@ -1434,7 +1553,7 @@ Swap exact amount without needing an balance_manager.
     <b>if</b> (is_bid) {
         (base_quantity, _) = self.<a href="pool.md#0x0_pool_get_amount_out">get_amount_out</a>(0, quote_quantity, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
     };
-    base_quantity = base_quantity - base_quantity % self.<a href="book.md#0x0_book">book</a>.lot_size();
+    base_quantity = base_quantity - base_quantity % self.<a href="pool.md#0x0_pool_load_inner">load_inner</a>().<a href="book.md#0x0_book">book</a>.lot_size();
 
     <b>let</b> <b>mut</b> temp_balance_manager = <a href="balance_manager.md#0x0_balance_manager_new">balance_manager::new</a>(ctx);
     temp_balance_manager.deposit(base_in, ctx);
@@ -1499,8 +1618,9 @@ Swap exact amount without needing an balance_manager.
     <b>let</b> whitelist = self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>();
     <b>assert</b>!(pay_with_deep || whitelist, <a href="pool.md#0x0_pool_EFeeTypeNotSupported">EFeeTypeNotSupported</a>);
 
+    <b>let</b> self = self.<a href="pool.md#0x0_pool_load_inner_mut">load_inner_mut</a>();
     <b>let</b> <b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a> = <a href="order_info.md#0x0_order_info_new">order_info::new</a>(
-        self.id.to_inner(),
+        self.pool_id,
         <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(),
         client_order_id,
         ctx.sender(),
@@ -1512,7 +1632,7 @@ Swap exact amount without needing an balance_manager.
         pay_with_deep,
         ctx.epoch(),
         expire_timestamp,
-        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.get_order_deep_price(self.<a href="pool.md#0x0_pool_whitelisted">whitelisted</a>()),
+        self.<a href="deep_price.md#0x0_deep_price">deep_price</a>.get_order_deep_price(whitelist),
         market_order,
     );
     self.<a href="book.md#0x0_book">book</a>.create_order(&<b>mut</b> <a href="order_info.md#0x0_order_info">order_info</a>, <a href="dependencies/sui-framework/clock.md#0x2_clock">clock</a>.timestamp_ms());
