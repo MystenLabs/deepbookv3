@@ -16,9 +16,11 @@ module deepbook::vault {
     use token::deep::DEEP;
 
     // === Errors ===
-    const ENotEnoughBase: u64 = 1;
-    const ENotEnoughQuote: u64 = 2;
-    const EIncorrectPool: u64 = 4;
+    const ENotEnoughBaseForLoan: u64 = 1;
+    const ENotEnoughQuoteForLoan: u64 = 2;
+    const EIncorrectBaseReturned: u64 = 3;
+    const EIncorrectQuoteReturned: u64 = 4;
+    const EIncorrectLoanPool: u64 = 5;
 
     // === Structs ===
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
@@ -27,7 +29,7 @@ module deepbook::vault {
         deep_balance: Balance<DEEP>,
     }
 
-    public struct FlashLoanHotPotato {
+    public struct FlashLoan {
         pool_id: ID,
         base_amount: u64,
         quote_amount: u64,
@@ -82,7 +84,7 @@ module deepbook::vault {
             self.deep_balance.join(balance);
         };
     }
-    
+
     public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
         amount_to_burn: u64,
@@ -96,19 +98,19 @@ module deepbook::vault {
         base_amount: u64,
         quote_amount: u64,
         ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoanHotPotato) {
-        assert!(self.base_balance.value() >= base_amount, ENotEnoughBase);
-        assert!(self.quote_balance.value() >= quote_amount, ENotEnoughQuote);
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoan) {
+        assert!(self.base_balance.value() >= base_amount, ENotEnoughBaseForLoan);
+        assert!(self.quote_balance.value() >= quote_amount, ENotEnoughQuoteForLoan);
 
         let base = self.base_balance.split(base_amount).into_coin(ctx);
         let quote = self.quote_balance.split(quote_amount).into_coin(ctx);
-        let hot_potato = FlashLoanHotPotato {
+        let flash_loan = FlashLoan {
             pool_id,
             base_amount,
             quote_amount,
         };
 
-        (base, quote, hot_potato)
+        (base, quote, flash_loan)
     }
 
     public(package) fun return_flashloan<BaseAsset, QuoteAsset>(
@@ -116,19 +118,19 @@ module deepbook::vault {
         pool_id: ID,
         base: Coin<BaseAsset>,
         quote: Coin<QuoteAsset>,
-        hot_potato: FlashLoanHotPotato,
+        flash_loan: FlashLoan,
     ) {
-        assert!(base.value() == hot_potato.base_amount, ENotEnoughBase);
-        assert!(quote.value() == hot_potato.quote_amount, ENotEnoughQuote);
-        assert!(pool_id == hot_potato.pool_id, EIncorrectPool);
-        
+        assert!(base.value() == flash_loan.base_amount, EIncorrectBaseReturned);
+        assert!(quote.value() == flash_loan.quote_amount, EIncorrectQuoteReturned);
+        assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
+
         self.base_balance.join(base.into_balance());
         self.quote_balance.join(quote.into_balance());
 
-        let FlashLoanHotPotato {
+        let FlashLoan {
             pool_id: _,
             base_amount: _,
             quote_amount: _,
-        } = hot_potato;
+        } = flash_loan;
     }
 }

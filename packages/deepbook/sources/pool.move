@@ -18,7 +18,7 @@ module deepbook::pool {
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
-        vault::{Self, Vault, FlashLoanHotPotato},
+        vault::{Self, Vault, FlashLoan},
         deep_price::{Self, DeepPrice},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
@@ -377,7 +377,7 @@ module deepbook::pool {
         base_amount: u64,
         quote_amount: u64,
         ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoanHotPotato) {
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoan) {
         self.vault.borrow_flashloan(self.id.to_inner(), base_amount, quote_amount, ctx)
     }
 
@@ -386,9 +386,9 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base: Coin<BaseAsset>,
         quote: Coin<QuoteAsset>,
-        potato: FlashLoanHotPotato,
+        flash_loan: FlashLoan,
     ) {
-        self.vault.return_flashloan(self.id.to_inner(), base, quote, potato);
+        self.vault.return_flashloan(self.id.to_inner(), base, quote, flash_loan);
     }
 
     // === Public-Mutative Functions * OPERATIONAL * ===
