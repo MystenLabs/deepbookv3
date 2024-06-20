@@ -698,7 +698,7 @@ module deepbook::pool_tests {
         };
         let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
-        let (base, quote, deep_required) = get_amount_out<SUI, USDC>(
+        let (base, quote, deep_required) = get_quantity_out<SUI, USDC>(
             pool_id,
             base_in,
             quote_in,
@@ -1466,7 +1466,7 @@ module deepbook::pool_tests {
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
-        let (base, quote, deep_required) = get_amount_out<SUI, USDC>(
+        let (base, quote, deep_required) = get_quantity_out<SUI, USDC>(
             pool_id,
             base_in,
             quote_in,
@@ -2497,7 +2497,7 @@ module deepbook::pool_tests {
         }
     }
 
-    fun get_amount_out<BaseAsset, QuoteAsset>(
+    fun get_quantity_out<BaseAsset, QuoteAsset>(
         pool_id: ID,
         base_amount: u64,
         quote_amount: u64,
@@ -2508,7 +2508,7 @@ module deepbook::pool_tests {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
 
-            let (base_out, quote_out, deep_required) = pool.get_amount_out<BaseAsset, QuoteAsset>(
+            let (base_out, quote_out, deep_required) = pool.get_quantity_out<BaseAsset, QuoteAsset>(
                 base_amount,
                 quote_amount,
                 &clock,

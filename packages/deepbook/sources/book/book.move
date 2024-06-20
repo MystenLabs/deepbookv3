@@ -84,61 +84,61 @@ module deepbook::book {
         self.inject_limit_order(order_info);
     }
 
-    /// Given base_amount and quote_amount, calculate the base_amount_out and quote_amount_out.
-    /// Will return (base_amount_out, quote_amount_out) if base_amount > 0 or quote_amount > 0.
-    public(package) fun get_amount_out(
+    /// Given base_quantity and quote_quantity, calculate the base_quantity_out and quote_quantity_out.
+    /// Will return (base_quantity_out, quote_quantity_out, deep_quantity_required) if base_amount > 0 or quote_amount > 0.
+    public(package) fun get_quantity_out(
         self: &Book,
-        base_amount: u64,
-        quote_amount: u64,
+        base_quantity: u64,
+        quote_quantity: u64,
         taker_fee: u64,
         deep_price: OrderDeepPrice,
         lot_size: u64,
         current_timestamp: u64,
     ): (u64, u64, u64) {
-        assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
-        let is_bid = quote_amount > 0;
-        let mut amount_out = 0;
-        let mut amount_in_left = if (is_bid) quote_amount else base_amount;
+        assert!((base_quantity > 0 || quote_quantity > 0) && !(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+        let is_bid = quote_quantity > 0;
+        let mut quantity_out = 0;
+        let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
 
         let book_side = if (is_bid) &self.asks else &self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (!ref.is_null() && amount_in_left > 0) {
+        while (!ref.is_null() && quantity_in_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
             if (current_timestamp < order.expire_timestamp()) {
-                let mut matched_base_amount;
+                let mut matched_base_quantity;
                 if (is_bid) {
-                    matched_base_amount = math::min(math::div(amount_in_left, cur_price), cur_quantity);
-                    matched_base_amount = matched_base_amount - matched_base_amount % lot_size;
-                    amount_out = amount_out + matched_base_amount;
-                    amount_in_left = amount_in_left - math::mul(matched_base_amount, cur_price);
+                    matched_base_quantity = math::min(math::div(quantity_in_left, cur_price), cur_quantity);
+                    matched_base_quantity = matched_base_quantity - matched_base_quantity % lot_size;
+                    quantity_out = quantity_out + matched_base_quantity;
+                    quantity_in_left = quantity_in_left - math::mul(matched_base_quantity, cur_price);
                 } else {
-                    matched_base_amount = math::min(amount_in_left, cur_quantity);
-                    matched_base_amount = matched_base_amount - matched_base_amount % lot_size;
-                    amount_out = amount_out + math::mul(matched_base_amount, cur_price);
-                    amount_in_left = amount_in_left - matched_base_amount;
+                    matched_base_quantity = math::min(quantity_in_left, cur_quantity);
+                    matched_base_quantity = matched_base_quantity - matched_base_quantity % lot_size;
+                    quantity_out = quantity_out + math::mul(matched_base_quantity, cur_price);
+                    quantity_in_left = quantity_in_left - matched_base_quantity;
                 };
 
-                if (matched_base_amount == 0) break;
+                if (matched_base_quantity == 0) break;
             };
 
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };
 
         let quantity_in_deep = if (is_bid) {
-            deep_price.deep_quantity(amount_out, quote_amount - amount_in_left)
+            deep_price.deep_quantity(quantity_out, quote_quantity - quantity_in_left)
         } else {
-            deep_price.deep_quantity(base_amount - amount_in_left, amount_out)
+            deep_price.deep_quantity(base_quantity - quantity_in_left, quantity_out)
         };
         let deep_fee = math::mul(taker_fee, quantity_in_deep);
 
         if (is_bid) {
-            (amount_out, amount_in_left, deep_fee)
+            (quantity_out, quantity_in_left, deep_fee)
         } else {
-            (amount_in_left, amount_out, deep_fee)
+            (quantity_in_left, quantity_out, deep_fee)
         }
     }
 
