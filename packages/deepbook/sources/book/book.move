@@ -109,36 +109,31 @@ module deepbook::book {
             let cur_quantity = order.quantity();
 
             if (current_timestamp < order.expire_timestamp()) {
-                let mut matched_amount;
+                let mut matched_base_amount;
                 if (is_bid) {
-                    matched_amount = math::min(math::div(amount_in_left, cur_price), cur_quantity);
-                    matched_amount = matched_amount - matched_amount % lot_size;
-                    amount_out = amount_out + matched_amount;
-                    amount_in_left = amount_in_left - math::mul(matched_amount, cur_price);
+                    matched_base_amount = math::min(math::div(amount_in_left, cur_price), cur_quantity);
+                    matched_base_amount = matched_base_amount - matched_base_amount % lot_size;
+                    amount_out = amount_out + matched_base_amount;
+                    amount_in_left = amount_in_left - math::mul(matched_base_amount, cur_price);
                 } else {
-                    matched_amount = math::min(amount_in_left, cur_quantity);
-                    matched_amount = matched_amount - matched_amount % lot_size;
-                    amount_out = amount_out + math::mul(matched_amount, cur_price);
-                    amount_in_left = amount_in_left - matched_amount;
+                    matched_base_amount = math::min(amount_in_left, cur_quantity);
+                    matched_base_amount = matched_base_amount - matched_base_amount % lot_size;
+                    amount_out = amount_out + math::mul(matched_base_amount, cur_price);
+                    amount_in_left = amount_in_left - matched_base_amount;
                 };
 
-                if (matched_amount == 0) break;
+                if (matched_base_amount == 0) break;
             };
 
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };
 
-        let deep_fee = if (is_bid) {
-            math::mul(
-                taker_fee,
-                deep_price.deep_quantity(amount_out, quote_amount - amount_in_left)
-            )
+        let quantity_in_deep = if (is_bid) {
+            deep_price.deep_quantity(amount_out, quote_amount - amount_in_left)
         } else {
-            math::mul(
-                taker_fee,
-                deep_price.deep_quantity(base_amount - amount_in_left, amount_out)
-            )
+            deep_price.deep_quantity(base_amount - amount_in_left, amount_out)
         };
+        let deep_fee = math::mul(taker_fee, quantity_in_deep);
 
         if (is_bid) {
             (amount_out, amount_in_left, deep_fee)
