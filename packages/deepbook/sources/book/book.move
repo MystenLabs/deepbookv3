@@ -17,6 +17,7 @@ module deepbook::book {
         order::Order,
         order_info::OrderInfo,
         constants,
+        deep_price::OrderDeepPrice,
     };
 
     // === Errors ===
@@ -89,8 +90,11 @@ module deepbook::book {
         self: &Book,
         base_amount: u64,
         quote_amount: u64,
+        taker_fee: u64,
+        deep_price: OrderDeepPrice,
+        lot_size: u64,
         current_timestamp: u64,
-    ): (u64, u64) {
+    ): (u64, u64, u64) {
         assert!((base_amount > 0 || quote_amount > 0) && !(base_amount > 0 && quote_amount > 0), EInvalidAmountIn);
         let is_bid = quote_amount > 0;
         let mut amount_out = 0;
@@ -106,11 +110,15 @@ module deepbook::book {
 
             if (current_timestamp < order.expire_timestamp()) {
                 if (is_bid) {
-                    let matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                    let mut matched_amount = math::min(amount_in_left, math::mul(cur_quantity, cur_price));
+                    matched_amount = matched_amount - matched_amount % lot_size;
+                    if (matched_amount == 0) break;
                     amount_out = amount_out + math::div(matched_amount, cur_price);
                     amount_in_left = amount_in_left - matched_amount;
                 } else {
-                    let matched_amount = math::min(amount_in_left, cur_quantity);
+                    let mut matched_amount = math::min(amount_in_left, cur_quantity);
+                    matched_amount = matched_amount - matched_amount % lot_size;
+                    if (matched_amount == 0) break;
                     amount_out = amount_out + math::mul(matched_amount, cur_price);
                     amount_in_left = amount_in_left - matched_amount;
                 };
@@ -119,10 +127,22 @@ module deepbook::book {
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
         };
 
-        if (is_bid) {
-            (amount_out, amount_in_left)
+        let deep_fee = if (is_bid) {
+            math::mul(
+                taker_fee,
+                deep_price.deep_quantity(amount_out, quote_amount - amount_in_left)
+            )
         } else {
-            (amount_in_left, amount_out)
+            math::mul(
+                taker_fee,
+                deep_price.deep_quantity(base_amount - amount_in_left, amount_out)
+            )
+        };
+
+        if (is_bid) {
+            (amount_out, amount_in_left, deep_fee)
+        } else {
+            (amount_in_left, amount_out, deep_fee)
         }
     }
 

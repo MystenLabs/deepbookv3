@@ -698,6 +698,13 @@ module deepbook::pool_tests {
         };
         let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
+        let (base, quote, deep_required) = get_amount_out<SUI, USDC>(
+            pool_id,
+            base_in,
+            quote_in,
+            &mut test,
+        );
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -726,6 +733,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        assert!(base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1456,6 +1466,13 @@ module deepbook::pool_tests {
         };
         let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
+        let (base, quote, deep_required) = get_amount_out<SUI, USDC>(
+            pool_id,
+            base_in,
+            quote_in,
+            &mut test,
+        );
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -1484,6 +1501,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        assert!(base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -2464,7 +2484,7 @@ module deepbook::pool_tests {
         pool_id: ID,
         test: &mut Scenario,
     ): u64 {
-        test.next_tx(ALICE);
+        test.next_tx(OWNER);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
@@ -2474,6 +2494,29 @@ module deepbook::pool_tests {
             return_shared(clock);
 
             mid_price
+        }
+    }
+
+    fun get_amount_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        base_amount: u64,
+        quote_amount: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_amount_out<BaseAsset, QuoteAsset>(
+                base_amount,
+                quote_amount,
+                &clock,
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
         }
     }
 }

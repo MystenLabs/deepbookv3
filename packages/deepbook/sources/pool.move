@@ -397,16 +397,23 @@ module deepbook::pool {
 
     /// Dry run to determine the amount out for a given base or quote amount.
     /// Only one out of base or quote amount should be non-zero.
+    /// Returns the (base_amount_out, quote_amount_out, deep_required)
     public fun get_amount_out<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
         quote_amount: u64,
-        current_timestamp: u64,
-    ): (u64, u64) {
+        clock: &Clock,
+    ): (u64, u64, u64) {
+        let params = self.state.governance().trade_params();
+        let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+        let deep_price = self.deep_price.get_order_deep_price(self.whitelisted());
         self.book.get_amount_out(
             base_amount,
             quote_amount,
-            current_timestamp,
+            taker_fee,
+            deep_price,
+            self.book.lot_size(),
+            clock.timestamp_ms(),
         )
     }
 
@@ -572,7 +579,7 @@ module deepbook::pool {
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
         if (is_bid) {
-            (base_quantity, _) = self.get_amount_out(0, quote_quantity, clock.timestamp_ms());
+            (base_quantity, _, _) = self.get_amount_out(0, quote_quantity, clock);
         };
         base_quantity = base_quantity - base_quantity % self.book.lot_size();
 
