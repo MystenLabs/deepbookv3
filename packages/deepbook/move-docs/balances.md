@@ -3,6 +3,8 @@
 
 # Module `0x0::balances`
 
+<code><a href="balances.md#0x0_balances_Balances">Balances</a></code> represents the three assets make up a pool: base, quote, and deep.
+Whenever funds are moved, they are moved in the form of <code><a href="balances.md#0x0_balances_Balances">Balances</a></code>.
 
 
 -  [Struct `Balances`](#0x0_balances_Balances)
@@ -51,7 +53,7 @@
 
 </dd>
 <dt>
-<code>deep: u64</code>
+<code><a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: u64</code>
 </dt>
 <dd>
 
@@ -80,7 +82,7 @@
     <a href="balances.md#0x0_balances_Balances">Balances</a> {
         base: 0,
         quote: 0,
-        deep: 0,
+        <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: 0,
     }
 }
 </code></pre>
@@ -95,7 +97,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances_new">new</a>(base: u64, quote: u64, deep: u64): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances_new">new</a>(base: u64, quote: u64, <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: u64): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>
 </code></pre>
 
 
@@ -104,11 +106,11 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_new">new</a>(base: u64, quote: u64, deep: u64): <a href="balances.md#0x0_balances_Balances">Balances</a> {
+<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_new">new</a>(base: u64, quote: u64, <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: u64): <a href="balances.md#0x0_balances_Balances">Balances</a> {
     <a href="balances.md#0x0_balances_Balances">Balances</a> {
         base: base,
         quote: quote,
-        deep: deep,
+        <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>,
     }
 }
 </code></pre>
@@ -136,7 +138,7 @@
     <b>let</b> <b>old</b> = *<a href="balances.md#0x0_balances">balances</a>;
     <a href="balances.md#0x0_balances">balances</a>.base = 0;
     <a href="balances.md#0x0_balances">balances</a>.quote = 0;
-    <a href="balances.md#0x0_balances">balances</a>.deep = 0;
+    <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> = 0;
 
     <b>old</b>
 }
@@ -164,7 +166,7 @@
 <pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_add_balances">add_balances</a>(<a href="balances.md#0x0_balances">balances</a>: &<b>mut</b> <a href="balances.md#0x0_balances_Balances">Balances</a>, other: <a href="balances.md#0x0_balances_Balances">Balances</a>) {
     <a href="balances.md#0x0_balances">balances</a>.base = <a href="balances.md#0x0_balances">balances</a>.base + other.base;
     <a href="balances.md#0x0_balances">balances</a>.quote = <a href="balances.md#0x0_balances">balances</a>.quote + other.quote;
-    <a href="balances.md#0x0_balances">balances</a>.deep = <a href="balances.md#0x0_balances">balances</a>.deep + other.deep;
+    <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> = <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> + other.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>;
 }
 </code></pre>
 
@@ -226,7 +228,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances_add_deep">add_deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<b>mut</b> <a href="balances.md#0x0_balances_Balances">balances::Balances</a>, deep: u64)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances_add_deep">add_deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<b>mut</b> <a href="balances.md#0x0_balances_Balances">balances::Balances</a>, <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: u64)
 </code></pre>
 
 
@@ -235,8 +237,8 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_add_deep">add_deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<b>mut</b> <a href="balances.md#0x0_balances_Balances">Balances</a>, deep: u64) {
-    <a href="balances.md#0x0_balances">balances</a>.deep = <a href="balances.md#0x0_balances">balances</a>.deep + deep;
+<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_add_deep">add_deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<b>mut</b> <a href="balances.md#0x0_balances_Balances">Balances</a>, <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>: u64) {
+    <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> = <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a> + <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>;
 }
 </code></pre>
 
@@ -298,7 +300,7 @@
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="balances.md#0x0_balances_deep">deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<a href="balances.md#0x0_balances_Balances">balances::Balances</a>): u64
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<a href="balances.md#0x0_balances_Balances">balances::Balances</a>): u64
 </code></pre>
 
 
@@ -307,8 +309,8 @@
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b>(package) <b>fun</b> <a href="balances.md#0x0_balances_deep">deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<a href="balances.md#0x0_balances_Balances">Balances</a>): u64 {
-    <a href="balances.md#0x0_balances">balances</a>.deep
+<pre><code><b>public</b>(package) <b>fun</b> <a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>(<a href="balances.md#0x0_balances">balances</a>: &<a href="balances.md#0x0_balances_Balances">Balances</a>): u64 {
+    <a href="balances.md#0x0_balances">balances</a>.<a href="dependencies/token/deep.md#0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8_deep">deep</a>
 }
 </code></pre>
 

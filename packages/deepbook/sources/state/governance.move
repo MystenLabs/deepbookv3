@@ -1,7 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Governance module handles the governance of the `Pool` that it's attached to.
+/// Users with non zero stake can create proposals and vote on them. Winning
+/// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance {
+    // === Imports ===
     use sui::vec_map::{Self, VecMap};
     use deepbook::{
         trade_params::{Self, TradeParams},
@@ -103,6 +107,7 @@ module deepbook::governance {
         self.reset_trade_params();
     }
 
+    /// Update the governance state. This is called at the start of every epoch.
     public(package) fun update(self: &mut Governance, ctx: &TxContext) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
@@ -176,7 +181,7 @@ module deepbook::governance {
         };
     }
 
-    /// Adjust the total voting power by adding and removing stake. If an account's
+    /// Adjust the total voting power by adding and removing stake. For example, if an account's
     /// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after` is 3000.
     /// Validation of inputs done in `State`.
     public(package) fun adjust_voting_power(

@@ -12,6 +12,7 @@ module deepbook::order_info {
         fill::Fill,
         balances::{Self, Balances},
         constants,
+        deep_price::OrderDeepPrice,
     };
 
     // === Errors ===
@@ -51,8 +52,8 @@ module deepbook::order_info {
         is_bid: bool,
         // Quantity (in base asset terms) when the order is placed
         original_quantity: u64,
-        // DEEP conversion per base asset
-        deep_per_base: u64,
+        // Deep conversion used by the order
+        order_deep_price: OrderDeepPrice,
         // Expiration timestamp in ms
         expire_timestamp: u64,
         // Quantity executed so far
@@ -160,12 +161,12 @@ module deepbook::order_info {
         self.original_quantity
     }
 
-    public fun executed_quantity(self: &OrderInfo): u64 {
-        self.executed_quantity
+    public fun order_deep_price(self: &OrderInfo): OrderDeepPrice {
+        self.order_deep_price
     }
 
-    public fun deep_per_base(self: &OrderInfo): u64 {
-        self.deep_per_base
+    public fun executed_quantity(self: &OrderInfo): u64 {
+        self.executed_quantity
     }
 
     public fun cumulative_quote_quantity(self: &OrderInfo): u64 {
@@ -210,7 +211,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         epoch: u64,
         expire_timestamp: u64,
-        deep_per_base: u64,
+        order_deep_price: OrderDeepPrice,
         market_order: bool,
     ): OrderInfo {
         OrderInfo {
@@ -224,7 +225,7 @@ module deepbook::order_info {
             price,
             is_bid,
             original_quantity: quantity,
-            deep_per_base,
+            order_deep_price,
             expire_timestamp,
             executed_quantity: 0,
             cumulative_quote_quantity: 0,
@@ -253,20 +254,26 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
+    /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
+    /// placing the order, calculate all of the balances that need to be settled and
+    /// the balances that are owed. The executed quantity is multiplied by the taker_fee
+    /// and the remaining quantity is multiplied by the maker_fee to get the DEEP fee.
     public(package) fun calculate_partial_fill_balances(
         self: &mut OrderInfo,
         taker_fee: u64,
         maker_fee: u64,
     ): (Balances, Balances) {
-        let deep_in = math::mul(
-            self.deep_per_base,
-            math::mul(self.executed_quantity, taker_fee)
+        let taker_deep_in = math::mul(
+            self.order_deep_price.deep_quantity(
+                self.executed_quantity,
+                self.cumulative_quote_quantity
+            ), taker_fee
         );
-        self.paid_fees = deep_in;
+        self.paid_fees = taker_deep_in;
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);
-        owed_balances.add_deep(deep_in);
+        owed_balances.add_deep(taker_deep_in);
 
         if (self.is_bid) {
             settled_balances.add_base(self.executed_quantity);
@@ -278,11 +285,14 @@ module deepbook::order_info {
 
         let remaining_quantity = self.remaining_quantity();
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
-            let deep_in = math::mul(
-                self.deep_per_base,
-                math::mul(remaining_quantity, maker_fee)
+            let maker_deep_in = math::mul(
+                maker_fee,
+                self.order_deep_price.deep_quantity(
+                    remaining_quantity,
+                    math::mul(remaining_quantity, self.price())
+                )
             );
-            owed_balances.add_deep(deep_in);
+            owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
             } else {
@@ -293,7 +303,7 @@ module deepbook::order_info {
         (settled_balances, owed_balances)
     }
 
-    /// OrderInfo is converted to an Order before being injected into the order book.
+    /// `OrderInfo` is converted to an `Order` before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
     public(package) fun to_order(
@@ -304,7 +314,8 @@ module deepbook::order_info {
             self.balance_manager_id,
             self.client_order_id,
             self.remaining_quantity(),
-            self.deep_per_base,
+            self.fee_is_deep,
+            self.order_deep_price,
             self.epoch,
             self.status,
             self.expire_timestamp,
@@ -347,6 +358,12 @@ module deepbook::order_info {
             return true
         };
 
+        if (self.remaining_quantity() == 0) {
+            self.status = constants::filled();
+
+            return true
+        };
+
         false
     }
 
@@ -364,8 +381,8 @@ module deepbook::order_info {
         !self.is_bid && self.price <= maker_price))
     }
 
-    /// Matches an OrderInfo with an Order from the book. Appends a Fill to fills.
-    /// If the book order is expired, the Fill will have the expired flag set to true.
+    /// Matches an `OrderInfo` with an `Order` from the book. Appends a `Fill` to fills.
+    /// If the book order is expired, the `Fill` will have the expired flag set to true.
     /// Funds for the match or an expired order are returned to the maker as settled.
     public(package) fun match_maker(
         self: &mut OrderInfo,
@@ -419,6 +436,7 @@ module deepbook::order_info {
         });
     }
 
+    // === Private Functions ===
     fun emit_order_filled(
         self: &OrderInfo,
         maker: &Order,

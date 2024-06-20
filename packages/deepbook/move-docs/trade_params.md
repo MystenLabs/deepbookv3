@@ -3,6 +3,7 @@
 
 # Module `0x0::trade_params`
 
+TradeParams module contains the trade parameters for a trading pair.
 
 
 -  [Struct `TradeParams`](#0x0_trade_params_TradeParams)
@@ -140,6 +141,8 @@
 
 ## Function `taker_fee_for_user`
 
+Returns the taker fee for a user based on the active stake and volume in deep.
+Taker fee is halved if user has enough stake and volume.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="trade_params.md#0x0_trade_params_taker_fee_for_user">taker_fee_for_user</a>(self: &<a href="trade_params.md#0x0_trade_params_TradeParams">trade_params::TradeParams</a>, active_stake: u64, volume_in_deep: u64): u64

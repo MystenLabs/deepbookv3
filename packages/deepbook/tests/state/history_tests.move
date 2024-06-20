@@ -14,6 +14,7 @@ module deepbook::history_tests {
         history::Self,
         trade_params::Self,
         constants,
+        balances::Self
     };
 
     const EWrongRebateAmount: u64 = 0;
@@ -36,7 +37,7 @@ module deepbook::history_tests {
             history.set_current_volumes(
                 10 * FLOAT_SCALING, // total_volume
                 5 * FLOAT_SCALING, // total_staked_volume
-                500_000_000, // total_fees_collected
+                balances::new(0, 0, 500_000_000), // total_fees_collected
             );
             epochs_to_advance = epochs_to_advance - 1;
         };
@@ -48,7 +49,7 @@ module deepbook::history_tests {
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
-            1_000_000_000, // total_fees_collected
+            balances::new(0, 0, 1_000_000_000), // total_fees_collected
         );
 
         // epoch 30
@@ -60,7 +61,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 180_000_000, EWrongRebateAmount);
+        assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -84,7 +85,7 @@ module deepbook::history_tests {
             history.set_current_volumes(
                 10 * FLOAT_SCALING, // total_volume
                 5 * FLOAT_SCALING, // total_staked_volume
-                500_000_000, // total_fees_collected
+                balances::new(0, 0, 500_000_000), // total_fees_collected
             );
             epochs_to_advance = epochs_to_advance - 1;
         };
@@ -96,7 +97,7 @@ module deepbook::history_tests {
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
-            1_000_000_000, // total_fees_collected
+            balances::new(0, 0, 1_000_000_000), // total_fees_collected
         );
 
         // epoch 31
@@ -109,21 +110,21 @@ module deepbook::history_tests {
             0, // maker_volume
             1_000_000 // stake
         );
-        assert!(rebate_epoch_0_alice == 0, EWrongRebateAmount);
+        assert!(rebate_epoch_0_alice.deep() == 0, EWrongRebateAmount);
 
         let rebate_epoch_1_alice = history.calculate_rebate_amount(
             28, // epoch
             0, // maker_volume
             1_000_000 // stake
         );
-        assert!(rebate_epoch_1_alice == 0, EWrongRebateAmount);
+        assert!(rebate_epoch_1_alice.deep() == 0, EWrongRebateAmount);
 
         let rebate_epoch_1_bob = history.calculate_rebate_amount(
             29,
             3 * FLOAT_SCALING,
             1_000_000 // stake
         );
-        assert!(rebate_epoch_1_bob == 180_000_000, EWrongRebateAmount);
+        assert!(rebate_epoch_1_bob.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -146,7 +147,7 @@ module deepbook::history_tests {
             history.set_current_volumes(
                 10 * FLOAT_SCALING, // total_volume
                 5 * FLOAT_SCALING, // total_staked_volume
-                500_000_000, // total_fees_collected
+                balances::new(0, 0, 500_000_000), // total_fees_collected
             );
             epochs_to_advance = epochs_to_advance - 1;
         };
@@ -158,7 +159,7 @@ module deepbook::history_tests {
         history.set_current_volumes(
             15 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
-            1_000_000_000, // total_fees_collected
+            balances::new(0, 0, 1_000_000_000), // total_fees_collected
         );
 
         // epoch 30
@@ -170,7 +171,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 0, EWrongRebateAmount);
+        assert!(rebate.deep() == 0, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);
@@ -190,7 +191,7 @@ module deepbook::history_tests {
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
-            500_000_000, // total_fees_collected
+            balances::new(0, 0, 500_000_000), // total_fees_collected
         );
         let mut epochs_to_advance = constants::phase_out_epochs() - 1;
 
@@ -200,14 +201,14 @@ module deepbook::history_tests {
             history.set_current_volumes(
                 10 * FLOAT_SCALING, // total_volume
                 5 * FLOAT_SCALING, // total_staked_volume
-                500_000_000, // total_fees_collected
+                balances::new(0, 0, 500_000_000), // total_fees_collected
             );
             let rebate = history.calculate_rebate_amount(
                 0, //test.ctx().epoch() - 1,
                 3 * FLOAT_SCALING,
                 1_000_000
             );
-            assert!(rebate == 300_000_000, EWrongRebateAmount);
+            assert!(rebate.deep() == 300_000_000, EWrongRebateAmount);
             epochs_to_advance = epochs_to_advance - 1;
         };
 
@@ -218,7 +219,7 @@ module deepbook::history_tests {
         history.set_current_volumes(
             10 * FLOAT_SCALING, // total_volume
             5 * FLOAT_SCALING, // total_staked_volume
-            1_000_000_000, // total_fees_collected
+            balances::new(0, 0, 1_000_000_000), // total_fees_collected
         );
 
         // epoch 29
@@ -230,7 +231,7 @@ module deepbook::history_tests {
             3 * FLOAT_SCALING,
             1_000_000
         );
-        assert!(rebate == 180_000_000, EWrongRebateAmount);
+        assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
         test_utils::destroy(history);
         end(test);

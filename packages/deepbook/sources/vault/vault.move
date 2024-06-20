@@ -1,17 +1,31 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// The vault holds all of the assets for this pool. At the end of all
+/// transaction processing, the vault is used to settle the balances for the user.
 module deepbook::vault {
+    // === Imports ===
     use sui::balance::{Self, Balance};
 
     use deepbook::{
-        balance_manager::{BalanceManager, TradeProof},
+        balance_manager::BalanceManager,
         balances::Balances,
     };
 
-    public struct DEEP has store {}
+    use token::deep::DEEP;
 
+    // === Structs ===
     public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
         base_balance: Balance<BaseAsset>,
         quote_balance: Balance<QuoteAsset>,
         deep_balance: Balance<DEEP>,
+    }
+
+    // === Public-Package Functions ===
+    public(package) fun balances<BaseAsset, QuoteAsset>(
+        self: &Vault<BaseAsset, QuoteAsset>
+    ): (u64, u64, u64) {
+        (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
     }
 
     public(package) fun empty<BaseAsset, QuoteAsset>(): Vault<BaseAsset, QuoteAsset> {
@@ -22,37 +36,45 @@ module deepbook::vault {
         }
     }
 
-    /// Transfer any settled amounts for the balance_manager.
+    /// Transfer any settled amounts for the `balance_manager`.
     public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
         self: &mut Vault<BaseAsset, QuoteAsset>,
         balances_out: Balances,
         balances_in: Balances,
         balance_manager: &mut BalanceManager,
-        proof: &TradeProof,
+        ctx: &TxContext,
     ) {
+        balance_manager.validate_trader(ctx);
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
-            balance_manager.deposit_with_proof(proof, balance);
+            balance_manager.deposit_protected(balance, ctx);
         };
         if (balances_out.quote() > balances_in.quote()) {
             let balance = self.quote_balance.split(balances_out.quote() - balances_in.quote());
-            balance_manager.deposit_with_proof(proof, balance);
+            balance_manager.deposit_protected(balance, ctx);
         };
         if (balances_out.deep() > balances_in.deep()) {
             let balance = self.deep_balance.split(balances_out.deep() - balances_in.deep());
-            balance_manager.deposit_with_proof(proof, balance);
+            balance_manager.deposit_protected(balance, ctx);
         };
         if (balances_in.base() > balances_out.base()) {
-            let balance = balance_manager.withdraw_with_proof(proof, balances_in.base() - balances_out.base(), false);
+            let balance = balance_manager.withdraw_protected(balances_in.base() - balances_out.base(), false, ctx);
             self.base_balance.join(balance);
         };
         if (balances_in.quote() > balances_out.quote()) {
-            let balance = balance_manager.withdraw_with_proof(proof, balances_in.quote() - balances_out.quote(), false);
+            let balance = balance_manager.withdraw_protected(balances_in.quote() - balances_out.quote(), false, ctx);
             self.quote_balance.join(balance);
         };
         if (balances_in.deep() > balances_out.deep()) {
-            let balance = balance_manager.withdraw_with_proof(proof, balances_in.deep() - balances_out.deep(), false);
+            let balance = balance_manager.withdraw_protected(balances_in.deep() - balances_out.deep(), false, ctx);
             self.deep_balance.join(balance);
         };
+    }
+
+    public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
+        self: &mut Vault<BaseAsset, QuoteAsset>,
+        amount_to_burn: u64,
+    ): Balance<DEEP> {
+        self.deep_balance.split(amount_to_burn)
     }
 }
