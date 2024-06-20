@@ -94,13 +94,13 @@ module deepbook::master_tests {
     }
 
     #[test]
-    fun test_master_2_ok(){
-        test_master_2(NoError)
+    fun test_master_deep_price_ok(){
+        test_master_deep_price(NoError)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
-    fun test_master_2_recently_added_e(){
-        test_master_2(EDataRecentlyAdded)
+    fun test_master_deep_price_recently_added_e(){
+        test_master_deep_price(EDataRecentlyAdded)
     }
 
     #[test]
@@ -780,7 +780,7 @@ module deepbook::master_tests {
         end(test);
     }
 
-    fun test_master_2(
+    fun test_master_deep_price(
         error_code: u64,
     ){
         let mut test = begin(OWNER);
