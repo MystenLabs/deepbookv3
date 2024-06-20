@@ -18,7 +18,6 @@ module deepbook::vault {
     // === Errors ===
     const ENotEnoughBase: u64 = 1;
     const ENotEnoughQuote: u64 = 2;
-    const EIncorrectSender: u64 = 3;
     const EIncorrectPool: u64 = 4;
 
     // === Structs ===
@@ -28,9 +27,8 @@ module deepbook::vault {
         deep_balance: Balance<DEEP>,
     }
 
-    public struct FlashloanHotPotato {
+    public struct FlashLoanHotPotato {
         pool_id: ID,
-        borrower: address,
         base_amount: u64,
         quote_amount: u64,
     }
@@ -98,14 +96,13 @@ module deepbook::vault {
         base_amount: u64,
         quote_amount: u64,
         ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashloanHotPotato) {
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoanHotPotato) {
         assert!(self.base_balance.value() >= base_amount, ENotEnoughBase);
         assert!(self.quote_balance.value() >= quote_amount, ENotEnoughQuote);
 
         let base = self.base_balance.split(base_amount).into_coin(ctx);
         let quote = self.quote_balance.split(quote_amount).into_coin(ctx);
-        let hot_potato = FlashloanHotPotato {
-            borrower: ctx.sender(),
+        let hot_potato = FlashLoanHotPotato {
             pool_id,
             base_amount,
             quote_amount,
@@ -119,10 +116,8 @@ module deepbook::vault {
         pool_id: ID,
         base: Coin<BaseAsset>,
         quote: Coin<QuoteAsset>,
-        hot_potato: FlashloanHotPotato,
-        ctx: &TxContext,
+        hot_potato: FlashLoanHotPotato,
     ) {
-        assert!(ctx.sender() == hot_potato.borrower, EIncorrectSender);
         assert!(base.value() == hot_potato.base_amount, ENotEnoughBase);
         assert!(quote.value() == hot_potato.quote_amount, ENotEnoughQuote);
         assert!(pool_id == hot_potato.pool_id, EIncorrectPool);
@@ -130,8 +125,7 @@ module deepbook::vault {
         self.base_balance.join(base.into_balance());
         self.quote_balance.join(quote.into_balance());
 
-        let FlashloanHotPotato {
-            borrower: _,
+        let FlashLoanHotPotato {
             pool_id: _,
             base_amount: _,
             quote_amount: _,

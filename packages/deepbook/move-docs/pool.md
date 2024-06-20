@@ -856,7 +856,7 @@ Borrow base and quote assets from the Pool. A hot potato is returned,
 forcing the borrower to return the assets within the same transaction.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashloanHotPotato">vault::FlashloanHotPotato</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
 </code></pre>
 
 
@@ -870,10 +870,8 @@ forcing the borrower to return the assets within the same transaction.
     base_amount: u64,
     quote_amount: u64,
     ctx: &<b>mut</b> TxContext,
-): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, FlashloanHotPotato) {
-    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(self);
-
-    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>(pool_id, base_amount, quote_amount, ctx)
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, FlashLoanHotPotato) {
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>(self.id.to_inner(), base_amount, quote_amount, ctx)
 }
 </code></pre>
 
@@ -888,7 +886,7 @@ forcing the borrower to return the assets within the same transaction.
 Return the flashloaned base and quote assets to the Pool.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, potato: <a href="vault.md#0x0_vault_FlashloanHotPotato">vault::FlashloanHotPotato</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, potato: <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
 </code></pre>
 
 
@@ -901,11 +899,9 @@ Return the flashloaned base and quote assets to the Pool.
     self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
     base: Coin&lt;BaseAsset&gt;,
     quote: Coin&lt;QuoteAsset&gt;,
-    potato: FlashloanHotPotato,
-    ctx: &TxContext,
+    potato: FlashLoanHotPotato,
 ) {
-    <b>let</b> pool_id = <a href="dependencies/sui-framework/object.md#0x2_object_id">object::id</a>(self);
-    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>(pool_id, base, quote, potato, ctx);
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>(self.id.to_inner(), base, quote, potato);
 }
 </code></pre>
 

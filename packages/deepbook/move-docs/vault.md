@@ -8,7 +8,7 @@ transaction processing, the vault is used to settle the balances for the user.
 
 
 -  [Struct `Vault`](#0x0_vault_Vault)
--  [Struct `FlashloanHotPotato`](#0x0_vault_FlashloanHotPotato)
+-  [Struct `FlashLoanHotPotato`](#0x0_vault_FlashLoanHotPotato)
 -  [Constants](#@Constants_0)
 -  [Function `balances`](#0x0_vault_balances)
 -  [Function `empty`](#0x0_vault_empty)
@@ -68,13 +68,13 @@ transaction processing, the vault is used to settle the balances for the user.
 
 </details>
 
-<a name="0x0_vault_FlashloanHotPotato"></a>
+<a name="0x0_vault_FlashLoanHotPotato"></a>
 
-## Struct `FlashloanHotPotato`
+## Struct `FlashLoanHotPotato`
 
 
 
-<pre><code><b>struct</b> <a href="vault.md#0x0_vault_FlashloanHotPotato">FlashloanHotPotato</a>
+<pre><code><b>struct</b> <a href="vault.md#0x0_vault_FlashLoanHotPotato">FlashLoanHotPotato</a>
 </code></pre>
 
 
@@ -86,12 +86,6 @@ transaction processing, the vault is used to settle the balances for the user.
 <dl>
 <dt>
 <code>pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a></code>
-</dt>
-<dd>
-
-</dd>
-<dt>
-<code>borrower: <b>address</b></code>
 </dt>
 <dd>
 
@@ -123,15 +117,6 @@ transaction processing, the vault is used to settle the balances for the user.
 
 
 <pre><code><b>const</b> <a href="vault.md#0x0_vault_EIncorrectPool">EIncorrectPool</a>: u64 = 4;
-</code></pre>
-
-
-
-<a name="0x0_vault_EIncorrectSender"></a>
-
-
-
-<pre><code><b>const</b> <a href="vault.md#0x0_vault_EIncorrectSender">EIncorrectSender</a>: u64 = 3;
 </code></pre>
 
 
@@ -296,7 +281,7 @@ Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balan
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashloanHotPotato">vault::FlashloanHotPotato</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
 </code></pre>
 
 
@@ -311,14 +296,13 @@ Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balan
     base_amount: u64,
     quote_amount: u64,
     ctx: &<b>mut</b> TxContext,
-): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashloanHotPotato">FlashloanHotPotato</a>) {
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashLoanHotPotato">FlashLoanHotPotato</a>) {
     <b>assert</b>!(self.base_balance.value() &gt;= base_amount, <a href="vault.md#0x0_vault_ENotEnoughBase">ENotEnoughBase</a>);
     <b>assert</b>!(self.quote_balance.value() &gt;= quote_amount, <a href="vault.md#0x0_vault_ENotEnoughQuote">ENotEnoughQuote</a>);
 
     <b>let</b> base = self.base_balance.split(base_amount).into_coin(ctx);
     <b>let</b> quote = self.quote_balance.split(quote_amount).into_coin(ctx);
-    <b>let</b> hot_potato = <a href="vault.md#0x0_vault_FlashloanHotPotato">FlashloanHotPotato</a> {
-        borrower: ctx.sender(),
+    <b>let</b> hot_potato = <a href="vault.md#0x0_vault_FlashLoanHotPotato">FlashLoanHotPotato</a> {
         pool_id,
         base_amount,
         quote_amount,
@@ -338,7 +322,7 @@ Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balan
 
 
 
-<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, hot_potato: <a href="vault.md#0x0_vault_FlashloanHotPotato">vault::FlashloanHotPotato</a>, ctx: &<a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>)
+<pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="vault.md#0x0_vault_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="vault.md#0x0_vault_Vault">vault::Vault</a>&lt;BaseAsset, QuoteAsset&gt;, pool_id: <a href="dependencies/sui-framework/object.md#0x2_object_ID">object::ID</a>, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, hot_potato: <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
 </code></pre>
 
 
@@ -352,10 +336,8 @@ Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balan
     pool_id: ID,
     base: Coin&lt;BaseAsset&gt;,
     quote: Coin&lt;QuoteAsset&gt;,
-    hot_potato: <a href="vault.md#0x0_vault_FlashloanHotPotato">FlashloanHotPotato</a>,
-    ctx: &TxContext,
+    hot_potato: <a href="vault.md#0x0_vault_FlashLoanHotPotato">FlashLoanHotPotato</a>,
 ) {
-    <b>assert</b>!(ctx.sender() == hot_potato.borrower, <a href="vault.md#0x0_vault_EIncorrectSender">EIncorrectSender</a>);
     <b>assert</b>!(base.value() == hot_potato.base_amount, <a href="vault.md#0x0_vault_ENotEnoughBase">ENotEnoughBase</a>);
     <b>assert</b>!(quote.value() == hot_potato.quote_amount, <a href="vault.md#0x0_vault_ENotEnoughQuote">ENotEnoughQuote</a>);
     <b>assert</b>!(pool_id == hot_potato.pool_id, <a href="vault.md#0x0_vault_EIncorrectPool">EIncorrectPool</a>);
@@ -363,8 +345,7 @@ Transfer any settled amounts for the <code><a href="balance_manager.md#0x0_balan
     self.base_balance.join(base.into_balance());
     self.quote_balance.join(quote.into_balance());
 
-    <b>let</b> <a href="vault.md#0x0_vault_FlashloanHotPotato">FlashloanHotPotato</a> {
-        borrower: _,
+    <b>let</b> <a href="vault.md#0x0_vault_FlashLoanHotPotato">FlashLoanHotPotato</a> {
         pool_id: _,
         base_amount: _,
         quote_amount: _,

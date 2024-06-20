@@ -19,7 +19,6 @@ module deepbook::vault_tests {
 
     const OWNER: address = @0xF;
     const ALICE: address = @0xA;
-    const BOB: address = @0xB;
 
     #[test]
     fun borrow_flashloan_ok() {
@@ -38,7 +37,7 @@ module deepbook::vault_tests {
         // borrow flashloan
         let (base, quote, hot_potato) = 
             vault.borrow_flashloan(id_from_address(@0x1), 1000, 1000, test.ctx());
-        vault.return_flashloan(id_from_address(@0x1), base, quote, hot_potato, test.ctx());
+        vault.return_flashloan(id_from_address(@0x1), base, quote, hot_potato);
 
         destroy(vault);
         destroy(balance_manager);
@@ -63,7 +62,7 @@ module deepbook::vault_tests {
         let (base, quote, hot_potato) = 
             vault.borrow_flashloan(id_from_address(@0x1), 0, 1000, test.ctx());
         let return_base = mint_for_testing<SPAM>(0, test.ctx());
-        vault.return_flashloan(id_from_address(@0x1), return_base, quote, hot_potato, test.ctx());
+        vault.return_flashloan(id_from_address(@0x1), return_base, quote, hot_potato);
 
         destroy(base);
         destroy(vault);
@@ -130,31 +129,7 @@ module deepbook::vault_tests {
         // borrow flashloan
         let (base, quote, hot_potato) = 
             vault.borrow_flashloan(id_from_address(@0x1), 1000, 1000, test.ctx());
-        vault.return_flashloan(id_from_address(@0x2), base, quote, hot_potato, test.ctx());
-        
-        abort(0)
-    }
-
-    #[test, expected_failure(abort_code = vault::EIncorrectSender)]
-    fun borrow_flashloan_incorrect_sender_e() {
-        let mut test = begin(OWNER);
-
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
-
-        // borrow flashloan
-        let (base, quote, hot_potato) = 
-            vault.borrow_flashloan(id_from_address(@0x1), 1000, 1000, test.ctx());
-        
-        test.next_tx(BOB);
-        vault.return_flashloan(id_from_address(@0x1), base, quote, hot_potato, test.ctx());
+        vault.return_flashloan(id_from_address(@0x2), base, quote, hot_potato);
         
         abort(0)
     }
@@ -177,7 +152,7 @@ module deepbook::vault_tests {
         let (mut base, quote, hot_potato) = 
             vault.borrow_flashloan(id_from_address(@0x1), 1000, 1000, test.ctx());
         let return_base = base.split(999, test.ctx());
-        vault.return_flashloan(id_from_address(@0x1), return_base, quote, hot_potato, test.ctx());
+        vault.return_flashloan(id_from_address(@0x1), return_base, quote, hot_potato);
 
         abort(0)
     }
@@ -200,7 +175,7 @@ module deepbook::vault_tests {
         let (base, mut quote, hot_potato) = 
             vault.borrow_flashloan(id_from_address(@0x1), 1000, 1000, test.ctx());
         let return_quote = quote.split(999, test.ctx());
-        vault.return_flashloan(id_from_address(@0x1), base, return_quote, hot_potato, test.ctx());
+        vault.return_flashloan(id_from_address(@0x1), base, return_quote, hot_potato);
 
         abort(0)
     }
