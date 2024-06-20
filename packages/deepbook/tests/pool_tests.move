@@ -643,7 +643,7 @@ module deepbook::pool_tests {
 
         let alice_client_order_id = 1;
         let alice_price = 3 * constants::float_scaling();
-        let alice_quantity = 1 * constants::float_scaling();
+        let alice_quantity = 2 * constants::float_scaling();
         let expired_price = if (is_bid) {
             3 * constants::float_scaling()
         } else {
@@ -687,16 +687,16 @@ module deepbook::pool_tests {
         set_time(200, &mut test);
 
         let base_in = if (is_bid) {
-            2 * constants::float_scaling() + residual
+            4 * constants::float_scaling() + residual
         } else {
             0
         };
         let quote_in = if (is_bid) {
             0
         } else {
-            4 * constants::float_scaling() + residual
+            8 * constants::float_scaling() + residual
         };
-        let deep_in = math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
+        let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
@@ -718,11 +718,11 @@ module deepbook::pool_tests {
             };
 
         if (is_bid) {
-            assert!(base_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 3 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(base_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
         } else {
-            assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 1 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
+            assert!(quote_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
