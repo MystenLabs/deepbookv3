@@ -370,27 +370,44 @@ module deepbook::pool {
     }
 
     // === Public-Mutative Functions * FLASHLOAN * ===
-    /// Borrow base and quote assets from the Pool. A hot potato is returned,
+
+    /// Borrow base assets from the Pool. A hot potato is returned,
     /// forcing the borrower to return the assets within the same transaction.
-    public fun borrow_flashloan<BaseAsset, QuoteAsset>(
+    public fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
-        quote_amount: u64,
         ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoan) {
-        self.vault.borrow_flashloan(self.id.to_inner(), base_amount, quote_amount, ctx)
+    ): (Coin<BaseAsset>, FlashLoan) {
+        self.vault.borrow_flashloan_base(self.id.to_inner(), base_amount, ctx)
     }
 
-    /// Return the flashloaned base and quote assets to the Pool.
+    /// Borrow quote assets from the Pool. A hot potato is returned,
+    /// forcing the borrower to return the assets within the same transaction.
+    public fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        quote_amount: u64,
+        ctx: &mut TxContext,
+    ): (Coin<QuoteAsset>, FlashLoan) {
+        self.vault.borrow_flashloan_quote(self.id.to_inner(), quote_amount, ctx)
+    }
+
+    /// Return the flashloaned base assets to the Pool.
     /// FlashLoan object will only be unwrapped if the assets are returned,
     /// otherwise the transaction will fail.
-    public fun return_flashloan<BaseAsset, QuoteAsset>(
+    public fun return_flashloan_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        base: Coin<BaseAsset>,
-        quote: Coin<QuoteAsset>,
+        coin: Coin<BaseAsset>,
         flash_loan: FlashLoan,
     ) {
-        self.vault.return_flashloan(self.id.to_inner(), base, quote, flash_loan);
+        self.vault.return_flashloan_base(self.id.to_inner(), coin, flash_loan);
+    }
+
+    public fun return_flashloan_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        coin: Coin<QuoteAsset>,
+        flash_loan: FlashLoan,
+    ) {
+        self.vault.return_flashloan_quote(self.id.to_inner(), coin, flash_loan);
     }
 
     // === Public-Mutative Functions * OPERATIONAL * ===

@@ -13,7 +13,7 @@ module deepbook::master_tests {
         sui::SUI,
         test_utils,
         clock::{Clock},
-        coin::{Self, Coin},
+        coin::Coin,
     };
     use deepbook::{
         balance_manager::{Self, BalanceManager},
@@ -51,6 +51,7 @@ module deepbook::master_tests {
     const ENotEnoughBaseForLoan: u64 = 9;
     const ENotEnoughQuoteForLoan: u64 = 10;
     const EIncorrectLoanPool: u64 = 11;
+    const EIncorrectTypeReturned: u64 = 12;
 
     #[test]
     fun test_master_ok(){
@@ -130,6 +131,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::vault::EIncorrectLoanPool)]
     fun test_flash_loan_incorrect_pool_e(){
         test_flash_loan(EIncorrectLoanPool)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::vault::EIncorrectTypeReturned)]
+    fun test_flash_loan_incorrect_type_returned_e(){
+        test_flash_loan(EIncorrectTypeReturned)
     }
 
     fun test_flash_loan(
@@ -250,30 +256,32 @@ module deepbook::master_tests {
             // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
             // Alice will borrow 100 DEEP from the SUI/DEEP pool
             // If Alice tries to borrow too much from the pool, there will be an error
-            let base_needed = if (error_code == ENotEnoughBaseForLoan) {
-                10000 * constants::float_scaling()
-            } else {
-                0
-            };
 
             let quote_needed = if (error_code == ENotEnoughQuoteForLoan) {
                 10000 * constants::float_scaling()
             } else {
                 100 * constants::float_scaling()
             };
-            let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<SUI, DEEP>(
+            if (error_code == ENotEnoughBaseForLoan) {
+                let base_needed = 10000 * constants::float_scaling();
+                let (_base_borrowed, _flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
+                    &mut loan_pool,
+                    base_needed,
+                    test.ctx(),
+                );
+                abort 0
+            };
+
+            let (quote_borrowed, flash_loan) = pool::borrow_flashloan_quote<SUI, DEEP>(
                 &mut loan_pool,
-                base_needed,
                 quote_needed,
                 test.ctx(),
             );
             alice_balance.deep = alice_balance.deep + quote_needed;
 
-            assert!(base_borrowed.value() == base_needed, 0);
             assert!(quote_borrowed.value() == quote_needed, 0);
 
             // Alice deposits the 100 DEEP into her balance_manager
-            alice_balance_manager.deposit<SUI>(base_borrowed, test.ctx());
             alice_balance_manager.deposit<DEEP>(quote_borrowed, test.ctx());
 
             // Alice places a bid order of 5 SUI at price 2, pays fees in DEEP
@@ -324,16 +332,14 @@ module deepbook::master_tests {
             alice_balance.deep = alice_balance.deep + math::mul(quantity, price);
 
             // Alice withdraws the 1 DEEP she borrowed from balance_manager and returns the loan
-            let base_return = coin::zero<SUI>(test.ctx());
             let quote_return = alice_balance_manager.withdraw<DEEP>(quote_needed, test.ctx());
 
             if (error_code == EIncorrectLoanPool) {
-                let wrong_base_return = coin::zero<SUI>(test.ctx());
                 let wrong_quote_return = alice_balance_manager.withdraw<USDT>(quote_needed, test.ctx());
-                target_pool.return_flashloan(wrong_base_return, wrong_quote_return, flash_loan);
+                target_pool.return_flashloan_quote(wrong_quote_return, flash_loan);
                 abort 0
             };
-            loan_pool.return_flashloan(base_return, quote_return, flash_loan);
+            loan_pool.return_flashloan_quote(quote_return, flash_loan);
             alice_balance.deep = alice_balance.deep - quote_needed;
 
             return_shared(alice_balance_manager);
@@ -347,6 +353,73 @@ module deepbook::master_tests {
             &alice_balance,
             &mut test
         );
+
+        // Alice borrows and returns the base asset, deposits into manager,
+        // withdraws and returns the base asset
+        // No balance changes
+        test.next_tx(ALICE);
+        {
+            let mut loan_pool = test.take_shared_by_id<Pool<SUI, DEEP>>(reference_pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(alice_balance_manager_id);
+
+            let base_needed = 1 * constants::float_scaling();
+            let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
+                &mut loan_pool,
+                base_needed,
+                test.ctx(),
+            );
+            alice_balance.deep = alice_balance.deep + base_needed;
+
+            assert!(base_borrowed.value() == base_needed, 0);
+
+            alice_balance_manager.deposit<SUI>(base_borrowed, test.ctx());
+
+            let base_return = alice_balance_manager.withdraw<SUI>(base_needed, test.ctx());
+            loan_pool.return_flashloan_base(base_return, flash_loan);
+            alice_balance.deep = alice_balance.deep - base_needed;
+
+            return_shared(alice_balance_manager);
+            return_shared(clock);
+            return_shared(loan_pool);
+        };
+
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Alice borrows the base asset, and tries to return the quote asset in place of the base asset
+        // This will fail
+        if (error_code == EIncorrectTypeReturned){
+            test.next_tx(ALICE);
+            {
+                let mut loan_pool = test.take_shared_by_id<Pool<SUI, DEEP>>(reference_pool_id);
+                let clock = test.take_shared<Clock>();
+                let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(alice_balance_manager_id);
+
+                let base_needed = 1 * constants::float_scaling();
+                let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
+                    &mut loan_pool,
+                    base_needed,
+                    test.ctx(),
+                );
+                alice_balance.deep = alice_balance.deep + base_needed;
+
+                assert!(base_borrowed.value() == base_needed, 0);
+
+                alice_balance_manager.deposit<SUI>(base_borrowed, test.ctx());
+
+                let quote_return = alice_balance_manager.withdraw<DEEP>(base_needed, test.ctx());
+                loan_pool.return_flashloan_quote(quote_return, flash_loan);
+                alice_balance.deep = alice_balance.deep - base_needed;
+
+                return_shared(alice_balance_manager);
+                return_shared(clock);
+                return_shared(loan_pool);
+            };
+        };
 
         end(test);
     }
