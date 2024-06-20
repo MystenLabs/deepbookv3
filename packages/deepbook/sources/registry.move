@@ -5,7 +5,6 @@
 module deepbook::registry {
     // === Imports ===
     use std::type_name::{Self, TypeName};
-
     use sui::{
         bag::{Self, Bag},
     };

@@ -9,7 +9,6 @@ module deepbook::state {
     use sui::{
         table::{Self, Table},
     };
-
     use deepbook::{
         math,
         history::{Self, History},

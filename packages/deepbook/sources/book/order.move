@@ -137,6 +137,11 @@ module deepbook::order {
         self.quantity = new_quantity;
     }
 
+    /// Calculate the refund for a canceled order. The refund is any
+    /// unfilled quantity and the maker fee. If the cancel quantity is
+    /// not provided, the remaining quantity is used. Cancel quantity is
+    /// provided when modifying an order, so that the refund can be calculated
+    /// based on the quantity that's reduced.
     public(package) fun calculate_cancel_refund(
         self: &Order,
         maker_fee: u64,

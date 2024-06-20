@@ -441,6 +441,11 @@ timestamp must be less than the expire timestamp.
 
 ## Function `calculate_cancel_refund`
 
+Calculate the refund for a canceled order. The refund is any
+unfilled quantity and the maker fee. If the cancel quantity is
+not provided, the remaining quantity is used. Cancel quantity is
+provided when modifying an order, so that the refund can be calculated
+based on the quantity that's reduced.
 
 
 <pre><code><b>public</b>(<b>friend</b>) <b>fun</b> <a href="order.md#0x0_order_calculate_cancel_refund">calculate_cancel_refund</a>(self: &<a href="order.md#0x0_order_Order">order::Order</a>, maker_fee: u64, cancel_quantity: <a href="dependencies/move-stdlib/option.md#0x1_option_Option">option::Option</a>&lt;u64&gt;): <a href="balances.md#0x0_balances_Balances">balances::Balances</a>

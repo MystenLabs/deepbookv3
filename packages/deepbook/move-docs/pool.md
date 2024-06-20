@@ -23,6 +23,8 @@ Public-facing interface for the package.
 -  [Function `submit_proposal`](#0x0_pool_submit_proposal)
 -  [Function `vote`](#0x0_pool_vote)
 -  [Function `claim_rebates`](#0x0_pool_claim_rebates)
+-  [Function `borrow_flashloan`](#0x0_pool_borrow_flashloan)
+-  [Function `return_flashloan`](#0x0_pool_return_flashloan)
 -  [Function `add_deep_price_point`](#0x0_pool_add_deep_price_point)
 -  [Function `burn_deep`](#0x0_pool_burn_deep)
 -  [Function `whitelisted`](#0x0_pool_whitelisted)
@@ -839,6 +841,67 @@ The balance_manager's data is updated with the claimed rewards.
 ) {
     <b>let</b> (settled, owed) = self.<a href="state.md#0x0_state">state</a>.process_claim_rebates(<a href="balance_manager.md#0x0_balance_manager">balance_manager</a>.id(), ctx);
     self.<a href="vault.md#0x0_vault">vault</a>.settle_balance_manager(settled, owed, <a href="balance_manager.md#0x0_balance_manager">balance_manager</a>, ctx);
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_borrow_flashloan"></a>
+
+## Function `borrow_flashloan`
+
+Borrow base and quote assets from the Pool. A hot potato is returned,
+forcing the borrower to return the assets within the same transaction.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base_amount: u64, quote_amount: u64, ctx: &<b>mut</b> <a href="dependencies/sui-framework/tx_context.md#0x2_tx_context_TxContext">tx_context::TxContext</a>): (<a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base_amount: u64,
+    quote_amount: u64,
+    ctx: &<b>mut</b> TxContext,
+): (Coin&lt;BaseAsset&gt;, Coin&lt;QuoteAsset&gt;, FlashLoanHotPotato) {
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_borrow_flashloan">borrow_flashloan</a>(self.id.to_inner(), base_amount, quote_amount, ctx)
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="0x0_pool_return_flashloan"></a>
+
+## Function `return_flashloan`
+
+Return the flashloaned base and quote assets to the Pool.
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">pool::Pool</a>&lt;BaseAsset, QuoteAsset&gt;, base: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;BaseAsset&gt;, quote: <a href="dependencies/sui-framework/coin.md#0x2_coin_Coin">coin::Coin</a>&lt;QuoteAsset&gt;, potato: <a href="vault.md#0x0_vault_FlashLoanHotPotato">vault::FlashLoanHotPotato</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>&lt;BaseAsset, QuoteAsset&gt;(
+    self: &<b>mut</b> <a href="pool.md#0x0_pool_Pool">Pool</a>&lt;BaseAsset, QuoteAsset&gt;,
+    base: Coin&lt;BaseAsset&gt;,
+    quote: Coin&lt;QuoteAsset&gt;,
+    potato: FlashLoanHotPotato,
+) {
+    self.<a href="vault.md#0x0_vault">vault</a>.<a href="pool.md#0x0_pool_return_flashloan">return_flashloan</a>(self.id.to_inner(), base, quote, potato);
 }
 </code></pre>
 
