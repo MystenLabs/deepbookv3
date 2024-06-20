@@ -705,6 +705,20 @@ module deepbook::pool_tests {
             &mut test,
         );
 
+        let (base_2, quote_2, deep_required_2) = if (is_bid) {
+            get_quote_quantity_out<SUI, USDC>(
+                pool_id,
+                base_in,
+                &mut test,
+            )
+        } else {
+            get_base_quantity_out<SUI, USDC>(
+                pool_id,
+                quote_in,
+                &mut test,
+            )
+        };
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -733,9 +747,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
-        assert!(base == base_out.value(), constants::e_order_info_mismatch());
-        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1473,6 +1487,20 @@ module deepbook::pool_tests {
             &mut test,
         );
 
+        let (base_2, quote_2, deep_required_2) = if (is_bid) {
+            get_quote_quantity_out<SUI, USDC>(
+                pool_id,
+                base_in,
+                &mut test,
+            )
+        } else {
+            get_base_quantity_out<SUI, USDC>(
+                pool_id,
+                quote_in,
+                &mut test,
+            )
+        };
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -1501,9 +1529,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
-        assert!(base == base_out.value(), constants::e_order_info_mismatch());
-        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -2499,8 +2527,8 @@ module deepbook::pool_tests {
 
     fun get_quantity_out<BaseAsset, QuoteAsset>(
         pool_id: ID,
-        base_amount: u64,
-        quote_amount: u64,
+        base_quantity: u64,
+        quote_quantity: u64,
         test: &mut Scenario,
     ): (u64, u64, u64) {
         test.next_tx(OWNER);
@@ -2509,9 +2537,51 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
 
             let (base_out, quote_out, deep_required) = pool.get_quantity_out<BaseAsset, QuoteAsset>(
-                base_amount,
-                quote_amount,
-                &clock,
+                base_quantity,
+                quote_quantity,
+                &clock
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
+        }
+    }
+
+    fun get_base_quantity_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        quote_quantity: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_base_quantity_out<BaseAsset, QuoteAsset>(
+                quote_quantity,
+                &clock
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
+        }
+    }
+
+    fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        base_quantity: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_quote_quantity_out<BaseAsset, QuoteAsset>(
+                base_quantity,
+                &clock
             );
             return_shared(pool);
             return_shared(clock);
