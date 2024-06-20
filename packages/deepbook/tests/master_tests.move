@@ -122,12 +122,9 @@ module deepbook::master_tests {
         let starting_balance = 10000 * constants::float_scaling();
         let client_order_id = 1;
         let order_type = constants::no_restriction();
-        let price = 1 * constants::float_scaling();
-        let quantity = 5000 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
         let pay_with_deep = true;
-        let maker_fee = constants::maker_fee();
         let taker_fee = constants::taker_fee();
 
         let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
@@ -151,7 +148,7 @@ module deepbook::master_tests {
         };
 
         // Create the DEEP reference pool
-        let pool_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let reference_pool_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
         // Create the SUI/USDT pool
         let pool_id = pool_tests::setup_pool_with_default_fees<SUI, USDT>(OWNER, registry_id, false, &mut test);
 
@@ -176,11 +173,22 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Owner places a bid order of 5000 DEEP for 5000 SUI into pool 1, which is a SUI/DEEP pool
+        // Owner adds a price point of default 100 DEEP per SUI to the SUI/USDT pool
+        pool_tests::add_deep_price_point<SUI, USDT, SUI, DEEP>(
+            OWNER,
+            pool_id,
+            reference_pool_id,
+            &mut test,
+        );
+
+        let price = 100 * constants::float_scaling();
+        let quantity = 10 * constants::float_scaling();
+
+        // Owner places a bid order of 1000 DEEP for 10 SUI into pool 1, which is a SUI/DEEP pool
         // This allows for flash loans
         pool_tests::place_limit_order<SUI, DEEP>(
             OWNER,
-            pool_reference_id,
+            reference_pool_id,
             owner_balance_manager_id,
             client_order_id,
             order_type,
@@ -190,14 +198,6 @@ module deepbook::master_tests {
             is_bid,
             pay_with_deep,
             expire_timestamp,
-            &mut test,
-        );
-
-        // Owner adds a price point of default 100 DEEP per SUI to the SUI/USDT pool
-        pool_tests::add_deep_price_point<SUI, USDT, SUI, DEEP>(
-            OWNER,
-            pool_id,
-            pool_reference_id,
             &mut test,
         );
 
@@ -220,26 +220,24 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
-        // Alice will borrow 1000 DEEP from the SUI/DEEP pool
-        let base_needed = 0;
-        let quote_needed = 1000 * constants::float_scaling();
-
         test.next_tx(ALICE);
         {
-            let mut loan_pool = test.take_shared_by_id<Pool<SUI, DEEP>>(pool_reference_id);
-            std::debug::print(&8888);
+            let mut loan_pool = test.take_shared_by_id<Pool<SUI, DEEP>>(reference_pool_id);
             let mut target_pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id);
-            std::debug::print(&8888);
             let clock = test.take_shared<Clock>();
             let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(alice_balance_manager_id);
-            std::debug::print(&8888);
+
+            // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
+            // Alice will borrow 1 DEEP from the SUI/DEEP pool
+            let base_needed = 0;
+            let quote_needed = 1 * constants::float_scaling();
             let (base_borrowed, quote_borrowed, flash_loan) = pool::borrow_flashloan<SUI, DEEP>(
                 &mut loan_pool,
                 base_needed,
                 quote_needed,
                 test.ctx(),
             );
+            alice_balance.deep = alice_balance.deep + quote_needed;
 
             assert!(base_borrowed.value() == base_needed, 0);
             assert!(quote_borrowed.value() == quote_needed, 0);
@@ -266,11 +264,45 @@ module deepbook::master_tests {
                 test.ctx(),
             );
 
+            // Alice should now have 5 more SUI and 10 less USDT
+            // Alice should traded 5 SUI, which is 500 in DEEP quantity,
+            // since taker fee is 0.10%, Alice should pay 0.10% * 500 = 0.5 DEEP
+            alice_balance.sui = alice_balance.sui + quantity;
+            alice_balance.usdt = alice_balance.usdt - math::mul(quantity, price);
+            alice_balance.deep = alice_balance.deep - math::mul(
+                math::mul(taker_fee, quantity),
+                constants::deep_multiplier()
+            );
+
+            // // Alice needs to swap 0.5 SUI back to DEEP to pay back the flash loan
+            // loan_pool.place_market_order<SUI, DEEP>(
+            //     &mut alice_balance_manager,
+            //     client_order_id,
+            //     constants::self_matching_allowed(),
+            //     quantity,
+            //     !is_bid,
+            //     pay_with_deep,
+            //     &clock,
+            //     test.ctx(),
+            // );
+
+            // self_matching_option: u8,
+            // quantity: u64,
+            // is_bid: bool,
+            // pay_with_deep: bool,
+            // clock: &Clock,
+            // ctx: &TxContext,
+
             test_utils::destroy(flash_loan);
             return_shared(alice_balance_manager);
             return_shared(clock);
             return_shared(target_pool);
             return_shared(loan_pool);
+            check_balance_and_print(
+                alice_balance_manager_id,
+                &alice_balance,
+                &mut test
+            );
         };
 
         end(test);
