@@ -48,8 +48,9 @@ module deepbook::master_tests {
     const EDataRecentlyAdded: u64 = 6;
     const ENoAmountToBurn: u64 = 7;
     const ENoAmountToBurn2: u64 = 8;
-    const ENotEnoughBase: u64 = 9;
-    const ENotEnoughQuote: u64 = 10;
+    const ENotEnoughBaseForLoan: u64 = 9;
+    const ENotEnoughQuoteForLoan: u64 = 10;
+    const EIncorrectLoanPool: u64 = 11;
 
     #[test]
     fun test_master_ok(){
@@ -118,12 +119,17 @@ module deepbook::master_tests {
 
     #[test, expected_failure(abort_code = ::deepbook::vault::ENotEnoughBaseForLoan)]
     fun test_flash_loan_base_e(){
-        test_flash_loan(ENotEnoughBase)
+        test_flash_loan(ENotEnoughBaseForLoan)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::vault::ENotEnoughQuoteForLoan)]
     fun test_flash_loan_quote_e(){
-        test_flash_loan(ENotEnoughQuote)
+        test_flash_loan(ENotEnoughQuoteForLoan)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::vault::EIncorrectLoanPool)]
+    fun test_flash_loan_incorrect_pool_e(){
+        test_flash_loan(EIncorrectLoanPool)
     }
 
     fun test_flash_loan(
@@ -244,13 +250,13 @@ module deepbook::master_tests {
             // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
             // Alice will borrow 100 DEEP from the SUI/DEEP pool
             // If Alice tries to borrow too much from the pool, there will be an error
-            let base_needed = if (error_code == ENotEnoughBase) {
+            let base_needed = if (error_code == ENotEnoughBaseForLoan) {
                 10000 * constants::float_scaling()
             } else {
                 0
             };
 
-            let quote_needed = if (error_code == ENotEnoughQuote) {
+            let quote_needed = if (error_code == ENotEnoughQuoteForLoan) {
                 10000 * constants::float_scaling()
             } else {
                 100 * constants::float_scaling()
@@ -320,6 +326,13 @@ module deepbook::master_tests {
             // Alice withdraws the 1 DEEP she borrowed from balance_manager and returns the loan
             let base_return = coin::zero<SUI>(test.ctx());
             let quote_return = alice_balance_manager.withdraw<DEEP>(quote_needed, test.ctx());
+
+            if (error_code == EIncorrectLoanPool) {
+                let wrong_base_return = coin::zero<SUI>(test.ctx());
+                let wrong_quote_return = alice_balance_manager.withdraw<USDT>(quote_needed, test.ctx());
+                target_pool.return_flashloan(wrong_base_return, wrong_quote_return, flash_loan);
+                abort 0
+            };
             loan_pool.return_flashloan(base_return, quote_return, flash_loan);
             alice_balance.deep = alice_balance.deep - quote_needed;
 
