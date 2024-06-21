@@ -531,6 +531,7 @@ module deepbook::order_info_tests {
         end(test);
     }
 
+    #[test_only]
     public fun create_order_info_base(
         trader: address,
         price: u64,
@@ -562,6 +563,7 @@ module deepbook::order_info_tests {
         )
     }
 
+    #[test_only]
     public fun create_order_info(
         balance_manager_id: ID,
         trader: address,

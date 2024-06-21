@@ -60,33 +60,6 @@ module deepbook::pool {
         treasury_address: address,
     }
 
-    /// Create a new pool. The pool is registered in the registry.
-    /// Checks are performed to ensure the tick size, lot size, and min size are valid.
-    /// The creation fee is transferred to the treasury address.
-    /// Returns the id of the pool created
-    public fun create_pool_admin<BaseAsset, QuoteAsset>(
-        registry: &mut Registry,
-        tick_size: u64,
-        lot_size: u64,
-        min_size: u64,
-        creation_fee: Coin<DEEP>,
-        whitelisted_pool: bool,
-        stable_pool: bool,
-        _cap: &DeepbookAdminCap,
-        ctx: &mut TxContext,
-    ): ID {
-        create_pool<BaseAsset, QuoteAsset>(
-            registry,
-            tick_size,
-            lot_size,
-            min_size,
-            creation_fee,
-            whitelisted_pool,
-            stable_pool,
-            ctx,
-        )
-    }
-
     // === Public-Mutative Functions * EXCHANGE * ===
     /// Place a limit order. Quantity is in base asset terms.
     /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
@@ -370,7 +343,6 @@ module deepbook::pool {
     }
 
     // === Public-Mutative Functions * FLASHLOAN * ===
-
     /// Borrow base assets from the Pool. A hot potato is returned,
     /// forcing the borrower to return the assets within the same transaction.
     public fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
@@ -411,6 +383,7 @@ module deepbook::pool {
     }
 
     // === Public-Mutative Functions * OPERATIONAL * ===
+
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
@@ -469,6 +442,42 @@ module deepbook::pool {
         token::deep::burn(treasury_cap, deep_to_burn);
 
         amount_burned
+    }
+
+    // === Public-Mutative Functions * ADMIN * ===
+    /// Create a new pool. The pool is registered in the registry.
+    /// Checks are performed to ensure the tick size, lot size, and min size are valid.
+    /// The creation fee is transferred to the treasury address.
+    /// Returns the id of the pool created
+    public fun create_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        tick_size: u64,
+        lot_size: u64,
+        min_size: u64,
+        creation_fee: Coin<DEEP>,
+        whitelisted_pool: bool,
+        stable_pool: bool,
+        _cap: &DeepbookAdminCap,
+        ctx: &mut TxContext,
+    ): ID {
+        create_pool<BaseAsset, QuoteAsset>(
+            registry,
+            tick_size,
+            lot_size,
+            min_size,
+            creation_fee,
+            whitelisted_pool,
+            stable_pool,
+            ctx,
+        )
+    }
+
+    /// Unregister a pool in case it needs to be manually redeployed.
+    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        _cap: &DeepbookAdminCap,
+    ) {
+        registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
     // === Public-View Functions ===
@@ -575,14 +584,6 @@ module deepbook::pool {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
-    /// Unregister a pool in case it needs to be manually redeployed.
-    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
-        registry: &mut Registry,
-        _cap: &DeepbookAdminCap,
-    ) {
-        registry.unregister_pool<BaseAsset, QuoteAsset>();
-    }
-
     // === Public-Package Functions ===
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
@@ -651,7 +652,6 @@ module deepbook::pool {
 
     // === Private Functions ===
     /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
-    /// Only called by admin during pool creation
     fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
