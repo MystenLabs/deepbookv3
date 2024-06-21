@@ -708,13 +708,13 @@ module deepbook::pool_tests {
     #[test_only]
     /// Cancel an order
     public(package) fun cancel_order<BaseAsset, QuoteAsset>(
+        sender: address,
         pool_id: ID,
-        owner: address,
         balance_manager_id: ID,
         order_id: u128,
         test: &mut Scenario,
     ) {
-        test.next_tx(owner);
+        test.next_tx(sender);
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
@@ -746,7 +746,8 @@ module deepbook::pool_tests {
         };
     }
 
-    fun modify_order<BaseAsset, QuoteAsset>(
+    #[test_only]
+    public(package) fun modify_order<BaseAsset, QuoteAsset>(
         sender: address,
         pool_id: ID,
         balance_manager_id: ID,
@@ -1623,15 +1624,15 @@ module deepbook::pool_tests {
             &mut test,
         ).order_id();
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             placed_order_id,
             &mut test
         );
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             placed_order_id,
             &mut test
@@ -2305,8 +2306,8 @@ module deepbook::pool_tests {
         );
 
         cancel_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             order_info.order_id(),
             &mut test
@@ -2547,8 +2548,8 @@ module deepbook::pool_tests {
         );
 
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             order_info.order_id(),
             &mut test

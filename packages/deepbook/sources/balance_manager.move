@@ -3,7 +3,7 @@
 
 /// The `BalanceManager` is a shared object that holds all of the balances for different assets. Users must pass in
 /// a `BalanceManager` to perform trades. The transaction sender is asserted to perform the necessary validation. Capabilities
-/// are not used to avoid equivocation. 
+/// are not used to avoid equivocation.
 /// The owner can add traders to the account. Traders can perform the same action as an owner can except for deposits,
 /// withdrawals, and addition / removals of traders.
 module deepbook::balance_manager {
@@ -21,6 +21,7 @@ module deepbook::balance_manager {
     const EBalanceManagerBalanceTooLow: u64 = 3;
     const EMaxTraderReached: u64 = 4;
     const ETraderNotInList: u64 = 5;
+    const ETraderAlreadyInList: u64 = 6;
 
     // === Constants ===
     const MAX_TRADERS: u64 = 1000;
@@ -60,6 +61,7 @@ module deepbook::balance_manager {
     ) {
         balance_manager.validate_owner(ctx);
         assert!(balance_manager.authorized_traders.size() < MAX_TRADERS, EMaxTraderReached);
+        assert!(!balance_manager.authorized_traders.contains(&authorize_address), ETraderAlreadyInList);
         balance_manager.authorized_traders.insert(authorize_address);
     }
 

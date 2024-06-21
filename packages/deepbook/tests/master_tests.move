@@ -52,6 +52,10 @@ module deepbook::master_tests {
     const ENotEnoughQuoteForLoan: u64 = 10;
     const EIncorrectLoanPool: u64 = 11;
     const EIncorrectTypeReturned: u64 = 12;
+    const EInvalidOwner: u64 = 13;
+    const ETraderAlreadyInList: u64 = 14;
+    const ETraderNotInList: u64 = 15;
+    const EInvalidTrader: u64 = 16;
 
     #[test]
     fun test_master_ok() {
@@ -139,117 +143,31 @@ module deepbook::master_tests {
     }
 
     #[test]
-    fun test_modify_and_asset_returned_ok(){
-        test_modify_and_asset_returned()
+    fun test_trader_permission_and_modify_returned_ok(){
+        test_trader_permission_and_modify_returned(NoError)
     }
 
-    fun authorize_trader(
-        sender: address,
-        balance_manager_id: ID,
-        trader: address,
-        test: &mut Scenario,
-    ) {
-        test.next_tx(sender);
-        {
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            balance_manager.authorize_trader(trader, test.ctx());
-            return_shared(balance_manager);
-        }
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
+    fun test_trader_permission_and_modify_returned_invalid_owner_e(){
+        test_trader_permission_and_modify_returned(EInvalidOwner)
     }
 
-    fun test_modify_and_asset_returned() {
-        let mut test = begin(OWNER);
-        let registry_id = pool_tests::setup_test(OWNER, &mut test);
-        pool_tests::set_time(0, &mut test);
-        let starting_balance = 10000 * constants::float_scaling();
-
-        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
-            OWNER,
-            starting_balance,
-            &mut test
-        );
-
-        // Create pool and reference pool
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
-        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
-
-        // Default price point of 100 deep per base will be added
-        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
-            OWNER,
-            pool1_id,
-            pool1_reference_id,
-            &mut test,
-        );
-
-        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
-            ALICE,
-            starting_balance,
-            &mut test
-        );
-
-        // Alice gives Bob permission to trade on her balance manager
-        authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
-
-        // variables to input into order
-        let client_order_id = 1;
-        let order_type = constants::no_restriction();
-        let price = 2 * constants::float_scaling();
-        let quantity = 10 * constants::float_scaling();
-        let expire_timestamp = constants::max_u64();
-        let is_bid = true;
-        let pay_with_deep = true;
-        let maker_fee = constants::maker_fee();
-        let mut alice_balance = ExpectedBalances{
-            sui: starting_balance,
-            usdc: starting_balance,
-            spam: starting_balance,
-            deep: starting_balance,
-            usdt: starting_balance,
-        };
-
-        // Alice places an order with quantity 10 in SUI/USDC pool at a price of 2
-        pool_tests::place_limit_order<SUI, USDC>(
-            ALICE,
-            pool1_id,
-            alice_balance_manager_id,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
-        alice_balance.deep = alice_balance.deep - math::mul(
-            math::mul(maker_fee, constants::deep_multiplier()),
-            quantity
-        );
-
-        let quantity = 5 * constants::float_scaling();
-
-        // Owner places an ask order at the same price matches with 5 of Alice's order
-        pool_tests::place_limit_order<SUI, USDC>(
-            OWNER,
-            pool1_id,
-            owner_balance_manager_id,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            !is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
-
-
-        end(test);
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::ETraderAlreadyInList)]
+    fun test_trader_permission_and_modify_trader_exists_e(){
+        test_trader_permission_and_modify_returned(ETraderAlreadyInList)
     }
 
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::ETraderNotInList)]
+    fun test_trader_permission_and_modify_trader_not_in_list_e(){
+        test_trader_permission_and_modify_returned(ETraderNotInList)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
+    fun test_trader_permission_invalid_trader_e() {
+        test_trader_permission_and_modify_returned(EInvalidTrader)
+    }
+
+    // === Test Functions ===
     fun test_master(
         error_code: u64,
     ) {
@@ -475,8 +393,8 @@ module deepbook::master_tests {
 
         // Alice should get refunded the previous fees for the order
         pool_tests::cancel_order<SUI, USDC>(
-            pool1_id,
             ALICE,
+            pool1_id,
             alice_balance_manager_id,
             order_info_1.order_id(),
             &mut test
@@ -1135,8 +1053,8 @@ module deepbook::master_tests {
 
         // Alice cancels the order, gets the exact same refund back
         pool_tests::cancel_order<SPAM, SUI>(
-            pool2_id,
             ALICE,
+            pool2_id,
             alice_balance_manager_id,
             order_info.order_id(),
             &mut test
@@ -1652,6 +1570,215 @@ module deepbook::master_tests {
         check_fee(BOB, fee_id, &mut test);
 
         end(test);
+    }
+
+    fun test_trader_permission_and_modify_returned(
+        error_code: u64,
+    ) {
+        let mut test = begin(OWNER);
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+        let starting_balance = 10000 * constants::float_scaling();
+
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            ALICE,
+            starting_balance,
+            &mut test
+        );
+
+        // Create pool and reference pool
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+
+        // Default price point of 100 deep per base will be added
+        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            pool1_reference_id,
+            &mut test,
+        );
+
+        // Bob tries to authorize himself on Alice's balance manager, will error
+        if (error_code == EInvalidOwner) {
+            authorize_trader(BOB, alice_balance_manager_id, BOB, &mut test);
+        };
+
+        // Alice gives Bob permission to trade on her balance manager
+        authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+
+        // Alice gives Bob permission to trade on her balance manager again, will error
+        if (error_code == ETraderAlreadyInList) {
+            authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+        };
+
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 10 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = true;
+        let maker_fee = constants::maker_fee();
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+
+        // Bob places an order with quantity 10 in SUI/USDC pool at a price of 2 using Alice's balance manager
+        let order_info = pool_tests::place_limit_order<SUI, USDC>(
+            BOB,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
+        alice_balance.deep = alice_balance.deep - math::mul(
+            math::mul(maker_fee, constants::deep_multiplier()),
+            quantity
+        );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        let quantity = 5 * constants::float_scaling();
+
+        // Owner places an ask order at the same price matches with 5 of Alice's order
+        pool_tests::place_limit_order<SUI, USDC>(
+            OWNER,
+            pool1_id,
+            owner_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        alice_balance.sui = alice_balance.sui + quantity;
+
+        let new_quantity = 8 * constants::float_scaling();
+        let cancelled_quantity = 2 * constants::float_scaling();
+        let remaining_quantity = 3 * constants::float_scaling();
+
+        // Bob modifies the order from original quantity of 10 to 8
+        // Since quantity of 5 was filled, the effective quantity is 3
+        pool_tests::modify_order<SUI, USDC>(
+            BOB,
+            pool1_id,
+            alice_balance_manager_id,
+            order_info.order_id(),
+            new_quantity,
+            &mut test
+        );
+        alice_balance.usdc = alice_balance.usdc + math::mul(price, cancelled_quantity);
+        alice_balance.deep = alice_balance.deep + math::mul(
+            math::mul(maker_fee, constants::deep_multiplier()),
+            cancelled_quantity
+        );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Alice cancels the order herself, should get correct refund of remaining quantity
+        pool_tests::cancel_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            order_info.order_id(),
+            &mut test
+        );
+        alice_balance.usdc = alice_balance.usdc + math::mul(price, remaining_quantity);
+        alice_balance.deep = alice_balance.deep + math::mul(
+            math::mul(maker_fee, constants::deep_multiplier()),
+            remaining_quantity
+        );
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Alice revokes Bob's trading permission
+        remove_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+
+        // Alice revokes Bob's trading permission again, removing a trader not in list will error
+        if (error_code == ETraderNotInList) {
+            remove_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+        };
+
+        // Bob tries to place an order using Alice's balance manager, will error
+        if (error_code == EInvalidTrader) {
+            pool_tests::place_limit_order<SUI, USDC>(
+                BOB,
+                pool1_id,
+                alice_balance_manager_id,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+        };
+
+        end(test);
+    }
+
+    // === Private Helper Functions ===
+    fun authorize_trader(
+        sender: address,
+        balance_manager_id: ID,
+        trader: address,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            balance_manager.authorize_trader(trader, test.ctx());
+            return_shared(balance_manager);
+        }
+    }
+
+    fun remove_trader(
+        sender: address,
+        balance_manager_id: ID,
+        trader: address,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            balance_manager.remove_trader(trader, test.ctx());
+            return_shared(balance_manager);
+        }
     }
 
     fun withdraw_and_burn<T>(
