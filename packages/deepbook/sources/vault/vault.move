@@ -19,7 +19,7 @@ module deepbook::vault {
     // === Errors ===
     const ENotEnoughBaseForLoan: u64 = 1;
     const ENotEnoughQuoteForLoan: u64 = 2;
-    const EInvalidLoanAmounts: u64 = 3;
+    const EinvalidLoanQuantity: u64 = 3;
     const EIncorrectLoanPool: u64 = 4;
     const EIncorrectTypeReturned: u64 = 5;
     const EIncorrectQuantityReturned: u64 = 6;
@@ -100,7 +100,7 @@ module deepbook::vault {
         borrow_quantity: u64,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, FlashLoan) {
-        assert!(borrow_quantity > 0, EInvalidLoanAmounts);
+        assert!(borrow_quantity > 0, EinvalidLoanQuantity);
         assert!(self.base_balance.value() >= borrow_quantity, ENotEnoughBaseForLoan);
         let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
@@ -119,7 +119,7 @@ module deepbook::vault {
         borrow_quantity: u64,
         ctx: &mut TxContext,
     ): (Coin<QuoteAsset>, FlashLoan) {
-        assert!(borrow_quantity > 0, EInvalidLoanAmounts);
+        assert!(borrow_quantity > 0, EinvalidLoanQuantity);
         assert!(self.quote_balance.value() >= borrow_quantity, ENotEnoughQuoteForLoan);
         let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
