@@ -472,7 +472,7 @@ module deepbook::pool {
         )
     }
 
-    /// Unregister a pool in case it needs to be manually redeployed.
+    /// Unregister a pool in case it needs to be redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
         _cap: &DeepbookAdminCap,
