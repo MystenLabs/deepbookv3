@@ -2757,8 +2757,7 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Helper, verify OrderInfo.
-    /// TODO: create an OrderInfo struct and use that instead of multiple parameters
+    /// Helper, verify OrderInfo fields
     fun verify_order_info(
         order_info: &OrderInfo,
         client_order_id: u64,
