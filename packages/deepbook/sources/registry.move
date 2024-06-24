@@ -18,6 +18,7 @@ module deepbook::registry {
     const EPackageVersionDisabled: u64 = 3;
     const EVersionNotDisabled: u64 = 4;
     const EVersionAlreadyDisabled: u64 = 5;
+    const ECannotDisableCurrentVersion: u64 = 6;
 
     public struct REGISTRY has drop {}
 
@@ -81,6 +82,7 @@ module deepbook::registry {
     ) {
         let self = self.load_inner_mut();
         assert!(!self.disabled_versions.contains(&version), EVersionAlreadyDisabled);
+        assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
         self.disabled_versions.insert(version);
     }
 
