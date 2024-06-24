@@ -472,6 +472,205 @@ module deepbook::pool_tests {
         );
     }
 
+    #[test]
+    fun test_queue_priority_bid_ok(){
+        test_queue_priority(true);
+    }
+
+    #[test]
+    fun test_queue_priority_ask_ok(){
+        test_queue_priority(false);
+    }
+
+    /// Alice places a worse order
+    /// Alice places 3 bid/ask orders with at price 1
+    /// Alice matches the order with an ask/bid order at price 1
+    /// The first order should be matched because of queue priority
+    /// Process is repeated with a third order
+    fun test_queue_priority(
+        is_bid: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+
+        let client_order_id = 1;
+        let price = 2 * constants::float_scaling();
+        let worse_price = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        let order_info_worse = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            worse_price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let order_info_2 = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let order_info_3 = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice places limit order at price 1 for matching
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_2.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_2.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_3.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_worse.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice places limit order at price 1 for matching
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_3.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_worse.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_worse.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
     #[test_only]
     public(package) fun setup_test(
         owner: address,
