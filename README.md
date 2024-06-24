@@ -1,54 +1,26 @@
 # DeepBook V3
-DeepBook V3 introduces the DEEP token, new features around governance, improved account abstraction, and enhancements to the existing matching engine. DBv3 is comprised of the primary Pool shared object, an Account shared object for balance management, and a Registry shared object for registering pools.
+DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant low latency exchange on chain. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Additionally, DBv3 features new features like flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech). Detailed documentation, SDK, and analytics coming soon.
+## DeepBook Architecture
 
-Pool is made up of three distinct parts: Book, State and Vault. These parts define the flow for the different types of actions that can be performed on DeepBook. 
+## Balance Manager
+The `BalanceManager` is a shared object that holds all balances of a single account. It has one owner and can have up to 1000 traders. When creating a `BalanceManager`, the sender of the transaction becomes the owner. The owner can add or remove traders. The owner cannot be changed.
+The owner can deposit and withdraw funds from the `BalanceManager` as well as place orders, stake, and more. A trader cannot deposit and withdraw funds, but can do everything else. All actions are shared between owner/traders. For example, one trader can cancel an order placed by another trader within the same `BalanceManager`.
+With exception to swaps, all interactions with DeepBook will require a `BalanceManager` as one of its inputs. When orders are matched, funds will be transferred to / from the `BalanceManager`. A single `BalanceManager` can be used between all pools.
 ## Pool
-### Categorizing Parts
-To define DBv3's flow, we will first categorize the unique parts of the Pool into three buckets: Book, State and Vault.
+`Pool` is made up of three distinct parts: Book, State and Vault. These parts define the flow for the different types of actions that can be performed on DeepBook. 
  1. Book - manages reading and writing to the order book. It fills orders and places orders into the order book.
  2. State - the most complex: maintains individual user data, overall volumes, historic volumes, and governance.
- 3. Vault - the least complex: settles users funds after action execution. 
-### Categorizing Actions
-Let's also categorize all actions into four buckets: order, stake, governance, and operational.
- 1. Order actions include placing, canceling, or modifying orders. These actions are processed in Book, State, then Vault in that order.
- 2. Stake actions include staking or unstaking DEEP tokens as well as burning/redeeming DEEP rewards. These actions are processed in State then Vault in that order.
- 3. Governance actions include creating new proposals and voting for existing proposals. These actions are processed in State.
- 4. Operational includes the single action to feed a DEEP data point into the pool. This action is processed in Vault.
+ 3. Vault - the least complex: settles users funds after action execution.
 
-Each part builds on top of the previous one. By maintaining this Book then State then Vault relationship, we are able to provide data availability guarantees, improve code readability, and ease of maintenance and upgrade of the protocol. Next, we will go over placing an order, staking, and voting step by step to visualize DBv3's flow.
-### Place Limit Order
-When placing a limit order, an `OrderInfo` object is created and its execution is as simple as:
-```
-self.book.create_order(&mut order_info, ...);
-self.state.process_create(&order_info, ...);
-self.vault.settle_order(&order_info, ...);
-self.vault.settle_account(...);
-```
-Notice the three parts and the maintenance of their relationship. The `Book` takes the `order_info` object and executes any overlapping amounts and adds the remaining amount into the order book, mutating the object as it does so. This gives `State` enough information to update every user affected as well as increase the overall volumes. Finally, `Vault` sets any settled amounts for all affected users by settling the order, then settles the account by moving the actual balances between the account and the pool.
-
-`self.book.create_order()`
-This takes us to the `book` module. It maintains two BigVectors that hold `Order`s.
->**Order** is a compact object that contains the minimum amount of data needed for matching. If an OrderInfo object has unfilled quantity after matching, then it will be converted into an Order via `order_info.to_order()` and injected into the book.
-
-Our order_info object traverses into the `match_against_book()` function. Here lies the core component of the matching engine: we iterate over each `Order` within the appropriate side of the book, calling OrderInfo's `match_maker()`. All trades, regardless of the direction, type, or origin, will use this single function to match orders. This function mutates both the OrderInfo that we started with as well as the Order that lies within the book, producing `Fill`s. These are appended into the fills vector within OrderInfo and are used to update the State. Any remaining quantity is injected into the book, and the OrderInfo object is returned to the caller.
-
-`self.state.process_create()`
-In the `state` module, each action is processed with an appropriate `process_action()` function. In the case of create, the resulting fills are iterated, updating the affected account's open orders and settled balances. The overall volume is updated in `history` and the order is added to the taker's open orders.
->When an account places an order, it is executed against resting orders that have been placed by makers in the past. Settled balances are funds that are stored for the maker of the order to be claimed later. This is done by the Vault, which settles all funds for the user after every action.
-
-
-`self.vault.settle_order()`
-For order creation only, the vault first settles the order to calculate the different balances that are moved for the account. By this point, the order can be completely unfilled, partially filled, or completely filled. For any filled amount, the vault calculates the fees owed by the account using the taker_fee rate. For the remaining unfilled amount, it calculates the fees owed using the maker_fee rate. Fees, combined with the actual quantity of the order, is updated for the account's settled/owed balances.
-
-`self.vault.settle_account()`
-In this final step, the Vault checks all of the settled and owed balances for a given account, and moves the appropriate balances between the account and the pool.
-
-Placing a limit order is the most complex action a user can take on DeepBook. There are different types of orders, different fee rates, and different matching results. But with DeepBook's three part flow, its easy to visualize and break down this complex task into smaller pieces and work them out independently. By isolating the core components such as matching orders and settling funds, we minimize the surface area for bugs. Further, the addition of any new actions is simplified with the intuitive nature of the Book then State then Vault relationship.
-### Stake
-
-### Vote
-
-## Other Important Details
-### DEEP Price
-### Fees with DEEP
-### Epoch Transition
+Users can place, modify and cancel limit / market orders. These actions will require a funded `BalanceManager` with the appropriate amount of base and quote tokens as well as DEEP tokens for trading fees. DBv3 also supports direct swaps, allowing users as well as protocols building on top of DBv3 to place market orders with `Coin` objects as inputs drectly and receive `Coin` objects as outputs.
+## $DEEP
+### Trading Fees
+In the initial release, all pool creation will be permissioned and DEEP tokens will be required to pay for trading fees. In the future upgrades, these restrictions will be removed, but usage of the DEEP token will still be incentivized. Both takers and makers will pay fees in DEEP, but makers with enough staked DEEP tokens will be eligible for rebates at the end of every epoch. Excess DEEP accumulated by all pools will be burned on a regular basis.
+DEEP/SUI and DEEP/USDC pools will be launched and whitelisted. Whitelisted pools have 0% trading fees. This allows users to easily obtain DEEP tokens to pay for trading fees in non DEEP pools. 
+### DEEP Staking & Governance
+DEEP tokens can be staked in individual pools, granting the staker access to governance. If the amount of DEEP tokens staked is greater than the pool's stake requried, then that user will be able to reap additional benefits from the pool. These benefits include halved trading fees after reaching a trade volume requirement, as well as maker rebates. During every epoch, staked users can submit proposals to change three parameters: taker fees, maker fees, and stake required. If the proposal passes quorum, 1/2 of all current stake, then its effects will be live from the next epoch and onwards.
+## More about DeepBook
+Use the following links ot learn more about DeepBook:
+* [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
+* Detailed Documentation.
+* DeepBook V3 SDK.
