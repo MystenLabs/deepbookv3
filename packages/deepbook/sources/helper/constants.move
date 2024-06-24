@@ -1,4 +1,5 @@
 module deepbook::constants {
+    const CURRENT_VERSION: u64 = 1;
     const POOL_CREATION_FEE: u64 = 10000 * 1_000_000_000; // 10000 DEEP
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
@@ -73,6 +74,10 @@ module deepbook::constants {
     const EIncorrectMidPrice: u64 = 2;
     #[test_only]
     const EIncorrectPoolId: u64 = 3;
+
+    public fun current_version(): u64 {
+        CURRENT_VERSION
+    }
 
     public fun pool_creation_fee(): u64 {
         POOL_CREATION_FEE
