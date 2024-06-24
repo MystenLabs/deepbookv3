@@ -394,6 +394,9 @@ module deepbook::pool {
         self.vault.return_flashloan_base(self.pool_id, coin, flash_loan);
     }
 
+    /// Return the flashloaned quote assets to the Pool.
+    /// FlashLoan object will only be unwrapped if the assets are returned,
+    /// otherwise the transaction will fail.
     public fun return_flashloan_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         coin: Coin<QuoteAsset>,
