@@ -2,7 +2,7 @@
 # DeepBook V3
 DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant low latency exchange on chain. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Additionally, DBv3 features new features like flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech). Detailed documentation, SDK, and analytics coming soon.
 ## DeepBook Architecture
-
+![image info](./DBv3Architecture.png)
 ## Balance Manager
 The `BalanceManager` is a shared object that holds all balances of a single account. It has one owner and can have up to 1000 traders. When creating a `BalanceManager`, the sender of the transaction becomes the owner. The owner can add or remove traders. The owner cannot be changed.
 The owner can deposit and withdraw funds from the `BalanceManager` as well as place orders, stake, and more. A trader cannot deposit and withdraw funds, but can do everything else. All actions are shared between owner/traders. For example, one trader can cancel an order placed by another trader within the same `BalanceManager`.
