@@ -45,7 +45,9 @@ module deepbook::registry {
         transfer::public_transfer(admin, ctx.sender());
     }
 
-    // === Admin Functions ===
+    // === Public Admin Functions ===
+    /// Sets the treasury address where the pool creation fees are sent
+    /// By default, the treasury address is the publisher of the deepbook package
     public fun set_treasury_address(
         self: &mut Registry,
         treasury_address: address,

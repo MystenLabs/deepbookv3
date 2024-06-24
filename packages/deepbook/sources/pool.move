@@ -19,7 +19,7 @@ module deepbook::pool {
         order_info::{Self, OrderInfo},
         book::{Self, Book},
         state::{Self, State},
-        vault::{Self, Vault, FlashLoanHotPotato},
+        vault::{Self, Vault, FlashLoan},
         deep_price::{Self, DeepPrice},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
@@ -69,33 +69,6 @@ module deepbook::pool {
         min_size: u64,
         whitelisted_pool: bool,
         treasury_address: address,
-    }
-
-    /// Create a new pool. The pool is registered in the registry.
-    /// Checks are performed to ensure the tick size, lot size, and min size are valid.
-    /// The creation fee is transferred to the treasury address.
-    /// Returns the id of the pool created
-    public fun create_pool_admin<BaseAsset, QuoteAsset>(
-        registry: &mut Registry,
-        tick_size: u64,
-        lot_size: u64,
-        min_size: u64,
-        creation_fee: Coin<DEEP>,
-        whitelisted_pool: bool,
-        stable_pool: bool,
-        _cap: &DeepbookAdminCap,
-        ctx: &mut TxContext,
-    ): ID {
-        create_pool<BaseAsset, QuoteAsset>(
-            registry,
-            tick_size,
-            lot_size,
-            min_size,
-            creation_fee,
-            whitelisted_pool,
-            stable_pool,
-            ctx,
-        )
     }
 
     // === Public-Mutative Functions * EXCHANGE * ===
@@ -202,6 +175,52 @@ module deepbook::pool {
             clock,
             ctx,
         )
+    }
+
+    /// Swap exact quantity without needing an balance_manager.
+    public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        base_in: Coin<BaseAsset>,
+        quote_in: Coin<QuoteAsset>,
+        deep_in: Coin<DEEP>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+        let mut base_quantity = base_in.value();
+        let quote_quantity = quote_in.value();
+        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidQuantityIn);
+        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidQuantityIn);
+
+        let pay_with_deep = deep_in.value() > 0;
+        let is_bid = quote_quantity > 0;
+        if (is_bid) {
+            (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
+        };
+        base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
+
+        let mut temp_balance_manager = balance_manager::new(ctx);
+        temp_balance_manager.deposit(base_in, ctx);
+        temp_balance_manager.deposit(quote_in, ctx);
+        temp_balance_manager.deposit(deep_in, ctx);
+
+        self.place_market_order(
+            &mut temp_balance_manager,
+            0,
+            constants::self_matching_allowed(),
+            base_quantity,
+            is_bid,
+            pay_with_deep,
+            clock,
+            ctx
+        );
+
+        let base_out = temp_balance_manager.withdraw_protected<BaseAsset>(0, true, ctx).into_coin(ctx);
+        let quote_out = temp_balance_manager.withdraw_protected<QuoteAsset>(0, true, ctx).into_coin(ctx);
+        let deep_out = temp_balance_manager.withdraw_protected<DEEP>(0, true, ctx).into_coin(ctx);
+
+        temp_balance_manager.delete();
+
+        (base_out, quote_out, deep_out)
     }
 
     /// Modifies an order given order_id and new_quantity.
@@ -344,31 +363,51 @@ module deepbook::pool {
     }
 
     // === Public-Mutative Functions * FLASHLOAN * ===
-    /// Borrow base and quote assets from the Pool. A hot potato is returned,
+    /// Borrow base assets from the Pool. A hot potato is returned,
     /// forcing the borrower to return the assets within the same transaction.
-    public fun borrow_flashloan<BaseAsset, QuoteAsset>(
+    public fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_amount: u64,
-        quote_amount: u64,
         ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, FlashLoanHotPotato) {
-        let pool_id = self.id.to_inner();
-
-        self.load_inner_mut().vault.borrow_flashloan(pool_id, base_amount, quote_amount, ctx)
+    ): (Coin<BaseAsset>, FlashLoan) {
+        let self = self.load_inner_mut();
+        self.vault.borrow_flashloan_base(self.pool_id, base_amount, ctx)
     }
 
-    /// Return the flashloaned base and quote assets to the Pool.
-    public fun return_flashloan<BaseAsset, QuoteAsset>(
+    /// Borrow quote assets from the Pool. A hot potato is returned,
+    /// forcing the borrower to return the assets within the same transaction.
+    public fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
-        base: Coin<BaseAsset>,
-        quote: Coin<QuoteAsset>,
-        potato: FlashLoanHotPotato,
+        quote_amount: u64,
+        ctx: &mut TxContext,
+    ): (Coin<QuoteAsset>, FlashLoan) {
+        let self = self.load_inner_mut();
+        self.vault.borrow_flashloan_quote(self.pool_id, quote_amount, ctx)
+    }
+
+    /// Return the flashloaned base assets to the Pool.
+    /// FlashLoan object will only be unwrapped if the assets are returned,
+    /// otherwise the transaction will fail.
+    public fun return_flashloan_base<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        coin: Coin<BaseAsset>,
+        flash_loan: FlashLoan,
     ) {
-        let pool_id = self.id.to_inner();
-        self.load_inner_mut().vault.return_flashloan(pool_id, base, quote, potato);
+        let self = self.load_inner_mut();
+        self.vault.return_flashloan_base(self.pool_id, coin, flash_loan);
+    }
+
+    public fun return_flashloan_quote<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        coin: Coin<QuoteAsset>,
+        flash_loan: FlashLoan,
+    ) {
+        let self = self.load_inner_mut();
+        self.vault.return_flashloan_quote(self.pool_id, coin, flash_loan);
     }
 
     // === Public-Mutative Functions * OPERATIONAL * ===
+
     /// Adds a price point along with a timestamp to the deep price.
     /// Allows for the calculation of deep price per base asset.
     public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
@@ -432,12 +471,66 @@ module deepbook::pool {
         amount_burned
     }
 
+    // === Public-Mutative Functions * ADMIN * ===
+    /// Create a new pool. The pool is registered in the registry.
+    /// Checks are performed to ensure the tick size, lot size, and min size are valid.
+    /// The creation fee is transferred to the treasury address.
+    /// Returns the id of the pool created
+    public fun create_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        tick_size: u64,
+        lot_size: u64,
+        min_size: u64,
+        creation_fee: Coin<DEEP>,
+        whitelisted_pool: bool,
+        stable_pool: bool,
+        _cap: &DeepbookAdminCap,
+        ctx: &mut TxContext,
+    ): ID {
+        create_pool<BaseAsset, QuoteAsset>(
+            registry,
+            tick_size,
+            lot_size,
+            min_size,
+            creation_fee,
+            whitelisted_pool,
+            stable_pool,
+            ctx,
+        )
+    }
+
+    /// Unregister a pool in case it needs to be redeployed.
+    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        registry: &mut Registry,
+        _cap: &DeepbookAdminCap,
+    ) {
+        registry.unregister_pool<BaseAsset, QuoteAsset>();
+    }
+
     // === Public-View Functions ===
     /// Accessor to check if the pool is whitelisted.
     public fun whitelisted<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): bool {
         self.load_inner().state.governance().whitelisted()
+    }
+
+    /// Dry run to determine the quote quantity out for a given base quantity.
+    public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_quantity: u64,
+        clock: &Clock,
+    ): (u64, u64, u64) {
+        self.get_quantity_out(base_quantity, 0, clock)
+    }
+
+    /// Dry run to determine the base quantity out for a given quote quantity.
+    public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        quote_quantity: u64,
+        clock: &Clock,
+    ): (u64, u64, u64) {
+        self.get_quantity_out(0, quote_quantity, clock)
     }
 
     /// Dry run to determine the quantity out for a given base or quote quantity.
@@ -519,15 +612,6 @@ module deepbook::pool {
         registry: &Registry,
     ): ID {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
-    }
-
-    // === Admin Functions ===
-    /// Unregister a pool in case it needs to be manually redeployed.
-    public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
-        registry: &mut Registry,
-        _cap: &DeepbookAdminCap,
-    ) {
-        registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
     // === Public-Package Functions ===
@@ -620,7 +704,6 @@ module deepbook::pool {
 
     // === Private Functions ===
     /// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
-    /// Only called by admin during pool creation
     fun set_whitelist<BaseAsset, QuoteAsset>(
         self: &mut PoolInner<BaseAsset, QuoteAsset>,
         ctx: &TxContext,
@@ -631,52 +714,6 @@ module deepbook::pool {
         assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
 
         self.state.governance_mut(ctx).set_whitelist(true);
-    }
-
-    /// Swap exact quantity without needing an balance_manager.
-    fun swap_exact_quantity<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        base_in: Coin<BaseAsset>,
-        quote_in: Coin<QuoteAsset>,
-        deep_in: Coin<DEEP>,
-        clock: &Clock,
-        ctx: &mut TxContext,
-    ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
-        let mut base_quantity = base_in.value();
-        let quote_quantity = quote_in.value();
-        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidQuantityIn);
-        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidQuantityIn);
-
-        let pay_with_deep = deep_in.value() > 0;
-        let is_bid = quote_quantity > 0;
-        if (is_bid) {
-            (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
-        };
-        base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
-
-        let mut temp_balance_manager = balance_manager::new(ctx);
-        temp_balance_manager.deposit(base_in, ctx);
-        temp_balance_manager.deposit(quote_in, ctx);
-        temp_balance_manager.deposit(deep_in, ctx);
-
-        self.place_market_order(
-            &mut temp_balance_manager,
-            0,
-            constants::self_matching_allowed(),
-            base_quantity,
-            is_bid,
-            pay_with_deep,
-            clock,
-            ctx
-        );
-
-        let base_out = temp_balance_manager.withdraw_protected<BaseAsset>(0, true, ctx).into_coin(ctx);
-        let quote_out = temp_balance_manager.withdraw_protected<QuoteAsset>(0, true, ctx).into_coin(ctx);
-        let deep_out = temp_balance_manager.withdraw_protected<DEEP>(0, true, ctx).into_coin(ctx);
-
-        temp_balance_manager.delete();
-
-        (base_out, quote_out, deep_out)
     }
 
     fun place_order_int<BaseAsset, QuoteAsset>(

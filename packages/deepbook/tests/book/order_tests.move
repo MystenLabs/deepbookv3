@@ -291,7 +291,8 @@ module deepbook::order_tests {
         abort(0)
     }
 
-    public fun create_order_base(
+    #[test_only]
+    public fun create_order_base (
         price: u64,
         quantity: u64,
         is_bid: bool,
@@ -316,6 +317,7 @@ module deepbook::order_tests {
         )
     }
 
+    #[test_only]
     public fun create_order(
         price: u64,
         quantity: u64,

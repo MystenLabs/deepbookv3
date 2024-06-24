@@ -59,12 +59,27 @@ module deepbook::pool_tests {
     #[test]
     fun test_place_then_fill_bid_ask() {
         place_then_fill(
+            false,
             true,
             constants::no_restriction(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_fill_bid_ask_stable() {
+        place_then_fill(
+            true,
+            true,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -73,11 +88,26 @@ module deepbook::pool_tests {
     fun test_place_then_fill_ask_bid() {
         place_then_fill(
             false,
+            false,
             constants::no_restriction(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_fill_ask_bid_stable() {
+        place_then_fill(
+            true,
+            false,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -85,12 +115,27 @@ module deepbook::pool_tests {
     #[test]
     fun test_place_then_ioc_bid_ask() {
         place_then_fill(
+            false,
             true,
             constants::immediate_or_cancel(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_ioc_bid_ask_stable() {
+        place_then_fill(
+            true,
+            true,
+            constants::immediate_or_cancel(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -99,11 +144,26 @@ module deepbook::pool_tests {
     fun test_place_then_ioc_ask_bid() {
         place_then_fill(
             false,
+            false,
             constants::immediate_or_cancel(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_place_then_ioc_ask_bid_stable() {
+        place_then_fill(
+            true,
+            false,
+            constants::immediate_or_cancel(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
         );
     }
@@ -161,10 +221,10 @@ module deepbook::pool_tests {
         partial_fill_order(
             true,
             constants::no_restriction(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::partially_filled()
         );
     }
@@ -174,10 +234,10 @@ module deepbook::pool_tests {
         partial_fill_order(
             false,
             constants::no_restriction(),
-            1 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            2 * constants::float_scaling(),
-            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            6 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()),
             constants::partially_filled()
         );
     }
@@ -352,6 +412,643 @@ module deepbook::pool_tests {
         test_get_pool_id_by_asset();
     }
 
+    #[test]
+    fun test_modify_order_bid_ok(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            0,
+            true,
+        );
+    }
+
+    #[test]
+    fun test_modify_order_ask_ok(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            0,
+            false,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal)]
+    fun test_modify_order_increase_bid_e(){
+        test_modify_order(
+            2 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            0,
+            true,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal)]
+    fun test_modify_order_increase_ask_e(){
+        test_modify_order(
+            2 * constants::float_scaling(),
+            3 * constants::float_scaling(),
+            0,
+            false,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
+    fun test_modify_order_invalid_new_quantity_bid_e(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            true,
+        );
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
+    fun test_modify_order_invalid_new_quantity_ask_e(){
+        test_modify_order(
+            3 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            2 * constants::float_scaling(),
+            false,
+        );
+    }
+
+    #[test]
+    fun test_queue_priority_bid_ok(){
+        test_queue_priority(true);
+    }
+
+    #[test]
+    fun test_queue_priority_ask_ok(){
+        test_queue_priority(false);
+    }
+
+    #[test_only]
+    public(package) fun setup_test(
+        owner: address,
+        test: &mut Scenario,
+    ): ID {
+        test.next_tx(owner);
+        share_clock(test);
+        share_registry_for_testing(test)
+    }
+
+    #[test_only]
+    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+        sender: address,
+        target_pool_id: ID,
+        reference_pool_id: ID,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let mut target_pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(target_pool_id);
+            let reference_pool = test.take_shared_by_id<Pool<ReferenceBaseAsset, ReferenceQuoteAsset>>(reference_pool_id);
+            let clock = test.take_shared<Clock>();
+            pool::add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+                &mut target_pool,
+                &reference_pool,
+                &clock
+            );
+            return_shared(target_pool);
+            return_shared(reference_pool);
+            return_shared(clock);
+        }
+    }
+
+    #[test_only]
+    /// Set up a reference pool where Deep per base is 100
+    public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        balance_manager_id: ID,
+        mid_price: u64,
+        test: &mut Scenario,
+    ): ID {
+        let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+            sender,
+            registry_id,
+            true,
+            test,
+        );
+
+        place_limit_order<BaseAsset, QuoteAsset>(
+            sender,
+            reference_pool_id,
+            balance_manager_id,
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            mid_price - 80 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            true,
+            true,
+            constants::max_u64(),
+            test,
+        );
+
+        place_limit_order<BaseAsset, QuoteAsset>(
+            sender,
+            reference_pool_id,
+            balance_manager_id,
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            mid_price + 80 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            false,
+            true,
+            constants::max_u64(),
+            test,
+        );
+
+        reference_pool_id
+    }
+
+    #[test_only]
+    public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        whitelisted_pool: bool,
+        test: &mut Scenario,
+    ): ID {
+        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
+        let stable_pool = false;
+        setup_pool<BaseAsset, QuoteAsset>(
+            sender,
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
+            registry_id,
+            whitelisted_pool,
+            stable_pool,
+            creation_fee,
+            test,
+        )
+    }
+
+    #[test_only]
+    public(package) fun setup_pool_with_stable_fees<BaseAsset, QuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        whitelisted_pool: bool,
+        test: &mut Scenario,
+    ): ID {
+        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
+        let stable_pool = true;
+        setup_pool<BaseAsset, QuoteAsset>(
+            sender,
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
+            registry_id,
+            whitelisted_pool,
+            stable_pool,
+            creation_fee,
+            test,
+        )
+    }
+
+    #[test_only]
+    public(package) fun setup_pool_with_default_fees_return_fee<BaseAsset, QuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        whitelisted_pool: bool,
+        test: &mut Scenario,
+    ): (ID, ID) {
+        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
+        let fee_id = object::id(&creation_fee);
+        let stable_pool = false;
+        let pool_id = setup_pool<BaseAsset, QuoteAsset>(
+            sender,
+            constants::tick_size(), // tick size
+            constants::lot_size(), // lot size
+            constants::min_size(), // min size
+            registry_id,
+            whitelisted_pool,
+            stable_pool,
+            creation_fee,
+            test,
+        );
+
+        (pool_id, fee_id)
+    }
+
+    #[test_only]
+    /// Place a limit order
+    public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
+        trader: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        client_order_id: u64,
+        order_type: u8,
+        self_matching_option: u8,
+        price: u64,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        expire_timestamp: u64,
+        test: &mut Scenario,
+    ): OrderInfo {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+
+            // Place order in pool
+            let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
+                &mut balance_manager,
+                client_order_id,
+                order_type,
+                self_matching_option,
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+
+            order_info
+        }
+    }
+
+    #[test_only]
+    /// Place an order
+    public(package) fun place_market_order<BaseAsset, QuoteAsset>(
+        trader: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        client_order_id: u64,
+        self_matching_option: u8,
+        quantity: u64,
+        is_bid: bool,
+        pay_with_deep: bool,
+        test: &mut Scenario,
+    ): OrderInfo {
+        test.next_tx(trader);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+
+            // Place order in pool
+            let order_info = pool.place_market_order<BaseAsset, QuoteAsset>(
+                &mut balance_manager,
+                client_order_id,
+                self_matching_option,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+
+            order_info
+        }
+    }
+
+    #[test_only]
+    /// Cancel an order
+    public(package) fun cancel_order<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        order_id: u128,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+
+            pool.cancel_order<BaseAsset, QuoteAsset>(
+                &mut balance_manager,
+                order_id,
+                &clock,
+                test.ctx()
+            );
+            return_shared(pool);
+            return_shared(clock);
+            return_shared(balance_manager);
+        }
+    }
+
+    #[test_only]
+    /// Set the time in the global clock to 1_000_000 + current_time
+    public(package) fun set_time(
+        current_time: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(OWNER);
+        {
+            let mut clock = test.take_shared<Clock>();
+            clock.set_for_testing(current_time + 1_000_000);
+            return_shared(clock);
+        };
+    }
+
+    #[test_only]
+    public(package) fun modify_order<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        order_id: u128,
+        new_quantity: u64,
+        test: &mut Scenario,
+    ) {
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let clock = test.take_shared<Clock>();
+
+            pool.modify_order<BaseAsset, QuoteAsset>(
+                &mut balance_manager,
+                order_id,
+                new_quantity,
+                &clock,
+                test.ctx()
+            );
+
+            return_shared(pool);
+            return_shared(balance_manager);
+            return_shared(clock);
+        }
+    }
+
+
+    /// Alice places a worse order
+    /// Alice places 3 bid/ask orders with at price 1
+    /// Alice matches the order with an ask/bid order at price 1
+    /// The first order should be matched because of queue priority
+    /// Process is repeated with a third order
+    fun test_queue_priority(
+        is_bid: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+
+        let client_order_id = 1;
+        let price = 2 * constants::float_scaling();
+        let worse_price = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        let order_info_worse = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            worse_price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let order_info_2 = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let order_info_3 = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice places limit order at price 1 for matching
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_2.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_2.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_3.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_worse.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Alice places limit order at price 1 for matching
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_3.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_3.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info_worse.order_id(),
+            is_bid,
+            client_order_id,
+            quantity,
+            0,
+            order_info_worse.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
+    fun test_modify_order(
+        original_quantity: u64,
+        new_quantity: u64,
+        filled_quantity: u64,
+        is_bid: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+
+        let client_order_id = 1;
+        let base_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        let order_info = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            base_price,
+            original_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        if (filled_quantity > 0) {
+            place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                constants::no_restriction(),
+                constants::self_matching_allowed(),
+                base_price,
+                filled_quantity,
+                !is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+        };
+
+        modify_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            order_info.order_id(),
+            new_quantity,
+            &mut test,
+        );
+
+        borrow_and_verify_book_order<SUI, USDC>(
+            pool_id,
+            order_info.order_id(),
+            is_bid,
+            client_order_id,
+            new_quantity,
+            0,
+            order_info.order_deep_price().deep_per_asset(),
+            test.ctx().epoch(),
+            constants::live(),
+            expire_timestamp,
+            &mut test,
+        );
+
+        end(test);
+    }
+
     fun test_get_pool_id_by_asset(){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -438,195 +1135,34 @@ module deepbook::pool_tests {
         target_pool_id
     }
 
-    public(package) fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
-        sender: address,
-        target_pool_id: ID,
-        reference_pool_id: ID,
-        test: &mut Scenario,
-    ){
-        test.next_tx(sender);
-        {
-            let mut target_pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(target_pool_id);
-            let reference_pool = test.take_shared_by_id<Pool<ReferenceBaseAsset, ReferenceQuoteAsset>>(reference_pool_id);
-            let clock = test.take_shared<Clock>();
-            pool::add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
-                &mut target_pool,
-                &reference_pool,
-                &clock
-            );
-            return_shared(target_pool);
-            return_shared(reference_pool);
-            return_shared(clock);
-        }
-    }
-
-    /// Set up a reference pool where Deep per base is 100
-    public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
+    fun setup_pool_with_stable_fees_and_reference_pool<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
         sender: address,
         registry_id: ID,
         balance_manager_id: ID,
-        mid_price: u64,
         test: &mut Scenario,
     ): ID {
-        let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
-            sender,
+        let target_pool_id = setup_pool_with_stable_fees<BaseAsset, QuoteAsset>(
+            OWNER,
             registry_id,
-            true,
-            test,
-        );
-
-        place_limit_order<BaseAsset, QuoteAsset>(
-            sender,
-            reference_pool_id,
-            balance_manager_id,
-            1,
-            constants::no_restriction(),
-            constants::self_matching_allowed(),
-            mid_price - 80 * constants::float_scaling(),
-            1 * constants::float_scaling(),
-            true,
-            true,
-            constants::max_u64(),
-            test,
-        );
-
-        place_limit_order<BaseAsset, QuoteAsset>(
-            sender,
-            reference_pool_id,
-            balance_manager_id,
-            1,
-            constants::no_restriction(),
-            constants::self_matching_allowed(),
-            mid_price + 80 * constants::float_scaling(),
-            1 * constants::float_scaling(),
             false,
-            true,
-            constants::max_u64(),
+            test,
+        );
+        let reference_pool_id = setup_reference_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            registry_id,
+            balance_manager_id,
+            100 * constants::float_scaling(),
+            test,
+        );
+        set_time(0, test);
+        add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            target_pool_id,
+            reference_pool_id,
             test,
         );
 
-        reference_pool_id
-    }
-
-    public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
-        sender: address,
-        registry_id: ID,
-        whitelisted_pool: bool,
-        test: &mut Scenario,
-    ): ID {
-        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
-        setup_pool<BaseAsset, QuoteAsset>(
-            sender,
-            constants::tick_size(), // tick size
-            constants::lot_size(), // lot size
-            constants::min_size(), // min size
-            registry_id,
-            whitelisted_pool,
-            creation_fee,
-            test,
-        )
-    }
-
-    public(package) fun setup_pool_with_default_fees_return_fee<BaseAsset, QuoteAsset>(
-        sender: address,
-        registry_id: ID,
-        whitelisted_pool: bool,
-        test: &mut Scenario,
-    ): (ID, ID) {
-        let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
-        let fee_id = object::id(&creation_fee);
-        let pool_id = setup_pool<BaseAsset, QuoteAsset>(
-            sender,
-            constants::tick_size(), // tick size
-            constants::lot_size(), // lot size
-            constants::min_size(), // min size
-            registry_id,
-            whitelisted_pool,
-            creation_fee,
-            test,
-        );
-
-        (pool_id, fee_id)
-    }
-
-    /// Place a limit order
-    public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
-        trader: address,
-        pool_id: ID,
-        balance_manager_id: ID,
-        client_order_id: u64,
-        order_type: u8,
-        self_matching_option: u8,
-        price: u64,
-        quantity: u64,
-        is_bid: bool,
-        pay_with_deep: bool,
-        expire_timestamp: u64,
-        test: &mut Scenario,
-    ): OrderInfo {
-        test.next_tx(trader);
-        {
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            let clock = test.take_shared<Clock>();
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-
-            // Place order in pool
-            let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
-                &mut balance_manager,
-                client_order_id,
-                order_type,
-                self_matching_option,
-                price,
-                quantity,
-                is_bid,
-                pay_with_deep,
-                expire_timestamp,
-                &clock,
-                test.ctx()
-            );
-            return_shared(pool);
-            return_shared(clock);
-            return_shared(balance_manager);
-
-            order_info
-        }
-    }
-
-    /// Place an order
-    public(package) fun place_market_order<BaseAsset, QuoteAsset>(
-        trader: address,
-        pool_id: ID,
-        balance_manager_id: ID,
-        client_order_id: u64,
-        self_matching_option: u8,
-        quantity: u64,
-        is_bid: bool,
-        pay_with_deep: bool,
-        test: &mut Scenario,
-    ): OrderInfo {
-        test.next_tx(trader);
-        {
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            let clock = test.take_shared<Clock>();
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-
-            // Place order in pool
-            let order_info = pool.place_market_order<BaseAsset, QuoteAsset>(
-                &mut balance_manager,
-                client_order_id,
-                self_matching_option,
-                quantity,
-                is_bid,
-                pay_with_deep,
-                &clock,
-                test.ctx()
-            );
-            return_shared(pool);
-            return_shared(clock);
-            return_shared(balance_manager);
-
-            order_info
-        }
+        target_pool_id
     }
 
     /// Alice places a bid order, Bob places a swap_exact_amount order
@@ -705,6 +1241,20 @@ module deepbook::pool_tests {
             &mut test,
         );
 
+        let (base_2, quote_2, deep_required_2) = if (is_bid) {
+            get_quote_quantity_out<SUI, USDC>(
+                pool_id,
+                base_in,
+                &mut test,
+            )
+        } else {
+            get_base_quantity_out<SUI, USDC>(
+                pool_id,
+                quote_in,
+                &mut test,
+            )
+        };
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -733,9 +1283,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
-        assert!(base == base_out.value(), constants::e_order_info_mismatch());
-        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1274,15 +1824,15 @@ module deepbook::pool_tests {
             &mut test,
         ).order_id();
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             placed_order_id,
             &mut test
         );
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             placed_order_id,
             &mut test
@@ -1473,6 +2023,20 @@ module deepbook::pool_tests {
             &mut test,
         );
 
+        let (base_2, quote_2, deep_required_2) = if (is_bid) {
+            get_quote_quantity_out<SUI, USDC>(
+                pool_id,
+                base_in,
+                &mut test,
+            )
+        } else {
+            get_base_quantity_out<SUI, USDC>(
+                pool_id,
+                quote_in,
+                &mut test,
+            )
+        };
+
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
                 place_swap_exact_base_for_quote<SUI, USDC>(
@@ -1501,9 +2065,9 @@ module deepbook::pool_tests {
         };
 
         assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
-        assert!(base == base_out.value(), constants::e_order_info_mismatch());
-        assert!(quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+        assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+        assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -1741,7 +2305,7 @@ module deepbook::pool_tests {
 
         let bob_client_order_id = 2;
         let bob_price = 2 * constants::float_scaling();
-        let bob_quantity = 2 * constants::float_scaling();
+        let bob_quantity = 2 * alice_quantity;
 
         let bob_order_info = place_limit_order<SUI, USDC>(
             BOB,
@@ -1785,6 +2349,7 @@ module deepbook::pool_tests {
     /// Place normal ask order, then try to fill full order.
     /// Alice places first order, Bob places second order.
     fun place_then_fill(
+        is_stable: bool,
         is_bid: bool,
         order_type: u8,
         alice_quantity: u64,
@@ -1796,7 +2361,11 @@ module deepbook::pool_tests {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
         let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        let pool_id = if (is_stable) {
+            setup_pool_with_stable_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test)
+        } else {
+            setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test)
+        };
         let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
 
         let alice_client_order_id = 1;
@@ -1825,7 +2394,7 @@ module deepbook::pool_tests {
         } else {
             3 * constants::float_scaling()
         };
-        let bob_quantity = 1 * constants::float_scaling();
+        let bob_quantity = alice_quantity;
 
         let bob_order_info = place_limit_order<SUI, USDC>(
             BOB,
@@ -1937,8 +2506,8 @@ module deepbook::pool_tests {
         );
 
         cancel_order<SUI, USDC>(
-            pool_id,
             BOB,
+            pool_id,
             balance_manager_id_bob,
             order_info.order_id(),
             &mut test
@@ -2179,8 +2748,8 @@ module deepbook::pool_tests {
         );
 
         cancel_order<SUI, USDC>(
-            pool_id,
             ALICE,
+            pool_id,
             balance_manager_id_alice,
             order_info.order_id(),
             &mut test
@@ -2188,8 +2757,7 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    /// Helper, verify OrderInfo.
-    /// TODO: create an OrderInfo struct and use that instead of multiple parameters
+    /// Helper, verify OrderInfo fields
     fun verify_order_info(
         order_info: &OrderInfo,
         client_order_id: u64,
@@ -2292,19 +2860,6 @@ module deepbook::pool_tests {
         orderbook
     }
 
-    /// Set the time in the global clock to 1_000_000 + current_time
-    public(package) fun set_time(
-        current_time: u64,
-        test: &mut Scenario,
-    ) {
-        test.next_tx(OWNER);
-        {
-            let mut clock = test.take_shared<Clock>();
-            clock.set_for_testing(current_time + 1_000_000);
-            return_shared(clock);
-        };
-    }
-
     /// Set the time in the global clock
     fun get_time(
         test: &mut Scenario,
@@ -2374,32 +2929,6 @@ module deepbook::pool_tests {
         }
     }
 
-    /// Cancel an order
-    public(package) fun cancel_order<BaseAsset, QuoteAsset>(
-        pool_id: ID,
-        owner: address,
-        balance_manager_id: ID,
-        order_id: u128,
-        test: &mut Scenario,
-    ) {
-        test.next_tx(owner);
-        {
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            let clock = test.take_shared<Clock>();
-            let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-
-            pool.cancel_order<BaseAsset, QuoteAsset>(
-                &mut balance_manager,
-                order_id,
-                &clock,
-                test.ctx()
-            );
-            return_shared(pool);
-            return_shared(clock);
-            return_shared(balance_manager);
-        }
-    }
-
     fun cancel_all_orders<BaseAsset, QuoteAsset>(
         pool_id: ID,
         owner: address,
@@ -2423,15 +2952,6 @@ module deepbook::pool_tests {
         }
     }
 
-    public(package) fun setup_test(
-        owner: address,
-        test: &mut Scenario,
-    ): ID {
-        test.next_tx(owner);
-        share_clock(test);
-        share_registry_for_testing(test)
-    }
-
     fun share_clock(
         test: &mut Scenario,
     ) {
@@ -2453,13 +2973,13 @@ module deepbook::pool_tests {
         min_size: u64,
         registry_id: ID,
         whitelisted_pool: bool,
+        stable_pool: bool,
         creation_fee: Coin<DEEP>,
         test: &mut Scenario,
     ): ID {
         test.next_tx(sender);
         let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
         let mut registry = test.take_shared_by_id<Registry>(registry_id);
-        let stable_pool = false;
         let pool_id;
         {
             pool_id = pool::create_pool_admin<BaseAsset, QuoteAsset>(
@@ -2499,8 +3019,8 @@ module deepbook::pool_tests {
 
     fun get_quantity_out<BaseAsset, QuoteAsset>(
         pool_id: ID,
-        base_amount: u64,
-        quote_amount: u64,
+        base_quantity: u64,
+        quote_quantity: u64,
         test: &mut Scenario,
     ): (u64, u64, u64) {
         test.next_tx(OWNER);
@@ -2509,9 +3029,51 @@ module deepbook::pool_tests {
             let clock = test.take_shared<Clock>();
 
             let (base_out, quote_out, deep_required) = pool.get_quantity_out<BaseAsset, QuoteAsset>(
-                base_amount,
-                quote_amount,
-                &clock,
+                base_quantity,
+                quote_quantity,
+                &clock
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
+        }
+    }
+
+    fun get_base_quantity_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        quote_quantity: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_base_quantity_out<BaseAsset, QuoteAsset>(
+                quote_quantity,
+                &clock
+            );
+            return_shared(pool);
+            return_shared(clock);
+
+            (base_out, quote_out, deep_required)
+        }
+    }
+
+    fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
+        pool_id: ID,
+        base_quantity: u64,
+        test: &mut Scenario,
+    ): (u64, u64, u64) {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
+
+            let (base_out, quote_out, deep_required) = pool.get_quote_quantity_out<BaseAsset, QuoteAsset>(
+                base_quantity,
+                &clock
             );
             return_shared(pool);
             return_shared(clock);
