@@ -9,7 +9,7 @@ module deepbook::pool {
         coin::{Self, Coin},
         clock::Clock,
         event,
-        vec_set::VecSet,
+        vec_set::{Self, VecSet},
         versioned::{Self, Versioned},
     };
     use deepbook::{
@@ -42,9 +42,6 @@ module deepbook::pool {
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
 
-    // === Constants ===
-    const CURRENT_VERSION: u64 = 1;
-
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -52,7 +49,7 @@ module deepbook::pool {
     }
 
     public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
-        disabled_versions: vector<u64>,
+        disabled_versions: VecSet<u64>,
         pool_id: ID,
         book: Book,
         state: State,
@@ -507,6 +504,18 @@ module deepbook::pool {
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
+    /// Takes the registry and updates the disabled version within pool
+    /// Only admin can update the disabled versions
+    public fun update_disabled_versions<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        registry: &Registry,
+        _cap: &DeepbookAdminCap,
+    ) {
+        let disabled_versions = registry.get_disabled_versions();
+        let inner = self.load_inner_mut();
+        inner.disabled_versions = disabled_versions;
+    }
+
     // === Public-View Functions ===
     /// Accessor to check if the pool is whitelisted.
     public fun whitelisted<BaseAsset, QuoteAsset>(
@@ -633,7 +642,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            disabled_versions: vector[],
+            disabled_versions: vec_set::empty(),
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(stable_pool, ctx),
@@ -649,7 +658,7 @@ module deepbook::pool {
         let treasury_address = registry.treasury_address();
         let pool = Pool<BaseAsset, QuoteAsset> {
             id: pool_id,
-            inner: versioned::create(CURRENT_VERSION, pool_inner, ctx),
+            inner: versioned::create(constants::current_version(), pool_inner, ctx),
         };
         let pool_id = object::id(&pool);
         registry.register_pool<BaseAsset, QuoteAsset>(pool_id);
@@ -686,7 +695,7 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
     ): &PoolInner<BaseAsset, QuoteAsset> {
         let inner: &PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value();
-        let package_version = CURRENT_VERSION;
+        let package_version = constants::current_version();
         assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
@@ -696,7 +705,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
     ): &mut PoolInner<BaseAsset, QuoteAsset> {
         let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
-        let package_version = CURRENT_VERSION;
+        let package_version = constants::current_version();
         assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
