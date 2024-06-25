@@ -209,7 +209,7 @@ module deepbook::governance {
     ): u64 {
         let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
         if (stake > VOTING_POWER_THRESHOLD) {
-            voting_power = voting_power + math::sqrt(stake * 1000) / 1000 - math::sqrt(VOTING_POWER_THRESHOLD * 1000) / 1000;
+            voting_power = voting_power + math::sqrt(stake, constants::deep_unit()) - math::sqrt(VOTING_POWER_THRESHOLD, constants::deep_unit());
         };
 
         voting_power

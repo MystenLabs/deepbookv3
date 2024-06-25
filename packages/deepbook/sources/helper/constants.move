@@ -7,6 +7,7 @@ module deepbook::constants {
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
     const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
     const HALF: u64 = 500_000_000;
+    const DEEP_UNIT: u64 = 1_000_000;
 
     // Restrictions on limit orders.
     // No restriction on the order.
@@ -64,8 +65,6 @@ module deepbook::constants {
     const USDC_UNIT: u64 = 1_000_000;
     #[test_only]
     const SUI_UNIT: u64 = 1_000_000_000;
-    #[test_only]
-    const DEEP_UNIT: u64 = 1_000_000;
 
     // Testing error codes
     #[test_only]
