@@ -75,7 +75,7 @@ module deepbook::math {
     }
 
     /// Computes the integer square root of a scaled u64 value, assuming the original value
-    /// is scaled by FLOAT_SCALING. The result will be in the same floating-point representation.
+    /// is scaled by precision. The result will be in the same floating-point representation.
     public(package) fun sqrt(x: u64, precision: u64): u64 {
         assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
         let multiplier = (FLOAT_SCALING / precision) as u128;
