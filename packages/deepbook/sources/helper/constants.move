@@ -168,6 +168,10 @@ module deepbook::constants {
         FEE_IS_DEEP
     }
 
+    public fun deep_unit(): u64 {
+        DEEP_UNIT
+    }
+
     #[test_only]
     public fun maker_fee(): u64 {
         MAKER_FEE
@@ -236,11 +240,6 @@ module deepbook::constants {
     #[test_only]
     public fun sui_unit(): u64 {
         SUI_UNIT
-    }
-
-    #[test_only]
-    public fun deep_unit(): u64 {
-        DEEP_UNIT
     }
 
     #[test_only]
