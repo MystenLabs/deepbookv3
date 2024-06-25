@@ -17,6 +17,8 @@ const DEEPBOOK_PACKAGE_ID = `0x22ed917fa56afe09677314871a2997a111ebacd1f622b6cfe
 const REGISTRY_ID = `0x14614dfc9243fcb2ef7ac51efed5c6284ca701d55216e1f42b3eb22c541feaa6`;
 const ADMINCAP_ID = `0x30314edf9cfa6057722746f31b0973225b38437589b067d4ca6ad263cef9186a`;
 const DEEP_SUI_POOL_ID = `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`;
+const TONY_SUI_POOL_ID = `0x92083a73031ad86c6df401dc4a59b5dfa589db5937a921c2ec72a5629b715154`;
+
 // Create manager and give ID
 const MANAGER_ID = `0x08b49d7067383d17cdd695161b247e2f617e0d9095da65edb85900e7b6f82de4`;
 
@@ -27,13 +29,13 @@ const DEEP_TYPE = `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0
 const SUI_TYPE = `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`;
 
 // Give the id of the coin objects to deposit into balance manager
-const BASE_ID = `0x7ac09c0f7b067f5671bea77149e2913eb994221534178088c070e8b3b21f5506`;
-const QUOTE_ID = `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`;
 const DEEP_COIN_ID = `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`;
 const SUI_COIN_ID = `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`;
+const TONY_COIN_ID = `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`;
 
 const DEEP_SCALAR = 1000000;
 const SUI_SCALAR = 1000000000;
+const TONY_SCALAR = 1000000;
 const FLOAT_SCALAR = 1000000000;
 const POOL_CREATION_FEE = 10000 * DEEP_SCALAR;
 const LARGE_TIMESTAMP = 1844674407370955161;
@@ -57,15 +59,15 @@ const CANCEL_MAKER = 2;
 // =================================================================
 
 const createPoolAdmin = async (
+    baseType: string,
+    quoteType: string,
     txb: TransactionBlock
 ) => {
-    const baseType = DEEP_TYPE;
-    const quoteType = SUI_TYPE;
     const [creationFee] = txb.splitCoins(
         txb.object(DEEP_COIN_ID),
         [txb.pure.u64(POOL_CREATION_FEE)]
     );
-    const whiteListedPool = true;
+    const whiteListedPool = false;
     const stablePool = false;
 
     txb.moveCall({
@@ -208,6 +210,7 @@ const checkManagerBalance = async (
 
 /// Places an order in the pool
 const placeLimitOrder = async (
+    poolId: string,
     baseType: string,
     baseScalar: number,
     quoteType: string,
@@ -215,6 +218,7 @@ const placeLimitOrder = async (
     price: number,
     quantity: number,
     isBid: boolean,
+    payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
     // Bidding for 10 deep, will pay price 2, so pay 20 SUI
@@ -228,14 +232,13 @@ const placeLimitOrder = async (
     const orderType = NO_RESTRICTION;
     const selfMatchingOption = SELF_MATCHING_ALLOWED;
 
-    const payWithDeep = false;
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
 
     const orderInfo = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
-            txb.object(DEEP_SUI_POOL_ID),
+            txb.object(poolId),
             txb.object(MANAGER_ID),
             txb.pure.u64(clientOrderId),
             txb.pure.u8(orderType),
@@ -250,58 +253,57 @@ const placeLimitOrder = async (
         typeArguments: [baseType, quoteType]
     });
 
-    // const res = await client.devInspectTransactionBlock({
-    //     sender: normalizeSuiAddress(MY_ADDRESS),
-    //     transactionBlock: txb,
-    // });
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
 
-    // const ID = bcs.struct('ID', {
-    //     bytes: bcs.Address,
-    // });
+    const ID = bcs.struct('ID', {
+        bytes: bcs.Address,
+    });
 
-    // const OrderDeepPrice = bcs.struct('OrderDeepPrice', {
-    //     asset_is_base: bcs.bool(),
-    //     deep_per_asset: bcs.u64(),
-    // });
+    const OrderDeepPrice = bcs.struct('OrderDeepPrice', {
+        asset_is_base: bcs.bool(),
+        deep_per_asset: bcs.u64(),
+    });
 
-    // const Fill = bcs.struct('Fill', {
-    //     maker_order_id: bcs.u128(),
-    //     balance_manager_id: ID,
-    //     expired: bcs.bool(),
-    //     completed: bcs.bool(),
-    //     base_quantity: bcs.u64(),
-    //     quote_quantity: bcs.u64(),
-    //     taker_is_bid: bcs.bool(),
-    //     maker_epoch: bcs.u64(),
-    //     maker_deep_price: OrderDeepPrice,
-    // });
+    const Fill = bcs.struct('Fill', {
+        maker_order_id: bcs.u128(),
+        balance_manager_id: ID,
+        expired: bcs.bool(),
+        completed: bcs.bool(),
+        base_quantity: bcs.u64(),
+        quote_quantity: bcs.u64(),
+        taker_is_bid: bcs.bool(),
+        maker_epoch: bcs.u64(),
+        maker_deep_price: OrderDeepPrice,
+    });
 
-    // const OrderInfo = bcs.struct('OrderInfo', {
-    //     pool_id: ID,
-    //     order_id: bcs.u128(),
-    //     balance_manager_id: ID,
-    //     client_order_id: bcs.u64(),
-    //     trader: bcs.Address,
-    //     order_type: bcs.u8(),
-    //     self_matching_option: bcs.u8(),
-    //     price: bcs.u64(),
-    //     is_bid: bcs.bool(),
-    //     original_quantity: bcs.u64(),
-    //     order_deep_price: OrderDeepPrice,
-    //     expire_timestamp: bcs.u64(),
-    //     executed_quantity: bcs.u64(),
-    //     cumulative_quote_quantity: bcs.u64(),
-    //     fills: bcs.vector(Fill),
-    //     fee_is_deep: bcs.bool(),
-    //     paid_fees: bcs.u64(),
-    //     epoch: bcs.u64(),
-    //     status: bcs.u8(),
-    //     market_order: bcs.bool(),
-    // });
+    const OrderInfo = bcs.struct('OrderInfo', {
+        pool_id: ID,
+        order_id: bcs.u128(),
+        balance_manager_id: ID,
+        client_order_id: bcs.u64(),
+        trader: bcs.Address,
+        order_type: bcs.u8(),
+        self_matching_option: bcs.u8(),
+        price: bcs.u64(),
+        is_bid: bcs.bool(),
+        original_quantity: bcs.u64(),
+        order_deep_price: OrderDeepPrice,
+        expire_timestamp: bcs.u64(),
+        executed_quantity: bcs.u64(),
+        cumulative_quote_quantity: bcs.u64(),
+        fills: bcs.vector(Fill),
+        fee_is_deep: bcs.bool(),
+        paid_fees: bcs.u64(),
+        epoch: bcs.u64(),
+        status: bcs.u8(),
+        market_order: bcs.bool(),
+    });
 
-
-    // let orderInformation = res.results![1].returnValues![0][0];
-    // console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
+    let orderInformation = res.results![0].returnValues![0][0];
+    console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
 }
 
 const cancelOrder = async (
@@ -374,20 +376,71 @@ const cancelAllOrders = async (
     });
 }
 
+const midPrice = async (
+    poolId: string,
+    baseType: string,
+    baseScalar: number,
+    quoteType: string,
+    quoteScalar: number,
+    txb: TransactionBlock
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::mid_price`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
+
+    const bytes = res.results![0].returnValues![0][0];
+    const parsed_mid_price = Number(bcs.U64.parse(new Uint8Array(bytes)));
+    const adjusted_mid_price = parsed_mid_price * baseScalar / quoteScalar / FLOAT_SCALAR;
+
+    console.log(`The mid price of ${poolId} is ${adjusted_mid_price}`);
+}
+
+const addDeepPricePoint = async (
+    targetPoolId: string,
+    referencePoolId: string,
+    targetBaseType: string,
+    targetQuoteType: string,
+    referenceBaseType: string,
+    referenceQuoteType: string,
+    txb: TransactionBlock
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::add_deep_price_point`,
+        arguments: [
+            txb.object(targetPoolId),
+            txb.object(referencePoolId),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [targetBaseType, targetQuoteType, referenceBaseType, referenceQuoteType]
+    });
+}
+
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createPoolAdmin(txb);
+    // await createPoolAdmin(TONY_TYPE, SUI_TYPE, txb);
+    // await addDeepPricePoint(TONY_SUI_POOL_ID, DEEP_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, DEEP_TYPE, SUI_TYPE, txb);
     // await unregisterPoolAdmin(txb);
     // await createAndShareBalanceManager(txb);
     // await depositIntoManager(5000, DEEP_SCALAR, DEEP_COIN_ID, DEEP_TYPE, txb);
     // await depositIntoManager(40, SUI_SCALAR, SUI_COIN_ID, SUI_TYPE, txb);
+    // await depositIntoManager(5000, TONY_SCALAR, TONY_COIN_ID, TONY_TYPE, txb);
     // await withdrawFromManager(5, SUI_SCALAR, SUI_TYPE, txb);
     // await withdrawAllFromManager(SUI_TYPE, txb);
     // await checkManagerBalance(DEEP_TYPE, DEEP_SCALAR, txb);
     // await checkManagerBalance(SUI_TYPE, SUI_SCALAR, txb);
     // await placeLimitOrder(
+    //     DEEP_SUI_POOL_ID,
     //     DEEP_TYPE,
     //     DEEP_SCALAR,
     //     SUI_TYPE,
@@ -395,9 +448,11 @@ const executeTransaction = async () => {
     //     2.5, // Price
     //     1, // Quantity
     //     true, // isBid
+    //     false, // payWithDeep
     //     txb
     // );
     // await placeLimitOrder(
+    //     DEEP_SUI_POOL_ID,
     //     DEEP_TYPE,
     //     DEEP_SCALAR,
     //     SUI_TYPE,
@@ -405,11 +460,25 @@ const executeTransaction = async () => {
     //     7.5, // Price
     //     1, // Quantity
     //     false, // isBid
+    //     false, // payWithDeep
+    //     txb
+    // );
+    // await placeLimitOrder(
+    //     TONY_SUI_POOL_ID,
+    //     TONY_TYPE,
+    //     TONY_SCALAR,
+    //     SUI_TYPE,
+    //     SUI_SCALAR,
+    //     5, // Price
+    //     1, // Quantity
+    //     true, // isBid
+    //     true, // payWithDeep
     //     txb
     // );
     // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
     // await cancelAllOrders(DEEP_SUI_POOL_ID, txb);
-    await getAllOpenOrders(txb);
+    // await getAllOpenOrders(txb);
+    // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
