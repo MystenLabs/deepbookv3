@@ -1,12 +1,13 @@
 module deepbook::constants {
     const CURRENT_VERSION: u64 = 1;
-    const POOL_CREATION_FEE: u64 = 10000 * 1_000_000_000; // 10000 DEEP
+    const POOL_CREATION_FEE: u64 = 10000 * 1_000_000; // 10000 DEEP
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const MAX_U64: u64 = (1u128 << 64 - 1) as u64;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = (1u128 << 63 - 1) as u64;
-    const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000_000; // 100 DEEP
+    const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
     const HALF: u64 = 500_000_000;
+    const DEEP_UNIT: u64 = 1_000_000;
 
     // Restrictions on limit orders.
     // No restriction on the order.
@@ -235,6 +236,11 @@ module deepbook::constants {
     #[test_only]
     public fun sui_unit(): u64 {
         SUI_UNIT
+    }
+
+    #[test_only]
+    public fun deep_unit(): u64 {
+        DEEP_UNIT
     }
 
     #[test_only]

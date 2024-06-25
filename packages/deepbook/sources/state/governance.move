@@ -31,7 +31,7 @@ module deepbook::governance {
     const MIN_MAKER_VOLATILE: u64 = 200000;
     const MAX_MAKER_VOLATILE: u64 = 500000;
     const MAX_PROPOSALS: u64 = 100;
-    const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000_000; // 100k
+    const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000; // 100k deep
 
     // === Structs ===
     /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
@@ -209,7 +209,7 @@ module deepbook::governance {
     ): u64 {
         let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
         if (stake > VOTING_POWER_THRESHOLD) {
-            voting_power = voting_power + math::sqrt(stake) - math::sqrt(VOTING_POWER_THRESHOLD);
+            voting_power = voting_power + math::sqrt(stake, constants::deep_unit()) - math::sqrt(VOTING_POWER_THRESHOLD, constants::deep_unit());
         };
 
         voting_power
