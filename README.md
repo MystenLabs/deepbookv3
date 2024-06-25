@@ -1,6 +1,6 @@
 ![image info](./DeepBook_Logo_White.png)
 # DeepBook V3
-DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant low latency exchange on chain. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Additionally, DBv3 features new features like flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech). Detailed documentation, SDK, and analytics coming soon.
+DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant, low latency exchange on chain. DBv3 comes with brand new features including flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech). Detailed documentation, SDK, and analytics coming soon.
 ## DeepBook Architecture
 ![image info](./DBv3Architecture.png)
 ## Balance Manager
