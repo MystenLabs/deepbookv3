@@ -1,7 +1,7 @@
 
-import { TransactionBlock } from "@mysten/sui.js/transactions";
+import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
 import { getActiveAddress, signAndExecute } from "./utils";
-import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
+import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress, SUI_TYPE_ARG } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 
@@ -13,13 +13,12 @@ const ENV = 'testnet';
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
 // The package id of the `deepbook` package
-const DEEPBOOK_PACKAGE_ID = `0x2d28d77d619646ff6c65aa0835bc5c78ceddf9787f33b8f40c694498e13e41cd`;
-const REGISTRY_ID = `0xf2d529191aec0f1823fa1e60648425f4c714f2fcf9f5786d7f443765b0fca22e`;
-const ADMINCAP_ID = `0x2809cf7ce450b00819883f7a44557619c272fd486c649fd45c890362607e7b31`;
-const POOL_ID = ``;
+const DEEPBOOK_PACKAGE_ID = `0x22ed917fa56afe09677314871a2997a111ebacd1f622b6cfed3a4422aa4d2e06`;
+const REGISTRY_ID = `0x14614dfc9243fcb2ef7ac51efed5c6284ca701d55216e1f42b3eb22c541feaa6`;
+const ADMINCAP_ID = `0x30314edf9cfa6057722746f31b0973225b38437589b067d4ca6ad263cef9186a`;
+const DEEP_SUI_POOL_ID = `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`;
 // Create manager and give ID
-const MANAGER_ID = ``;
-const TRADECAP_ID = ``;
+const MANAGER_ID = `0x08b49d7067383d17cdd695161b247e2f617e0d9095da65edb85900e7b6f82de4`;
 
 // Update to the base and quote types of the pool
 const ASLAN_TYPE = `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`;
@@ -31,12 +30,15 @@ const SUI_TYPE = `0x000000000000000000000000000000000000000000000000000000000000
 const BASE_ID = `0x7ac09c0f7b067f5671bea77149e2913eb994221534178088c070e8b3b21f5506`;
 const QUOTE_ID = `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`;
 const DEEP_COIN_ID = `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`;
+const SUI_COIN_ID = `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`;
 
+const DEEP_SCALAR = 1000000;
+const SUI_SCALAR = 1000000000;
 const FLOAT_SCALAR = 1000000000;
+const POOL_CREATION_FEE = 10000 * DEEP_SCALAR;
 const LARGE_TIMESTAMP = 1844674407370955161;
-const POOL_CREATION_FEE = 100 * FLOAT_SCALAR;
 const MY_ADDRESS = getActiveAddress();
-const GAS_BUDGET = 500000000; // Update gas budget as needed for order placement
+const GAS_BUDGET = 0.5 * SUI_SCALAR; // Update gas budget as needed for order placement
 
 // Trading constants
 // Order types
@@ -54,18 +56,16 @@ const CANCEL_MAKER = 2;
 // Transactions
 // =================================================================
 
-const createPool = async (
+const createPoolAdmin = async (
     txb: TransactionBlock
 ) => {
-    txb.setGasBudget(GAS_BUDGET);
-
     const baseType = DEEP_TYPE;
     const quoteType = SUI_TYPE;
     const [creationFee] = txb.splitCoins(
         txb.object(DEEP_COIN_ID),
-        [txb.pure.u64(10000 * FLOAT_SCALAR)]
+        [txb.pure.u64(POOL_CREATION_FEE)]
     );
-    const whiteListedPool = false;
+    const whiteListedPool = true;
     const stablePool = false;
 
     txb.moveCall({
@@ -84,31 +84,54 @@ const createPool = async (
     });
 }
 
-// const createAndShareBalanceManager = async (
-//     txb: TransactionBlock
-// ) => {
-//     const manager = txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::new`,
-//     });
-//     txb.moveCall({
-// 		target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::share`,
-// 		arguments: [
-// 			manager,
-// 		],
-//     });
-// }
+const unregisterPoolAdmin = async (
+    txb: TransactionBlock
+) => {
+    const baseType = DEEP_TYPE;
+    const quoteType = SUI_TYPE;
+    txb.moveCall({
+		target: `${DEEPBOOK_PACKAGE_ID}::pool::unregister_pool_admin`,
+		arguments: [
+			txb.object(REGISTRY_ID),
+			txb.object(ADMINCAP_ID),
+		],
+		typeArguments: [baseType, quoteType]
+    });
+}
 
-// // Admin Only
+const createAndShareBalanceManager = async (
+    txb: TransactionBlock
+) => {
+    const manager = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::new`,
+    });
+    txb.moveCall({
+		target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::share`,
+		arguments: [
+			manager,
+		],
+    });
+}
+
 const depositIntoManager = async (
     amountToDeposit: number,
+    scalar: number,
     coinId: string,
     coinType: string,
     txb: TransactionBlock
 ) => {
-    const [deposit] = txb.splitCoins(
-        txb.object(coinId),
-        [txb.pure.u64(amountToDeposit)]
-    );
+    var deposit;
+    if (coinType == SUI_TYPE) {
+        [deposit] = txb.splitCoins(
+            txb.gas,
+            [txb.pure.u64(amountToDeposit * scalar)]
+        );
+    } else {
+        [deposit] = txb.splitCoins(
+            txb.object(coinId),
+            [txb.pure.u64(amountToDeposit * scalar)]
+        );
+    }
 
     txb.moveCall({
 		target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::deposit`,
@@ -122,287 +145,271 @@ const depositIntoManager = async (
     console.log(`Deposited ${amountToDeposit} of type ${coinType} into manager ${MANAGER_ID}`);
 }
 
-// const withdrawFromManager = async (
-//     amountToWithdraw: number,
-//     coinType: string,
-//     txb: TransactionBlock
-// ) => {
-//     const coin = txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
-//         arguments: [
-//             txb.object(MANAGER_ID),
-//             txb.pure.u64(amountToWithdraw),
-//         ],
-//         typeArguments: [coinType]
-//     });
+const withdrawFromManager = async (
+    amountToWithdraw: number,
+    scalar: number,
+    coinType: string,
+    txb: TransactionBlock
+) => {
+    const coin = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
+        arguments: [
+            txb.object(MANAGER_ID),
+            txb.pure.u64(amountToWithdraw * scalar),
+        ],
+        typeArguments: [coinType]
+    });
 
-//     txb.transferObjects([coin], MY_ADDRESS);
-//     console.log(`Withdrew ${amountToWithdraw} of type ${coinType} from manager ${MANAGER_ID}`);
-// }
+    txb.transferObjects([coin], MY_ADDRESS);
+    console.log(`Withdrew ${amountToWithdraw} of type ${coinType} from manager ${MANAGER_ID}`);
+}
 
-// const withdrawAllFromManager = async (
-//     coinType: string,
-//     txb: TransactionBlock
-// ) => {
-//     const coin = txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
-//         arguments: [
-//             txb.object(MANAGER_ID),
-//         ],
-//         typeArguments: [coinType]
-//     });
+const withdrawAllFromManager = async (
+    coinType: string,
+    txb: TransactionBlock
+) => {
+    const coin = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
+        arguments: [
+            txb.object(MANAGER_ID),
+        ],
+        typeArguments: [coinType]
+    });
 
-//     txb.transferObjects([coin], MY_ADDRESS);
-//     console.log(`Withdrew all of type ${coinType} from manager ${MANAGER_ID}`);
-// };
+    txb.transferObjects([coin], MY_ADDRESS);
+    console.log(`Withdrew all of type ${coinType} from manager ${MANAGER_ID}`);
+};
 
-// const checkManagerBalance = async (
-//     coinType: string,
-//     txb: TransactionBlock
-// ) => {
-//     // Result types: [U64]
-//     txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
-//         arguments: [
-//             txb.object(MANAGER_ID),
-//         ],
-//         typeArguments: [coinType]
-//     });
+const checkManagerBalance = async (
+    coinType: string,
+    scalar: number,
+    txb: TransactionBlock
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
+        arguments: [
+            txb.object(MANAGER_ID),
+        ],
+        typeArguments: [coinType]
+    });
 
-//     const res = await client.devInspectTransactionBlock({
-//         sender: normalizeSuiAddress(MY_ADDRESS),
-//         transactionBlock: txb,
-//     });
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
 
-//     const bytes = res.results![0].returnValues![0][0];
-//     const parsed_balance = bcs.U64.parse(new Uint8Array(bytes));
+    const bytes = res.results![0].returnValues![0][0];
+    const parsed_balance = bcs.U64.parse(new Uint8Array(bytes));
+    const balanceNumber = Number(parsed_balance);
+    const adjusted_balance = balanceNumber / scalar;
 
-//     console.log(`Manager balance for ${coinType} is ${parsed_balance.toString()}`); // Output the u64 number as a string
-// }
+    console.log(`Manager balance for ${coinType} is ${adjusted_balance.toString()}`); // Output the u64 number as a string
+}
 
-// /// Places an order in the pool
-// const placeLimitOrder = async (
-//     isOwner: boolean,
-//     txb: TransactionBlock
-// ) => {
-//     txb.setGasBudget(GAS_BUDGET);
-//     const baseType = DEEP_TYPE;
-//     const quoteType = SUI_TYPE;
-//     const clientOrderId = 88;
-//     const orderType = NO_RESTRICTION;
-//     const selfMatchingOption = SELF_MATCHING_ALLOWED;
-//     const price = 2000000;
-//     const quantity = 1000000;
-//     const isBid = true;
-//     const payWithDeep = false;
-//     var tradeProof;
+/// Places an order in the pool
+const placeLimitOrder = async (
+    baseType: string,
+    baseScalar: number,
+    quoteType: string,
+    quoteScalar: number,
+    price: number,
+    quantity: number,
+    isBid: boolean,
+    txb: TransactionBlock
+) => {
+    // Bidding for 10 deep, will pay price 2, so pay 20 SUI
+    // Input quantity should be 10 * 1_000_000
+    // Input price should be 2 * FLOAT_SCALAR * quote_scalar / base_scalar  = 2 * 1_000_000_000_000
+    // This will make the quote quantity quantity * price = 20 * 1_000_000_000
+    // This makes the quote quantity accurate
+    txb.setGasBudget(GAS_BUDGET);
 
-//     if (isOwner) {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//             ],
-//         });
-//     } else {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//                 txb.object(TRADECAP_ID),
-//             ],
-//         });
-//     }
+    const clientOrderId = 88;
+    const orderType = NO_RESTRICTION;
+    const selfMatchingOption = SELF_MATCHING_ALLOWED;
 
-//     const orderInfo = txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
-//         arguments: [
-//             txb.object(POOL_ID),
-//             txb.object(MANAGER_ID),
-//             tradeProof,
-//             txb.pure.u64(clientOrderId),
-//             txb.pure.u8(orderType),
-//             txb.pure.u8(selfMatchingOption),
-//             txb.pure.u64(price),
-//             txb.pure.u64(quantity),
-//             txb.pure.bool(isBid),
-//             txb.pure.bool(payWithDeep),
-//             txb.pure.u64(LARGE_TIMESTAMP),
-//             txb.object(SUI_CLOCK_OBJECT_ID),
-//         ],
-//         typeArguments: [baseType, quoteType]
-//     });
+    const payWithDeep = false;
+    const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
+    const inputQuantity = quantity * baseScalar;
 
-//     const res = await client.devInspectTransactionBlock({
-//         sender: normalizeSuiAddress(MY_ADDRESS),
-//         transactionBlock: txb,
-//     });
+    const orderInfo = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
+        arguments: [
+            txb.object(DEEP_SUI_POOL_ID),
+            txb.object(MANAGER_ID),
+            txb.pure.u64(clientOrderId),
+            txb.pure.u8(orderType),
+            txb.pure.u8(selfMatchingOption),
+            txb.pure.u64(inputPrice),
+            txb.pure.u64(inputQuantity),
+            txb.pure.bool(isBid),
+            txb.pure.bool(payWithDeep),
+            txb.pure.u64(LARGE_TIMESTAMP),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
 
-//     const ID = bcs.struct('ID', {
-//         bytes: bcs.Address,
-//     });
+    // const res = await client.devInspectTransactionBlock({
+    //     sender: normalizeSuiAddress(MY_ADDRESS),
+    //     transactionBlock: txb,
+    // });
 
-//     const Fill = bcs.struct('Fill', {
-//         orderId: bcs.u128(),
-//         balanceManagerId: ID,
-//         expired: bcs.bool(),
-//         completed: bcs.bool(),
-//         volume: bcs.u64(),
-//         quoteQuantity: bcs.u64(),
-//         takerIsBid: bcs.bool()
-//     });
+    // const ID = bcs.struct('ID', {
+    //     bytes: bcs.Address,
+    // });
 
-//     const OrderInfo = bcs.struct('OrderInfo', {
-//         poolId: bcs.Address,
-//         orderId: bcs.u128(),
-//         balanceManagerId: ID,
-//         clientOrderId: bcs.u64(),
-//         trader: bcs.Address,
-//         orderType: bcs.u8(),
-//         selfMatchingOption: bcs.u8(),
-//         price: bcs.u64(),
-//         isBid: bcs.bool(),
-//         originalQuantity: bcs.u64(),
-//         deepPerBase: bcs.u64(),
-//         expireTimestamp: bcs.u64(),
-//         executedQuantity: bcs.u64(),
-//         cumulativeQuoteQuantity: bcs.u64(),
-//         fills: bcs.vector(Fill),
-//         feeIsDeep: bcs.bool(),
-//         paidFees: bcs.u64(),
-//         epoch: bcs.u64(),
-//         status: bcs.u8(),
-//         marketOrder: bcs.bool()
-//     });
+    // const OrderDeepPrice = bcs.struct('OrderDeepPrice', {
+    //     asset_is_base: bcs.bool(),
+    //     deep_per_asset: bcs.u64(),
+    // });
 
-//     let orderInformation = res.results![1].returnValues![0][0];
-//     console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
-// }
+    // const Fill = bcs.struct('Fill', {
+    //     maker_order_id: bcs.u128(),
+    //     balance_manager_id: ID,
+    //     expired: bcs.bool(),
+    //     completed: bcs.bool(),
+    //     base_quantity: bcs.u64(),
+    //     quote_quantity: bcs.u64(),
+    //     taker_is_bid: bcs.bool(),
+    //     maker_epoch: bcs.u64(),
+    //     maker_deep_price: OrderDeepPrice,
+    // });
 
-// const cancelOrder = async (
-//     orderId: string,
-//     isOwner: boolean,
-//     txb: TransactionBlock
-// ) => {
-//     const baseType = DEEP_TYPE;
-//     const quoteType = SUI_TYPE;
-//     txb.setGasBudget(GAS_BUDGET);
+    // const OrderInfo = bcs.struct('OrderInfo', {
+    //     pool_id: ID,
+    //     order_id: bcs.u128(),
+    //     balance_manager_id: ID,
+    //     client_order_id: bcs.u64(),
+    //     trader: bcs.Address,
+    //     order_type: bcs.u8(),
+    //     self_matching_option: bcs.u8(),
+    //     price: bcs.u64(),
+    //     is_bid: bcs.bool(),
+    //     original_quantity: bcs.u64(),
+    //     order_deep_price: OrderDeepPrice,
+    //     expire_timestamp: bcs.u64(),
+    //     executed_quantity: bcs.u64(),
+    //     cumulative_quote_quantity: bcs.u64(),
+    //     fills: bcs.vector(Fill),
+    //     fee_is_deep: bcs.bool(),
+    //     paid_fees: bcs.u64(),
+    //     epoch: bcs.u64(),
+    //     status: bcs.u8(),
+    //     market_order: bcs.bool(),
+    // });
 
-//     var tradeProof;
-//     if (isOwner) {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//             ],
-//         })
-//     } else {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//                 txb.object(TRADECAP_ID),
-//             ],
-//         })
-//     }
 
-//     txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
-//         arguments: [
-//             txb.object(POOL_ID),
-//             txb.object(MANAGER_ID),
-//             txb.object(tradeProof),
-//             txb.pure.u128(orderId),
-//             txb.object(SUI_CLOCK_OBJECT_ID),
-//         ],
-//         typeArguments: [baseType, quoteType]
-//     });
-// }
+    // let orderInformation = res.results![1].returnValues![0][0];
+    // console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
+}
 
-// const getAllOpenOrders = async (
-//     txb: TransactionBlock
-// ) => {
-//     const baseType = DEEP_TYPE;
-//     const quoteType = SUI_TYPE;
+const cancelOrder = async (
+    poolId: string,
+    orderId: string,
+    txb: TransactionBlock
+) => {
+    const baseType = DEEP_TYPE;
+    const quoteType = SUI_TYPE;
+    txb.setGasBudget(GAS_BUDGET);
 
-//     txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
-//         arguments: [
-//             txb.object(POOL_ID),
-//             txb.pure.id(MANAGER_ID),
-//         ],
-//         typeArguments: [baseType, quoteType]
-//     });
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+            txb.pure.u128(orderId),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
 
-//     const res = await client.devInspectTransactionBlock({
-//         sender: normalizeSuiAddress(MY_ADDRESS),
-//         transactionBlock: txb,
-//     });
+const getAllOpenOrders = async (
+    txb: TransactionBlock
+) => {
+    const baseType = DEEP_TYPE;
+    const quoteType = SUI_TYPE;
 
-//     const order_ids = res.results![0].returnValues![0][0];
-//     const VecSet = bcs.struct('VecSet', {
-//         constants: bcs.vector(bcs.U128),
-//     });
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
+        arguments: [
+            txb.object(DEEP_SUI_POOL_ID),
+            txb.pure.id(MANAGER_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
 
-//     let parsed_order_ids = VecSet.parse(new Uint8Array(order_ids)).constants;
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
 
-//     console.log(parsed_order_ids);
-// }
+    const order_ids = res.results![0].returnValues![0][0];
+    const VecSet = bcs.struct('VecSet', {
+        constants: bcs.vector(bcs.U128),
+    });
 
-// const cancelAllOrders = async (
-//     isOwner: boolean,
-//     txb: TransactionBlock
-// ) => {
-//     const baseType = DEEP_TYPE;
-//     const quoteType = SUI_TYPE;
-//     txb.setGasBudget(GAS_BUDGET);
+    let parsed_order_ids = VecSet.parse(new Uint8Array(order_ids)).constants;
 
-//     var tradeProof;
-//     if (isOwner) {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//             ],
-//         })
-//     } else {
-//         tradeProof = txb.moveCall({
-//             target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
-//             arguments: [
-//                 txb.object(MANAGER_ID),
-//                 txb.object(TRADECAP_ID),
-//             ],
-//         })
-//     }
+    console.log(parsed_order_ids);
+}
 
-//     txb.moveCall({
-//         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
-//         arguments: [
-//             txb.object(POOL_ID),
-//             txb.object(MANAGER_ID),
-//             txb.object(tradeProof),
-//             txb.object(SUI_CLOCK_OBJECT_ID),
-//         ],
-//         typeArguments: [baseType, quoteType]
-//     });
-// }
+const cancelAllOrders = async (
+    poolId: string,
+    txb: TransactionBlock
+) => {
+    const baseType = DEEP_TYPE;
+    const quoteType = SUI_TYPE;
+    txb.setGasBudget(GAS_BUDGET);
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
 
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    await createPool(txb);
+    // await createPoolAdmin(txb);
+    // await unregisterPoolAdmin(txb);
     // await createAndShareBalanceManager(txb);
-    // await whiteListPool(txb);
-    // await depositIntoManager(10000000000, BASE_ID, BASE_TYPE, txb);
-    // await withdrawFromManager(2000, QUOTE_TYPE, txb);
-    // await withdrawAllFromManager(BASE_TYPE, txb);
-    // await checkManagerBalance(BASE_TYPE, txb);
-    // await checkManagerBalance(QUOTE_TYPE, txb);
-    // await placeLimitOrder(true, txb);
-    // await cancelOrder("36893497370791140086775802", true, txb);
-    // await cancelAllOrders(true, txb);
-    // await getAllOpenOrders(txb);
+    // await depositIntoManager(5000, DEEP_SCALAR, DEEP_COIN_ID, DEEP_TYPE, txb);
+    // await depositIntoManager(40, SUI_SCALAR, SUI_COIN_ID, SUI_TYPE, txb);
+    // await withdrawFromManager(5, SUI_SCALAR, SUI_TYPE, txb);
+    // await withdrawAllFromManager(SUI_TYPE, txb);
+    // await checkManagerBalance(DEEP_TYPE, DEEP_SCALAR, txb);
+    // await checkManagerBalance(SUI_TYPE, SUI_SCALAR, txb);
+    // await placeLimitOrder(
+    //     DEEP_TYPE,
+    //     DEEP_SCALAR,
+    //     SUI_TYPE,
+    //     SUI_SCALAR,
+    //     2.5, // Price
+    //     1, // Quantity
+    //     true, // isBid
+    //     txb
+    // );
+    // await placeLimitOrder(
+    //     DEEP_TYPE,
+    //     DEEP_SCALAR,
+    //     SUI_TYPE,
+    //     SUI_SCALAR,
+    //     7.5, // Price
+    //     1, // Quantity
+    //     false, // isBid
+    //     txb
+    // );
+    // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
+    // await cancelAllOrders(DEEP_SUI_POOL_ID, txb);
+    await getAllOpenOrders(txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
