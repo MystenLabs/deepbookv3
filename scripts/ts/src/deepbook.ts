@@ -359,10 +359,10 @@ const getAllOpenOrders = async (
 
 const cancelAllOrders = async (
     poolId: string,
+    baseType: string,
+    quoteType: string,
     txb: TransactionBlock
 ) => {
-    const baseType = DEEP_TYPE;
-    const quoteType = SUI_TYPE;
     txb.setGasBudget(GAS_BUDGET);
 
     txb.moveCall({
@@ -476,7 +476,7 @@ const executeTransaction = async () => {
     //     txb
     // );
     // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
-    // await cancelAllOrders(DEEP_SUI_POOL_ID, txb);
+    // await cancelAllOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
     // await getAllOpenOrders(txb);
     // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
 
