@@ -8,6 +8,7 @@ module deepbook::vault {
     use sui::{
         balance::{Self, Balance},
         coin::Coin,
+        event,
     };
     use deepbook::{
         balance_manager::BalanceManager,
@@ -32,6 +33,12 @@ module deepbook::vault {
     }
 
     public struct FlashLoan {
+        pool_id: ID,
+        borrow_quantity: u64,
+        type_name: TypeName,
+    }
+
+    public struct FlashLoanBorrowed has copy, drop {
         pool_id: ID,
         borrow_quantity: u64,
         type_name: TypeName,
@@ -102,13 +109,20 @@ module deepbook::vault {
     ): (Coin<BaseAsset>, FlashLoan) {
         assert!(borrow_quantity > 0, EinvalidLoanQuantity);
         assert!(self.base_balance.value() >= borrow_quantity, ENotEnoughBaseForLoan);
+        let borrow_type_name = type_name::get<BaseAsset>();
         let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
         let flash_loan = FlashLoan {
             pool_id,
             borrow_quantity,
-            type_name: type_name::get<BaseAsset>(),
+            type_name: borrow_type_name,
         };
+
+        event::emit(FlashLoanBorrowed {
+            pool_id,
+            borrow_quantity,
+            type_name: borrow_type_name,
+        });
 
         (borrow, flash_loan)
     }
@@ -121,13 +135,20 @@ module deepbook::vault {
     ): (Coin<QuoteAsset>, FlashLoan) {
         assert!(borrow_quantity > 0, EinvalidLoanQuantity);
         assert!(self.quote_balance.value() >= borrow_quantity, ENotEnoughQuoteForLoan);
+        let borrow_type_name = type_name::get<QuoteAsset>();
         let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
         let flash_loan = FlashLoan {
             pool_id,
             borrow_quantity,
-            type_name: type_name::get<QuoteAsset>(),
+            type_name: borrow_type_name,
         };
+
+        event::emit(FlashLoanBorrowed {
+            pool_id,
+            borrow_quantity,
+            type_name: borrow_type_name,
+        });
 
         (borrow, flash_loan)
     }
