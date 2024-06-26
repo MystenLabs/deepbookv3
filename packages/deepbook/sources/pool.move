@@ -142,6 +142,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let quote_in = coin::zero(ctx);
+
         swap_exact_quantity(
             self,
             base_in,
@@ -164,6 +165,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let base_in = coin::zero(ctx);
+        
         swap_exact_quantity(
             self,
             base_in,
@@ -766,7 +768,6 @@ module deepbook::pool {
         self.book.create_order(&mut order_info, clock.timestamp_ms());
         let (settled, owed) = self.state.process_create(
             &mut order_info,
-            whitelist,
             ctx
         );
         self.vault.settle_balance_manager(settled, owed, balance_manager, ctx);
