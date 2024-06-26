@@ -484,58 +484,66 @@ const getPoolIdByAssets = async (
     console.log(`Pool ID base ${baseType} and quote ${quoteType} is ${address}`);
 }
 
+const stake = async (
+    txb: TransactionBlock,
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+    stakeAmount: number,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+            txb.pure.u64(stakeAmount * DEEP_SCALAR),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
+const unstake = async (
+    txb: TransactionBlock,
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
+const submitProposal = async (
+    txb: TransactionBlock,
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+    balanceManagerId: string,
+    takerFee: number,
+    makerFee: number,
+    stakeRequired: number,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await addDeepPricePoint(TONY_SUI_POOL_ID, DEEP_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, DEEP_TYPE, SUI_TYPE, txb);
-    // await placeLimitOrder(
-    //     DEEP_SUI_POOL_ID,
-    //     DEEP_TYPE,
-    //     DEEP_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     2.5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // await placeLimitOrder(
-    //     DEEP_SUI_POOL_ID,
-    //     DEEP_TYPE,
-    //     DEEP_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     7.5, // Price
-    //     1, // Quantity
-    //     false, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // await placeLimitOrder(
-    //     TONY_SUI_POOL_ID,
-    //     TONY_TYPE,
-    //     TONY_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     true, // payWithDeep
-    //     txb
-    // );
-    // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
-    // await cancelAllOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await accountOpenOrders(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE);
-    // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
-    // await whiteListed(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await getQuoteQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
-    // await getBaseQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
-    // await getLevel2Range(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 2.5, 7.5, true);
-    // await getLevel2TickFromMid(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 1);
-    // await vaultBalances(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR);
-    // await getPoolIdByAssets(txb, DEEP_TYPE, SUI_TYPE);
+    // await stake(txb, TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 100);
+    // await unstake(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
