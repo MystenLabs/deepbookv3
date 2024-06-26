@@ -220,24 +220,28 @@ module deepbook::book {
         while (!ref.is_null() && ticks_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let (_, order_price, _) = utils::decode_order_id(order.order_id());
-            if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
-            if (cur_price == 0) cur_price = order_price;
+            if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
+            if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
+                cur_price = order_price
+            };
 
-            let order_quantity = order.quantity();
-            if (order_price != cur_price) {
+            if (cur_price != 0 && order_price != cur_price) {
                 price_vec.push_back(cur_price);
                 quantity_vec.push_back(cur_quantity);
                 cur_price = order_price;
                 cur_quantity = 0;
+                ticks_left = ticks_left - 1;
             };
-
-            cur_quantity = cur_quantity + order_quantity;
-            ticks_left = ticks_left - 1;
+            if (cur_price != 0) {
+                cur_quantity = cur_quantity + order.quantity();
+            };
             (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
         };
 
-        price_vec.push_back(cur_price);
-        quantity_vec.push_back(cur_quantity);
+        if (cur_price != 0) {
+            price_vec.push_back(cur_price);
+            quantity_vec.push_back(cur_quantity);
+        };
 
         (price_vec, quantity_vec)
     }
