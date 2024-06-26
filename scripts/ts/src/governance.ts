@@ -58,432 +58,6 @@ const CANCEL_MAKER = 2;
 // Transactions
 // =================================================================
 
-/// Places an order in the pool
-const placeLimitOrder = async (
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    quoteScalar: number,
-    price: number,
-    quantity: number,
-    isBid: boolean,
-    payWithDeep: boolean,
-    txb: TransactionBlock
-) => {
-    // Bidding for 10 deep, will pay price 2, so pay 20 SUI
-    // Input quantity should be 10 * 1_000_000
-    // Input price should be 2 * FLOAT_SCALAR * quote_scalar / base_scalar  = 2 * 1_000_000_000_000
-    // This will make the quote quantity quantity * price = 20 * 1_000_000_000
-    // This makes the quote quantity accurate
-    txb.setGasBudget(GAS_BUDGET);
-
-    const clientOrderId = 88;
-    const orderType = NO_RESTRICTION;
-    const selfMatchingOption = SELF_MATCHING_ALLOWED;
-
-    const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
-    const inputQuantity = quantity * baseScalar;
-
-    const orderInfo = txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
-        arguments: [
-            txb.object(poolId),
-            txb.object(MANAGER_ID),
-            txb.pure.u64(clientOrderId),
-            txb.pure.u8(orderType),
-            txb.pure.u8(selfMatchingOption),
-            txb.pure.u64(inputPrice),
-            txb.pure.u64(inputQuantity),
-            txb.pure.bool(isBid),
-            txb.pure.bool(payWithDeep),
-            txb.pure.u64(LARGE_TIMESTAMP),
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const ID = bcs.struct('ID', {
-        bytes: bcs.Address,
-    });
-
-    const OrderDeepPrice = bcs.struct('OrderDeepPrice', {
-        asset_is_base: bcs.bool(),
-        deep_per_asset: bcs.u64(),
-    });
-
-    const Fill = bcs.struct('Fill', {
-        maker_order_id: bcs.u128(),
-        balance_manager_id: ID,
-        expired: bcs.bool(),
-        completed: bcs.bool(),
-        base_quantity: bcs.u64(),
-        quote_quantity: bcs.u64(),
-        taker_is_bid: bcs.bool(),
-        maker_epoch: bcs.u64(),
-        maker_deep_price: OrderDeepPrice,
-    });
-
-    const OrderInfo = bcs.struct('OrderInfo', {
-        pool_id: ID,
-        order_id: bcs.u128(),
-        balance_manager_id: ID,
-        client_order_id: bcs.u64(),
-        trader: bcs.Address,
-        order_type: bcs.u8(),
-        self_matching_option: bcs.u8(),
-        price: bcs.u64(),
-        is_bid: bcs.bool(),
-        original_quantity: bcs.u64(),
-        order_deep_price: OrderDeepPrice,
-        expire_timestamp: bcs.u64(),
-        executed_quantity: bcs.u64(),
-        cumulative_quote_quantity: bcs.u64(),
-        fills: bcs.vector(Fill),
-        fee_is_deep: bcs.bool(),
-        paid_fees: bcs.u64(),
-        epoch: bcs.u64(),
-        status: bcs.u8(),
-        market_order: bcs.bool(),
-    });
-
-    let orderInformation = res.results![0].returnValues![0][0];
-    console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
-}
-
-const cancelOrder = async (
-    poolId: string,
-    orderId: string,
-    txb: TransactionBlock
-) => {
-    const baseType = DEEP_TYPE;
-    const quoteType = SUI_TYPE;
-    txb.setGasBudget(GAS_BUDGET);
-
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
-        arguments: [
-            txb.object(poolId),
-            txb.object(MANAGER_ID),
-            txb.pure.u128(orderId),
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-}
-
-const cancelAllOrders = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
-    txb: TransactionBlock
-) => {
-    txb.setGasBudget(GAS_BUDGET);
-
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
-        arguments: [
-            txb.object(poolId),
-            txb.object(MANAGER_ID),
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-}
-
-const addDeepPricePoint = async (
-    targetPoolId: string,
-    referencePoolId: string,
-    targetBaseType: string,
-    targetQuoteType: string,
-    referenceBaseType: string,
-    referenceQuoteType: string,
-    txb: TransactionBlock
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::add_deep_price_point`,
-        arguments: [
-            txb.object(targetPoolId),
-            txb.object(referencePoolId),
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [targetBaseType, targetQuoteType, referenceBaseType, referenceQuoteType]
-    });
-}
-
-const burnDeep = async (
-    txb: TransactionBlock,
-    poolId: string,
-    baseType: string,
-    quoteType: string
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
-        arguments: [
-            txb.object(poolId),
-            txb.object(DEEP_TREASURY_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-}
-
-// PUBLIC VIEW FUNCTIONS
-const midPrice = async (
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    quoteScalar: number,
-    txb: TransactionBlock
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::mid_price`,
-        arguments: [
-            txb.object(poolId),
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const bytes = res.results![0].returnValues![0][0];
-    const parsed_mid_price = Number(bcs.U64.parse(new Uint8Array(bytes)));
-    const adjusted_mid_price = parsed_mid_price * baseScalar / quoteScalar / FLOAT_SCALAR;
-
-    console.log(`The mid price of ${poolId} is ${adjusted_mid_price}`);
-}
-
-const whiteListed = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
-    txb: TransactionBlock
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::whitelisted`,
-        arguments: [
-            txb.object(poolId),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const bytes = res.results![0].returnValues![0][0];
-    const whitelisted = bcs.Bool.parse(new Uint8Array(bytes));
-
-    console.log(`Whitelist status for ${poolId} is ${whitelisted}`);
-}
-
-const getQuoteQuantityOut = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
-    baseScalar: number,
-    quoteScalar: number,
-    baseQuantity: number,
-    txb: TransactionBlock
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_quote_quantity_out`,
-        arguments: [
-            txb.object(poolId),
-            txb.pure.u64(baseQuantity * baseScalar), // base_quantity
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const baseOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
-    const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
-    const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
-
-    console.log(`For ${baseQuantity} base in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
-}
-
-const getBaseQuantityOut = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
-    baseScalar: number,
-    quoteScalar: number,
-    quoteQuantity: number,
-    txb: TransactionBlock
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_base_quantity_out`,
-        arguments: [
-            txb.object(poolId),
-            txb.pure.u64(quoteQuantity * quoteScalar), // quote_quantity
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const baseOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
-    const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
-    const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
-
-    console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
-}
-
-const accountOpenOrders = async (
-    txb: TransactionBlock,
-    poolId: string,
-    baseType: string,
-    quoteType: string
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
-        arguments: [
-            txb.object(poolId),
-            txb.pure.id(MANAGER_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const order_ids = res.results![0].returnValues![0][0];
-    const VecSet = bcs.struct('VecSet', {
-        constants: bcs.vector(bcs.U128),
-    });
-
-    let parsed_order_ids = VecSet.parse(new Uint8Array(order_ids)).constants;
-
-    console.log(parsed_order_ids);
-}
-
-const getLevel2Range = async (
-    txb: TransactionBlock,
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    quoteScalar: number,
-    priceHigh: number,
-    priceLow: number,
-    isBid: boolean,
-) => {
-    // TODO
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_range`,
-        arguments: [
-            txb.object(poolId),
-            txb.pure.u64(0),
-			txb.pure.u64(priceHigh * FLOAT_SCALAR * quoteScalar / baseScalar),
-			txb.pure.bool(isBid),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const prices = res.results![0].returnValues![0][0];
-    const parsed_prices = bcs.vector(bcs.u64()).parse(new Uint8Array(prices));
-    const quantities = res.results![0].returnValues![1][0];
-    const parsed_quantities = bcs.vector(bcs.u64()).parse(new Uint8Array(quantities));
-    console.log(res.results![0].returnValues![0])
-    console.log(parsed_prices);
-    console.log(parsed_quantities);
-}
-
-const getLevel2TickFromMid = async (
-    txb: TransactionBlock,
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    quoteScalar: number,
-    tickFromMid: number
-) => {
-    // TODO
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_tick_from_mid`,
-        arguments: [
-            txb.object(poolId),
-            txb.pure.u64(tickFromMid)
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-}
-
-const vaultBalances = async (
-    txb: TransactionBlock,
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    quoteScalar: number
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::vault_balances`,
-        arguments: [
-            txb.object(poolId),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const baseInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
-    const quoteInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
-    const deepInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
-    console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / DEEP_SCALAR}`);
-}
-
-const getPoolIdByAssets = async (
-    txb: TransactionBlock,
-    baseType: string,
-    quoteType: string
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_pool_id_by_asset`,
-        arguments: [
-            txb.object(REGISTRY_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const ID = bcs.struct('ID', {
-        bytes: bcs.Address,
-    });
-    const address = ID.parse(new Uint8Array(res.results![0].returnValues![0][0]))['bytes'];
-    console.log(`Pool ID base ${baseType} and quote ${quoteType} is ${address}`);
-}
-
 const stake = async (
     txb: TransactionBlock,
     poolId: string,
@@ -523,19 +97,40 @@ const submitProposal = async (
     poolId: string,
     baseType: string,
     quoteType: string,
-    balanceManagerId: string,
     takerFee: number,
     makerFee: number,
     stakeRequired: number,
 ) => {
+    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
         arguments: [
             txb.object(poolId),
             txb.object(MANAGER_ID),
+            txb.pure.u64(takerFee * FLOAT_SCALAR),
+            txb.pure.u64(makerFee * FLOAT_SCALAR),
+            txb.pure.u64(stakeRequired * DEEP_SCALAR),
         ],
         typeArguments: [baseType, quoteType]
     });
+}
+
+const vote = async (
+    txb: TransactionBlock,
+    pool_id: string,
+    balance_manager_id: string,
+    proposal_id: string,
+) => {
+    // TODO: Test
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,
+        arguments: [
+            txb.object(pool_id),
+            txb.object(balance_manager_id),
+            txb.pure.id(proposal_id),
+        ],
+    });
+
 }
 
 /// Main entry points, comment out as needed...
@@ -544,6 +139,8 @@ const executeTransaction = async () => {
 
     // await stake(txb, TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 100);
     // await unstake(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE);
+    // await submitProposal(txb, TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 0.0005, 0.0002, 10);
+    // await vote(txb, TONY_SUI_POOL_ID, MANAGER_ID, 'proposal_id');
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

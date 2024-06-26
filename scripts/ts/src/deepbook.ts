@@ -222,6 +222,7 @@ const burnDeep = async (
     baseType: string,
     quoteType: string
 ) => {
+    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
         arguments: [
@@ -386,7 +387,7 @@ const getLevel2Range = async (
     priceLow: number,
     isBid: boolean,
 ) => {
-    // TODO
+    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_range`,
         arguments: [
@@ -421,7 +422,7 @@ const getLevel2TickFromMid = async (
     quoteScalar: number,
     tickFromMid: number
 ) => {
-    // TODO
+    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_tick_from_mid`,
         arguments: [
