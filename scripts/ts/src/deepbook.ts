@@ -144,11 +144,27 @@ const addDeepPricePoint = async (
     });
 }
 
-const burnDeep = async (
-    txb: TransactionBlock,
+const claimRebates = async (
     poolId: string,
     baseType: string,
-    quoteType: string
+    quoteType: string,
+    txb: TransactionBlock
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
+const burnDeep = async (
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
