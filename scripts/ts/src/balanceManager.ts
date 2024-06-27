@@ -155,7 +155,7 @@ const executeTransaction = async () => {
     // await depositIntoManager(5000, TONY_SCALAR, TONY_COIN_ID, TONY_TYPE, txb);
     // await withdrawFromManager(5, SUI_SCALAR, SUI_TYPE, txb);
     // await withdrawAllFromManager(SUI_TYPE, txb);
-    await checkManagerBalance(DEEP_TYPE, DEEP_SCALAR, txb);
+    // await checkManagerBalance(DEEP_TYPE, DEEP_SCALAR, txb);
     // await checkManagerBalance(SUI_TYPE, SUI_SCALAR, txb);
 
     // Run transaction against ENV

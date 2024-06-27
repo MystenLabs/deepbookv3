@@ -462,86 +462,6 @@ const getPoolIdByAssets = async (
     console.log(`Pool ID base ${baseType} and quote ${quoteType} is ${address}`);
 }
 
-const swapExactBaseForQuote = async (
-    poolId: string,
-    baseType: string,
-    baseScalar: number,
-    quoteType: string,
-    baseAmount: number,
-    deepAmount: number,
-    txb: TransactionBlock
-) => {
-    var baseCoin;
-    if (baseType == SUI_TYPE) {
-        [baseCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    } else {
-        [baseCoin] = txb.splitCoins(
-            txb.object(TONY_COIN_ID),
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(DEEP_COIN_ID),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
-    let [baseOut, quoteOut, deepOut] = txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_base_for_quote`,
-        arguments: [
-            txb.object(poolId),
-            baseCoin,
-            deepCoin,
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    txb.transferObjects([baseOut], MY_ADDRESS);
-    txb.transferObjects([quoteOut], MY_ADDRESS);
-    txb.transferObjects([deepOut], MY_ADDRESS);
-}
-
-const swapExactQuoteForBase = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
-    quoteScalar: number,
-    quoteAmount: number,
-    deepAmount: number,
-    txb: TransactionBlock
-) => {
-    var quoteCoin;
-    if (quoteType == SUI_TYPE) {
-        [quoteCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    } else {
-        [quoteCoin] = txb.splitCoins(
-            txb.object(SUI_COIN_ID),
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(DEEP_COIN_ID),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
-    let [baseOut, quoteOut, deepOut] = txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_quote_for_base`,
-        arguments: [
-            txb.object(poolId),
-            quoteCoin,
-            deepCoin,
-            txb.object(SUI_CLOCK_OBJECT_ID),
-        ],
-        typeArguments: [baseType, quoteType]
-    });
-    txb.transferObjects([baseOut], MY_ADDRESS);
-    txb.transferObjects([quoteOut], MY_ADDRESS);
-    txb.transferObjects([deepOut], MY_ADDRESS);
-}
-
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
@@ -557,7 +477,7 @@ const executeTransaction = async () => {
     //     1234, // Client Order ID
     //     NO_RESTRICTION, // orderType
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     2, // Price
+    //     2.5, // Price
     //     1, // Quantity
     //     true, // isBid
     //     true, // payWithDeep
@@ -610,14 +530,12 @@ const executeTransaction = async () => {
     // await accountOpenOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
     // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
     // await whiteListed(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await getQuoteQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, TONY_SCALAR, SUI_SCALAR, 1, txb);
-    // await getBaseQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, TONY_SCALAR, SUI_SCALAR, 1, txb);
+    // await getQuoteQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
+    // await getBaseQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
     // await getLevel2Range(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 2.5, 7.5, true, txb);
     // await getLevel2TickFromMid(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 1, txb);
     // await vaultBalances(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
     // await getPoolIdByAssets(DEEP_TYPE, SUI_TYPE, txb);
-    // await swapExactBaseForQuote(TONY_SUI_POOL_ID, TONY_TYPE, TONY_SCALAR, SUI_TYPE, 1, 0.0004, txb);
-    await swapExactQuoteForBase(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, SUI_SCALAR, 1, 0.0002, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
