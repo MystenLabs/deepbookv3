@@ -547,7 +547,7 @@ const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // await addDeepPricePoint(TONY_SUI_POOL_ID, DEEP_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, DEEP_TYPE, SUI_TYPE, txb);
-    // // Limit order for normal pools
+    // Limit order for normal pools
     // await placeLimitOrder(
     //     TONY_SUI_POOL_ID,
     //     TONY_TYPE,
@@ -557,8 +557,8 @@ const executeTransaction = async () => {
     //     1234, // Client Order ID
     //     NO_RESTRICTION, // orderType
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     2, // Price
-    //     1, // Quantity
+    //     1, // Price
+    //     10, // Quantity
     //     true, // isBid
     //     true, // payWithDeep
     //     txb

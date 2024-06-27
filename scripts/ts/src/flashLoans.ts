@@ -462,80 +462,71 @@ const getPoolIdByAssets = async (
     console.log(`Pool ID base ${baseType} and quote ${quoteType} is ${address}`);
 }
 
+const borrowAndReturnBaseAsset = async (
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+    borrowAmount: number,
+    baseScalar: number,
+    txb: TransactionBlock,
+) => {
+    const [baseCoin, flashLoan] = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::borrow_flashloan_base`,
+        arguments: [
+            txb.object(poolId),
+            txb.pure.u64(borrowAmount * baseScalar),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+
+    // Execute other transaction as necessary
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,
+        arguments: [
+            txb.object(poolId),
+            baseCoin,
+            flashLoan,
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
+const borrowAndReturnQuoteAsset = async (
+    poolId: string,
+    baseType: string,
+    quoteType: string,
+    borrowAmount: number,
+    quoteScalar: number,
+    txb: TransactionBlock,
+) => {
+    const [quoteCoin, flashLoan] = txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::borrow_flashloan_quote`,
+        arguments: [
+            txb.object(poolId),
+            txb.pure.u64(borrowAmount * quoteScalar),
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+
+    // Execute other transaction as necessary
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_quote`,
+        arguments: [
+            txb.object(poolId),
+            quoteCoin,
+            flashLoan,
+        ],
+        typeArguments: [baseType, quoteType]
+    });
+}
+
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
-
-    // await addDeepPricePoint(TONY_SUI_POOL_ID, DEEP_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, DEEP_TYPE, SUI_TYPE, txb);
-    // // Limit order for normal pools
-    // await placeLimitOrder(
-    //     TONY_SUI_POOL_ID,
-    //     TONY_TYPE,
-    //     TONY_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     1234, // Client Order ID
-    //     NO_RESTRICTION, // orderType
-    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     2.5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     true, // payWithDeep
-    //     txb
-    // );
-    // // Limit order for whitelist pools
-    // await placeLimitOrder(
-    //     TONY_SUI_POOL_ID,
-    //     TONY_TYPE,
-    //     TONY_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     1234, // Client Order ID
-    //     NO_RESTRICTION, // orderType
-    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     2.5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // Market order for normal pools
-    // await placeMarketOrder(
-    //     TONY_SUI_POOL_ID,
-    //     TONY_TYPE,
-    //     TONY_SCALAR,
-    //     SUI_TYPE,
-    //     1234, // Client Order ID
-    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     1, // Quantity
-    //     false, // isBid
-    //     true, // payWithDeep
-    //     txb
-    // );
-    // // Market order for whitelist pools
-    // await placeMarketOrder(
-    //     DEEP_SUI_POOL_ID,
-    //     DEEP_TYPE,
-    //     DEEP_SCALAR,
-    //     SUI_TYPE,
-    //     1234, // Client Order ID
-    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     1, // Quantity
-    //     true, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
-    // await cancelAllOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await accountOpenOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
-    // await whiteListed(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await getQuoteQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
-    // await getBaseQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
-    // await getLevel2Range(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 2.5, 7.5, true, txb);
-    // await getLevel2TickFromMid(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 1, txb);
-    // await vaultBalances(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
-    // await getPoolIdByAssets(DEEP_TYPE, SUI_TYPE, txb);
+    // borrowAndReturnBaseAsset(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, TONY_SCALAR, txb);
+    // borrowAndReturnQuoteAsset(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, SUI_SCALAR, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
