@@ -65,6 +65,9 @@ const placeLimitOrder = async (
     baseScalar: number,
     quoteType: string,
     quoteScalar: number,
+    clientOrderId: number,
+    orderType: number,
+    selfMatchingOption: number,
     price: number,
     quantity: number,
     isBid: boolean,
@@ -77,10 +80,6 @@ const placeLimitOrder = async (
     // This will make the quote quantity quantity * price = 20 * 1_000_000_000
     // This makes the quote quantity accurate
     txb.setGasBudget(GAS_BUDGET);
-
-    const clientOrderId = 88;
-    const orderType = NO_RESTRICTION;
-    const selfMatchingOption = SELF_MATCHING_ALLOWED;
 
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
@@ -102,58 +101,36 @@ const placeLimitOrder = async (
         ],
         typeArguments: [baseType, quoteType]
     });
+}
 
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
+const placeMarketOrder = async (
+    poolId: string,
+    baseType: string,
+    baseScalar: number,
+    quoteType: string,
+    clientOrderId: number,
+    selfMatchingOption: number,
+    quantity: number,
+    isBid: boolean,
+    payWithDeep: boolean,
+    txb: TransactionBlock
+) => {
+    txb.setGasBudget(GAS_BUDGET);
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::place_market_order`,
+        arguments: [
+            txb.object(poolId),
+            txb.object(MANAGER_ID),
+            txb.pure.u64(clientOrderId),
+            txb.pure.u8(selfMatchingOption),
+            txb.pure.u64(quantity * baseScalar),
+            txb.pure.bool(isBid),
+            txb.pure.bool(payWithDeep),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [baseType, quoteType]
     });
-
-    const ID = bcs.struct('ID', {
-        bytes: bcs.Address,
-    });
-
-    const OrderDeepPrice = bcs.struct('OrderDeepPrice', {
-        asset_is_base: bcs.bool(),
-        deep_per_asset: bcs.u64(),
-    });
-
-    const Fill = bcs.struct('Fill', {
-        maker_order_id: bcs.u128(),
-        balance_manager_id: ID,
-        expired: bcs.bool(),
-        completed: bcs.bool(),
-        base_quantity: bcs.u64(),
-        quote_quantity: bcs.u64(),
-        taker_is_bid: bcs.bool(),
-        maker_epoch: bcs.u64(),
-        maker_deep_price: OrderDeepPrice,
-    });
-
-    const OrderInfo = bcs.struct('OrderInfo', {
-        pool_id: ID,
-        order_id: bcs.u128(),
-        balance_manager_id: ID,
-        client_order_id: bcs.u64(),
-        trader: bcs.Address,
-        order_type: bcs.u8(),
-        self_matching_option: bcs.u8(),
-        price: bcs.u64(),
-        is_bid: bcs.bool(),
-        original_quantity: bcs.u64(),
-        order_deep_price: OrderDeepPrice,
-        expire_timestamp: bcs.u64(),
-        executed_quantity: bcs.u64(),
-        cumulative_quote_quantity: bcs.u64(),
-        fills: bcs.vector(Fill),
-        fee_is_deep: bcs.bool(),
-        paid_fees: bcs.u64(),
-        epoch: bcs.u64(),
-        status: bcs.u8(),
-        market_order: bcs.bool(),
-    });
-
-    let orderInformation = res.results![0].returnValues![0][0];
-    console.log(OrderInfo.parse(new Uint8Array(orderInformation)));
 }
 
 const cancelOrder = async (
@@ -347,10 +324,10 @@ const getBaseQuantityOut = async (
 }
 
 const accountOpenOrders = async (
-    txb: TransactionBlock,
     poolId: string,
     baseType: string,
-    quoteType: string
+    quoteType: string,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
@@ -490,45 +467,67 @@ const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // await addDeepPricePoint(TONY_SUI_POOL_ID, DEEP_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, DEEP_TYPE, SUI_TYPE, txb);
-    // await placeLimitOrder(
-    //     DEEP_SUI_POOL_ID,
-    //     DEEP_TYPE,
-    //     DEEP_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     2.5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // await placeLimitOrder(
-    //     DEEP_SUI_POOL_ID,
-    //     DEEP_TYPE,
-    //     DEEP_SCALAR,
-    //     SUI_TYPE,
-    //     SUI_SCALAR,
-    //     7.5, // Price
-    //     1, // Quantity
-    //     false, // isBid
-    //     false, // payWithDeep
-    //     txb
-    // );
+    // // Limit order for normal pools
     // await placeLimitOrder(
     //     TONY_SUI_POOL_ID,
     //     TONY_TYPE,
     //     TONY_SCALAR,
     //     SUI_TYPE,
     //     SUI_SCALAR,
-    //     5, // Price
+    //     1234, // Client Order ID
+    //     NO_RESTRICTION, // orderType
+    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
+    //     2.5, // Price
     //     1, // Quantity
     //     true, // isBid
     //     true, // payWithDeep
     //     txb
     // );
+    // // Limit order for whitelist pools
+    // await placeLimitOrder(
+    //     TONY_SUI_POOL_ID,
+    //     TONY_TYPE,
+    //     TONY_SCALAR,
+    //     SUI_TYPE,
+    //     SUI_SCALAR,
+    //     1234, // Client Order ID
+    //     NO_RESTRICTION, // orderType
+    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
+    //     2.5, // Price
+    //     1, // Quantity
+    //     true, // isBid
+    //     false, // payWithDeep
+    //     txb
+    // );
+    // Market order for normal pools
+    // await placeMarketOrder(
+    //     TONY_SUI_POOL_ID,
+    //     TONY_TYPE,
+    //     TONY_SCALAR,
+    //     SUI_TYPE,
+    //     1234, // Client Order ID
+    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
+    //     1, // Quantity
+    //     false, // isBid
+    //     true, // payWithDeep
+    //     txb
+    // );
+    // // Market order for whitelist pools
+    // await placeMarketOrder(
+    //     DEEP_SUI_POOL_ID,
+    //     DEEP_TYPE,
+    //     DEEP_SCALAR,
+    //     SUI_TYPE,
+    //     1234, // Client Order ID
+    //     SELF_MATCHING_ALLOWED, // selfMatchingOption
+    //     1, // Quantity
+    //     true, // isBid
+    //     false, // payWithDeep
+    //     txb
+    // );
     // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
     // await cancelAllOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await accountOpenOrders(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE);
+    // await accountOpenOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
     // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
     // await whiteListed(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
     // await getQuoteQuantityOut(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, DEEP_SCALAR, SUI_SCALAR, 1, txb);
