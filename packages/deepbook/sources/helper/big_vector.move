@@ -1072,8 +1072,8 @@ module deepbook::big_vector {
         let Slice {
             prev: lprev,
             next: lnext,
-            keys: lkeys,
-            vals: lvals,
+            keys: mut lkeys,
+            vals: mut lvals,
         } = left;
 
         let Slice {
