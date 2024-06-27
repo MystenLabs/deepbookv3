@@ -10,11 +10,11 @@ import {
 // =================================================================
 
 const stake = async (
-    txb: TransactionBlock,
     poolId: string,
     baseType: string,
     quoteType: string,
     stakeAmount: number,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
@@ -28,10 +28,10 @@ const stake = async (
 }
 
 const unstake = async (
-    txb: TransactionBlock,
     poolId: string,
     baseType: string,
     quoteType: string,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
@@ -44,13 +44,13 @@ const unstake = async (
 }
 
 const submitProposal = async (
-    txb: TransactionBlock,
     poolId: string,
     baseType: string,
     quoteType: string,
     takerFee: number,
     makerFee: number,
     stakeRequired: number,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
@@ -66,10 +66,10 @@ const submitProposal = async (
 }
 
 const vote = async (
-    txb: TransactionBlock,
     pool_id: string,
     balance_manager_id: string,
     proposal_id: string,
+    txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,
@@ -86,10 +86,10 @@ const vote = async (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await stake(txb, TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 100);
-    // await unstake(txb, DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE);
-    // await submitProposal(txb, TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 0.0005, 0.0002, 10);
-    // await vote(txb, TONY_SUI_POOL_ID, MANAGER_ID, 'proposal_id');
+    // await stake(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 100, txb);
+    // await unstake(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, txb);
+    // await submitProposal(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 0.0005, 0.0002, 10, txb);
+    // await vote(TONY_SUI_POOL_ID, MANAGER_ID, 'proposal_id', txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

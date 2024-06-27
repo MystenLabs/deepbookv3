@@ -25,7 +25,7 @@ const borrowAndReturnBaseAsset = async (
         typeArguments: [baseType, quoteType]
     });
 
-    // Execute other transaction as necessary
+    // Execute other move calls as necessary
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,
@@ -55,7 +55,7 @@ const borrowAndReturnQuoteAsset = async (
         typeArguments: [baseType, quoteType]
     });
 
-    // Execute other transaction as necessary
+    // Execute other move calls as necessary
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_quote`,

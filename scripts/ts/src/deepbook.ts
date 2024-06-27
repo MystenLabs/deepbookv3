@@ -1,4 +1,4 @@
-import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
@@ -29,11 +29,10 @@ const placeLimitOrder = async (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
-    const baseScalar = COIN_SCALARS[baseType];
-    const quoteScalar = COIN_SCALARS[quoteType];
-
     txb.setGasBudget(GAS_BUDGET);
 
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
 
@@ -229,7 +228,7 @@ const getQuoteQuantityOut = async (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_quote_quantity_out`,
         arguments: [
             txb.object(poolId),
-            txb.pure.u64(baseQuantity * baseScalar), // base_quantity
+            txb.pure.u64(baseQuantity * baseScalar),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
         typeArguments: [baseType, quoteType]
@@ -260,7 +259,7 @@ const getBaseQuantityOut = async (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_base_quantity_out`,
         arguments: [
             txb.object(poolId),
-            txb.pure.u64(quoteQuantity * quoteScalar), // quote_quantity
+            txb.pure.u64(quoteQuantity * quoteScalar),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
         typeArguments: [baseType, quoteType]
