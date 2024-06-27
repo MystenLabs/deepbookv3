@@ -1,58 +1,15 @@
-
 import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
-import { getActiveAddress, signAndExecute } from "./utils";
+import { signAndExecute } from "./utils";
 import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
+import {
+    ENV, COIN_SCALARS, DEEPBOOK_PACKAGE_ID, TONY_TYPE, DEEP_TYPE, SUI_TYPE,
+    DEEP_SUI_POOL_ID, TONY_SUI_POOL_ID, MANAGER_ID, REGISTRY_ID, DEEP_TREASURY_ID, COIN_IDS,
+    NO_RESTRICTION, SELF_MATCHING_ALLOWED, FLOAT_SCALAR, LARGE_TIMESTAMP, GAS_BUDGET, MY_ADDRESS
+} from './coinConstants';
 
-// =================================================================
-// Constants to update when running the different transactions
-// =================================================================
-
-const ENV = 'testnet';
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
-
-// The package id of the `deepbook` package
-const DEEPBOOK_PACKAGE_ID = `0x22ed917fa56afe09677314871a2997a111ebacd1f622b6cfed3a4422aa4d2e06`;
-const REGISTRY_ID = `0x14614dfc9243fcb2ef7ac51efed5c6284ca701d55216e1f42b3eb22c541feaa6`;
-const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
-const DEEP_SUI_POOL_ID = `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`;
-const TONY_SUI_POOL_ID = `0x92083a73031ad86c6df401dc4a59b5dfa589db5937a921c2ec72a5629b715154`;
-
-// Create manager and give ID
-const MANAGER_ID = `0x08b49d7067383d17cdd695161b247e2f617e0d9095da65edb85900e7b6f82de4`;
-
-// Update to the base and quote types of the pool
-const ASLAN_TYPE = `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`;
-const TONY_TYPE = `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::tonycoin::TONYCOIN`;
-const DEEP_TYPE = `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`;
-const SUI_TYPE = `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`;
-
-// Give the id of the coin objects to deposit into balance manager
-const DEEP_COIN_ID = `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`;
-const SUI_COIN_ID = `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`;
-const TONY_COIN_ID = `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`;
-
-const DEEP_SCALAR = 1000000;
-const SUI_SCALAR = 1000000000;
-const TONY_SCALAR = 1000000;
-const FLOAT_SCALAR = 1000000000;
-const POOL_CREATION_FEE = 10000 * DEEP_SCALAR;
-const LARGE_TIMESTAMP = 1844674407370955161;
-const MY_ADDRESS = getActiveAddress();
-const GAS_BUDGET = 0.5 * SUI_SCALAR; // Update gas budget as needed for order placement
-
-// Trading constants
-// Order types
-const NO_RESTRICTION = 0;
-const IMMEDIATE_OR_CANCEL = 1;
-const FILL_OR_KILL = 2;
-const POST_ONLY = 3;
-
-// Self matching options
-const SELF_MATCHING_ALLOWED = 0;
-const CANCEL_TAKER = 1;
-const CANCEL_MAKER = 2;
 
 // =================================================================
 // Transactions
@@ -62,9 +19,7 @@ const CANCEL_MAKER = 2;
 const placeLimitOrder = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
-    quoteScalar: number,
     clientOrderId: number,
     orderType: number,
     selfMatchingOption: number,
@@ -74,17 +29,15 @@ const placeLimitOrder = async (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
-    // Bidding for 10 deep, will pay price 2, so pay 20 SUI
-    // Input quantity should be 10 * 1_000_000
-    // Input price should be 2 * FLOAT_SCALAR * quote_scalar / base_scalar  = 2 * 1_000_000_000_000
-    // This will make the quote quantity quantity * price = 20 * 1_000_000_000
-    // This makes the quote quantity accurate
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.setGasBudget(GAS_BUDGET);
 
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
 
-    const orderInfo = txb.moveCall({
+    txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
             txb.object(poolId),
@@ -106,7 +59,6 @@ const placeLimitOrder = async (
 const placeMarketOrder = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
     clientOrderId: number,
     selfMatchingOption: number,
@@ -115,6 +67,8 @@ const placeMarketOrder = async (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
+    const baseScalar = COIN_SCALARS[baseType];
+
     txb.setGasBudget(GAS_BUDGET);
 
     txb.moveCall({
@@ -138,8 +92,6 @@ const cancelOrder = async (
     orderId: string,
     txb: TransactionBlock
 ) => {
-    const baseType = DEEP_TYPE;
-    const quoteType = SUI_TYPE;
     txb.setGasBudget(GAS_BUDGET);
 
     txb.moveCall({
@@ -150,7 +102,7 @@ const cancelOrder = async (
             txb.pure.u128(orderId),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [DEEP_TYPE, SUI_TYPE]
     });
 }
 
@@ -199,7 +151,6 @@ const burnDeep = async (
     baseType: string,
     quoteType: string
 ) => {
-    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
         arguments: [
@@ -214,11 +165,12 @@ const burnDeep = async (
 const midPrice = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
-    quoteScalar: number,
     txb: TransactionBlock
 ) => {
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::mid_price`,
         arguments: [
@@ -267,11 +219,12 @@ const getQuoteQuantityOut = async (
     poolId: string,
     baseType: string,
     quoteType: string,
-    baseScalar: number,
-    quoteScalar: number,
     baseQuantity: number,
     txb: TransactionBlock
 ) => {
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_quote_quantity_out`,
         arguments: [
@@ -290,18 +243,19 @@ const getQuoteQuantityOut = async (
     const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
 
-    console.log(`For ${baseQuantity} base in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
+    console.log(`For ${baseQuantity} base in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / COIN_SCALARS[DEEP_TYPE]} deep`);
 }
 
 const getBaseQuantityOut = async (
     poolId: string,
     baseType: string,
     quoteType: string,
-    baseScalar: number,
-    quoteScalar: number,
     quoteQuantity: number,
     txb: TransactionBlock
 ) => {
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_base_quantity_out`,
         arguments: [
@@ -320,7 +274,7 @@ const getBaseQuantityOut = async (
     const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
 
-    console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
+    console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / COIN_SCALARS[DEEP_TYPE]} deep`);
 }
 
 const accountOpenOrders = async (
@@ -356,20 +310,20 @@ const accountOpenOrders = async (
 const getLevel2Range = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
-    quoteScalar: number,
     priceHigh: number,
     priceLow: number,
     isBid: boolean,
     txb: TransactionBlock,
 ) => {
-    // TODO: Test
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_range`,
         arguments: [
             txb.object(poolId),
-            txb.pure.u64(0),
+            txb.pure.u64(priceLow * FLOAT_SCALAR * quoteScalar / baseScalar),
 			txb.pure.u64(priceHigh * FLOAT_SCALAR * quoteScalar / baseScalar),
 			txb.pure.bool(isBid),
         ],
@@ -393,13 +347,10 @@ const getLevel2Range = async (
 const getLevel2TickFromMid = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
-    quoteScalar: number,
     tickFromMid: number,
     txb: TransactionBlock,
 ) => {
-    // TODO: Test
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_tick_from_mid`,
         arguments: [
@@ -413,11 +364,12 @@ const getLevel2TickFromMid = async (
 const vaultBalances = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
-    quoteScalar: number,
     txb: TransactionBlock,
 ) => {
+    const baseScalar = COIN_SCALARS[baseType];
+    const quoteScalar = COIN_SCALARS[quoteType];
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vault_balances`,
         arguments: [
@@ -434,7 +386,7 @@ const vaultBalances = async (
     const baseInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
     const quoteInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
-    console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / DEEP_SCALAR}`);
+    console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / COIN_SCALARS[DEEP_TYPE]}`);
 }
 
 const getPoolIdByAssets = async (
@@ -465,13 +417,14 @@ const getPoolIdByAssets = async (
 const swapExactBaseForQuote = async (
     poolId: string,
     baseType: string,
-    baseScalar: number,
     quoteType: string,
     baseAmount: number,
     deepAmount: number,
     txb: TransactionBlock
 ) => {
-    var baseCoin;
+    const baseScalar = COIN_SCALARS[baseType];
+
+    let baseCoin;
     if (baseType == SUI_TYPE) {
         [baseCoin] = txb.splitCoins(
             txb.gas,
@@ -479,13 +432,13 @@ const swapExactBaseForQuote = async (
         );
     } else {
         [baseCoin] = txb.splitCoins(
-            txb.object(TONY_COIN_ID),
+            txb.object(COIN_IDS.TONY),
             [txb.pure.u64(baseAmount * baseScalar)]
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(DEEP_COIN_ID),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
+        txb.object(COIN_IDS.DEEP),
+        [txb.pure.u64(deepAmount * COIN_SCALARS[DEEP_TYPE])]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_base_for_quote`,
@@ -506,12 +459,13 @@ const swapExactQuoteForBase = async (
     poolId: string,
     baseType: string,
     quoteType: string,
-    quoteScalar: number,
     quoteAmount: number,
     deepAmount: number,
     txb: TransactionBlock
 ) => {
-    var quoteCoin;
+    const quoteScalar = COIN_SCALARS[quoteType];
+
+    let quoteCoin;
     if (quoteType == SUI_TYPE) {
         [quoteCoin] = txb.splitCoins(
             txb.gas,
@@ -519,13 +473,13 @@ const swapExactQuoteForBase = async (
         );
     } else {
         [quoteCoin] = txb.splitCoins(
-            txb.object(SUI_COIN_ID),
+            txb.object(COIN_IDS.SUI),
             [txb.pure.u64(quoteAmount * quoteScalar)]
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(DEEP_COIN_ID),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
+        txb.object(COIN_IDS.DEEP),
+        [txb.pure.u64(deepAmount * COIN_SCALARS[DEEP_TYPE])]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_quote_for_base`,
@@ -551,9 +505,7 @@ const executeTransaction = async () => {
     // await placeLimitOrder(
     //     TONY_SUI_POOL_ID,
     //     TONY_TYPE,
-    //     TONY_SCALAR,
     //     SUI_TYPE,
-    //     SUI_SCALAR,
     //     1234, // Client Order ID
     //     NO_RESTRICTION, // orderType
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
@@ -567,9 +519,7 @@ const executeTransaction = async () => {
     // await placeLimitOrder(
     //     TONY_SUI_POOL_ID,
     //     TONY_TYPE,
-    //     TONY_SCALAR,
     //     SUI_TYPE,
-    //     SUI_SCALAR,
     //     1234, // Client Order ID
     //     NO_RESTRICTION, // orderType
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
@@ -583,7 +533,6 @@ const executeTransaction = async () => {
     // await placeMarketOrder(
     //     TONY_SUI_POOL_ID,
     //     TONY_TYPE,
-    //     TONY_SCALAR,
     //     SUI_TYPE,
     //     1234, // Client Order ID
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
@@ -596,7 +545,6 @@ const executeTransaction = async () => {
     // await placeMarketOrder(
     //     DEEP_SUI_POOL_ID,
     //     DEEP_TYPE,
-    //     DEEP_SCALAR,
     //     SUI_TYPE,
     //     1234, // Client Order ID
     //     SELF_MATCHING_ALLOWED, // selfMatchingOption
@@ -608,16 +556,16 @@ const executeTransaction = async () => {
     // await cancelOrder(DEEP_SUI_POOL_ID, "46116860184283102412036854775805", txb);
     // await cancelAllOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
     // await accountOpenOrders(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
+    // await midPrice(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, txb);
     // await whiteListed(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, txb);
-    // await getQuoteQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, TONY_SCALAR, SUI_SCALAR, 1, txb);
-    // await getBaseQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, TONY_SCALAR, SUI_SCALAR, 1, txb);
-    // await getLevel2Range(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 2.5, 7.5, true, txb);
-    // await getLevel2TickFromMid(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, 1, txb);
-    // await vaultBalances(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
+    // await getQuoteQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, txb);
+    // await getBaseQuantityOut(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, txb);
+    // await getLevel2Range(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, 2.5, 7.5, true, txb);
+    // await getLevel2TickFromMid(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, 1, txb);
+    // await vaultBalances(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, txb);
     // await getPoolIdByAssets(DEEP_TYPE, SUI_TYPE, txb);
-    // await swapExactBaseForQuote(TONY_SUI_POOL_ID, TONY_TYPE, TONY_SCALAR, SUI_TYPE, 1, 0.0004, txb);
-    // await swapExactQuoteForBase(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, SUI_SCALAR, 1, 0.0002, txb);
+    // await swapExactBaseForQuote(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, 0.0004, txb);
+    // await swapExactQuoteForBase(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 1, 0.0002, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

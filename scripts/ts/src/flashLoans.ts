@@ -1,21 +1,8 @@
-import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
-import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
-import { bcs } from "@mysten/sui.js/bcs";
 import {
-    COIN_SCALARS, COIN_IDS, ASLAN_TYPE, TONY_TYPE, DEEP_TYPE, SUI_TYPE,
-    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID,
-    DEEP_SUI_POOL_ID, TONY_SUI_POOL_ID, MANAGER_ID, MY_ADDRESS,
-    NO_RESTRICTION, IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY,
-    SELF_MATCHING_ALLOWED, CANCEL_TAKER, CANCEL_MAKER
+    ENV, COIN_SCALARS, DEEPBOOK_PACKAGE_ID, TONY_TYPE, SUI_TYPE, TONY_SUI_POOL_ID
 } from './coinConstants';
-
-// =================================================================
-// Constants to update when running the different transactions
-// =================================================================
-
-const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
 // =================================================================
 // Transactions
