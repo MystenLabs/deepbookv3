@@ -1,8 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, COIN_SCALARS, TONY_TYPE, DEEP_TYPE, SUI_TYPE,
-    DEEP_SUI_POOL_ID, TONY_SUI_POOL_ID, MANAGER_ID
+    ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants, MANAGER_ID
 } from './coinConstants';
 
 // =================================================================
@@ -10,43 +9,37 @@ import {
 // =================================================================
 
 const stake = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     stakeAmount: number,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
         arguments: [
-            txb.object(poolId),
+            txb.object(pool.poolAddress),
             txb.object(MANAGER_ID),
-            txb.pure.u64(stakeAmount * COIN_SCALARS[DEEP_TYPE]),
+            txb.pure.u64(stakeAmount * pool.baseCoin.scalar),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
 const unstake = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
         arguments: [
-            txb.object(poolId),
+            txb.object(pool.poolAddress),
             txb.object(MANAGER_ID),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
 const submitProposal = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     takerFee: number,
     makerFee: number,
     stakeRequired: number,
@@ -55,41 +48,39 @@ const submitProposal = async (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
         arguments: [
-            txb.object(poolId),
+            txb.object(pool.poolAddress),
             txb.object(MANAGER_ID),
-            txb.pure.u64(takerFee * COIN_SCALARS.FLOAT_SCALAR),
-            txb.pure.u64(makerFee * COIN_SCALARS.FLOAT_SCALAR),
-            txb.pure.u64(stakeRequired * COIN_SCALARS[DEEP_TYPE]),
+            txb.pure.u64(takerFee * Constants.FLOAT_SCALAR),
+            txb.pure.u64(makerFee * Constants.FLOAT_SCALAR),
+            txb.pure.u64(stakeRequired * pool.baseCoin.scalar),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
 const vote = async (
-    pool_id: string,
-    balance_manager_id: string,
+    pool: Pool,
     proposal_id: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,
         arguments: [
-            txb.object(pool_id),
-            txb.object(balance_manager_id),
+            txb.object(pool.poolAddress),
+            txb.object(MANAGER_ID),
             txb.pure.id(proposal_id),
         ],
     });
-
 }
 
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await stake(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 100, txb);
-    // await unstake(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, txb);
-    // await submitProposal(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, 0.0005, 0.0002, 10, txb);
-    // await vote(TONY_SUI_POOL_ID, MANAGER_ID, 'proposal_id', txb);
+    // await stake(Pools.TONY_SUI_POOL, 100, txb);
+    // await unstake(Pools.DEEP_SUI_POOL, txb);
+    // await submitProposal(Pools.TONY_SUI_POOL, 0.0005, 0.0002, 10, txb);
+    // await vote(Pools.TONY_SUI_POOL, 'proposal_id', txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

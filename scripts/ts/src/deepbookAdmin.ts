@@ -1,12 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    COIN_SCALARS, COIN_IDS, ASLAN_TYPE, TONY_TYPE, DEEP_TYPE, SUI_TYPE,
-    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_SUI_POOL_ID,
-    TONY_SUI_POOL_ID, MANAGER_ID, ADMINCAP_ID, NO_RESTRICTION,
-    IMMEDIATE_OR_CANCEL, FILL_OR_KILL, POST_ONLY, SELF_MATCHING_ALLOWED,
-    CANCEL_TAKER, CANCEL_MAKER, MY_ADDRESS, POOL_CREATION_FEE,
-    LARGE_TIMESTAMP, GAS_BUDGET
+    ENV, Coins, Pool, Pools, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, MANAGER_ID, ADMINCAP_ID, Constants
 } from './coinConstants';
 
 // =================================================================
@@ -14,13 +9,12 @@ import {
 // =================================================================
 
 const createPoolAdmin = async (
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     txb: TransactionBlock
 ) => {
     const [creationFee] = txb.splitCoins(
-        txb.object(COIN_IDS.DEEP_TYPE),
-        [txb.pure.u64(POOL_CREATION_FEE)]
+        txb.object(Coins.DEEP.coinId),
+        [txb.pure.u64(Constants.POOL_CREATION_FEE)]
     );
     const whiteListedPool = false;
     const stablePool = false;
@@ -37,13 +31,12 @@ const createPoolAdmin = async (
             txb.pure.bool(stablePool),
             txb.object(ADMINCAP_ID), // admin_cap_id
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
 const unregisterPoolAdmin = async (
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
@@ -52,24 +45,22 @@ const unregisterPoolAdmin = async (
             txb.object(REGISTRY_ID),
             txb.object(ADMINCAP_ID),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
 const updateDisabledVersions = async (
-    poolId: string,
-    baseType: string,
-    quoteType: string,
+    pool: Pool,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::update_disabled_versions`,
         arguments: [
-            txb.object(poolId),
+            txb.object(pool.poolAddress),
             txb.object(REGISTRY_ID),
             txb.object(ADMINCAP_ID),
         ],
-        typeArguments: [baseType, quoteType]
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
@@ -77,9 +68,9 @@ const updateDisabledVersions = async (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createPoolAdmin(TONY_TYPE, SUI_TYPE, txb);
-    // await unregisterPoolAdmin(DEEP_TYPE, SUI_TYPE, txb);
-    // await updateDisabledVersions(DEEP_SUI_POOL_ID, DEEP_TYPE, SUI_TYPE, txb);
+    // await createPoolAdmin(Pools.TONY_SUI_POOL, txb);
+    // await unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
+    // await updateDisabledVersions(Pools.DEEP_SUI_POOL, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
