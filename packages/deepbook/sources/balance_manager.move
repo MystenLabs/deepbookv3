@@ -8,12 +8,7 @@
 /// withdrawals, and addition / removals of traders.
 module deepbook::balance_manager {
     // === Imports ===
-    use sui::{
-        bag::{Self, Bag},
-        balance::{Self, Balance},
-        coin::Coin,
-        vec_set::{Self, VecSet},
-    };
+    use sui::{bag::{Self, Bag}, balance::{Self, Balance}, coin::Coin, vec_set::{Self, VecSet}};
 
     // === Errors ===
     const EInvalidOwner: u64 = 0;
@@ -57,27 +52,30 @@ module deepbook::balance_manager {
     public fun authorize_trader(
         balance_manager: &mut BalanceManager,
         authorize_address: address,
-        ctx: &mut TxContext
+        ctx: &mut TxContext,
     ) {
         balance_manager.validate_owner(ctx);
         assert!(balance_manager.authorized_traders.size() < MAX_TRADERS, EMaxTraderReached);
-        assert!(!balance_manager.authorized_traders.contains(&authorize_address), ETraderAlreadyInList);
+        assert!(
+            !balance_manager.authorized_traders.contains(&authorize_address),
+            ETraderAlreadyInList,
+        );
         balance_manager.authorized_traders.insert(authorize_address);
     }
 
     /// Remove an authorized_trader. Only the owner can remove.
-    public fun remove_trader(balance_manager: &mut BalanceManager, trader_address: address, ctx: &TxContext) {
+    public fun remove_trader(
+        balance_manager: &mut BalanceManager,
+        trader_address: address,
+        ctx: &TxContext,
+    ) {
         balance_manager.validate_owner(ctx);
         assert!(balance_manager.authorized_traders.contains(&trader_address), ETraderNotInList);
         balance_manager.authorized_traders.remove(&trader_address);
     }
 
     /// Deposit funds to an balance_manager. Only owner can deposit.
-    public fun deposit<T>(
-        self: &mut BalanceManager,
-        coin: Coin<T>,
-        ctx: &mut TxContext,
-    ) {
+    public fun deposit<T>(self: &mut BalanceManager, coin: Coin<T>, ctx: &mut TxContext) {
         self.validate_owner(ctx);
         self.deposit_protected(coin.into_balance(), ctx);
     }
@@ -94,10 +92,7 @@ module deepbook::balance_manager {
     }
 
     /// Withdraw entire balance of a single Coin from the balance_manager. Only owner can withdraw.
-    public fun withdraw_all<T>(
-        self: &mut BalanceManager,
-        ctx: &mut TxContext,
-    ): Coin<T> {
+    public fun withdraw_all<T>(self: &mut BalanceManager, ctx: &mut TxContext): Coin<T> {
         self.validate_owner(ctx);
 
         self.withdraw_protected(0, true, ctx).into_coin(ctx)
@@ -197,7 +192,8 @@ module deepbook::balance_manager {
     public(package) fun validate_trader(self: &BalanceManager, ctx: &TxContext) {
         assert!(
             self.authorized_traders.contains(&ctx.sender()) ||
-            ctx.sender() == self.owner(), EInvalidTrader
+            ctx.sender() == self.owner(),
+            EInvalidTrader,
         );
     }
 }

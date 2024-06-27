@@ -116,7 +116,7 @@ module deepbook::math {
     fun mul_internal(x: u64, y: u64): (u64, u64) {
         let x = x as u128;
         let y = y as u128;
-        let round = if((x * y) % FLOAT_SCALING_U128 == 0) 0 else 1;
+        let round = if ((x * y) % FLOAT_SCALING_U128 == 0) 0 else 1;
 
         (round, (x * y / FLOAT_SCALING_U128) as u64)
     }
@@ -137,7 +137,7 @@ module deepbook::math {
             2 * FLOAT_SCALING,
             3 * FLOAT_SCALING,
             4 * FLOAT_SCALING,
-            5 * FLOAT_SCALING
+            5 * FLOAT_SCALING,
         ];
         assert!(median(v) == 3 * FLOAT_SCALING, 0);
 
@@ -146,7 +146,7 @@ module deepbook::math {
             15 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
             3 * FLOAT_SCALING,
-            5 * FLOAT_SCALING
+            5 * FLOAT_SCALING,
         ];
         assert!(median(v) == 5 * FLOAT_SCALING, 0);
 
@@ -156,7 +156,8 @@ module deepbook::math {
             23 * FLOAT_SCALING,
             4 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
-            28 * FLOAT_SCALING];
+            28 * FLOAT_SCALING,
+        ];
         assert!(median(v) == 9_500_000_000, 0);
     }
 

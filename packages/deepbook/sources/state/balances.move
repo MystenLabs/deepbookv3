@@ -13,19 +13,11 @@ module deepbook::balances {
 
     // === Public-Package Functions ===
     public(package) fun empty(): Balances {
-        Balances {
-            base: 0,
-            quote: 0,
-            deep: 0,
-        }
+        Balances { base: 0, quote: 0, deep: 0 }
     }
 
     public(package) fun new(base: u64, quote: u64, deep: u64): Balances {
-        Balances {
-            base: base,
-            quote: quote,
-            deep: deep,
-        }
+        Balances { base: base, quote: quote, deep: deep }
     }
 
     public(package) fun reset(balances: &mut Balances): Balances {

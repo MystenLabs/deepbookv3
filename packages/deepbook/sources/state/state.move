@@ -6,9 +6,7 @@
 /// the transactions and updates the state accordingly.
 module deepbook::state {
     // === Imports ===
-    use sui::{
-        table::{Self, Table},
-    };
+    use sui::{table::{Self, Table}};
     use deepbook::{
         math,
         history::{Self, History},
@@ -30,22 +28,15 @@ module deepbook::state {
         governance: Governance,
     }
 
-    public(package) fun empty(
-        stable_pool: bool,
-        ctx: &mut TxContext
-    ): State {
+    public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
         let governance = governance::empty(
             stable_pool,
-            ctx
+            ctx,
         );
         let trade_params = governance.trade_params();
         let history = history::empty(trade_params, ctx.epoch(), ctx);
 
-        State {
-            history,
-            governance,
-            accounts: table::new(ctx),
-        }
+        State { history, governance, accounts: table::new(ctx) }
     }
 
     /// Up until this point, an OrderInfo object has been created and potentially filled.
@@ -74,16 +65,20 @@ module deepbook::state {
         let avg_executed_price = if (order_info.executed_quantity() > 0) {
             math::div(
                 order_info.cumulative_quote_quantity(),
-                order_info.executed_quantity()
+                order_info.executed_quantity(),
             )
         } else {
             0
         };
-        let account_volume_in_deep =
-            order_info.order_deep_price().deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
+        let account_volume_in_deep = order_info
+            .order_deep_price()
+            .deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
 
         // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
-        let taker_fee = self.governance.trade_params().taker_fee_for_user(account_stake, account_volume_in_deep);
+        let taker_fee = self
+            .governance
+            .trade_params()
+            .taker_fee_for_user(account_stake, account_volume_in_deep);
         let maker_fee = self.governance.trade_params().maker_fee();
 
         if (order_info.remaining_quantity() > 0) {
@@ -91,7 +86,10 @@ module deepbook::state {
         };
         account.add_taker_volume(order_info.executed_quantity());
 
-        let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(taker_fee, maker_fee);
+        let (mut settled, mut owed) = order_info.calculate_partial_fill_balances(
+            taker_fee,
+            maker_fee,
+        );
         let (old_settled, old_owed) = account.settle();
         self.history.add_total_fees_collected(balances::new(0, 0, order_info.paid_fees()));
         settled.add_balances(old_settled);
@@ -227,11 +225,13 @@ module deepbook::state {
         assert!(account.active_stake() > 0, ENoStake);
 
         let prev_proposal = account.set_voted_proposal(option::some(proposal_id));
-        self.governance.adjust_vote(
-            prev_proposal,
-            option::some(proposal_id),
-            account.active_stake(),
-        );
+        self
+            .governance
+            .adjust_vote(
+                prev_proposal,
+                option::some(proposal_id),
+                account.active_stake(),
+            );
     }
 
     /// Process claim rebates transaction. Update account rebates and settle balances.
@@ -250,42 +250,27 @@ module deepbook::state {
         account.settle()
     }
 
-    public(package) fun governance(
-        self: &State,
-    ): &Governance {
+    public(package) fun governance(self: &State): &Governance {
         &self.governance
     }
 
-    public(package) fun governance_mut(
-        self: &mut State,
-        ctx: &TxContext,
-    ): &mut Governance {
+    public(package) fun governance_mut(self: &mut State, ctx: &TxContext): &mut Governance {
         self.governance.update(ctx);
 
         &mut self.governance
     }
 
-    public(package) fun account(
-        self: &State,
-        account_id: ID,
-    ): &Account {
+    public(package) fun account(self: &State, account_id: ID): &Account {
         &self.accounts[account_id]
     }
 
-    public(package) fun history_mut(
-        self: &mut State,
-    ): &mut History {
+    public(package) fun history_mut(self: &mut State): &mut History {
         &mut self.history
     }
 
     // === Private Functions ===
     /// Process fills for all makers. Update maker accounts and history.
-    fun process_fills(
-        self: &mut State,
-        fills: &vector<Fill>,
-        whitelisted: bool,
-        ctx: &TxContext,
-    ) {
+    fun process_fills(self: &mut State, fills: &vector<Fill>, whitelisted: bool, ctx: &TxContext) {
         let mut i = 0;
 
         while (i < fills.length()) {
@@ -312,11 +297,7 @@ module deepbook::state {
     }
 
     /// If account doesn't exist, create it. Update account volumes and rebates.
-    fun update_account(
-        self: &mut State,
-        account_id: ID,
-        ctx: &TxContext,
-    ) {
+    fun update_account(self: &mut State, account_id: ID, ctx: &TxContext) {
         if (!self.accounts.contains(account_id)) {
             self.accounts.add(account_id, account::empty(ctx));
         };
@@ -324,7 +305,9 @@ module deepbook::state {
         let account = &mut self.accounts[account_id];
         let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
         if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
-            let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+            let rebates = self
+                .history
+                .calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
             account.add_rebates(rebates);
         }
     }
