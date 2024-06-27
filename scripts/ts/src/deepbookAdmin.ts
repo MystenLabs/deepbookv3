@@ -19,7 +19,7 @@ const createPoolAdmin = async (
     txb: TransactionBlock
 ) => {
     const [creationFee] = txb.splitCoins(
-        txb.object(COIN_IDS.DEEP),
+        txb.object(COIN_IDS.DEEP_TYPE),
         [txb.pure.u64(POOL_CREATION_FEE)]
     );
     const whiteListedPool = false;

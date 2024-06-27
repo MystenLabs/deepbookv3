@@ -422,21 +422,22 @@ const swapExactBaseForQuote = async (
     txb: TransactionBlock
 ) => {
     const baseScalar = COIN_SCALARS[baseType];
+    const baseCoinId = COIN_IDS[baseType];
 
     let baseCoin;
-    if (baseType == SUI_TYPE) {
+    if (baseType === SUI_TYPE) {
         [baseCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(baseAmount * baseScalar)]
         );
     } else {
         [baseCoin] = txb.splitCoins(
-            txb.object(COIN_IDS.TONY),
+            txb.object(baseCoinId),
             [txb.pure.u64(baseAmount * baseScalar)]
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(COIN_IDS.DEEP),
+        txb.object(COIN_IDS[DEEP_TYPE]),
         [txb.pure.u64(deepAmount * COIN_SCALARS[DEEP_TYPE])]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
@@ -463,21 +464,22 @@ const swapExactQuoteForBase = async (
     txb: TransactionBlock
 ) => {
     const quoteScalar = COIN_SCALARS[quoteType];
+    const quoteCoinId = COIN_IDS[quoteType];
 
     let quoteCoin;
-    if (quoteType == SUI_TYPE) {
+    if (quoteType === SUI_TYPE) {
         [quoteCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(quoteAmount * quoteScalar)]
         );
     } else {
         [quoteCoin] = txb.splitCoins(
-            txb.object(COIN_IDS.SUI),
+            txb.object(quoteCoinId),
             [txb.pure.u64(quoteAmount * quoteScalar)]
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(COIN_IDS.DEEP),
+        txb.object(COIN_IDS[DEEP_TYPE]),
         [txb.pure.u64(deepAmount * COIN_SCALARS[DEEP_TYPE])]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
@@ -494,6 +496,7 @@ const swapExactQuoteForBase = async (
     txb.transferObjects([quoteOut], MY_ADDRESS);
     txb.transferObjects([deepOut], MY_ADDRESS);
 }
+
 
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {

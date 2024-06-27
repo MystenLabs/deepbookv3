@@ -4,8 +4,7 @@ import { normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    ENV, COIN_SCALARS, DEEPBOOK_PACKAGE_ID, TONY_TYPE, DEEP_TYPE, SUI_TYPE,
-    MANAGER_ID, COIN_IDS, MY_ADDRESS
+    ENV, COIN_SCALARS, COIN_IDS, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, SUI_TYPE, MANAGER_ID
 } from './coinConstants';
 
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
@@ -14,27 +13,23 @@ const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 // Transactions
 // =================================================================
 
-const createAndShareBalanceManager = async (
-    txb: TransactionBlock
-) => {
+const createAndShareBalanceManager = async (txb: TransactionBlock) => {
     const manager = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::new`,
     });
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::share`,
-        arguments: [
-            manager,
-        ],
+        arguments: [manager],
     });
-}
+};
 
 const depositIntoManager = async (
     amountToDeposit: number,
     coinType: string,
-    coinId: string,
     txb: TransactionBlock
 ) => {
     const scalar = COIN_SCALARS[coinType];
+    const coinId = COIN_IDS[coinType];
     let deposit;
 
     if (coinType === SUI_TYPE) {
@@ -59,7 +54,7 @@ const depositIntoManager = async (
     });
 
     console.log(`Deposited ${amountToDeposit} of type ${coinType} into manager ${MANAGER_ID}`);
-}
+};
 
 const withdrawFromManager = async (
     amountToWithdraw: number,
@@ -78,7 +73,7 @@ const withdrawFromManager = async (
 
     txb.transferObjects([coin], MY_ADDRESS);
     console.log(`Withdrew ${amountToWithdraw} of type ${coinType} from manager ${MANAGER_ID}`);
-}
+};
 
 const withdrawAllFromManager = async (
     coinType: string,
@@ -120,16 +115,16 @@ const checkManagerBalance = async (
     const adjusted_balance = balanceNumber / scalar;
 
     console.log(`Manager balance for ${coinType} is ${adjusted_balance.toString()}`); // Output the u64 number as a string
-}
+};
 
-/// Main entry points, comment out as needed...
+// Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // await createAndShareBalanceManager(txb);
-    // await depositIntoManager(5000, DEEP_TYPE, COIN_IDS.DEEP, txb);
-    // await depositIntoManager(40, SUI_TYPE, COIN_IDS.SUI, txb);
-    // await depositIntoManager(5000, TONY_TYPE, COIN_IDS.TONY, txb);
+    // await depositIntoManager(5000, DEEP_TYPE, txb);
+    // await depositIntoManager(40, SUI_TYPE, txb);
+    // await depositIntoManager(5000, TONY_TYPE, txb);
     // await withdrawFromManager(5, SUI_TYPE, txb);
     // await withdrawAllFromManager(SUI_TYPE, txb);
     // await checkManagerBalance(DEEP_TYPE, txb);
@@ -139,6 +134,6 @@ const executeTransaction = async () => {
     const res = await signAndExecute(txb, ENV);
 
     console.dir(res, { depth: null });
-}
+};
 
 executeTransaction();

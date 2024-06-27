@@ -23,6 +23,10 @@ type CoinScalarsType = {
     [key: string]: number;
 };
 
+type CoinIDsType = {
+    [key: string]: string;
+};
+
 // Declare coin types
 export const ASLAN_TYPE = `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`;
 export const TONY_TYPE = `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::tonycoin::TONYCOIN`;
@@ -38,10 +42,11 @@ export const COIN_SCALARS: CoinScalarsType = {
 };
 
 // Update coin IDs as needed
-export const COIN_IDS = {
-    DEEP: `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`,
-    SUI: `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`,
-    TONY: `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`
+export const COIN_IDS: CoinIDsType = {
+    [ASLAN_TYPE]: `0xsome_aslan_coin_id`, // Update with actual ID
+    [TONY_TYPE]: `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`,
+    [DEEP_TYPE]: `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`,
+    [SUI_TYPE]: `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`
 };
 
 // Update env, package IDs, manager id as needed
