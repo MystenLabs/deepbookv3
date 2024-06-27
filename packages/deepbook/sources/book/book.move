@@ -6,12 +6,7 @@
 module deepbook::book {
     // === Imports ===
     use deepbook::{
-        big_vector::{
-            Self,
-            BigVector,
-            slice_borrow,
-            slice_borrow_mut,
-        },
+        big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
         utils,
         math,
         order::Order,
@@ -57,7 +52,12 @@ module deepbook::book {
         self.lot_size
     }
 
-    public(package) fun empty(tick_size: u64, lot_size: u64, min_size: u64, ctx: &mut TxContext): Book {
+    public(package) fun empty(
+        tick_size: u64,
+        lot_size: u64,
+        min_size: u64,
+        ctx: &mut TxContext,
+    ): Book {
         Book {
             tick_size,
             lot_size,
@@ -72,13 +72,13 @@ module deepbook::book {
     /// Creates a new order.
     /// Order is matched against the book and injected into the book if necessary.
     /// If order is IOC or fully executed, it will not be injected.
-    public(package) fun create_order(
-        self: &mut Book,
-        order_info: &mut OrderInfo,
-        timestamp: u64,
-    ) {
+    public(package) fun create_order(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
         order_info.validate_inputs(self.tick_size, self.min_size, self.lot_size, timestamp);
-        let order_id = utils::encode_order_id(order_info.is_bid(), order_info.price(), self.get_order_id(order_info.is_bid()));
+        let order_id = utils::encode_order_id(
+            order_info.is_bid(),
+            order_info.price(),
+            self.get_order_id(order_info.is_bid()),
+        );
         order_info.set_order_id(order_id);
         self.match_against_book(order_info, timestamp);
         if (order_info.assert_execution()) return;
@@ -96,7 +96,10 @@ module deepbook::book {
         lot_size: u64,
         current_timestamp: u64,
     ): (u64, u64, u64) {
-        assert!((base_quantity > 0 || quote_quantity > 0) && !(base_quantity > 0 && quote_quantity > 0), EInvalidAmountIn);
+        assert!(
+            (base_quantity > 0 || quote_quantity > 0) && !(base_quantity > 0 && quote_quantity > 0),
+            EInvalidAmountIn,
+        );
         let is_bid = quote_quantity > 0;
         let mut quantity_out = 0;
         let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
@@ -112,13 +115,19 @@ module deepbook::book {
             if (current_timestamp < order.expire_timestamp()) {
                 let mut matched_base_quantity;
                 if (is_bid) {
-                    matched_base_quantity = math::min(math::div(quantity_in_left, cur_price), cur_quantity);
-                    matched_base_quantity = matched_base_quantity - matched_base_quantity % lot_size;
+                    matched_base_quantity = math::min(
+                        math::div(quantity_in_left, cur_price),
+                        cur_quantity,
+                    );
+                    matched_base_quantity = matched_base_quantity -
+                    matched_base_quantity % lot_size;
                     quantity_out = quantity_out + matched_base_quantity;
-                    quantity_in_left = quantity_in_left - math::mul(matched_base_quantity, cur_price);
+                    quantity_in_left = quantity_in_left -
+                    math::mul(matched_base_quantity, cur_price);
                 } else {
                     matched_base_quantity = math::min(quantity_in_left, cur_quantity);
-                    matched_base_quantity = matched_base_quantity - matched_base_quantity % lot_size;
+                    matched_base_quantity = matched_base_quantity -
+                    matched_base_quantity % lot_size;
                     quantity_out = quantity_out + math::mul(matched_base_quantity, cur_price);
                     quantity_in_left = quantity_in_left - matched_base_quantity;
                 };
@@ -126,7 +135,8 @@ module deepbook::book {
                 if (matched_base_quantity == 0) break;
             };
 
-            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
+            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+            else book_side.prev_slice(ref, offset);
         };
 
         let quantity_in_deep = if (is_bid) {
@@ -151,7 +161,12 @@ module deepbook::book {
     /// Modifies an order given order_id and new_quantity.
     /// New quantity must be less than the original quantity.
     /// Order must not have already expired.
-    public(package) fun modify_order(self: &mut Book, order_id: u128, new_quantity: u64, timestamp: u64): (u64, &Order) {
+    public(package) fun modify_order(
+        self: &mut Book,
+        order_id: u128,
+        new_quantity: u64,
+        timestamp: u64,
+    ): (u64, &Order) {
         assert!(new_quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
@@ -164,10 +179,7 @@ module deepbook::book {
     }
 
     /// Returns the mid price of the order book.
-    public(package) fun mid_price(
-        self: &Book,
-        current_timestamp: u64,
-    ): u64 {
+    public(package) fun mid_price(self: &Book, current_timestamp: u64): u64 {
         let (mut ask_ref, mut ask_offset) = self.asks.min_slice();
         let (mut bid_ref, mut bid_offset) = self.bids.max_slice();
         let mut best_ask_price = 0;
@@ -212,7 +224,8 @@ module deepbook::book {
         let key_low = (price_low as u128) << 64;
         let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
         let book_side = if (is_bid) &self.bids else &self.asks;
-        let (mut ref, mut offset) = if (is_bid) book_side.slice_before(key_high) else book_side.slice_following(key_low);
+        let (mut ref, mut offset) = if (is_bid) book_side.slice_before(key_high)
+        else book_side.slice_following(key_low);
         let mut ticks_left = ticks;
         let mut cur_price = 0;
         let mut cur_quantity = 0;
@@ -220,7 +233,9 @@ module deepbook::book {
         while (!ref.is_null() && ticks_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let (_, order_price, _) = utils::decode_order_id(order.order_id());
-            if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) break;
+            if ((is_bid && order_price >= price_low) || (!is_bid && order_price <= price_high)) {
+                break
+            };
             if (cur_price == 0) cur_price = order_price;
 
             let order_quantity = order.quantity();
@@ -233,7 +248,8 @@ module deepbook::book {
 
             cur_quantity = cur_quantity + order_quantity;
             ticks_left = ticks_left - 1;
-            (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
+            (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset)
+            else book_side.next_slice(ref, offset);
         };
 
         price_vec.push_back(cur_price);
@@ -256,11 +272,7 @@ module deepbook::book {
     /// Matches the given order and quantity against the order book.
     /// If is_bid, it will match against asks, otherwise against bids.
     /// Mutates the order and the maker order as necessary.
-    fun match_against_book(
-        self: &mut Book,
-        order_info: &mut OrderInfo,
-        timestamp: u64,
-    ) {
+    fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
         let is_bid = order_info.is_bid();
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
@@ -268,7 +280,8 @@ module deepbook::book {
         while (!ref.is_null()) {
             let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
-            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset) else book_side.prev_slice(ref, offset);
+            (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+            else book_side.prev_slice(ref, offset);
         };
 
         let fills = order_info.fills();
@@ -293,10 +306,7 @@ module deepbook::book {
     }
 
     /// Balance accounting happens before this function is called
-    fun inject_limit_order(
-        self: &mut Book,
-        order_info: &OrderInfo,
-    ) {
+    fun inject_limit_order(self: &mut Book, order_info: &OrderInfo) {
         let order = order_info.to_order();
         if (order_info.is_bid()) {
             self.bids.insert(order_info.order_id(), order);

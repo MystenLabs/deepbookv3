@@ -5,15 +5,8 @@
 /// transaction processing, the vault is used to settle the balances for the user.
 module deepbook::vault {
     // === Imports ===
-    use sui::{
-        balance::{Self, Balance},
-        coin::Coin,
-        event,
-    };
-    use deepbook::{
-        balance_manager::BalanceManager,
-        balances::Balances,
-    };
+    use sui::{balance::{Self, Balance}, coin::Coin, event};
+    use deepbook::{balance_manager::BalanceManager, balances::Balances};
     use std::type_name::{Self, TypeName};
     use token::deep::DEEP;
 
@@ -46,7 +39,7 @@ module deepbook::vault {
 
     // === Public-Package Functions ===
     public(package) fun balances<BaseAsset, QuoteAsset>(
-        self: &Vault<BaseAsset, QuoteAsset>
+        self: &Vault<BaseAsset, QuoteAsset>,
     ): (u64, u64, u64) {
         (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
     }
@@ -81,15 +74,27 @@ module deepbook::vault {
             balance_manager.deposit_protected(balance, ctx);
         };
         if (balances_in.base() > balances_out.base()) {
-            let balance = balance_manager.withdraw_protected(balances_in.base() - balances_out.base(), false, ctx);
+            let balance = balance_manager.withdraw_protected(
+                balances_in.base() - balances_out.base(),
+                false,
+                ctx,
+            );
             self.base_balance.join(balance);
         };
         if (balances_in.quote() > balances_out.quote()) {
-            let balance = balance_manager.withdraw_protected(balances_in.quote() - balances_out.quote(), false, ctx);
+            let balance = balance_manager.withdraw_protected(
+                balances_in.quote() - balances_out.quote(),
+                false,
+                ctx,
+            );
             self.quote_balance.join(balance);
         };
         if (balances_in.deep() > balances_out.deep()) {
-            let balance = balance_manager.withdraw_protected(balances_in.deep() - balances_out.deep(), false, ctx);
+            let balance = balance_manager.withdraw_protected(
+                balances_in.deep() - balances_out.deep(),
+                false,
+                ctx,
+            );
             self.deep_balance.join(balance);
         };
     }
@@ -112,17 +117,9 @@ module deepbook::vault {
         let borrow_type_name = type_name::get<BaseAsset>();
         let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
-        let flash_loan = FlashLoan {
-            pool_id,
-            borrow_quantity,
-            type_name: borrow_type_name,
-        };
+        let flash_loan = FlashLoan { pool_id, borrow_quantity, type_name: borrow_type_name };
 
-        event::emit(FlashLoanBorrowed {
-            pool_id,
-            borrow_quantity,
-            type_name: borrow_type_name,
-        });
+        event::emit(FlashLoanBorrowed { pool_id, borrow_quantity, type_name: borrow_type_name });
 
         (borrow, flash_loan)
     }
@@ -138,17 +135,9 @@ module deepbook::vault {
         let borrow_type_name = type_name::get<QuoteAsset>();
         let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
-        let flash_loan = FlashLoan {
-            pool_id,
-            borrow_quantity,
-            type_name: borrow_type_name,
-        };
+        let flash_loan = FlashLoan { pool_id, borrow_quantity, type_name: borrow_type_name };
 
-        event::emit(FlashLoanBorrowed {
-            pool_id,
-            borrow_quantity,
-            type_name: borrow_type_name,
-        });
+        event::emit(FlashLoanBorrowed { pool_id, borrow_quantity, type_name: borrow_type_name });
 
         (borrow, flash_loan)
     }

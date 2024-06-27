@@ -5,11 +5,7 @@
 module deepbook::registry {
     // === Imports ===
     use std::type_name::{Self, TypeName};
-    use sui::{
-        bag::{Self, Bag},
-        versioned::{Self, Versioned},
-        vec_set::{Self, VecSet},
-    };
+    use sui::{bag::{Self, Bag}, versioned::{Self, Versioned}, vec_set::{Self, VecSet}};
     use deepbook::constants;
 
     // === Errors ===
@@ -55,9 +51,7 @@ module deepbook::registry {
             inner: versioned::create(constants::current_version(), registry_inner, ctx),
         };
         transfer::share_object(registry);
-        let admin = DeepbookAdminCap {
-            id: object::new(ctx),
-        };
+        let admin = DeepbookAdminCap { id: object::new(ctx) };
         transfer::public_transfer(admin, ctx.sender());
     }
 
@@ -75,11 +69,7 @@ module deepbook::registry {
 
     /// Disables a package version
     /// Only Admin can disable a package version
-    public fun disable_version(
-        self: &mut Registry,
-        version: u64,
-        _cap: &DeepbookAdminCap,
-    ) {
+    public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
         let self = self.load_inner_mut();
         assert!(!self.disabled_versions.contains(&version), EVersionAlreadyDisabled);
         assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
@@ -88,20 +78,14 @@ module deepbook::registry {
 
     /// Enables a package version
     /// Only Admin can enable a package version
-    public fun enable_version(
-        self: &mut Registry,
-        version: u64,
-        _cap: &DeepbookAdminCap,
-    ) {
+    public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
         let self = self.load_inner_mut();
         assert!(self.disabled_versions.contains(&version), EVersionNotDisabled);
         self.disabled_versions.remove(&version);
     }
 
     // === Public-Package Functions ===
-    public(package) fun load_inner_mut(
-        self: &mut Registry,
-    ): &mut RegistryInner {
+    public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
         let inner: &mut RegistryInner = self.inner.load_value_mut();
         let package_version = constants::current_version();
         assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
@@ -111,10 +95,7 @@ module deepbook::registry {
 
     /// Register a new pool in the registry.
     /// Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
-    public(package) fun register_pool<BaseAsset, QuoteAsset>(
-        self: &mut Registry,
-        pool_id: ID,
-    ) {
+    public(package) fun register_pool<BaseAsset, QuoteAsset>(self: &mut Registry, pool_id: ID) {
         let self = self.load_inner_mut();
         let key = PoolKey {
             base: type_name::get<QuoteAsset>(),
@@ -132,9 +113,7 @@ module deepbook::registry {
     }
 
     /// Only admin can call this function
-    public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
-        self: &mut Registry,
-    ) {
+    public(package) fun unregister_pool<BaseAsset, QuoteAsset>(self: &mut Registry) {
         let self = self.load_inner_mut();
         let key = PoolKey {
             base: type_name::get<BaseAsset>(),
@@ -144,9 +123,7 @@ module deepbook::registry {
         self.pools.remove<PoolKey, ID>(key);
     }
 
-    public(package) fun load_inner(
-        self: &Registry,
-    ): &RegistryInner {
+    public(package) fun load_inner(self: &Registry): &RegistryInner {
         let inner: &RegistryInner = self.inner.load_value();
         let package_version = constants::current_version();
         assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
@@ -155,9 +132,7 @@ module deepbook::registry {
     }
 
     /// Get the pool id for the given base and quote assets.
-    public(package) fun get_pool_id<BaseAsset, QuoteAsset>(
-        self: &Registry
-    ): ID {
+    public(package) fun get_pool_id<BaseAsset, QuoteAsset>(self: &Registry): ID {
         let self = self.load_inner();
         let key = PoolKey {
             base: type_name::get<BaseAsset>(),
@@ -200,8 +175,6 @@ module deepbook::registry {
 
     #[test_only]
     public fun get_admin_cap_for_testing(ctx: &mut TxContext): DeepbookAdminCap {
-        DeepbookAdminCap {
-            id: object::new(ctx),
-        }
+        DeepbookAdminCap { id: object::new(ctx) }
     }
 }

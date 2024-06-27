@@ -107,7 +107,8 @@ module deepbook::order {
             self.status = constants::expired();
         } else {
             self.filled_quantity = self.filled_quantity + base_quantity;
-            self.status = if (self.quantity == self.filled_quantity) constants::filled() else constants::partially_filled();
+            self.status = if (self.quantity == self.filled_quantity) constants::filled()
+            else constants::partially_filled();
         };
 
         fill::new(
@@ -119,20 +120,19 @@ module deepbook::order {
             quote_quantity,
             is_bid,
             self.epoch,
-            self.order_deep_price
+            self.order_deep_price,
         )
     }
 
-    /// Modify the order with a new quantity. The new quantity must be greater 
-    /// than the filled quantity and less than the original quantity. The 
+    /// Modify the order with a new quantity. The new quantity must be greater
+    /// than the filled quantity and less than the original quantity. The
     /// timestamp must be less than the expire timestamp.
-    public(package) fun modify(
-        self: &mut Order,
-        new_quantity: u64,
-        timestamp: u64,
-    ) {
-        assert!(new_quantity > self.filled_quantity &&
-                new_quantity < self.quantity, EInvalidNewQuantity);
+    public(package) fun modify(self: &mut Order, new_quantity: u64, timestamp: u64) {
+        assert!(
+            new_quantity > self.filled_quantity &&
+            new_quantity < self.quantity,
+            EInvalidNewQuantity,
+        );
         assert!(timestamp <= self.expire_timestamp, EOrderExpired);
         self.quantity = new_quantity;
     }
@@ -154,10 +154,12 @@ module deepbook::order {
         };
         let deep_out = math::mul(
             maker_fee,
-            self.order_deep_price().deep_quantity(
-                cancel_quantity,
-                math::mul(cancel_quantity, self.price())
-            )
+            self
+                .order_deep_price()
+                .deep_quantity(
+                    cancel_quantity,
+                    math::mul(cancel_quantity, self.price()),
+                ),
         );
 
         let mut base_out = 0;
@@ -175,7 +177,7 @@ module deepbook::order {
         self: &Order,
         pool_id: ID,
         trader: address,
-        timestamp: u64
+        timestamp: u64,
     ) {
         let is_bid = self.is_bid();
         let price = self.price();
@@ -196,7 +198,7 @@ module deepbook::order {
         self: &Order,
         pool_id: ID,
         trader: address,
-        timestamp: u64
+        timestamp: u64,
     ) {
         let is_bid = self.is_bid();
         let price = self.price();

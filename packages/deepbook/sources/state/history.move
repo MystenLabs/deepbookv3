@@ -7,11 +7,7 @@
 module deepbook::history {
     // === Imports ===
     use sui::table::{Self, Table};
-    use deepbook::{
-        math,
-        constants,
-        balances::{Self, Balances}
-    };
+    use deepbook::{math, constants, balances::{Self, Balances}};
     use deepbook::trade_params::TradeParams;
 
     // === Errors ===
@@ -63,13 +59,9 @@ module deepbook::history {
         history
     }
 
-    /// Update the epoch if it has changed. If there are accounts with rebates, 
+    /// Update the epoch if it has changed. If there are accounts with rebates,
     /// add the current epoch's volume data to the historic volumes.
-    public(package) fun update(
-        self: &mut History,
-        trade_params: TradeParams,
-        ctx: &TxContext,
-    ) {
+    public(package) fun update(self: &mut History, trade_params: TradeParams, ctx: &TxContext) {
         let epoch = ctx.epoch();
         if (self.epoch == epoch) return;
         if (self.historic_volumes.contains(self.epoch)) {
@@ -84,10 +76,7 @@ module deepbook::history {
     }
 
     /// Reset the current epoch's volume data.
-    public(package) fun reset_volumes(
-        self: &mut History,
-        trade_params: TradeParams,
-    ) {
+    public(package) fun reset_volumes(self: &mut History, trade_params: TradeParams) {
         self.volumes = Volumes {
             total_volume: 0,
             total_staked_volume: 0,
@@ -111,7 +100,11 @@ module deepbook::history {
 
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = if (volumes.historic_median > 0) {
-            constants::float_scaling() - math::min(constants::float_scaling(), math::div(other_maker_liquidity, volumes.historic_median))
+            constants::float_scaling() -
+            math::min(
+                constants::float_scaling(),
+                math::div(other_maker_liquidity, volumes.historic_median),
+            )
         } else {
             0
         };
@@ -120,7 +113,10 @@ module deepbook::history {
         } else {
             0
         };
-        let maker_fee_proportion = math::mul(maker_volume_proportion, volumes.total_fees_collected.deep());
+        let maker_fee_proportion = math::mul(
+            maker_volume_proportion,
+            volumes.total_fees_collected.deep(),
+        );
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;
 
@@ -130,9 +126,7 @@ module deepbook::history {
     }
 
     /// Updates the historic_median for past 28 epochs.
-    public(package) fun update_historic_median(
-        self: &mut History,
-    ) {
+    public(package) fun update_historic_median(self: &mut History) {
         let epochs_since_creation = self.epoch - self.epoch_created;
         if (epochs_since_creation < constants::phase_out_epochs()) {
             self.volumes.historic_median = constants::max_u64();
@@ -154,11 +148,7 @@ module deepbook::history {
 
     /// Add volume to the current epoch's volume data.
     /// Increments the total volume and total staked volume.
-    public(package) fun add_volume(
-        self: &mut History,
-        maker_volume: u64,
-        account_stake: u64,
-    ) {
+    public(package) fun add_volume(self: &mut History, maker_volume: u64, account_stake: u64) {
         if (maker_volume == 0) return;
 
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
@@ -167,34 +157,24 @@ module deepbook::history {
         };
     }
 
-    public(package) fun balance_to_burn(
-        self: &History,
-    ): u64 {
+    public(package) fun balance_to_burn(self: &History): u64 {
         self.balance_to_burn
     }
 
-    public(package) fun reset_balance_to_burn(
-        self: &mut History,
-    ): u64 {
+    public(package) fun reset_balance_to_burn(self: &mut History): u64 {
         let balance_to_burn = self.balance_to_burn;
         self.balance_to_burn = 0;
 
         balance_to_burn
     }
 
-    public(package) fun historic_maker_fee(
-        self: &History,
-        epoch: u64,
-    ): u64 {
+    public(package) fun historic_maker_fee(self: &History, epoch: u64): u64 {
         assert!(self.historic_volumes.contains(epoch), EHistoricVolumesNotFound);
 
         self.historic_volumes[epoch].trade_params.maker_fee()
     }
 
-    public(package) fun add_total_fees_collected(
-        self: &mut History,
-        fees: Balances,
-    ) {
+    public(package) fun add_total_fees_collected(self: &mut History, fees: Balances) {
         self.volumes.total_fees_collected.add_balances(fees);
     }
 

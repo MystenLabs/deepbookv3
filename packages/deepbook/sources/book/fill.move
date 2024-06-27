@@ -4,10 +4,7 @@
 /// `Fill` struct represents the results of a match between two orders.
 module deepbook::fill {
     // === Imports ===
-    use deepbook::{
-        balances::{Self, Balances},
-        deep_price::OrderDeepPrice,
-    };
+    use deepbook::{balances::{Self, Balances}, deep_price::OrderDeepPrice};
 
     // === Structs ===
     /// Fill struct represents the results of a match between two orders.
