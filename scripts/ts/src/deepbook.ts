@@ -617,7 +617,7 @@ const executeTransaction = async () => {
     // await vaultBalances(DEEP_SUI_POOL_ID, DEEP_TYPE, DEEP_SCALAR, SUI_TYPE, SUI_SCALAR, txb);
     // await getPoolIdByAssets(DEEP_TYPE, SUI_TYPE, txb);
     // await swapExactBaseForQuote(TONY_SUI_POOL_ID, TONY_TYPE, TONY_SCALAR, SUI_TYPE, 1, 0.0004, txb);
-    await swapExactQuoteForBase(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, SUI_SCALAR, 1, 0.0002, txb);
+    // await swapExactQuoteForBase(TONY_SUI_POOL_ID, TONY_TYPE, SUI_TYPE, SUI_SCALAR, 1, 0.0002, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
