@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// DEEP price module. This module maintains the conversion rate 
+/// DEEP price module. This module maintains the conversion rate
 /// between DEEP and the base and quote assets.
 module deepbook::deep_price {
     // === Imports ===
@@ -53,30 +53,20 @@ module deepbook::deep_price {
         asset_is_base: bool,
         deep_per_asset: u64,
     ): OrderDeepPrice {
-        OrderDeepPrice {
-            asset_is_base: asset_is_base,
-            deep_per_asset: deep_per_asset,
-        }
+        OrderDeepPrice { asset_is_base: asset_is_base, deep_per_asset: deep_per_asset }
     }
 
-    public(package) fun get_order_deep_price(
-        self: &DeepPrice,
-        whitelisted: bool,
-    ): OrderDeepPrice {
+    public(package) fun get_order_deep_price(self: &DeepPrice, whitelisted: bool): OrderDeepPrice {
         let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(whitelisted);
 
         new_order_deep_price(asset_is_base, deep_per_asset)
     }
 
-    public(package) fun deep_per_asset(
-        self: &OrderDeepPrice,
-    ): u64 {
+    public(package) fun deep_per_asset(self: &OrderDeepPrice): u64 {
         self.deep_per_asset
     }
 
-    public(package) fun asset_is_base(
-        self: &OrderDeepPrice,
-    ): bool {
+    public(package) fun asset_is_base(self: &OrderDeepPrice): bool {
         self.asset_is_base
     }
 
@@ -100,17 +90,18 @@ module deepbook::deep_price {
         timestamp: u64,
         is_base_conversion: bool,
     ) {
-        assert!(self.last_insert_timestamp(is_base_conversion) + MIN_DURATION_BETWEEN_DATA_POINTS_MS < timestamp, EDataPointRecentlyAdded);
+        assert!(
+            self.last_insert_timestamp(is_base_conversion) + MIN_DURATION_BETWEEN_DATA_POINTS_MS <
+            timestamp,
+            EDataPointRecentlyAdded,
+        );
         let asset_prices = if (is_base_conversion) {
             &mut self.base_prices
         } else {
             &mut self.quote_prices
         };
 
-        asset_prices.push_back(Price {
-            timestamp: timestamp,
-            conversion_rate: conversion_rate,
-        });
+        asset_prices.push_back(Price { timestamp: timestamp, conversion_rate: conversion_rate });
         if (is_base_conversion) {
             self.cumulative_base = self.cumulative_base + conversion_rate;
             while (
@@ -135,14 +126,14 @@ module deepbook::deep_price {
     // === Private Functions ===
     /// Returns the conversion rate of DEEP per asset token.
     /// Base will be used by default, if there are no base data then quote will be used
-    fun calculate_order_deep_price(
-        self: &DeepPrice,
-        whitelisted: bool,
-    ): (bool, u64) {
+    fun calculate_order_deep_price(self: &DeepPrice, whitelisted: bool): (bool, u64) {
         if (whitelisted) {
             return (false, 0) // no fees for whitelist
         };
-        assert!(self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0, ENoDataPoints);
+        assert!(
+            self.last_insert_timestamp(true) > 0 || self.last_insert_timestamp(false) > 0,
+            ENoDataPoints,
+        );
 
         let is_base_conversion = self.last_insert_timestamp(false) == 0;
 
@@ -161,10 +152,7 @@ module deepbook::deep_price {
         (is_base_conversion, deep_per_asset)
     }
 
-    fun last_insert_timestamp(
-        self: &DeepPrice,
-        is_base_conversion: bool,
-    ): u64 {
+    fun last_insert_timestamp(self: &DeepPrice, is_base_conversion: bool): u64 {
         let prices = if (is_base_conversion) {
             &self.base_prices
         } else {

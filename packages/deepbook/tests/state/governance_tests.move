@@ -530,12 +530,12 @@ module deepbook::governance_tests {
         test.next_tx(OWNER);
         let stable_pool = false;
         let mut gov = governance::empty(stable_pool, test.ctx());
-        gov.adjust_voting_power(0, 100_000 * constants::sui_unit());
-        assert!(gov.voting_power() == 100_000 * constants::sui_unit(), 0);
+        gov.adjust_voting_power(0, 100_000 * constants::deep_unit());
+        assert!(gov.voting_power() == 100_000 * constants::deep_unit(), 0);
         test.next_epoch(OWNER);
         gov.update(test.ctx());
-        assert!(gov.quorum() == 50_000 * constants::sui_unit(), 0);
-        gov.adjust_voting_power(100_000 * constants::sui_unit(), 150_000 * constants::sui_unit());
+        assert!(gov.quorum() == 50_000 * constants::deep_unit(), 0);
+        gov.adjust_voting_power(100_000 * constants::deep_unit(), 150_000 * constants::deep_unit());
         test.next_epoch(OWNER);
         gov.update(test.ctx());
         // The additional power is calculated as sqrt(total_stake = 150k) - sqrt(threshold = 100k)
@@ -543,17 +543,18 @@ module deepbook::governance_tests {
         // total voting power = 100000 + 71.070568604 = 100071.070568604
         // quorum = 50035.535284302
         // The total voting power is therefore 52.928, with quorum being half of that = 26.464.
-        assert!(gov.voting_power() == 100_071_070_568_604, 0);
-        assert!(gov.quorum() == 50_035_535_284_302, 0);
-        gov.adjust_voting_power(150_000 * constants::sui_unit(), 200_000 * constants::sui_unit());
+        assert!(gov.voting_power() == 100_071_070_568, 0);
+
+        assert!(gov.quorum() == 50_035_535_284, 0);
+        gov.adjust_voting_power(150_000 * constants::deep_unit(), 200_000 * constants::deep_unit());
         test.next_epoch(OWNER);
         gov.update(test.ctx());
         // The additional power is calculated as sqrt(total_stake = 200k) - sqrt(threshold = 100k)
         // 447.213595499 - 316.227766016 = 130.985829483
         // total voting power = 100000 + 130.985829484 = 100130.985829483
         // quorum = 50065.492914741
-        assert!(gov.voting_power() == 100_130_985_829_483, 0);
-        assert!(gov.quorum() == 50_065_492_914_741, 0);
+        assert!(gov.voting_power() == 100_130_985_829, 0);
+        assert!(gov.quorum() == 50_065_492_914, 0);
 
         destroy(gov);
         end(test);

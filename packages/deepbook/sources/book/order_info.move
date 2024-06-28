@@ -153,7 +153,7 @@ module deepbook::order_info {
         self.price
     }
 
-    public fun is_bid(self: &OrderInfo): bool{
+    public fun is_bid(self: &OrderInfo): bool {
         self.is_bid
     }
 
@@ -265,10 +265,12 @@ module deepbook::order_info {
     ): (Balances, Balances) {
         let taker_deep_in = math::mul(
             taker_fee,
-            self.order_deep_price.deep_quantity(
-                self.executed_quantity,
-                self.cumulative_quote_quantity
-            )
+            self
+                .order_deep_price
+                .deep_quantity(
+                    self.executed_quantity,
+                    self.cumulative_quote_quantity,
+                ),
         );
         self.paid_fees = taker_deep_in;
 
@@ -288,10 +290,12 @@ module deepbook::order_info {
         if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
             let maker_deep_in = math::mul(
                 maker_fee,
-                self.order_deep_price.deep_quantity(
-                    remaining_quantity,
-                    math::mul(remaining_quantity, self.price())
-                )
+                self
+                    .order_deep_price
+                    .deep_quantity(
+                        remaining_quantity,
+                        math::mul(remaining_quantity, self.price()),
+                    ),
             );
             owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
@@ -307,9 +311,7 @@ module deepbook::order_info {
     /// `OrderInfo` is converted to an `Order` before being injected into the order book.
     /// This is done to save space in the order book. Order contains the minimum
     /// information required to match orders.
-    public(package) fun to_order(
-        self: &OrderInfo,
-    ): Order {
+    public(package) fun to_order(self: &OrderInfo): Order {
         order::new(
             self.order_id,
             self.balance_manager_id,
@@ -334,21 +336,31 @@ module deepbook::order_info {
         assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
         assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
-        assert!(order_info.order_type >= constants::no_restriction() && order_info.order_type <= constants::max_restriction(), EInvalidOrderType);
+        assert!(
+            order_info.order_type >= constants::no_restriction() &&
+            order_info.order_type <= constants::max_restriction(),
+            EInvalidOrderType,
+        );
         if (order_info.market_order) {
             assert!(order_info.order_type != constants::post_only(), EMarketOrderCannotBePostOnly);
             return
         };
-        assert!(order_info.price >= constants::min_price() && order_info.price <= constants::max_price(), EOrderInvalidPrice);
+        assert!(
+            order_info.price >= constants::min_price() &&
+            order_info.price <= constants::max_price(),
+            EOrderInvalidPrice,
+        );
         assert!(order_info.price % tick_size == 0, EOrderInvalidPrice);
     }
 
     /// Assert order types after partial fill against the order book.
     public(package) fun assert_execution(self: &mut OrderInfo): bool {
-        if (self.order_type == constants::post_only())
-            assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook);
-        if (self.order_type == constants::fill_or_kill())
-            assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled);
+        if (self.order_type == constants::post_only()) {
+            assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook)
+        };
+        if (self.order_type == constants::fill_or_kill()) {
+            assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled)
+        };
         if (self.order_type == constants::immediate_or_cancel()) {
             if (self.remaining_quantity() > 0) {
                 self.status = constants::canceled();
@@ -377,32 +389,34 @@ module deepbook::order_info {
     public(package) fun can_match(self: &OrderInfo, order: &Order): bool {
         let maker_price = order.price();
 
-        (self.original_quantity - self.executed_quantity > 0 &&
-        (self.is_bid && self.price >= maker_price ||
-        !self.is_bid && self.price <= maker_price))
+        (
+            self.original_quantity - self.executed_quantity > 0 &&
+            (
+                self.is_bid && self.price >= maker_price ||
+                !self.is_bid && self.price <= maker_price,
+            ),
+        )
     }
 
     /// Matches an `OrderInfo` with an `Order` from the book. Appends a `Fill` to fills.
     /// If the book order is expired, the `Fill` will have the expired flag set to true.
     /// Funds for the match or an expired order are returned to the maker as settled.
-    public(package) fun match_maker(
-        self: &mut OrderInfo,
-        maker: &mut Order,
-        timestamp: u64,
-    ): bool {
+    public(package) fun match_maker(self: &mut OrderInfo, maker: &mut Order, timestamp: u64): bool {
         if (!self.can_match(maker)) return false;
 
         if (self.self_matching_option() == constants::cancel_taker()) {
-            assert!(maker.balance_manager_id() != self.balance_manager_id(), ESelfMatchingCancelTaker);
+            assert!(
+                maker.balance_manager_id() != self.balance_manager_id(),
+                ESelfMatchingCancelTaker,
+            );
         };
-        let expire_maker =
-            self.self_matching_option() == constants::cancel_maker() &&
-            maker.balance_manager_id() == self.balance_manager_id();
+        let expire_maker = self.self_matching_option() == constants::cancel_maker() &&
+        maker.balance_manager_id() == self.balance_manager_id();
         let fill = maker.generate_fill(
             timestamp,
             self.remaining_quantity(),
             self.is_bid,
-            expire_maker
+            expire_maker,
         );
         self.fills.push_back(fill);
         if (fill.expired()) return true;
@@ -417,7 +431,7 @@ module deepbook::order_info {
             maker.price(),
             fill.base_quantity(),
             fill.quote_quantity(),
-            timestamp
+            timestamp,
         );
 
         true
@@ -444,7 +458,7 @@ module deepbook::order_info {
         price: u64,
         filled_quantity: u64,
         quote_quantity: u64,
-        timestamp: u64
+        timestamp: u64,
     ) {
         event::emit(OrderFilled {
             pool_id: self.pool_id,

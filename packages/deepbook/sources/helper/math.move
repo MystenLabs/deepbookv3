@@ -8,6 +8,9 @@ module deepbook::math {
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const FLOAT_SCALING_U128: u128 = 1_000_000_000;
 
+    /// Error codes
+    const EInvalidPrecision: u64 = 0;
+
     /// Multiply two floating numbers.
     /// This function will round down the result.
     public(package) fun mul(x: u64, y: u64): u64 {
@@ -72,12 +75,14 @@ module deepbook::math {
     }
 
     /// Computes the integer square root of a scaled u64 value, assuming the original value
-    /// is scaled by FLOAT_SCALING. The result will be in the same floating-point representation.
-    public(package) fun sqrt(x: u64): u64 {
-        let scaled_x: u128 = (x as u128) * FLOAT_SCALING_U128;
+    /// is scaled by precision. The result will be in the same floating-point representation.
+    public(package) fun sqrt(x: u64, precision: u64): u64 {
+        assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
+        let multiplier = (FLOAT_SCALING / precision) as u128;
+        let scaled_x: u128 = (x as u128) * multiplier * FLOAT_SCALING_U128;
         let sqrt_scaled_x: u128 = sui_math::sqrt_u128(scaled_x);
 
-        sqrt_scaled_x as u64
+        (sqrt_scaled_x / multiplier) as u64
     }
 
     fun quick_sort(mut data: vector<u64>): vector<u64> {
@@ -111,7 +116,7 @@ module deepbook::math {
     fun mul_internal(x: u64, y: u64): (u64, u64) {
         let x = x as u128;
         let y = y as u128;
-        let round = if((x * y) % FLOAT_SCALING_U128 == 0) 0 else 1;
+        let round = if ((x * y) % FLOAT_SCALING_U128 == 0) 0 else 1;
 
         (round, (x * y / FLOAT_SCALING_U128) as u64)
     }
@@ -132,7 +137,7 @@ module deepbook::math {
             2 * FLOAT_SCALING,
             3 * FLOAT_SCALING,
             4 * FLOAT_SCALING,
-            5 * FLOAT_SCALING
+            5 * FLOAT_SCALING,
         ];
         assert!(median(v) == 3 * FLOAT_SCALING, 0);
 
@@ -141,7 +146,7 @@ module deepbook::math {
             15 * FLOAT_SCALING,
             2 * FLOAT_SCALING,
             3 * FLOAT_SCALING,
-            5 * FLOAT_SCALING
+            5 * FLOAT_SCALING,
         ];
         assert!(median(v) == 5 * FLOAT_SCALING, 0);
 
@@ -151,7 +156,8 @@ module deepbook::math {
             23 * FLOAT_SCALING,
             4 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
-            28 * FLOAT_SCALING];
+            28 * FLOAT_SCALING,
+        ];
         assert!(median(v) == 9_500_000_000, 0);
     }
 
@@ -159,15 +165,26 @@ module deepbook::math {
     /// Test sqrt function
     fun test_sqrt() {
         let scaling = 1_000_000;
+        let precision_6 = 1_000_000;
+        let precision_9 = 1_000_000_000;
 
-        assert!(sqrt(0) == 0, 0);
-        assert!(sqrt(1_000 * scaling) == 1_000 * scaling, 0);
-        assert!(sqrt(2_000 * scaling) == 1_414_213_562, 0);
-        assert!(sqrt(2_250 * scaling) == 1_500 * scaling, 0);
-        assert!(sqrt(25_000 * scaling) == 5_000 * scaling, 0);
-        assert!(sqrt(59_000 * scaling) == 7_681_145_747, 0);
-        assert!(sqrt(100_000_000 * scaling) == 316_227_766_016, 0);
-        assert!(sqrt(300_000_000 * scaling) == 547_722_557_505, 0);
-        assert!(sqrt(100_000_000_000) == 10_000_000_000, 0);
+        assert!(sqrt(0, precision_6) == 0, 0);
+        assert!(sqrt(1 * scaling, precision_6) == 1 * scaling, 0);
+        assert!(sqrt(2 * scaling, precision_6) == 1_414_213, 0);
+        assert!(sqrt(25 * scaling, precision_6) == 5 * scaling, 0);
+        assert!(sqrt(59 * scaling, precision_6) == 7_681_145, 0);
+        assert!(sqrt(100_000 * scaling, precision_6) == 316_227_766, 0);
+        assert!(sqrt(300_000 * scaling, precision_6) == 547_722_557, 0);
+        assert!(sqrt(100_000_000, precision_6) == 10_000_000, 0);
+
+        assert!(sqrt(0, precision_9) == 0, 0);
+        assert!(sqrt(1_000 * scaling, precision_9) == 1_000 * scaling, 0);
+        assert!(sqrt(2_000 * scaling, precision_9) == 1_414_213_562, 0);
+        assert!(sqrt(2_250 * scaling, precision_9) == 1_500 * scaling, 0);
+        assert!(sqrt(25_000 * scaling, precision_9) == 5_000 * scaling, 0);
+        assert!(sqrt(59_000 * scaling, precision_9) == 7_681_145_747, 0);
+        assert!(sqrt(100_000_000 * scaling, precision_9) == 316_227_766_016, 0);
+        assert!(sqrt(300_000_000 * scaling, precision_9) == 547_722_557_505, 0);
+        assert!(sqrt(100_000_000_000, precision_9) == 10_000_000_000, 0);
     }
 }

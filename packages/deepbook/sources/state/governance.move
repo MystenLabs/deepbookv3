@@ -7,11 +7,7 @@
 module deepbook::governance {
     // === Imports ===
     use sui::vec_map::{Self, VecMap};
-    use deepbook::{
-        trade_params::{Self, TradeParams},
-        constants,
-        math
-    };
+    use deepbook::{trade_params::{Self, TradeParams}, constants, math};
 
     // === Errors ===
     const EInvalidMakerFee: u64 = 1;
@@ -31,7 +27,7 @@ module deepbook::governance {
     const MIN_MAKER_VOLATILE: u64 = 200000;
     const MAX_MAKER_VOLATILE: u64 = 500000;
     const MAX_PROPOSALS: u64 = 100;
-    const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000_000; // 100k
+    const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000; // 100k deep
 
     // === Structs ===
     /// `Proposal` struct that holds the parameters of a proposal and its current total votes.
@@ -64,10 +60,7 @@ module deepbook::governance {
     }
 
     // === Public-Package Functions ===
-    public(package) fun empty(
-        stable_pool: bool,
-        ctx: &TxContext,
-    ): Governance {
+    public(package) fun empty(stable_pool: bool, ctx: &TxContext): Governance {
         let default_taker = if (stable_pool) { MAX_TAKER_STABLE } else { MAX_TAKER_VOLATILE };
         let default_maker = if (stable_pool) { MAX_MAKER_STABLE } else { MAX_MAKER_VOLATILE };
         Governance {
@@ -75,8 +68,16 @@ module deepbook::governance {
             whitelisted: false,
             stable: stable_pool,
             proposals: vec_map::empty(),
-            trade_params: trade_params::new(default_taker, default_maker, constants::default_stake_required()),
-            next_trade_params: trade_params::new(default_taker, default_maker, constants::default_stake_required()),
+            trade_params: trade_params::new(
+                default_taker,
+                default_maker,
+                constants::default_stake_required(),
+            ),
+            next_trade_params: trade_params::new(
+                default_taker,
+                default_maker,
+                constants::default_stake_required(),
+            ),
             voting_power: 0,
             quorum: 0,
         }
@@ -84,10 +85,7 @@ module deepbook::governance {
 
     /// Whitelist a pool. This pool can be used as a DEEP reference price for
     /// other pools. This pool will have zero fees.
-    public(package) fun set_whitelist(
-        self: &mut Governance,
-        whitelisted: bool,
-    ) {
+    public(package) fun set_whitelist(self: &mut Governance, whitelisted: bool) {
         self.whitelisted = whitelisted;
         self.stable = false;
         self.reset_trade_params();
@@ -100,10 +98,7 @@ module deepbook::governance {
     /// Set the pool to stable or volatile. If stable, the fees are set to
     /// stable fees. If volatile, the fees are set to volatile fees.
     /// This resets governance. A whitelisted pool cannot be set to stable.
-    public(package) fun set_stable(
-        self: &mut Governance,
-        stable: bool,
-    ) {
+    public(package) fun set_stable(self: &mut Governance, stable: bool) {
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         self.stable = stable;
@@ -138,11 +133,23 @@ module deepbook::governance {
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         if (self.stable) {
-            assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
-            assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
+            assert!(
+                taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE,
+                EInvalidTakerFee,
+            );
+            assert!(
+                maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE,
+                EInvalidMakerFee,
+            );
         } else {
-            assert!(taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE, EInvalidTakerFee);
-            assert!(maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE, EInvalidMakerFee);
+            assert!(
+                taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE,
+                EInvalidTakerFee,
+            );
+            assert!(
+                maker_fee >= MIN_MAKER_VOLATILE && maker_fee <= MAX_MAKER_VOLATILE,
+                EInvalidMakerFee,
+            );
         };
 
         let voting_power = stake_to_voting_power(stake_amount);
@@ -192,10 +199,9 @@ module deepbook::governance {
         stake_before: u64,
         stake_after: u64,
     ) {
-        self.voting_power =
-            self.voting_power +
-            stake_to_voting_power(stake_after) -
-            stake_to_voting_power(stake_before);
+        self.voting_power = self.voting_power +
+        stake_to_voting_power(stake_after) -
+        stake_to_voting_power(stake_before);
     }
 
     public(package) fun trade_params(self: &Governance): TradeParams {
@@ -204,32 +210,23 @@ module deepbook::governance {
 
     // === Private Functions ===
     /// Convert stake to voting power.
-    fun stake_to_voting_power(
-        stake: u64
-    ): u64 {
+    fun stake_to_voting_power(stake: u64): u64 {
         let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
         if (stake > VOTING_POWER_THRESHOLD) {
-            voting_power = voting_power + math::sqrt(stake) - math::sqrt(VOTING_POWER_THRESHOLD);
+            voting_power = voting_power + math::sqrt(stake, constants::deep_unit()) -
+            math::sqrt(VOTING_POWER_THRESHOLD, constants::deep_unit());
         };
 
         voting_power
     }
 
     fun new_proposal(taker_fee: u64, maker_fee: u64, stake_required: u64): Proposal {
-        Proposal {
-            taker_fee,
-            maker_fee,
-            stake_required,
-            votes: 0,
-        }
+        Proposal { taker_fee, maker_fee, stake_required, votes: 0 }
     }
 
     /// Remove the proposal with the lowest votes if it has less votes than the voting power.
     /// If there are multiple proposals with the same lowest votes, the latest one is removed.
-    fun remove_lowest_proposal(
-        self: &mut Governance,
-        voting_power: u64,
-    ) {
+    fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
         let mut removal_id = option::none<ID>();
         let mut cur_lowest_votes = constants::max_u64();
         let (keys, values) = self.proposals.into_keys_values();
@@ -248,9 +245,7 @@ module deepbook::governance {
         self.proposals.remove(removal_id.borrow());
     }
 
-    fun reset_trade_params(
-        self: &mut Governance,
-    ) {
+    fun reset_trade_params(self: &mut Governance) {
         self.proposals = vec_map::empty();
         let stake = self.trade_params.stake_required();
         if (self.whitelisted) {
