@@ -4,8 +4,11 @@ import path from "path";
 
 import { getFullnodeUrl, SuiClient } from '@mysten/sui.js/client';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
+import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
+import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
+import { decodeSuiPrivateKey } from "@mysten/sui.js/dist/cjs/cryptography";
 import { TransactionBlock } from '@mysten/sui.js/transactions';
-import { fromB64 } from '@mysten/sui.js/utils';
+import { fromB64, isValidSuiAddress } from '@mysten/sui.js/utils';
 import { execSync } from "child_process";
 
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet'
@@ -43,6 +46,16 @@ export const getSigner = () => {
     throw new Error(`keypair not found for sender: ${sender}`);
 }
 
+export const getSignerFromPK = (privateKey: string) => {
+    const { schema, secretKey } = decodeSuiPrivateKey(privateKey);
+    if (schema === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
+    if (schema === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
+    if (schema === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
+
+    throw new Error(`Unsupported schema: ${schema}`);
+}
+
+
 /// Executes a `sui move build --dump-bytecode-as-base64` for the specified path.
 export const getUpgradeDigest = (path_name: string) => {
     return JSON.parse(
@@ -71,4 +84,25 @@ export const signAndExecute = async (txb: TransactionBlock, network: Network) =>
             showObjectChanges: true,
         }
     })
+}
+
+export const signAndExecuteWithClientAndSigner = async (
+    txb: TransactionBlock,
+    client: SuiClient,
+    signer: Ed25519Keypair | Secp256k1Keypair | Secp256r1Keypair,
+) => {
+    return client.signAndExecuteTransactionBlock({
+        transactionBlock: txb,
+        signer,
+        options: {
+            showEffects: true,
+            showObjectChanges: true,
+        }
+    })
+}
+
+export const validateAddressThrow = (address: string, name: string) => {
+    if (!isValidSuiAddress(address)) {
+        throw new Error(`Invalid ${name} address: ${address}`);
+    }
 }

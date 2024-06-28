@@ -12,29 +12,34 @@ export const MY_ADDRESS = getActiveAddress();
 export const ADMINCAP_ID = `0x30314edf9cfa6057722746f31b0973225b38437589b067d4ca6ad263cef9186a`;
 
 export interface Coin {
+    address: string;
     type: string;
     scalar: number;
     coinId: string;
 }
 
 // Define coins using the structure
-export const Coins = {
+export const Coins: { [key: string]: Coin } = {
     ASLAN: {
+        address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
         type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`,
         scalar: 1000000,
         coinId: `0xsome_aslan_coin_id` // Update with actual ID
     },
     TONY: {
+        address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
         type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::tonycoin::TONYCOIN`,
         scalar: 1000000,
         coinId: `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`
     },
     DEEP: {
+        address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
         type: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`,
         scalar: 1000000,
         coinId: `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`
     },
     SUI: {
+        address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
         type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
         scalar: 1000000000,
         coinId: `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`
@@ -43,7 +48,7 @@ export const Coins = {
 };
 
 export interface Pool {
-    poolAddress: string;
+    address: string;
     baseCoin: Coin;
     quoteCoin: Coin;
 }
@@ -51,12 +56,12 @@ export interface Pool {
 // Define the pools using the interface
 export const Pools: { [key: string]: Pool } = {
     TONY_SUI_POOL: {
-        poolAddress: `0x92083a73031ad86c6df401dc4a59b5dfa589db5937a921c2ec72a5629b715154`,
+        address: `0x92083a73031ad86c6df401dc4a59b5dfa589db5937a921c2ec72a5629b715154`,
         baseCoin: Coins.TONY,
         quoteCoin: Coins.SUI,
     },
     DEEP_SUI_POOL: {
-        poolAddress: `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`,
+        address: `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`,
         baseCoin: Coins.DEEP,
         quoteCoin: Coins.SUI,
     },
