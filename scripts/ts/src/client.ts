@@ -6,8 +6,9 @@ import { checkManagerBalance, createAndShareBalanceManager, depositIntoManager, 
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner, validateAddressThrow } from "./utils";
 import { normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { Coin, Coins, Pool, Pools } from "./coinConstants";
+import { Coin, Coins, OrderType, Pool, Pools, SelfMatchingOptions } from "./coinConstants";
 import { bcs } from "@mysten/sui.js/bcs";
+import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut, getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder, swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
 
 export class DeepBookClient {
     #client: SuiClient;
@@ -76,10 +77,10 @@ export class DeepBookClient {
     ) {
         validateAddressThrow(poolAddress, "pool address");
         if (!this.#coins[baseCoinAddress]) {
-            throw new Error("Base coin address not recognized, add it to the client first");
+            throw new Error("Base coin address not recognized, add it to the client first.");
         }
         if (!this.#coins[quoteCoinAddress]) {
-            throw new Error("Quote coin address not recognized, add it to the client first");
+            throw new Error("Quote coin address not recognized, add it to the client first.");
         }
         this.#pools[poolName] = {
             address: poolAddress,
@@ -107,7 +108,7 @@ export class DeepBookClient {
     async depositIntoManager(amountToDeposit: number, coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
         if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first");
+            throw new Error("Coin address not recognized, add it to the client first.");
         }
         let txb = new TransactionBlock();
         let coin = this.#coins[coinAddress];
@@ -119,7 +120,7 @@ export class DeepBookClient {
     async withdrawFromManager(amountToWithdraw: number, coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
         if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first");
+            throw new Error("Coin address not recognized, add it to the client first.");
         }
         let txb = new TransactionBlock();
         let coin = this.#coins[coinAddress];
@@ -131,7 +132,7 @@ export class DeepBookClient {
     async withdrawAllFromManager(coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
         if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first");
+            throw new Error("Coin address not recognized, add it to the client first.");
         }
         let txb = new TransactionBlock();
         let coin = this.#coins[coinAddress];
@@ -143,7 +144,7 @@ export class DeepBookClient {
     async checkManagerBalance(coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
         if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first");
+            throw new Error("Coin address not recognized, add it to the client first.");
         }
         let txb = new TransactionBlock();
         let coin = this.#coins[coinAddress];
@@ -160,5 +161,314 @@ export class DeepBookClient {
         const adjusted_balance = balanceNumber / coin.scalar;
 
         console.log(`Manager balance for ${coin.type} is ${adjusted_balance.toString()}`); // Output the u64 number as a string
+    }
+
+    async placeLimitOrder(
+        poolAddress: string,
+        clientOrderId: number,
+        price: number,
+        quantity: number,
+        isBid: boolean,
+        orderType?: OrderType,
+        selfMatchingOption?: SelfMatchingOptions,
+        payWithDeep?: boolean,
+    ) {
+        if (orderType === undefined) {
+            orderType = OrderType.NO_RESTRICTION;
+        }
+        if (selfMatchingOption === undefined) {
+            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED;
+        }
+        if (payWithDeep === undefined) {
+            payWithDeep = true;
+        }
+
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!payWithDeep) {
+            throw new Error("payWithDeep = false not supported.");
+        }
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+
+        placeLimitOrder(pool, this.#balanceManager, clientOrderId, price, quantity, isBid, orderType, selfMatchingOption, payWithDeep, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async placeMarketOrder(
+        poolAddress: string,
+        clientOrderId: number,
+        quantity: number,
+        isBid: boolean,
+        selfMatchingOption?: SelfMatchingOptions,
+        payWithDeep?: boolean,
+    ) {
+        if (selfMatchingOption === undefined) {
+            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED;
+        }
+        if (payWithDeep === undefined) {
+            payWithDeep = true;
+        }
+
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!payWithDeep) {
+            throw new Error("payWithDeep = false not supported.");
+        }
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+
+        placeMarketOrder(pool, this.#balanceManager, clientOrderId, quantity, isBid, selfMatchingOption, payWithDeep, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async cancelOrder(
+        poolAddress: string,
+        clientOrderId: number,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+
+        cancelOrder(pool, this.#balanceManager, clientOrderId, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async cancelAllOrders(
+        poolAddress: string,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+
+        cancelAllOrders(pool, this.#balanceManager, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async swapExactBaseForQuote(
+        poolAddress: string,
+        baseAmount: number,
+        deepAmount: number,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        swapExactBaseForQuote(pool, baseAmount, deepAmount, txb);
+        
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async swapExactQuoteForBase(
+        poolAddress: string,
+        quoteAmount: number,
+        deepAmount: number,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        swapExactQuoteForBase(pool, quoteAmount, deepAmount, txb);
+        
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async addDeepPricePoint(
+        targetPoolAddress: string,
+        referencePoolAddress: string,
+    ) {
+        if (!this.#pools[targetPoolAddress]) {
+            throw new Error("Target pool address not recognized, add it to the client first.");
+        }
+        if (!this.#pools[referencePoolAddress]) {
+            throw new Error("Reference pool address not recognized, add it to the client first.");
+        }
+
+        let targetPool = this.#pools[targetPoolAddress];
+        let referencePool = this.#pools[referencePoolAddress];
+        let txb = new TransactionBlock();
+        addDeepPricePoint(targetPool, referencePool, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async claimRebates(
+        poolAddress: string,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        claimRebates(pool, this.#balanceManager, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async burnDeep(
+        poolAddress: string,
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        burnDeep(pool, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async midPrice(
+        poolAddress: string,
+    ): Promise<number> {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        return await midPrice(pool, txb);
+    }
+
+    async whitelisted(
+        poolAddress: string
+    ): Promise<boolean> {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        return await whiteListed(pool, txb);
+    }
+
+    async getQuoteQuantityOut(
+        poolAddress: string,
+        baseQuantity: number
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        
+        await getQuoteQuantityOut(pool, baseQuantity, txb);
+    }
+
+    async getBaseQuantityOut(
+        poolAddress: string,
+        quoteQuantity: number
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        
+        await getBaseQuantityOut(pool, quoteQuantity, txb);
+    }
+
+    async accountOpenOrders(
+        poolAddress: string,
+    ) {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
+
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await accountOpenOrders(pool, this.#balanceManager, txb);
+    }
+
+    async getLevel2Range(
+        poolAddress: string,
+        priceLow: number,
+        priceHigh: number,
+        isBid: boolean,
+    ): Promise<string[][]> {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        
+        return getLevel2Range(pool, priceLow, priceHigh, isBid, txb);
+    }
+
+    async getLevel2TicksFromMid(
+        poolAddress: string,
+        ticks: number,
+    ): Promise<string[][]> {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        
+        return getLevel2TicksFromMid(pool, ticks, txb);
+    }
+
+    async vaultBalances(
+        poolAddress: string,
+    ): Promise<number[]> {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        
+        return vaultBalances(pool, txb);
+    }
+
+    async getPoolIdByAssets(
+        baseType: string,
+        quoteType: string,
+    ): Promise<string> {
+        let txb = new TransactionBlock();
+        
+        return getPoolIdByAssets(baseType, quoteType, txb);
     }
 }

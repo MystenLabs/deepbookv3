@@ -77,16 +77,16 @@ export const Constants = {
 };
 
 // Trading constants
-export const TradingConstants = {
-    NO_RESTRICTION: 0,
-    IMMEDIATE_OR_CANCEL: 1,
-    FILL_OR_KILL: 2,
-    POST_ONLY: 3,
+export enum OrderType {
+    NO_RESTRICTION,
+    IMMEDIATE_OR_CANCEL,
+    FILL_OR_KILL,
+    POST_ONLY,
 };
 
 // Self matching options
-export const SelfMatchingOptions = {
-    SELF_MATCHING_ALLOWED: 0,
-    CANCEL_TAKER: 1,
-    CANCEL_MAKER: 2,
+export enum SelfMatchingOptions {
+    SELF_MATCHING_ALLOWED,
+    CANCEL_TAKER,
+    CANCEL_MAKER,
 };
