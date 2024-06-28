@@ -56,6 +56,8 @@ module deepbook::master_tests {
     const ETraderAlreadyInList: u64 = 14;
     const ETraderNotInList: u64 = 15;
     const EInvalidTrader: u64 = 16;
+    const EIncorrectLevel2Price: u64 = 17;
+    const EIncorrectLevel2Quantity: u64 = 18;
 
     #[test]
     fun test_master_ok() {
@@ -165,6 +167,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
     fun test_trader_permission_invalid_trader_e() {
         test_trader_permission_and_modify_returned(EInvalidTrader)
+    }
+
+    #[test]
+    fun test_get_level_2_range_ok(){
+        test_get_level_2_range()
     }
 
     // === Test Functions ===
@@ -1752,6 +1759,225 @@ module deepbook::master_tests {
         end(test);
     }
 
+    fun test_get_level_2_range() {
+        // There is a reference pool with SUI as base asset and DEEP as quote asset
+        // We call get level 2 range for the reference pool, should return correct vectors
+        let mut test = begin(OWNER);
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+
+        let starting_balance = 10000 * constants::float_scaling();
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+
+        // Currently there's a bid order at price 20 with quantity 1
+        // OWNER places another bid order in the reference pool at price 20 and quantity 2
+        let price = 20 * constants::float_scaling();
+        let quantity = 2 * constants::float_scaling();
+        let is_bid = true;
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            constants::max_u64(),
+            &mut test,
+        );
+
+        // OWNER places another order in the reference pool at price 30 and quantity 5
+        let price = 30 * constants::float_scaling();
+        let quantity = 5 * constants::float_scaling();
+        let is_bid = true;
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            2,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            constants::max_u64(),
+            &mut test,
+        );
+
+        // Get level 2 range for the reference pool, should return correct vectors
+        let is_bid = true;
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            0,
+            30 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+        assert!(prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Include price 20 but exclude price 30
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            0,
+            20 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+        assert!(prices[0] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(quantities[0] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Exclude all prices
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            21 * constants::float_scaling(),
+            29 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+        assert!(prices.length() == 0, EIncorrectLevel2Price);
+        assert!(quantities.length() == 0, EIncorrectLevel2Quantity);
+
+        // Currently there's an ask order at price 180 with quantity 1
+        // OWNER places another ask order in the reference pool at price 180 and quantity 2
+        let price = 180 * constants::float_scaling();
+        let quantity = 2 * constants::float_scaling();
+        let is_bid = false;
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            3,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            constants::max_u64(),
+            &mut test,
+        );
+
+        // OWNER places another ask order at price 170 and quantity 5
+        let price = 170 * constants::float_scaling();
+        let quantity = 5 * constants::float_scaling();
+        let is_bid = false;
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            4,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            constants::max_u64(),
+            &mut test,
+        );
+
+        // Get level 2 range for the reference pool, should return correct vectors
+        let is_bid = false;
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            170 * constants::float_scaling(),
+            200 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+
+        assert!(prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Include price 180 but exclude price 170
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            180 * constants::float_scaling(),
+            200 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+        assert!(prices[0] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(quantities[0] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Include price 170 but exclude 180
+        let (prices, quantities) = get_level2_range<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            170 * constants::float_scaling(),
+            179 * constants::float_scaling(),
+            is_bid,
+            &mut test
+        );
+        assert!(prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Only the best bid of 30 and best ask of 170 should be returned
+        let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            1,
+            &mut test
+        );
+        assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Both bids and asks (2 each) should be returned
+        let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            2,
+            &mut test
+        );
+        assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(bid_prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(bid_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(ask_prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(ask_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        // Should only return 2 bids and 2 asks even though tick is higher
+        let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            3,
+            &mut test
+        );
+        assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(bid_prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(bid_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+        assert!(ask_prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+        assert!(ask_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+
+        end(test);
+    }
+
     // === Private Helper Functions ===
     fun authorize_trader(
         sender: address,
@@ -2081,6 +2307,46 @@ module deepbook::master_tests {
             );
             return_shared(pool);
             return_shared(my_manager);
+        }
+    }
+
+    fun get_level2_range<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        price_low: u64,
+        price_high: u64,
+        is_bid: bool,
+        test: &mut Scenario,
+    ): (vector<u64>, vector<u64>){
+        test.next_tx(sender);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let (prices, quantities) = pool.get_level2_range<BaseAsset, QuoteAsset>(
+                price_low,
+                price_high,
+                is_bid,
+            );
+            return_shared(pool);
+
+            (prices, quantities)
+        }
+    }
+
+    fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        ticks: u64,
+        test: &mut Scenario,
+    ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>){
+        test.next_tx(sender);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let (bid_prices, bid_quantities, ask_prices, ask_quantities) = pool.get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
+                ticks,
+            );
+            return_shared(pool);
+
+            (bid_prices, bid_quantities, ask_prices, ask_quantities)
         }
     }
 }
