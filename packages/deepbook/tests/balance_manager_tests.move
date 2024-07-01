@@ -9,7 +9,7 @@ module deepbook::balance_manager_tests {
         coin::mint_for_testing,
     };
     use deepbook::{
-        balance_manager::{Self, BalanceManager},
+        balance_manager::{Self, BalanceManager, TradeCap},
     };
     use token::deep::DEEP;
 
@@ -77,19 +77,22 @@ module deepbook::balance_manager_tests {
         let alice = @0xA;
         let bob = @0xB;
         let account_id;
+        let trade_cap_id;
 
         test.next_tx(alice);
         {
             let mut balance_manager = balance_manager::new(test.ctx());
             account_id = object::id(&balance_manager);
-            balance_manager.authorize_trader(bob, test.ctx());
+            let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+            trade_cap_id = object::id(&trade_cap);
+            transfer::public_transfer(trade_cap, bob);
             balance_manager.share();
         };
 
         test.next_tx(bob);
         {
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(account_id);
-            balance_manager.remove_trader(bob, test.ctx());
+            balance_manager.revoke_trade_cap(&trade_cap_id, test.ctx());
         };
 
         abort 0
@@ -101,28 +104,36 @@ module deepbook::balance_manager_tests {
         let alice = @0xA;
         let bob = @0xB;
         let account_id;
+        let trade_cap_id;
+
         test.next_tx(alice);
         {
             let mut balance_manager = balance_manager::new(test.ctx());
             account_id = object::id(&balance_manager);
-            balance_manager.authorize_trader(bob, test.ctx());
+            let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+            let trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
+            trade_cap_id = object::id(&trade_cap);
 
-            balance_manager.deposit_protected(
-                mint_for_testing<SUI>(100, test.ctx()).into_balance(), test.ctx(),
+            balance_manager.deposit_with_proof(
+                &trade_proof,
+                mint_for_testing<SUI>(100, test.ctx()).into_balance(),
             );
+            transfer::public_transfer(trade_cap, bob);
             let balance = balance_manager.balance<SUI>();
             assert!(balance == 100, 0);
 
-            balance_manager.remove_trader(bob, test.ctx());
+            balance_manager.revoke_trade_cap(&trade_cap_id, test.ctx());
             balance_manager.share();
         };
 
         test.next_tx(bob);
         {
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(account_id);
-
-            balance_manager.deposit_protected(
-                mint_for_testing<DEEP>(100000, test.ctx()).into_balance(), test.ctx()
+            let trade_cap = test.take_from_sender<TradeCap>();
+            let trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
+            balance_manager.deposit_with_proof(
+                &trade_proof,
+                mint_for_testing<DEEP>(100000, test.ctx()).into_balance()
             );
         };
 
@@ -231,6 +242,8 @@ module deepbook::balance_manager_tests {
             deposit_into_account<USDC>(&mut balance_manager, amount, test);
             deposit_into_account<DEEP>(&mut balance_manager, amount, test);
             deposit_into_account<USDT>(&mut balance_manager, amount, test);
+            let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+            transfer::public_transfer(trade_cap, sender);
             let id = object::id(&balance_manager);
             balance_manager.share();
 
