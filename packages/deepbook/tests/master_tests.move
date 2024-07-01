@@ -9,6 +9,7 @@ module deepbook::master_tests {
             begin,
             end,
             return_shared,
+            return_to_sender,
         },
         sui::SUI,
         test_utils,
@@ -16,7 +17,7 @@ module deepbook::master_tests {
         coin::Coin,
     };
     use deepbook::{
-        balance_manager::{Self, BalanceManager},
+        balance_manager::{Self, BalanceManager, TradeCap},
         constants,
         pool_tests::{Self},
         pool::{Self, Pool},
@@ -53,8 +54,7 @@ module deepbook::master_tests {
     const EIncorrectLoanPool: u64 = 11;
     const EIncorrectTypeReturned: u64 = 12;
     const EInvalidOwner: u64 = 13;
-    const ETraderAlreadyInList: u64 = 14;
-    const ETraderNotInList: u64 = 15;
+    const ETradeCapNotInList: u64 = 15;
     const EInvalidTrader: u64 = 16;
     const EIncorrectLevel2Price: u64 = 17;
     const EIncorrectLevel2Quantity: u64 = 18;
@@ -74,7 +74,7 @@ module deepbook::master_tests {
         test_master(ENotEnoughFunds)
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
     fun test_master_incorrect_stake_owner_e() {
         test_master(EIncorrectStakeOwner)
     }
@@ -154,14 +154,9 @@ module deepbook::master_tests {
         test_trader_permission_and_modify_returned(EInvalidOwner)
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::balance_manager::ETraderAlreadyInList)]
-    fun test_trader_permission_and_modify_trader_exists_e(){
-        test_trader_permission_and_modify_returned(ETraderAlreadyInList)
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::balance_manager::ETraderNotInList)]
+    #[test, expected_failure(abort_code = ::deepbook::balance_manager::ETradeCapNotInList)]
     fun test_trader_permission_and_modify_trader_not_in_list_e(){
-        test_trader_permission_and_modify_returned(ETraderNotInList)
+        test_trader_permission_and_modify_returned(ETradeCapNotInList)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
@@ -1252,6 +1247,7 @@ module deepbook::master_tests {
             let mut target_pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(alice_balance_manager_id);
+            let trade_proof = alice_balance_manager.generate_proof_as_owner(test.ctx());
 
             // Alice wants to swap 10 USDT for 5 SUI in the SUI/USDT pool, but has no SUI to swap to DEEP
             // Alice will borrow 100 DEEP from the SUI/DEEP pool
@@ -1290,6 +1286,7 @@ module deepbook::master_tests {
             let quantity = 5 * constants::float_scaling();
             target_pool.place_limit_order<SUI, USDT>(
                 &mut alice_balance_manager,
+                &trade_proof,
                 client_order_id,
                 order_type,
                 constants::self_matching_allowed(),
@@ -1320,6 +1317,7 @@ module deepbook::master_tests {
             // Alice is matched with owner's price of 100 in reference pool
             loan_pool.place_market_order<SUI, DEEP>(
                 &mut alice_balance_manager,
+                &trade_proof,
                 client_order_id,
                 constants::self_matching_allowed(),
                 quantity,
@@ -1617,12 +1615,7 @@ module deepbook::master_tests {
         };
 
         // Alice gives Bob permission to trade on her balance manager
-        authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
-
-        // Alice gives Bob permission to trade on her balance manager again, will error
-        if (error_code == ETraderAlreadyInList) {
-            authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
-        };
+        let bob_trade_cap_id = authorize_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
 
         // variables to input into order
         let client_order_id = 1;
@@ -1731,11 +1724,11 @@ module deepbook::master_tests {
         );
 
         // Alice revokes Bob's trading permission
-        remove_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+        remove_trader(ALICE, alice_balance_manager_id, bob_trade_cap_id, &mut test);
 
         // Alice revokes Bob's trading permission again, removing a trader not in list will error
-        if (error_code == ETraderNotInList) {
-            remove_trader(ALICE, alice_balance_manager_id, BOB, &mut test);
+        if (error_code == ETradeCapNotInList) {
+            remove_trader(ALICE, alice_balance_manager_id, bob_trade_cap_id, &mut test);
         };
 
         // Bob tries to place an order using Alice's balance manager, will error
@@ -1984,25 +1977,29 @@ module deepbook::master_tests {
         balance_manager_id: ID,
         trader: address,
         test: &mut Scenario,
-    ) {
+    ): ID {
         test.next_tx(sender);
         {
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            balance_manager.authorize_trader(trader, test.ctx());
+            let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+            let trade_cap_id = object::id(&trade_cap);
+            transfer::public_transfer(trade_cap, trader);
             return_shared(balance_manager);
+
+            trade_cap_id
         }
     }
 
     fun remove_trader(
         sender: address,
         balance_manager_id: ID,
-        trader: address,
+        trade_cap_id: ID,
         test: &mut Scenario,
     ) {
         test.next_tx(sender);
         {
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            balance_manager.remove_trader(trader, test.ctx());
+            balance_manager.revoke_trade_cap(&trade_cap_id, test.ctx());
             return_shared(balance_manager);
         }
     }
@@ -2186,11 +2183,15 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_cap = test.take_from_sender<TradeCap>();
+            let trade_proof = my_manager.generate_proof_as_trader(&trade_cap, test.ctx());
             pool::claim_rebates<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
+                &trade_proof,
                 test.ctx()
             );
+            test.return_to_sender(trade_cap);
             return_shared(pool);
             return_shared(my_manager);
         }
@@ -2206,10 +2207,12 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::unstake<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
+                &trade_proof,
                 test.ctx()
             );
             return_shared(pool);
@@ -2227,10 +2230,11 @@ module deepbook::master_tests {
         {
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
             pool::withdraw_settled_amounts<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
-                test.ctx(),
+                &trade_proof,
             );
             return_shared(my_manager);
             return_shared(pool);
@@ -2271,10 +2275,12 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::stake<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
+                &trade_proof,
                 amount,
                 test.ctx()
             );
@@ -2296,10 +2302,12 @@ module deepbook::master_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = my_manager.generate_proof_as_owner(test.ctx());
 
             pool::submit_proposal<BaseAsset, QuoteAsset>(
                 &mut pool,
                 &mut my_manager,
+                &trade_proof,
                 taker_fee,
                 maker_fee,
                 stake_required,

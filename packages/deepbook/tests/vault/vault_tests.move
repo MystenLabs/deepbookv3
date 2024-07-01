@@ -29,9 +29,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (base, base_loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
@@ -54,9 +55,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (quote, loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
@@ -77,9 +79,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (_base, _loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1001, test.ctx());
@@ -98,9 +101,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (_base, _loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
@@ -119,9 +123,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (base, base_loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
@@ -140,9 +145,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (mut base, loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
@@ -162,9 +168,10 @@ module deepbook::vault_tests {
         let settled_balances = balances::new(0, 0, 0);
         let owed_balances = balances::new(1000, 1000, 1000);
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
         // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, test.ctx());
+        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
 
         // borrow flashloan
         let (mut quote, loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
