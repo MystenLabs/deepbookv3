@@ -9,7 +9,14 @@ import { normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { Coin, Coins, OrderType, Pool, Pools, SelfMatchingOptions } from "./coinConstants";
 import { bcs } from "@mysten/sui.js/bcs";
 import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut, getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder, swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
+import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./deepbookAdmin";
+import { stake, submitProposal, unstake, vote } from "./governance";
 
+/// DeepBook Client. If a private key is provided, then all transactions
+/// will be signed with that key. Otherwise, the default key will be used.
+/// Placing orders requires a balance manager to be set.
+/// Client is initialized with default Coins and Pools. To trade on more pools,
+/// new coins / pools must be added to the client.
 export class DeepBookClient {
     #client: SuiClient;
     #signer: Ed25519Keypair | Secp256k1Keypair | Secp256r1Keypair;
@@ -93,6 +100,7 @@ export class DeepBookClient {
         return this.#pools;
     }
 
+    /// Balance Manager
     setBalanceManager(balanceManager: string) {
         validateAddressThrow(balanceManager, "balance manager");
         this.#balanceManager = balanceManager;
@@ -163,6 +171,7 @@ export class DeepBookClient {
         console.log(`Manager balance for ${coin.type} is ${adjusted_balance.toString()}`); // Output the u64 number as a string
     }
 
+    /// DeepBook
     async placeLimitOrder(
         poolAddress: string,
         clientOrderId: number,
@@ -188,7 +197,7 @@ export class DeepBookClient {
         }
 
         if (!payWithDeep) {
-            throw new Error("payWithDeep = false not supported.");
+            throw new Error("payWithDeep = false not yet supported.");
         }
         if (!this.#pools[poolAddress]) {
             throw new Error("Pool address not recognized, add it to the client first.");
@@ -470,5 +479,112 @@ export class DeepBookClient {
         let txb = new TransactionBlock();
         
         return getPoolIdByAssets(baseType, quoteType, txb);
+    }
+
+    /// DeepBook Admin
+    async createPoolAdmin(
+        baseCoinAddress: string,
+        quoteCoinAddress: string,
+        tickSize: number,
+        lotSize: number,
+        minSize: number,
+        whitelisted: boolean,
+        stablePool: boolean,
+    ) {
+        if (!this.#coins[baseCoinAddress]) {
+            throw new Error("Base coin address not recognized, add it to the client first.");
+        }
+        if (!this.#coins[quoteCoinAddress]) {
+            throw new Error("Quote coin address not recognized, add it to the client first.");
+        }
+        let txb = new TransactionBlock();
+        let baseCoin = this.#coins[baseCoinAddress];
+        let quoteCoin = this.#coins[quoteCoinAddress];
+        await createPoolAdmin(baseCoin, quoteCoin, tickSize, lotSize, minSize, whitelisted, stablePool, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async unregisterPoolAdmin(
+        poolAddress: string,
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await unregisterPoolAdmin(pool, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async updateDisabledVersions(
+        poolAddress: string,
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await updateDisabledVersions(pool, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async stake(
+        poolAddress: string,
+        amount: number
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await stake(pool, this.#balanceManager, amount, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async unstake(
+        poolAddress: string
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await unstake(pool, this.#balanceManager, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async submitProposal(
+        poolAddress: string,
+        takerFee: number,
+        makerFee: number,
+        stakeRequired: number,
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await submitProposal(pool, this.#balanceManager, takerFee, makerFee, stakeRequired, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async vote(
+        poolAddress: string,
+        proposal_id: string
+    ) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error("Pool address not recognized, add it to the client first.");
+        }
+        let pool = this.#pools[poolAddress];
+        let txb = new TransactionBlock();
+        await vote(pool, this.#balanceManager, proposal_id, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
     }
 }

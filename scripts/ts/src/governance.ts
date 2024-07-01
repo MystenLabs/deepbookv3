@@ -1,45 +1,48 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants, MANAGER_ID
+    ENV, DEEPBOOK_PACKAGE_ID, Pool, Constants
 } from './coinConstants';
 
 // =================================================================
 // Transactions
 // =================================================================
 
-const stake = async (
+export const stake = async (
     pool: Pool,
+    balanceManager: string,
     stakeAmount: number,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
         arguments: [
-            txb.object(pool.poolAddress),
-            txb.object(MANAGER_ID),
+            txb.object(pool.address),
+            txb.object(balanceManager),
             txb.pure.u64(stakeAmount * pool.baseCoin.scalar),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
-const unstake = async (
+export const unstake = async (
     pool: Pool,
+    balanceManager: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
         arguments: [
-            txb.object(pool.poolAddress),
-            txb.object(MANAGER_ID),
+            txb.object(pool.address),
+            txb.object(balanceManager),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
 
-const submitProposal = async (
+export const submitProposal = async (
     pool: Pool,
+    balanceManager: string,
     takerFee: number,
     makerFee: number,
     stakeRequired: number,
@@ -48,8 +51,8 @@ const submitProposal = async (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
         arguments: [
-            txb.object(pool.poolAddress),
-            txb.object(MANAGER_ID),
+            txb.object(pool.address),
+            txb.object(balanceManager),
             txb.pure.u64(takerFee * Constants.FLOAT_SCALAR),
             txb.pure.u64(makerFee * Constants.FLOAT_SCALAR),
             txb.pure.u64(stakeRequired * pool.baseCoin.scalar),
@@ -58,16 +61,17 @@ const submitProposal = async (
     });
 }
 
-const vote = async (
+export const vote = async (
     pool: Pool,
+    balanceManager: string,
     proposal_id: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,
         arguments: [
-            txb.object(pool.poolAddress),
-            txb.object(MANAGER_ID),
+            txb.object(pool.address),
+            txb.object(balanceManager),
             txb.pure.id(proposal_id),
         ],
     });

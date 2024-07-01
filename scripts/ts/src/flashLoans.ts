@@ -1,4 +1,4 @@
-import { TransactionBlock } from "@mysten/sui.js/transactions";
+import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
     ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants
@@ -7,8 +7,7 @@ import {
 // =================================================================
 // Transactions
 // =================================================================
-
-const borrowAndReturnBaseAsset = async (
+export const borrowAndReturnBaseAsset = async (
     pool: Pool,
     borrowAmount: number,
     txb: TransactionBlock,
@@ -17,7 +16,7 @@ const borrowAndReturnBaseAsset = async (
     const [baseCoin, flashLoan] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::borrow_flashloan_base`,
         arguments: [
-            txb.object(pool.poolAddress),
+            txb.object(pool.address),
             txb.pure.u64(borrowAmount * baseScalar),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -28,7 +27,7 @@ const borrowAndReturnBaseAsset = async (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,
         arguments: [
-            txb.object(pool.poolAddress),
+            txb.object(pool.address),
             baseCoin,
             flashLoan,
         ],
@@ -36,7 +35,7 @@ const borrowAndReturnBaseAsset = async (
     });
 }
 
-const borrowAndReturnQuoteAsset = async (
+export const borrowAndReturnQuoteAsset = async (
     pool: Pool,
     borrowAmount: number,
     txb: TransactionBlock,
@@ -45,7 +44,7 @@ const borrowAndReturnQuoteAsset = async (
     const [quoteCoin, flashLoan] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::borrow_flashloan_quote`,
         arguments: [
-            txb.object(pool.poolAddress),
+            txb.object(pool.address),
             txb.pure.u64(borrowAmount * quoteScalar),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -56,7 +55,7 @@ const borrowAndReturnQuoteAsset = async (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_quote`,
         arguments: [
-            txb.object(pool.poolAddress),
+            txb.object(pool.address),
             quoteCoin,
             flashLoan,
         ],
@@ -65,7 +64,7 @@ const borrowAndReturnQuoteAsset = async (
 }
 
 /// Main entry points, comment out as needed...
-const executeTransaction = async () => {
+export const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // await borrowAndReturnBaseAsset(Pools.TONY_SUI_POOL, 1, txb);

@@ -4,7 +4,7 @@ import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    ENV, Coins, Pool, DEEPBOOK_PACKAGE_ID, MANAGER_ID, REGISTRY_ID, DEEP_TREASURY_ID, Constants, MY_ADDRESS,
+    ENV, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, Constants, MY_ADDRESS,
 } from './coinConstants';
 
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
