@@ -96,11 +96,36 @@ export const checkManagerBalance = (
     });
 }
 
+export const generateProof = (
+    managerAddress: string,
+    txb: TransactionBlock,
+    tradeCapId?: string
+) => {
+    if (tradeCapId) {
+        // Generate proof as trader
+        return txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
+            arguments: [
+                txb.object(managerAddress),
+                txb.object(tradeCapId),
+            ],
+        });
+    } else {
+        // Generate proof as owner
+        return txb.moveCall({
+            target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
+            arguments: [
+                txb.object(managerAddress),
+            ],
+        });
+    }
+}
+
 // Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createAndShareBalanceManager(txb);
+    await createAndShareBalanceManager(txb);
     // await depositIntoManager(5000, Coins.DEEP, txb);
     // await depositIntoManager(40, Coins.SUI, txb);
     // await depositIntoManager(5000, Coins.TONY, txb);

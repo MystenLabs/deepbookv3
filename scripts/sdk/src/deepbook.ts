@@ -6,6 +6,7 @@ import { bcs } from "@mysten/sui.js/bcs";
 import {
     ENV, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, Constants, MY_ADDRESS,
 } from './coinConstants';
+import { generateProof } from "./balanceManager";
 
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
@@ -26,17 +27,19 @@ export const placeLimitOrder = async (
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(Constants.GAS_BUDGET);
-
     const baseScalar = pool.baseCoin.scalar;
     const quoteScalar = pool.quoteCoin.scalar;
     const inputPrice = price * Constants.FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
+
+    const tradeProof = generateProof(balanceManager, txb)
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
             txb.object(pool.address),
             txb.object(balanceManager),
+            tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(orderType),
             txb.pure.u8(selfMatchingOption),
@@ -61,20 +64,45 @@ export const placeMarketOrder = async (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
+    txb.setGasBudget(Constants.GAS_BUDGET);
     const baseScalar = pool.baseCoin.scalar;
 
-    txb.setGasBudget(Constants.GAS_BUDGET);
+    const tradeProof = generateProof(balanceManager, txb)
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_market_order`,
         arguments: [
             txb.object(pool.address),
             txb.object(balanceManager),
+            tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(selfMatchingOption),
             txb.pure.u64(quantity * baseScalar),
             txb.pure.bool(isBid),
             txb.pure.bool(payWithDeep),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
+    });
+}
+
+export const modifyOrder = async (
+    pool: Pool,
+    balanceManager: string,
+    orderId: number,
+    newQuantity: number,
+    txb: TransactionBlock,
+ ) => {
+    const tradeProof = generateProof(balanceManager, txb);
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::modify_order`,
+        arguments: [
+            txb.object(pool.address),
+            txb.object(balanceManager),
+            tradeProof,
+            txb.pure.u128(orderId),
+            txb.pure.u64(newQuantity),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -88,12 +116,14 @@ export const cancelOrder = async (
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(Constants.GAS_BUDGET);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
         arguments: [
             txb.object(pool.address),
             txb.object(balanceManager),
+            tradeProof,
             txb.pure.u128(orderId),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
@@ -107,13 +137,33 @@ export const cancelAllOrders = async (
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(Constants.GAS_BUDGET);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
         arguments: [
             txb.object(pool.address),
             txb.object(balanceManager),
+            tradeProof,
             txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
+    });
+}
+
+export const withdrawSettledAmounts = async (
+    pool: Pool,
+    balanceManager: string,
+    txb: TransactionBlock
+) => {
+    const tradeProof = generateProof(balanceManager, txb);
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::withdraw_settled_amounts`,
+        arguments: [
+            txb.object(pool.address),
+            txb.object(balanceManager),
+            tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
@@ -140,11 +190,14 @@ export const claimRebates = async (
     balanceManager: string,
     txb: TransactionBlock
 ) => {
+    const tradeProof = generateProof(balanceManager, txb);
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::burn_deep`,
         arguments: [
             txb.object(pool.address),
             txb.object(balanceManager),
+            tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
@@ -389,7 +442,7 @@ export const vaultBalances = async (
     const quoteInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
     console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / Coins.DEEP.scalar}`);
-    
+
     return [baseInVault / baseScalar, quoteInVault / quoteScalar, deepInVault / Coins.DEEP.scalar]
 }
 
@@ -416,7 +469,7 @@ export const getPoolIdByAssets = async (
     });
     const address = ID.parse(new Uint8Array(res.results![0].returnValues![0][0]))['bytes'];
     console.log(`Pool ID base ${baseType} and quote ${quoteType} is ${address}`);
-    
+
     return address;
 }
 

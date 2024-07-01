@@ -23,13 +23,20 @@ export const createPoolAdmin = async (
         [txb.pure.u64(Constants.POOL_CREATION_FEE)]
     );
 
+    const baseScalar = baseCoin.scalar;
+    const quoteScalar = quoteCoin.scalar;
+
+    const adjustedTickSize = tickSize * Constants.FLOAT_SCALAR * quoteScalar / baseScalar;
+    const adjustedLotSize = lotSize * baseScalar;
+    const adjustedMinSize = minSize * baseScalar;
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::create_pool_admin`,
         arguments: [
             txb.object(REGISTRY_ID), // registry_id
-            txb.pure.u64(tickSize), // tick_size
-            txb.pure.u64(lotSize), // lot_size
-            txb.pure.u64(minSize), // min_size
+            txb.pure.u64(adjustedTickSize), // adjusted tick_size
+            txb.pure.u64(adjustedLotSize), // adjusted lot_size
+            txb.pure.u64(adjustedMinSize), // adjusted min_size
             creationFee, // 0x2::balance::Balance<0x2::sui::SUI>
             txb.pure.bool(whitelisted),
             txb.pure.bool(stablePool),
@@ -72,9 +79,9 @@ export const updateDisabledVersions = async (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createPoolAdmin(Pools.TONY_SUI_POOL, txb);
-    // await unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
-    // await updateDisabledVersions(Pools.DEEP_SUI_POOL, txb);
+    await createPoolAdmin(
+        Coins.DEEP, Coins.SUI, 1, 1, 1, false, false, txb
+    );
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

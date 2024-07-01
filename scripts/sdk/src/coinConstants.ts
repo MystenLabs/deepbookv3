@@ -2,13 +2,13 @@ import { getActiveAddress } from "./utils";
 
 // Update env, package IDs, manager id as needed
 export const ENV = 'testnet';
-export const DEEPBOOK_PACKAGE_ID = `0x22ed917fa56afe09677314871a2997a111ebacd1f622b6cfed3a4422aa4d2e06`;
-export const REGISTRY_ID = `0x14614dfc9243fcb2ef7ac51efed5c6284ca701d55216e1f42b3eb22c541feaa6`;
+export const DEEPBOOK_PACKAGE_ID = `0x514048a778f0f0bd62a81aa30db8b92010b5531d71fcffc4542a73c5db66604d`;
+export const REGISTRY_ID = `0xbd59be189705cadaa2253fe06875da5afe1f5d8c6da49b8a30a909a8749fc933`;
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
 export const MY_ADDRESS = getActiveAddress();
 
 // Admin only
-export const ADMINCAP_ID = `0x30314edf9cfa6057722746f31b0973225b38437589b067d4ca6ad263cef9186a`;
+export const ADMINCAP_ID = `0xa210c26b2fffeaaff3d8415ace0523fb9113667adcfad1ffa4b88d26ae778b32`;
 
 export interface Coin {
     address: string;
