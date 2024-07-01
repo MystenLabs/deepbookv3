@@ -1,19 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
-import { normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
-import { bcs } from "@mysten/sui.js/bcs";
 import {
-    ENV, Coin, Coins, Pools, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ID, Constants
+    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS,
 } from './coinConstants';
 
-const client = new SuiClient({ url: getFullnodeUrl(ENV) });
-
-// =================================================================
-// Transactions
-// =================================================================
-
-const createAndShareBalanceManager = async (txb: TransactionBlock) => {
+export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::new`,
     });
@@ -23,7 +14,8 @@ const createAndShareBalanceManager = async (txb: TransactionBlock) => {
     });
 };
 
-const depositIntoManager = async (
+export const depositIntoManager = (
+    managerAddress: string,
     amountToDeposit: number,
     coin: Coin,
     txb: TransactionBlock
@@ -45,16 +37,17 @@ const depositIntoManager = async (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::deposit`,
         arguments: [
-            txb.object(MANAGER_ID),
+            txb.object(managerAddress),
             deposit,
         ],
         typeArguments: [coin.type]
     });
 
-    console.log(`Deposited ${amountToDeposit} of type ${coin.type} into manager ${MANAGER_ID}`);
+    console.log(`Deposited ${amountToDeposit} of type ${coin.type} into manager ${managerAddress}`);
 };
 
-const withdrawFromManager = async (
+export const withdrawFromManager = (
+    managerAddress: string,
     amountToWithdraw: number,
     coin: Coin,
     txb: TransactionBlock
@@ -62,56 +55,46 @@ const withdrawFromManager = async (
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
         arguments: [
-            txb.object(MANAGER_ID),
+            txb.object(managerAddress),
             txb.pure.u64(amountToWithdraw * coin.scalar),
         ],
         typeArguments: [coin.type]
     });
 
     txb.transferObjects([coinObject], MY_ADDRESS);
-    console.log(`Withdrew ${amountToWithdraw} of type ${coin.type} from manager ${MANAGER_ID}`);
+    console.log(`Withdrew ${amountToWithdraw} of type ${coin.type} from manager ${managerAddress}`);
 };
 
-const withdrawAllFromManager = async (
+export const withdrawAllFromManager = (
+    managerAddress: string,
     coin: Coin,
     txb: TransactionBlock
 ) => {
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
         arguments: [
-            txb.object(MANAGER_ID),
+            txb.object(managerAddress),
         ],
         typeArguments: [coin.type]
     });
 
     txb.transferObjects([coinObject], MY_ADDRESS);
-    console.log(`Withdrew all of type ${coin.type} from manager ${MANAGER_ID}`);
+    console.log(`Withdrew all of type ${coin.type} from manager ${managerAddress}`);
 };
 
-const checkManagerBalance = async (
+export const checkManagerBalance = (
+    managerAddress: string,
     coin: Coin,
     txb: TransactionBlock
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
         arguments: [
-            txb.object(MANAGER_ID),
+            txb.object(managerAddress),
         ],
         typeArguments: [coin.type]
     });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
-        transactionBlock: txb,
-    });
-
-    const bytes = res.results![0].returnValues![0][0];
-    const parsed_balance = bcs.U64.parse(new Uint8Array(bytes));
-    const balanceNumber = Number(parsed_balance);
-    const adjusted_balance = balanceNumber / coin.scalar;
-
-    console.log(`Manager balance for ${coin.type} is ${adjusted_balance.toString()}`); // Output the u64 number as a string
-};
+}
 
 // Main entry points, comment out as needed...
 const executeTransaction = async () => {
