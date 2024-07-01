@@ -8,7 +8,7 @@ import {
 // Transactions
 // =================================================================
 
-export const createPoolAdmin = async (
+export const createPoolAdmin = (
     baseCoin: Coin,
     quoteCoin: Coin,
     tickSize: number,
@@ -46,7 +46,7 @@ export const createPoolAdmin = async (
     });
 }
 
-export const unregisterPoolAdmin = async (
+export const unregisterPoolAdmin = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
@@ -60,7 +60,7 @@ export const unregisterPoolAdmin = async (
     });
 }
 
-export const updateDisabledVersions = async (
+export const updateDisabledVersions = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
@@ -79,10 +79,10 @@ export const updateDisabledVersions = async (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    await createPoolAdmin(
-        Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
-    );
-    // await unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
+    // createPoolAdmin(
+    //     Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
+    // );
+    // unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

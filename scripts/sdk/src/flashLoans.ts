@@ -64,14 +64,14 @@ export const borrowAndReturnQuoteAsset = (
 }
 
 /// Main entry points, comment out as needed...
-export const executeTransaction = () => {
+export const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // borrowAndReturnBaseAsset(Pools.TONY_SUI_POOL, 1, txb);
     // borrowAndReturnQuoteAsset(Pools.TONY_SUI_POOL, 1, txb);
 
     // Run transaction against ENV
-    const res = signAndExecute(txb, ENV);
+    const res = await signAndExecute(txb, ENV);
 
     console.dir(res, { depth: null });
 }

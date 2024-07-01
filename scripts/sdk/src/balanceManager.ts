@@ -134,20 +134,20 @@ export const generateProof = (managerKey: string, txb: TransactionBlock) => {
 }
 
 // Main entry points, comment out as needed...
-const executeTransaction = () => {
+const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    createAndShareBalanceManager(txb);
-    depositIntoManager('MANAGER_1', 5000, Coins.DEEP, txb);
-    depositIntoManager('MANAGER_1', 1, Coins.SUI, txb);
-    depositIntoManager('MANAGER_1', 5000, Coins.TONY, txb);
-    withdrawFromManager('MANAGER_1', 5, Coins.SUI, txb);
-    withdrawAllFromManager('MANAGER_1', Coins.SUI, txb);
-    checkManagerBalance('MANAGER_1', Coins.DEEP, txb);
-    checkManagerBalance('MANAGER_1', Coins.SUI, txb);
+    // createAndShareBalanceManager(txb);
+    // depositIntoManager('MANAGER_1', 5000, Coins.DEEP, txb);
+    // depositIntoManager('MANAGER_1', 1, Coins.SUI, txb);
+    // depositIntoManager('MANAGER_1', 5000, Coins.TONY, txb);
+    // withdrawFromManager('MANAGER_1', 5, Coins.SUI, txb);
+    // withdrawAllFromManager('MANAGER_1', Coins.SUI, txb);
+    // checkManagerBalance('MANAGER_1', Coins.DEEP, txb);
+    // checkManagerBalance('MANAGER_1', Coins.SUI, txb);
 
     // Run transaction against ENV
-    const res = signAndExecute(txb, ENV);
+    const res = await signAndExecute(txb, ENV);
 
     console.dir(res, { depth: null });
 };

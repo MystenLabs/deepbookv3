@@ -585,7 +585,7 @@ export const swapExactQuoteForBase = (
 }
 
 // Main entry points, comment out as needed...
-const executeTransaction = () => {
+const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     // addDeepPricePoint(Pools.TONY_SUI_POOL, Pools.DEEP_SUI_POOL, txb);
@@ -617,7 +617,7 @@ const executeTransaction = () => {
     // swapExactQuoteForBase(Pools.TONY_SUI_POOL, 1, 0.0002, txb);
 
     // Run transaction against ENV
-    const res = signAndExecute(txb, ENV);
+    const res = await signAndExecute(txb, ENV);
 
     console.dir(res, { depth: null });
 }
