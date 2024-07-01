@@ -7,7 +7,7 @@ export const REGISTRY_ID = `0xbd59be189705cadaa2253fe06875da5afe1f5d8c6da49b8a30
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
 export const MY_ADDRESS = getActiveAddress();
 
-export const MANAGER_ADDRESS_DICT: { [key: string]: { address: string, tradeCapId: string | null } } = {
+export const MANAGER_ADDRESSES: { [key: string]: { address: string, tradeCapId: string | null } } = {
     'MANAGER_ADDRESS_1': { address: '0x6354fc0a52ea336ffd6e1a0e36bba85f6f8055ecaf7687d6f2a13990a4e730b3', tradeCapId: null }, // Owner
     // Add more entries here as needed
     // 'managerName': { address: 'managerAddress', tradeCapId: 'tradeCapId' }, // For trader permissions

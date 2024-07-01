@@ -1,7 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants, Coins, MANAGER_ADDRESS_DICT
+    ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants, Coins, MANAGER_ADDRESSES
 } from './coinConstants';
 import { generateProof } from "./balanceManager";
 
@@ -16,7 +16,7 @@ export const stake = (
     txb: TransactionBlock,
 ) => {
     const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESS_DICT[balanceManagerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
@@ -36,7 +36,7 @@ export const unstake = (
     txb: TransactionBlock,
 ) => {
     const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESS_DICT[balanceManagerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
@@ -58,7 +58,7 @@ export const submitProposal = (
     txb: TransactionBlock,
 ) => {
     const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESS_DICT[balanceManagerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
@@ -81,7 +81,7 @@ export const vote = (
     txb: TransactionBlock,
 ) => {
     const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESS_DICT[balanceManagerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,

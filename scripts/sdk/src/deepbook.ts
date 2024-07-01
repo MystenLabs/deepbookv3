@@ -6,7 +6,7 @@ import { bcs } from "@mysten/sui.js/bcs";
 import {
     ENV, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, Constants, MY_ADDRESS,
     Pools, OrderType, SelfMatchingOptions,
-    MANAGER_ADDRESS_DICT
+    MANAGER_ADDRESSES
 } from './coinConstants';
 import { generateProof } from "./balanceManager";
 
@@ -40,7 +40,7 @@ export const placeLimitOrder = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(orderType),
@@ -75,7 +75,7 @@ export const placeMarketOrder = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_market_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(selfMatchingOption),
@@ -101,7 +101,7 @@ export const modifyOrder = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::modify_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
             txb.pure.u128(orderId),
             txb.pure.u64(newQuantity),
@@ -124,7 +124,7 @@ export const cancelOrder = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
             txb.pure.u128(orderId),
             txb.object(SUI_CLOCK_OBJECT_ID),
@@ -145,7 +145,7 @@ export const cancelAllOrders = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
@@ -164,7 +164,7 @@ export const withdrawSettledAmounts = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::withdraw_settled_amounts`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -198,7 +198,7 @@ export const claimRebates = (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::claim_rebates`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
             tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -335,7 +335,7 @@ export const accountOpenOrders = async (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
         arguments: [
             txb.object(pool.address),
-            txb.pure.id(MANAGER_ADDRESS_DICT[managerKey].address),
+            txb.pure.id(MANAGER_ADDRESSES[managerKey].address),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });

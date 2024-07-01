@@ -1,7 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESS_DICT
+    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
 } from './coinConstants';
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
@@ -20,7 +20,7 @@ export const depositIntoManager = (
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESS_DICT[managerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     let deposit;
 
     if (coin.type === Coins.SUI.type) {
@@ -53,7 +53,7 @@ export const withdrawFromManager = (
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESS_DICT[managerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
         arguments: [
@@ -72,7 +72,7 @@ export const withdrawAllFromManager = (
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESS_DICT[managerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
         arguments: [
@@ -90,7 +90,7 @@ export const checkManagerBalance = (
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESS_DICT[managerKey].address;
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
         arguments: [
@@ -127,7 +127,7 @@ export const generateProofAsTrader = (
 }
 
 export const generateProof = (managerKey: string, txb: TransactionBlock) => {
-    const { address, tradeCapId } = MANAGER_ADDRESS_DICT[managerKey];
+    const { address, tradeCapId } = MANAGER_ADDRESSES[managerKey];
     return tradeCapId
         ? generateProofAsTrader(address, tradeCapId, txb)
         : generateProofAsOwner(address, txb);
