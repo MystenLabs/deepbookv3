@@ -8,7 +8,7 @@ export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e89051
 export const MY_ADDRESS = getActiveAddress();
 
 export const MANAGER_ADDRESSES: { [key: string]: { address: string, tradeCapId: string | null } } = {
-    'MANAGER_ADDRESS_1': { address: '0x6354fc0a52ea336ffd6e1a0e36bba85f6f8055ecaf7687d6f2a13990a4e730b3', tradeCapId: null }, // Owner
+    'MANAGER_1': { address: '0x6354fc0a52ea336ffd6e1a0e36bba85f6f8055ecaf7687d6f2a13990a4e730b3', tradeCapId: null }, // Owner
     // Add more entries here as needed
     // 'managerName': { address: 'managerAddress', tradeCapId: 'tradeCapId' }, // For trader permissions
 };

@@ -592,7 +592,7 @@ const executeTransaction = () => {
     // // Limit order for whitelist pools
     // placeLimitOrder(
     //     Pools.DEEP_SUI_POOL,
-    //     'MANAGER_ADDRESS_1',
+    //     'MANAGER_1',
     //     1234, // Client Order ID
     //     2.5, // Price
     //     1, // Quantity
@@ -602,9 +602,9 @@ const executeTransaction = () => {
     //     false, // payWithDeep
     //     txb
     // );
-    // cancelOrder(Pools.DEEP_SUI_POOL, 'MANAGER_ADDRESS_1', 46116860184283102412036854775805, txb);
-    // cancelAllOrders(Pools.TONY_SUI_POOL, 'MANAGER_ADDRESS_1', txb);
-    // accountOpenOrders(Pools.DEEP_SUI_POOL, 'MANAGER_ADDRESS_1', txb);
+    // cancelOrder(Pools.DEEP_SUI_POOL, 'MANAGER_1', 46116860184283102412036854775805, txb);
+    // cancelAllOrders(Pools.TONY_SUI_POOL, 'MANAGER_1', txb);
+    // accountOpenOrders(Pools.DEEP_SUI_POOL, 'MANAGER_1', txb);
     // midPrice(Pools.DEEP_SUI_POOL, txb);
     // whiteListed(Pools.TONY_SUI_POOL, txb);
     // getQuoteQuantityOut(Pools.TONY_SUI_POOL, 1, txb);

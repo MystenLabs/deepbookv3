@@ -98,10 +98,10 @@ export const vote = (
 const executeTransaction = () => {
     const txb = new TransactionBlock();
 
-    // stake(Pools.TONY_SUI_POOL, 'MANAGER_ADDRESS_1', 100, txb);
-    // unstake(Pools.DEEP_SUI_POOL, 'MANAGER_ADDRESS_1', txb);
-    // submitProposal(Pools.TONY_SUI_POOL, 'MANAGER_ADDRESS_1', 0.0005, 0.0002, 10, txb);
-    // vote(Pools.TONY_SUI_POOL, 'MANAGER_ADDRESS_1', 'proposal_id', txb);
+    // stake(Pools.TONY_SUI_POOL, 'MANAGER_1', 100, txb);
+    // unstake(Pools.DEEP_SUI_POOL, 'MANAGER_1', txb);
+    // submitProposal(Pools.TONY_SUI_POOL, 'MANAGER_1', 0.0005, 0.0002, 10, txb);
+    // vote(Pools.TONY_SUI_POOL, 'MANAGER_1', 'proposal_id', txb);
 
     // Run transaction against ENV
     const res = signAndExecute(txb, ENV);
