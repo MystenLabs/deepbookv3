@@ -19,7 +19,7 @@ module deepbook::pool_tests {
 
     use deepbook::{
         pool::{Self, Pool},
-        balance_manager::{BalanceManager},
+        balance_manager::{BalanceManager, TradeCap},
         order::{Order},
         order_info::OrderInfo,
         big_vector::BigVector,
@@ -654,10 +654,14 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_cap = test.take_from_sender<TradeCap>();
+            let trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
+            // let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
             let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
+                &trade_proof,
                 client_order_id,
                 order_type,
                 self_matching_option,
@@ -669,6 +673,7 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
+            test.return_to_sender(trade_cap);
             return_shared(pool);
             return_shared(clock);
             return_shared(balance_manager);
@@ -695,10 +700,12 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             // Place order in pool
             let order_info = pool.place_market_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
+                &trade_proof,
                 client_order_id,
                 self_matching_option,
                 quantity,
@@ -729,9 +736,11 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             pool.cancel_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
+                &trade_proof,
                 order_id,
                 &clock,
                 test.ctx()
@@ -769,16 +778,20 @@ module deepbook::pool_tests {
         {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_cap = test.take_from_sender<TradeCap>();
+            let trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
             let clock = test.take_shared<Clock>();
 
             pool.modify_order<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
+                &trade_proof,
                 order_id,
                 new_quantity,
                 &clock,
                 test.ctx()
             );
 
+            test.return_to_sender(trade_cap);
             return_shared(pool);
             return_shared(balance_manager);
             return_shared(clock);
@@ -2940,9 +2953,11 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+            let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
             pool.cancel_all_orders<BaseAsset, QuoteAsset>(
                 &mut balance_manager,
+                &trade_proof,
                 &clock,
                 test.ctx()
             );
