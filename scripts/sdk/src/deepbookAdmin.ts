@@ -1,7 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, Coin, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID, Constants
+    ENV, Coin, Coins, Pools, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID, Constants
 } from './coinConstants';
 
 // =================================================================
@@ -80,8 +80,9 @@ const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
     await createPoolAdmin(
-        Coins.DEEP, Coins.SUI, 1, 1, 1, false, false, txb
+        Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
     );
+    // await unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
