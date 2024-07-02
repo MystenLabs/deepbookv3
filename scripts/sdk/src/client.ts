@@ -13,6 +13,8 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
     swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./governance";
+import dotenv from "dotenv";
+dotenv.config();
 
 /// DeepBook Client. If a private key is provided, then all transactions
 /// will be signed with that key. Otherwise, the default key will be used.
@@ -43,24 +45,92 @@ export class DeepBookClient {
             validateAddressThrow(balanceManager, "balance manager");
             this.#balanceManager = balanceManager;
         }
-        this.initCoins();
         this.initPools();
     }
 
-    initCoins() {
+    getActiveAddress() {
+        return this.#signer.getPublicKey().toSuiAddress();
+    }
+
+    async getOwnedCoin(cointType: string) {
+        const coins = await this.#client.getCoins({
+            owner: this.getActiveAddress(),
+            coinType: cointType,
+            limit: 1,
+        })
+
+        return coins.data[0].coinObjectId;
+    }
+
+    // Merge all owned coins of a specific type into a single coin.
+    // Returns true if there are more coins to be merged still,
+    // false otherwise. Run this function in a while loop until it returns false.
+    // A gas coin object ID must be explicitely provided to avoid merging it.
+    async mergeOwnedCoins(
+        coinType: string,
+        gasCoinId: string,
+    ): Promise<boolean> {
+        // store all coin objects
+        let coins = [];
+        const data = await this.#client.getCoins({
+            owner: this.getActiveAddress(),
+            coinType,
+        });
+        coins.push(...data.data.map(coin => ({
+            objectId: coin.coinObjectId,
+            version: coin.version,
+            digest: coin.digest,
+        })));
+
+        coins = coins.filter(coin => coin.objectId !== gasCoinId);
+
+        // no need to merge anymore
+        if (coins.length === 1) return false;
+
+        const baseCoin = coins[0];
+        const otherCoins = coins.slice(1);
+        const txb = new TransactionBlock();
+        const gas = await this.#client.getObject({
+            id: gasCoinId,
+        })
+        if (!gas) throw new Error("failed to find gas object.");
+        txb.setGasPayment([gas.data!]);
+
+        txb.mergeCoins(txb.objectRef({
+            objectId: baseCoin.objectId,
+            version: baseCoin.version,
+            digest: baseCoin.digest,
+        }), otherCoins.map(coin => txb.objectRef({
+            objectId: coin.objectId,
+            version: coin.version,
+            digest: coin.digest,
+        })));
+
+        const res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+
+        return true;
+    }
+
+    // Initialize coins in the client.
+    async initCoins() {
         this.#coins[Coins.ASLAN.address] = Coins.ASLAN;
         this.#coins[Coins.TONY.address] = Coins.TONY;
         this.#coins[Coins.DEEP.address] = Coins.DEEP;
         this.#coins[Coins.SUI.address] = Coins.SUI;
+        await this.getOwnedCoin(Coins.SUI.type);
+        await this.getOwnedCoin(Coins.DEEP.type);
+        await this.getOwnedCoin(Coins.TONY.type);
+        await this.getOwnedCoin(Coins.ASLAN.type);
     }
 
-    addCoin(
+    async addCoin(
         address: string,
         type: string,
         decimals: number,
-        coinId: string
     ) {
         validateAddressThrow(address, "coin address");
+        let coinId = await this.getOwnedCoin(type);
         this.#coins[type] = {
             address: address,
             type: type,
@@ -504,3 +574,22 @@ export class DeepBookClient {
         }
     }
 }
+
+const testClient = async () => {
+    let pk = process.env.PRIVATE_KEY;
+    console.log(pk);
+    let client = new DeepBookClient("testnet", pk);
+    console.log(client.getActiveAddress());
+    await client.initCoins();
+    console.log(client.getCoins());
+    // let canMerge = true;
+    // while (canMerge) {
+    //     canMerge = await client.mergeOwnedCoins(
+    //         "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+    //         "0x0000dab4cdfa9271dfb3c9d4765fb06599aa350b19d6cf6bb1c0858893de7fef",
+    //         );
+    // }
+    
+};
+
+testClient();

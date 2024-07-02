@@ -29,25 +29,25 @@ export const Coins: { [key: string]: Coin } = {
         address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
         type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`,
         scalar: 1000000,
-        coinId: `0xsome_aslan_coin_id` // Update with actual ID
+        coinId: `` // Update with actual ID
     },
     TONY: {
         address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
         type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::tonycoin::TONYCOIN`,
         scalar: 1000000,
-        coinId: `0xd5dd3f2623fd809bf691362b6838efc7b84e12c49741299787439f755e5ee765`
+        coinId: ``
     },
     DEEP: {
         address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
         type: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`,
         scalar: 1000000,
-        coinId: `0x16c00b1c55d94745bc7f949e11d456af12fd2b4084e89992b4df2c6a3e4ffac6`
+        coinId: ``
     },
     SUI: {
         address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
         type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
         scalar: 1000000000,
-        coinId: `0x4c80b183f1bbdae4632f229d1548cece6713b8de5eaa1cbacf4f42f106209bc3`
+        coinId: ``
     }
     // Add more coins as needed
 };
