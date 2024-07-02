@@ -161,11 +161,15 @@ export class DeepBookClient {
         for (const coinKey in Coins) {
             if (Object.prototype.hasOwnProperty.call(Coins, coinKey)) {
                 const coin = Coins[coinKey];
-                const coinId = await this.getOwnedCoin(coin.type);
-                this.#coins[coinKey] = {
-                    ...coin,
-                    coinId: coinId || ""
-                };
+                if (!coin.coinId) {
+                    const accountCoin = await this.getOwnedCoin(coin.type);
+                    this.#coins[coinKey] = {
+                        ...coin,
+                        coinId: accountCoin || '',
+                    };
+                } else {
+                    this.#coins[coinKey] = coin;
+                }
             }
         }
     }
