@@ -124,7 +124,7 @@ export class DeepBookClient {
 
     async withdrawFromManager(amountToWithdraw: number, coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        
+
         let txb = new TransactionBlock();
         let coin = this.getCoin(coinAddress);
         withdrawFromManager(this.#balanceManager, amountToWithdraw, coin, txb);
@@ -144,7 +144,7 @@ export class DeepBookClient {
 
     async checkManagerBalance(coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        
+
         let txb = new TransactionBlock();
         let coin = this.getCoin(coinAddress);
         checkManagerBalance(this.#balanceManager, coin, txb);
@@ -261,7 +261,7 @@ export class DeepBookClient {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         swapExactBaseForQuote(pool, baseAmount, deepAmount, txb);
-        
+
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -276,7 +276,7 @@ export class DeepBookClient {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         swapExactQuoteForBase(pool, quoteAmount, deepAmount, txb);
-        
+
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -337,7 +337,7 @@ export class DeepBookClient {
     ) {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        
+
         await getQuoteQuantityOut(pool, baseQuantity, txb);
     }
 
@@ -347,7 +347,7 @@ export class DeepBookClient {
     ) {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        
+
         await getBaseQuantityOut(pool, quoteQuantity, txb);
     }
 
@@ -369,7 +369,7 @@ export class DeepBookClient {
     ): Promise<string[][]> {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        
+
         return getLevel2Range(pool, priceLow, priceHigh, isBid, txb);
     }
 
@@ -379,7 +379,7 @@ export class DeepBookClient {
     ): Promise<string[][]> {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        
+
         return getLevel2TicksFromMid(pool, ticks, txb);
     }
 
@@ -388,7 +388,7 @@ export class DeepBookClient {
     ): Promise<number[]> {
         let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        
+
         return vaultBalances(pool, txb);
     }
 
@@ -397,7 +397,7 @@ export class DeepBookClient {
         quoteType: string,
     ): Promise<string> {
         let txb = new TransactionBlock();
-        
+
         return getPoolIdByAssets(baseType, quoteType, txb);
     }
 

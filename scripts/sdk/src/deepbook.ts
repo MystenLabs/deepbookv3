@@ -326,6 +326,37 @@ export const getBaseQuantityOut = async (
     console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
 }
 
+export const getQuantityOut = async (
+    pool: Pool,
+    basequantity: number,
+    quoteQuantity: number,
+    txb: TransactionBlock
+) => {
+    const baseScalar = pool.baseCoin.scalar;
+    const quoteScalar = pool.quoteCoin.scalar;
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_quantity_out`,
+        arguments: [
+            txb.object(pool.address),
+            txb.pure.u64(basequantity * baseScalar),
+            txb.pure.u64(quoteQuantity * quoteScalar),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
+    });
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
+
+    const baseOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
+    const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
+    const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
+
+    console.log(`For ${basequantity} base and ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
+}
+
 export const accountOpenOrders = async (
     pool: Pool,
     managerKey: string,
@@ -586,7 +617,7 @@ export const swapExactQuoteForBase = (
 
 // Main entry points, comment out as needed...
 const executeTransaction = async () => {
-    const txb = new TransactionBlock();
+    // const txb = new TransactionBlock();
 
     // addDeepPricePoint(Pools.TONY_SUI_POOL, Pools.DEEP_SUI_POOL, txb);
     // // Limit order for whitelist pools
@@ -617,9 +648,9 @@ const executeTransaction = async () => {
     // swapExactQuoteForBase(Pools.TONY_SUI_POOL, 1, 0.0002, txb);
 
     // Run transaction against ENV
-    const res = await signAndExecute(txb, ENV);
+    // const res = await signAndExecute(txb, ENV);
 
-    console.dir(res, { depth: null });
+    // console.dir(res, { depth: null });
 }
 
 executeTransaction();
