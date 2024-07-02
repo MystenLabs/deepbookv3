@@ -11,6 +11,7 @@ import {
 export const createPoolAdmin = (
     baseCoin: Coin,
     quoteCoin: Coin,
+    deepCoinId: string,
     tickSize: number,
     lotSize: number,
     minSize: number,
@@ -19,7 +20,7 @@ export const createPoolAdmin = (
     txb: TransactionBlock
 ) => {
     const [creationFee] = txb.splitCoins(
-        txb.object(Coins.DEEP.coinId),
+        txb.object(deepCoinId),
         [txb.pure.u64(Constants.POOL_CREATION_FEE)]
     );
 
