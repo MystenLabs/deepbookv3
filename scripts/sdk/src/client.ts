@@ -44,7 +44,7 @@ export class DeepBookClient {
         } else {
             this.#signer = getSignerFromPK(privateKey);
         }
-        this.initCoins();
+        await this.initCoins();
         this.initPools();
         this.initBalanceManagers();
     }
@@ -60,7 +60,11 @@ export class DeepBookClient {
             limit: 1,
         });
 
-        return coins.data[0].coinObjectId;
+        if (coins.data.length > 0) {
+            return coins.data[0].coinObjectId;
+        } else {
+            return null;
+        }
     }
 
     // Merge all owned coins of a specific type into a single coin.
@@ -118,8 +122,11 @@ export class DeepBookClient {
         for (const coinKey in Coins) {
             if (Object.prototype.hasOwnProperty.call(Coins, coinKey)) {
                 const coin = Coins[coinKey];
-                this.#coins[coinKey] = coin;
-                await this.getOwnedCoin(coin.type);
+                const coinId = await this.getOwnedCoin(coin.type);
+                this.#coins[coinKey] = {
+                    ...coin,
+                    coinId: coinId || ""
+                };
             }
         }
     }
@@ -143,21 +150,6 @@ export class DeepBookClient {
                 };
             }
         }
-    }
-
-    async addCoin(
-        address: string,
-        type: string,
-        decimals: number,
-    ) {
-        validateAddressThrow(address, "coin address");
-        let coinId = await this.getOwnedCoin(type);
-        this.#coins[address] = {
-            address: address,
-            type: type,
-            scalar: Math.pow(10, decimals),
-            coinId: coinId
-        };
     }
 
     getCoins() {
@@ -193,17 +185,25 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async depositIntoManager(managerName: string, amountToDeposit: number, coin: Coin) {
+    async depositIntoManager(managerName: string, amountToDeposit: number, coinKey: string) {
         if (!this.#balanceManagers.hasOwnProperty(managerName)) {
             throw new Error(`Balance manager with name ${managerName} not found.`);
         }
+        console.log(this.#coins)
+
+        const coin = this.#coins[coinKey];
+        if (!coin) {
+            throw new Error(`Coin with key ${coinKey} not found.`);
+        }
+
         validateAddressThrow(coin.address, "coin address");
 
         let txb = new TransactionBlock();
-        depositIntoManager(managerName, amountToDeposit, coin, txb);
+        depositIntoManager(this.#balanceManagers[managerName].address, amountToDeposit, coin, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
+
 
     async withdrawFromManager(managerName: string, amountToWithdraw: number, coin: Coin) {
         if (!this.#balanceManagers.hasOwnProperty(managerName)) {
@@ -598,10 +598,11 @@ const testClient = async () => {
     // while (canMerge) {
     //     canMerge = await client.mergeOwnedCoins(
     //         "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-    //         "0x0000dab4cdfa9271dfb3c9d4765fb06599aa350b19d6cf6bb1c0858893de7fef",
+    //         "0x00306c77ad4ba06b70da516aa844747af4b7fc7a01ef4841568feea7c57b6126",
     //         );
     // }
-    await client.depositIntoManager("MANAGER_1", 10, Coins.SUI);
+    // await client.depositIntoManager("MANAGER_1", 10, Coins.SUI);
+    await client.depositIntoManager("MANAGER_1", 1000, "DBUSDC");
 };
 
 testClient();

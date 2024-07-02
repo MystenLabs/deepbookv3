@@ -25,16 +25,16 @@ export interface Coin {
 
 // Define coins using the structure
 export const Coins: { [key: string]: Coin } = {
-    ASLAN: {
-        address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
-        type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::aslancoin::ASLANCOIN`,
+    DBUSDC: {
+        address: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f`,
+        type: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f::DBUSDC::DBUSDC`,
         scalar: 1000000,
-        coinId: `` // Update with actual ID
+        coinId: ``
     },
-    TONY: {
-        address: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c`,
-        type: `0xf0087ed5c38123066b2bf4f3d0ce71fa26e26d25d7ff774bab17057b8e90064c::tonycoin::TONYCOIN`,
-        scalar: 1000000,
+    DBWETH: {
+        address: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f`,
+        type: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f::DBWETH::DBWETH`,
+        scalar: 100000000,
         coinId: ``
     },
     DEEP: {
@@ -60,13 +60,8 @@ export interface Pool {
 
 // Define the pools using the interface
 export const Pools: { [key: string]: Pool } = {
-    TONY_SUI_POOL: {
-        address: ``,
-        baseCoin: Coins.TONY,
-        quoteCoin: Coins.SUI,
-    },
     DEEP_SUI_POOL: {
-        address: `0x47c9cd29216b8109c1cfa38ac20044d8bbd386a79d40cd635dc7e6d5817efed2`,
+        address: ``,
         baseCoin: Coins.DEEP,
         quoteCoin: Coins.SUI,
     },
