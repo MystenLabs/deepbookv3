@@ -8,7 +8,9 @@ import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner, validate
 import { normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { Coin, Coins, OrderType, Pool, Pools, SelfMatchingOptions } from "./coinConstants";
 import { bcs } from "@mysten/sui.js/bcs";
-import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut, getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder, swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
+import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut,
+    getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder,
+    swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./governance";
 
@@ -83,16 +85,13 @@ export class DeepBookClient {
         quoteCoinAddress: string,
     ) {
         validateAddressThrow(poolAddress, "pool address");
-        if (!this.#coins[baseCoinAddress]) {
-            throw new Error("Base coin address not recognized, add it to the client first.");
-        }
-        if (!this.#coins[quoteCoinAddress]) {
-            throw new Error("Quote coin address not recognized, add it to the client first.");
-        }
+        let baseCoin = this.getCoin(baseCoinAddress);
+        let quoteCoin = this.getCoin(quoteCoinAddress);
+
         this.#pools[poolName] = {
             address: poolAddress,
-            baseCoin: this.#coins[baseCoinAddress],
-            quoteCoin: this.#coins[quoteCoinAddress]
+            baseCoin,
+            quoteCoin,
         };
     }
 
@@ -115,11 +114,9 @@ export class DeepBookClient {
 
     async depositIntoManager(amountToDeposit: number, coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first.");
-        }
+
         let txb = new TransactionBlock();
-        let coin = this.#coins[coinAddress];
+        let coin = this.getCoin(coinAddress);
         depositIntoManager(this.#balanceManager, amountToDeposit, coin, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
@@ -127,11 +124,9 @@ export class DeepBookClient {
 
     async withdrawFromManager(amountToWithdraw: number, coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first.");
-        }
+        
         let txb = new TransactionBlock();
-        let coin = this.#coins[coinAddress];
+        let coin = this.getCoin(coinAddress);
         withdrawFromManager(this.#balanceManager, amountToWithdraw, coin, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
@@ -139,11 +134,9 @@ export class DeepBookClient {
 
     async withdrawAllFromManager(coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first.");
-        }
+
         let txb = new TransactionBlock();
-        let coin = this.#coins[coinAddress];
+        let coin = this.getCoin(coinAddress);
         withdrawAllFromManager(this.#balanceManager, coin, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
@@ -151,11 +144,9 @@ export class DeepBookClient {
 
     async checkManagerBalance(coinAddress: string) {
         validateAddressThrow(coinAddress, "coin address");
-        if (!this.#coins[coinAddress]) {
-            throw new Error("Coin address not recognized, add it to the client first.");
-        }
+        
         let txb = new TransactionBlock();
-        let coin = this.#coins[coinAddress];
+        let coin = this.getCoin(coinAddress);
         checkManagerBalance(this.#balanceManager, coin, txb);
         let sender = normalizeSuiAddress(this.#signer.getPublicKey().toSuiAddress());
         const res = await this.#client.devInspectTransactionBlock({
@@ -192,17 +183,12 @@ export class DeepBookClient {
             payWithDeep = true;
         }
 
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
-
         if (!payWithDeep) {
             throw new Error("payWithDeep = false not yet supported.");
         }
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        this.validateBalanceManager();
+
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
 
         placeLimitOrder(pool, this.#balanceManager, clientOrderId, price, quantity, isBid, orderType, selfMatchingOption, payWithDeep, txb);
@@ -225,17 +211,12 @@ export class DeepBookClient {
             payWithDeep = true;
         }
 
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
-
         if (!payWithDeep) {
             throw new Error("payWithDeep = false not supported.");
         }
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        this.validateBalanceManager();
+
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
 
         placeMarketOrder(pool, this.#balanceManager, clientOrderId, quantity, isBid, selfMatchingOption, payWithDeep, txb);
@@ -247,14 +228,9 @@ export class DeepBookClient {
         poolAddress: string,
         clientOrderId: number,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
 
         cancelOrder(pool, this.#balanceManager, clientOrderId, txb);
@@ -265,14 +241,9 @@ export class DeepBookClient {
     async cancelAllOrders(
         poolAddress: string,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
 
         cancelAllOrders(pool, this.#balanceManager, txb);
@@ -285,14 +256,9 @@ export class DeepBookClient {
         baseAmount: number,
         deepAmount: number,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         swapExactBaseForQuote(pool, baseAmount, deepAmount, txb);
         
@@ -305,14 +271,9 @@ export class DeepBookClient {
         quoteAmount: number,
         deepAmount: number,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         swapExactQuoteForBase(pool, quoteAmount, deepAmount, txb);
         
@@ -324,15 +285,8 @@ export class DeepBookClient {
         targetPoolAddress: string,
         referencePoolAddress: string,
     ) {
-        if (!this.#pools[targetPoolAddress]) {
-            throw new Error("Target pool address not recognized, add it to the client first.");
-        }
-        if (!this.#pools[referencePoolAddress]) {
-            throw new Error("Reference pool address not recognized, add it to the client first.");
-        }
-
-        let targetPool = this.#pools[targetPoolAddress];
-        let referencePool = this.#pools[referencePoolAddress];
+        let targetPool = this.getPool(targetPoolAddress);
+        let referencePool = this.getPool(referencePoolAddress);
         let txb = new TransactionBlock();
         addDeepPricePoint(targetPool, referencePool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
@@ -342,14 +296,9 @@ export class DeepBookClient {
     async claimRebates(
         poolAddress: string,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         claimRebates(pool, this.#balanceManager, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
@@ -359,10 +308,7 @@ export class DeepBookClient {
     async burnDeep(
         poolAddress: string,
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         burnDeep(pool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
@@ -372,10 +318,7 @@ export class DeepBookClient {
     async midPrice(
         poolAddress: string,
     ): Promise<number> {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         return await midPrice(pool, txb);
     }
@@ -383,10 +326,7 @@ export class DeepBookClient {
     async whitelisted(
         poolAddress: string
     ): Promise<boolean> {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         return await whiteListed(pool, txb);
     }
@@ -395,10 +335,7 @@ export class DeepBookClient {
         poolAddress: string,
         baseQuantity: number
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         
         await getQuoteQuantityOut(pool, baseQuantity, txb);
@@ -408,10 +345,7 @@ export class DeepBookClient {
         poolAddress: string,
         quoteQuantity: number
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         
         await getBaseQuantityOut(pool, quoteQuantity, txb);
@@ -420,14 +354,9 @@ export class DeepBookClient {
     async accountOpenOrders(
         poolAddress: string,
     ) {
-        if (this.#balanceManager === "") {
-            throw new Error("Balance manager not set, set it first.");
-        }
+        this.validateBalanceManager();
 
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         await accountOpenOrders(pool, this.#balanceManager, txb);
     }
@@ -438,10 +367,7 @@ export class DeepBookClient {
         priceHigh: number,
         isBid: boolean,
     ): Promise<string[][]> {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         
         return getLevel2Range(pool, priceLow, priceHigh, isBid, txb);
@@ -451,10 +377,7 @@ export class DeepBookClient {
         poolAddress: string,
         ticks: number,
     ): Promise<string[][]> {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         
         return getLevel2TicksFromMid(pool, ticks, txb);
@@ -463,10 +386,7 @@ export class DeepBookClient {
     async vaultBalances(
         poolAddress: string,
     ): Promise<number[]> {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
         
         return vaultBalances(pool, txb);
@@ -491,16 +411,10 @@ export class DeepBookClient {
         whitelisted: boolean,
         stablePool: boolean,
     ) {
-        if (!this.#coins[baseCoinAddress]) {
-            throw new Error("Base coin address not recognized, add it to the client first.");
-        }
-        if (!this.#coins[quoteCoinAddress]) {
-            throw new Error("Quote coin address not recognized, add it to the client first.");
-        }
         let txb = new TransactionBlock();
-        let baseCoin = this.#coins[baseCoinAddress];
-        let quoteCoin = this.#coins[quoteCoinAddress];
-        await createPoolAdmin(baseCoin, quoteCoin, tickSize, lotSize, minSize, whitelisted, stablePool, txb);
+        let baseCoin = this.getCoin(baseCoinAddress);
+        let quoteCoin = this.getCoin(quoteCoinAddress);
+        createPoolAdmin(baseCoin, quoteCoin, tickSize, lotSize, minSize, whitelisted, stablePool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -508,12 +422,9 @@ export class DeepBookClient {
     async unregisterPoolAdmin(
         poolAddress: string,
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress)
         let txb = new TransactionBlock();
-        await unregisterPoolAdmin(pool, txb);
+        unregisterPoolAdmin(pool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -521,12 +432,9 @@ export class DeepBookClient {
     async updateDisabledVersions(
         poolAddress: string,
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        await updateDisabledVersions(pool, txb);
+        updateDisabledVersions(pool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -535,12 +443,9 @@ export class DeepBookClient {
         poolAddress: string,
         amount: number
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        await stake(pool, this.#balanceManager, amount, txb);
+        stake(pool, this.#balanceManager, amount, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -548,12 +453,9 @@ export class DeepBookClient {
     async unstake(
         poolAddress: string
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        await unstake(pool, this.#balanceManager, txb);
+        unstake(pool, this.#balanceManager, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -564,12 +466,9 @@ export class DeepBookClient {
         makerFee: number,
         stakeRequired: number,
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        await submitProposal(pool, this.#balanceManager, takerFee, makerFee, stakeRequired, txb);
+        submitProposal(pool, this.#balanceManager, takerFee, makerFee, stakeRequired, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
@@ -578,13 +477,30 @@ export class DeepBookClient {
         poolAddress: string,
         proposal_id: string
     ) {
-        if (!this.#pools[poolAddress]) {
-            throw new Error("Pool address not recognized, add it to the client first.");
-        }
-        let pool = this.#pools[poolAddress];
+        let pool = this.getPool(poolAddress);
         let txb = new TransactionBlock();
-        await vote(pool, this.#balanceManager, proposal_id, txb);
+        vote(pool, this.#balanceManager, proposal_id, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
+    }
+
+    getCoin(coinAddress: string) {
+        if (!this.#coins[coinAddress]) {
+            throw new Error(`Coin address ${coinAddress} not recognized, add it to the client first.`);
+        }
+        return this.#coins[coinAddress];
+    }
+
+    getPool(poolAddress: string) {
+        if (!this.#pools[poolAddress]) {
+            throw new Error(`Pool address ${poolAddress} not recognized, add it to the client first.`);
+        }
+        return this.#pools[poolAddress];
+    }
+
+    validateBalanceManager() {
+        if (this.#balanceManager === "") {
+            throw new Error("Balance manager not set, set it first.");
+        }
     }
 }
