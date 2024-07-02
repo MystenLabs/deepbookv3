@@ -112,16 +112,30 @@ export class DeepBookClient {
         return true;
     }
 
+    async mergeUntilComplete(
+        coinType: string,
+        gasCoinId: string,
+    ) {
+        let canMerge = true;
+        while (canMerge) {
+            canMerge = await this.mergeOwnedCoins(coinType, gasCoinId);
+        }
+    }
+
     // Initialize coins in the client.
     async initCoins() {
         this.#coins[Coins.ASLAN.address] = Coins.ASLAN;
         this.#coins[Coins.TONY.address] = Coins.TONY;
         this.#coins[Coins.DEEP.address] = Coins.DEEP;
         this.#coins[Coins.SUI.address] = Coins.SUI;
-        await this.getOwnedCoin(Coins.SUI.type);
-        await this.getOwnedCoin(Coins.DEEP.type);
-        await this.getOwnedCoin(Coins.TONY.type);
-        await this.getOwnedCoin(Coins.ASLAN.type);
+        let suiId = await this.getOwnedCoin(Coins.SUI.type);
+        let deepId = await this.getOwnedCoin(Coins.DEEP.type);
+        let tonyId = await this.getOwnedCoin(Coins.TONY.type);
+        let aslanId = await this.getOwnedCoin(Coins.ASLAN.type);
+        this.#coins[Coins.SUI.address].coinId = suiId;
+        this.#coins[Coins.DEEP.address].coinId = deepId;
+        this.#coins[Coins.TONY.address].coinId = tonyId;
+        this.#coins[Coins.ASLAN.address].coinId = aslanId;
     }
 
     async addCoin(
@@ -141,6 +155,22 @@ export class DeepBookClient {
 
     getCoins() {
         return this.#coins;
+    }
+
+    getDeepType() {
+        return Coins.DEEP.type;
+    }
+
+    getDeepAddress() {
+        return Coins.DEEP.address;
+    }
+
+    getDeepDbUSDCPoolAddress() {
+        return Pools.DEEP_USDC_POOL.address
+    }
+
+    async getFirstSuiCoinId() {
+        return await this.getOwnedCoin(Coins.SUI.type);
     }
 
     initPools() {
