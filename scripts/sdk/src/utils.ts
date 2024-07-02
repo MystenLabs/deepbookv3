@@ -104,3 +104,15 @@ export const validateAddressThrow = (address: string, name: string) => {
         throw new Error(`Invalid ${name} address: ${address}`);
     }
 }
+
+export const toSuiObjectRef = (coin: SuiObjectResponse) =>  {
+    const data = coin.data;
+    if (!data?.objectId || !data?.digest || !data?.version) {
+      throw new Error('Invalid coin - missing data');
+    }
+    return {
+      objectId: data?.objectId,
+      digest: data?.digest,
+      version: data?.version,
+    };
+}

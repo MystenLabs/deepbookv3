@@ -77,7 +77,7 @@ export const updateDisabledVersions = (
 
 /// Main entry points, comment out as needed...
 const executeTransaction = async () => {
-    const txb = new TransactionBlock();
+    // const txb = new TransactionBlock();
 
     // createPoolAdmin(
     //     Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
@@ -85,9 +85,9 @@ const executeTransaction = async () => {
     // unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
 
     // Run transaction against ENV
-    const res = await signAndExecute(txb, ENV);
+    // const res = await signAndExecute(txb, ENV);
 
-    console.dir(res, { depth: null });
+    // console.dir(res, { depth: null });
 }
 
 executeTransaction();
