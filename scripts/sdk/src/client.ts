@@ -174,6 +174,22 @@ export class DeepBookClient {
         }
     }
 
+    getDeepType() {
+        return Coins.DEEP.type;
+    }
+
+    getDeepAddress() {
+        return Coins.DEEP.address;
+    }
+
+    getDeepDbUSDCPoolAddress() {
+        return Pools.DEEP_USDC_POOL.address
+    }
+
+    async getFirstSuiCoinId() {
+        return await this.getOwnedCoin(Coins.SUI.type);
+    }
+
     initPools() {
         for (const poolName in Pools) {
             if (Object.prototype.hasOwnProperty.call(Pools, poolName)) {
@@ -197,6 +213,14 @@ export class DeepBookClient {
 
     getCoins() {
         return this.#coins;
+    }
+
+    getCoin(coinKey: string) {
+        return this.#coins[coinKey];
+    }
+
+    getPool(poolName: string) {
+        return this.#pools[poolName];
     }
 
     addPool(
@@ -645,6 +669,11 @@ export class DeepBookClient {
         let pool = this.#pools[poolName];
         let txb = new TransactionBlock();
         vote(pool, managerName, proposal_id, txb);
+        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
+        console.dir(res, { depth: null });
+    }
+
+    async signAndExecute(txb: TransactionBlock) {
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
