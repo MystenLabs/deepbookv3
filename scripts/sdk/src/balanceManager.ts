@@ -171,29 +171,3 @@ export const id = (
         ],
     });
 }
-
-// Main entry points, comment out as needed...
-const executeTransaction = async () => {
-    // const txb = new TransactionBlock();
-    // const client = new SuiClient({ url: getFullnodeUrl(ENV) });
-    // const coinToPay = await client.getObject({ id: Coins.SUI.coinId });
-    // txb.setGasPayment([toSuiObjectRef(coinToPay)]);
-
-    // createAndShareBalanceManager(txb);
-    // depositIntoManager('MANAGER_1', 5000, Coins.DEEP, txb);
-    // depositIntoManager('MANAGER_1', 1, Coins.SUI, txb);
-    // depositIntoManager('MANAGER_1', 5000, Coins.TONY, txb);
-    // withdrawFromManager('MANAGER_1', 5, Coins.SUI, txb);
-    // withdrawAllFromManager('MANAGER_1', Coins.SUI, txb);
-    // checkManagerBalance('MANAGER_1', Coins.DEEP, txb);
-    // checkManagerBalance('MANAGER_1', Coins.SUI, txb);
-    // owner('MANAGER_1', txb);
-    // id('MANAGER_1', txb);
-
-    // Run transaction against ENV
-    // const res = await signAndExecute(txb, ENV);
-
-    // console.dir(res, { depth: null });
-};
-
-executeTransaction();

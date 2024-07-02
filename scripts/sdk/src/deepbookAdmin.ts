@@ -74,20 +74,3 @@ export const updateDisabledVersions = (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 }
-
-/// Main entry points, comment out as needed...
-const executeTransaction = async () => {
-    // const txb = new TransactionBlock();
-
-    // createPoolAdmin(
-    //     Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
-    // );
-    // unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
-
-    // Run transaction against ENV
-    // const res = await signAndExecute(txb, ENV);
-
-    // console.dir(res, { depth: null });
-}
-
-executeTransaction();
