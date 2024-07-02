@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "@mysten/sui.js": "^0.51.1",
+    "dotenv": "^16.4.5",
     "ts-node": "^10.9.1",
     "typescript": "^5.4.3"
   },
