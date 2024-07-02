@@ -2,13 +2,13 @@ import { getActiveAddress } from "./utils";
 
 // Update env, package IDs, manager id as needed
 export const ENV = 'testnet';
-export const DEEPBOOK_PACKAGE_ID = `0x514048a778f0f0bd62a81aa30db8b92010b5531d71fcffc4542a73c5db66604d`;
-export const REGISTRY_ID = `0xbd59be189705cadaa2253fe06875da5afe1f5d8c6da49b8a30a909a8749fc933`;
+export const DEEPBOOK_PACKAGE_ID = `0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778`;
+export const REGISTRY_ID = `0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37`;
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
 export const MY_ADDRESS = getActiveAddress();
 
 export const MANAGER_ADDRESSES: { [key: string]: { address: string, tradeCapId: string | null } } = {
-    'MANAGER_1': { address: '0x6354fc0a52ea336ffd6e1a0e36bba85f6f8055ecaf7687d6f2a13990a4e730b3', tradeCapId: null }, // Owner
+    'MANAGER_1': { address: '0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf', tradeCapId: null }, // Owner
     // Add more entries here as needed
     // 'managerName': { address: 'managerAddress', tradeCapId: 'tradeCapId' }, // For trader permissions
 };
