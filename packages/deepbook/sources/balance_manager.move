@@ -66,17 +66,6 @@ module deepbook::balance_manager {
         transfer::share_object(balance_manager);
     }
 
-    /// Returns the balance of a Coin in an balance_manager.
-    public fun balance<T>(balance_manager: &BalanceManager): u64 {
-        let key = BalanceKey<T> {};
-        if (!balance_manager.balances.contains(key)) {
-            0
-        } else {
-            let acc_balance: &Balance<T> = &balance_manager.balances[key];
-            acc_balance.value()
-        }
-    }
-
     /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
     public fun mint_trade_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
         balance_manager.validate_owner(ctx);
@@ -156,6 +145,18 @@ module deepbook::balance_manager {
 
     public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
         assert!(object::id(balance_manager) == proof.balance_manager_id, EInvalidProof);
+    }
+
+    // === Public-View Functions ===
+    /// Returns the balance of a Coin in an balance_manager.
+    public fun balance<T>(balance_manager: &BalanceManager): u64 {
+        let key = BalanceKey<T> {};
+        if (!balance_manager.balances.contains(key)) {
+            0
+        } else {
+            let acc_balance: &Balance<T> = &balance_manager.balances[key];
+            acc_balance.value()
+        }
     }
 
     /// Returns the owner of the balance_manager.
