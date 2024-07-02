@@ -93,20 +93,3 @@ export const vote = (
         ],
     });
 }
-
-/// Main entry points, comment out as needed...
-const executeTransaction = async () => {
-    const txb = new TransactionBlock();
-
-    // stake(Pools.TONY_SUI_POOL, 'MANAGER_1', 100, txb);
-    // unstake(Pools.DEEP_SUI_POOL, 'MANAGER_1', txb);
-    // submitProposal(Pools.TONY_SUI_POOL, 'MANAGER_1', 0.0005, 0.0002, 10, txb);
-    // vote(Pools.TONY_SUI_POOL, 'MANAGER_1', 'proposal_id', txb);
-
-    // Run transaction against ENV
-    const res = await signAndExecute(txb, ENV);
-
-    console.dir(res, { depth: null });
-}
-
-executeTransaction();

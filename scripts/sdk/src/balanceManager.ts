@@ -1,8 +1,9 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { signAndExecute } from "./utils";
+import { signAndExecute, toSuiObjectRef } from "./utils";
 import {
     ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
 } from './coinConstants';
+import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({
@@ -133,23 +134,40 @@ export const generateProof = (managerKey: string, txb: TransactionBlock) => {
         : generateProofAsOwner(address, txb);
 }
 
-// Main entry points, comment out as needed...
-const executeTransaction = async () => {
-    const txb = new TransactionBlock();
+export const validateProof = (
+    managerKey: string,
+    tradeProofId: string,
+    txb: TransactionBlock,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::validate_proof`,
+        arguments: [
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(tradeProofId),
+        ],
+    });
+}
 
-    // createAndShareBalanceManager(txb);
-    // depositIntoManager('MANAGER_1', 5000, Coins.DEEP, txb);
-    // depositIntoManager('MANAGER_1', 1, Coins.SUI, txb);
-    // depositIntoManager('MANAGER_1', 5000, Coins.TONY, txb);
-    // withdrawFromManager('MANAGER_1', 5, Coins.SUI, txb);
-    // withdrawAllFromManager('MANAGER_1', Coins.SUI, txb);
-    // checkManagerBalance('MANAGER_1', Coins.DEEP, txb);
-    // checkManagerBalance('MANAGER_1', Coins.SUI, txb);
+export const owner = (
+    managerKey: string,
+    txb: TransactionBlock,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::owner`,
+        arguments: [
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
+        ],
+    });
+}
 
-    // Run transaction against ENV
-    const res = await signAndExecute(txb, ENV);
-
-    console.dir(res, { depth: null });
-};
-
-executeTransaction();
+export const id = (
+    managerKey: string,
+    txb: TransactionBlock,
+) => {
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::id`,
+        arguments: [
+            txb.object(MANAGER_ADDRESSES[managerKey].address),
+        ],
+    });
+}

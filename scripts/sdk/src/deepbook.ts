@@ -326,6 +326,37 @@ export const getBaseQuantityOut = async (
     console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
 }
 
+export const getQuantityOut = async (
+    pool: Pool,
+    basequantity: number,
+    quoteQuantity: number,
+    txb: TransactionBlock
+) => {
+    const baseScalar = pool.baseCoin.scalar;
+    const quoteScalar = pool.quoteCoin.scalar;
+
+    txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_quantity_out`,
+        arguments: [
+            txb.object(pool.address),
+            txb.pure.u64(basequantity * baseScalar),
+            txb.pure.u64(quoteQuantity * quoteScalar),
+            txb.object(SUI_CLOCK_OBJECT_ID),
+        ],
+        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
+    });
+    const res = await client.devInspectTransactionBlock({
+        sender: normalizeSuiAddress(MY_ADDRESS),
+        transactionBlock: txb,
+    });
+
+    const baseOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
+    const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
+    const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
+
+    console.log(`For ${basequantity} base and ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
+}
+
 export const accountOpenOrders = async (
     pool: Pool,
     managerKey: string,
@@ -583,43 +614,3 @@ export const swapExactQuoteForBase = (
     txb.transferObjects([quoteOut], MY_ADDRESS);
     txb.transferObjects([deepOut], MY_ADDRESS);
 }
-
-// Main entry points, comment out as needed...
-const executeTransaction = async () => {
-    const txb = new TransactionBlock();
-
-    // addDeepPricePoint(Pools.TONY_SUI_POOL, Pools.DEEP_SUI_POOL, txb);
-    // // Limit order for whitelist pools
-    // placeLimitOrder(
-    //     Pools.DEEP_SUI_POOL,
-    //     'MANAGER_1',
-    //     1234, // Client Order ID
-    //     2.5, // Price
-    //     1, // Quantity
-    //     true, // isBid
-    //     OrderType.NO_RESTRICTION, // orderType
-    //     SelfMatchingOptions.SELF_MATCHING_ALLOWED, // selfMatchingOption
-    //     false, // payWithDeep
-    //     txb
-    // );
-    // cancelOrder(Pools.DEEP_SUI_POOL, 'MANAGER_1', 46116860184283102412036854775805, txb);
-    // cancelAllOrders(Pools.TONY_SUI_POOL, 'MANAGER_1', txb);
-    // accountOpenOrders(Pools.DEEP_SUI_POOL, 'MANAGER_1', txb);
-    // midPrice(Pools.DEEP_SUI_POOL, txb);
-    // whiteListed(Pools.TONY_SUI_POOL, txb);
-    // getQuoteQuantityOut(Pools.TONY_SUI_POOL, 1, txb);
-    // getBaseQuantityOut(Pools.TONY_SUI_POOL, 1, txb);
-    // getLevel2Range(Pools.DEEP_SUI_POOL, 2.5, 7.5, true, txb);
-    // getLevel2TickFromMid(Pools.DEEP_SUI_POOL, 1, txb);
-    // vaultBalances(Pools.DEEP_SUI_POOL, txb);
-    // getPoolIdByAssets(Pools.DEEP_SUI_POOL.baseCoin.type, Pools.DEEP_SUI_POOL.quoteCoin.type, txb);
-    // swapExactBaseForQuote(Pools.TONY_SUI_POOL, 1, 0.0004, txb);
-    // swapExactQuoteForBase(Pools.TONY_SUI_POOL, 1, 0.0002, txb);
-
-    // Run transaction against ENV
-    const res = await signAndExecute(txb, ENV);
-
-    console.dir(res, { depth: null });
-}
-
-executeTransaction();
