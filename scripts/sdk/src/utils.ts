@@ -2,11 +2,11 @@ import { readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 
-import { getFullnodeUrl, SuiClient } from '@mysten/sui.js/client';
+import { getFullnodeUrl, SuiClient, SuiObjectRef, SuiObjectResponse } from '@mysten/sui.js/client';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
-import { decodeSuiPrivateKey } from "@mysten/sui.js/dist/cjs/cryptography";
+import { decodeSuiPrivateKey } from "@mysten/sui.js/cryptography";
 import { TransactionBlock } from '@mysten/sui.js/transactions';
 import { fromB64, isValidSuiAddress } from '@mysten/sui.js/utils';
 import { execSync } from "child_process";
@@ -14,7 +14,6 @@ import { execSync } from "child_process";
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet'
 
 const SUI = `sui`;
-
 
 export const getActiveAddress = () => {
     return execSync(`${SUI} client active-address`, { encoding: 'utf8' }).trim();
@@ -54,7 +53,6 @@ export const getSignerFromPK = (privateKey: string) => {
 
     throw new Error(`Unsupported schema: ${schema}`);
 }
-
 
 /// Executes a `sui move build --dump-bytecode-as-base64` for the specified path.
 export const getUpgradeDigest = (path_name: string) => {

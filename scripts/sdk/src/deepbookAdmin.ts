@@ -1,14 +1,14 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, Coin, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID, Constants
+    ENV, Coin, Coins, Pools, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID, Constants
 } from './coinConstants';
 
 // =================================================================
 // Transactions
 // =================================================================
 
-export const createPoolAdmin = async (
+export const createPoolAdmin = (
     baseCoin: Coin,
     quoteCoin: Coin,
     tickSize: number,
@@ -23,13 +23,20 @@ export const createPoolAdmin = async (
         [txb.pure.u64(Constants.POOL_CREATION_FEE)]
     );
 
+    const baseScalar = baseCoin.scalar;
+    const quoteScalar = quoteCoin.scalar;
+
+    const adjustedTickSize = tickSize * Constants.FLOAT_SCALAR * quoteScalar / baseScalar;
+    const adjustedLotSize = lotSize * baseScalar;
+    const adjustedMinSize = minSize * baseScalar;
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::create_pool_admin`,
         arguments: [
             txb.object(REGISTRY_ID), // registry_id
-            txb.pure.u64(tickSize), // tick_size
-            txb.pure.u64(lotSize), // lot_size
-            txb.pure.u64(minSize), // min_size
+            txb.pure.u64(adjustedTickSize), // adjusted tick_size
+            txb.pure.u64(adjustedLotSize), // adjusted lot_size
+            txb.pure.u64(adjustedMinSize), // adjusted min_size
             creationFee, // 0x2::balance::Balance<0x2::sui::SUI>
             txb.pure.bool(whitelisted),
             txb.pure.bool(stablePool),
@@ -39,7 +46,7 @@ export const createPoolAdmin = async (
     });
 }
 
-export const unregisterPoolAdmin = async (
+export const unregisterPoolAdmin = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
@@ -53,7 +60,7 @@ export const unregisterPoolAdmin = async (
     });
 }
 
-export const updateDisabledVersions = async (
+export const updateDisabledVersions = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
@@ -72,9 +79,10 @@ export const updateDisabledVersions = async (
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createPoolAdmin(Pools.TONY_SUI_POOL, txb);
-    // await unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
-    // await updateDisabledVersions(Pools.DEEP_SUI_POOL, txb);
+    // createPoolAdmin(
+    //     Coins.TONY, Coins.SUI, 0.001, 0.001, 0.001, false, false, txb
+    // );
+    // unregisterPoolAdmin(Pools.DEEP_SUI_POOL, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

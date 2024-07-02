@@ -1,7 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS,
+    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
 } from './coinConstants';
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
@@ -15,11 +15,12 @@ export const createAndShareBalanceManager = (txb: TransactionBlock) => {
 };
 
 export const depositIntoManager = (
-    managerAddress: string,
+    managerKey: string,
     amountToDeposit: number,
     coin: Coin,
     txb: TransactionBlock
 ) => {
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     let deposit;
 
     if (coin.type === Coins.SUI.type) {
@@ -47,11 +48,12 @@ export const depositIntoManager = (
 };
 
 export const withdrawFromManager = (
-    managerAddress: string,
+    managerKey: string,
     amountToWithdraw: number,
     coin: Coin,
     txb: TransactionBlock
 ) => {
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
         arguments: [
@@ -66,10 +68,11 @@ export const withdrawFromManager = (
 };
 
 export const withdrawAllFromManager = (
-    managerAddress: string,
+    managerKey: string,
     coin: Coin,
     txb: TransactionBlock
 ) => {
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
         arguments: [
@@ -83,10 +86,11 @@ export const withdrawAllFromManager = (
 };
 
 export const checkManagerBalance = (
-    managerAddress: string,
+    managerKey: string,
     coin: Coin,
     txb: TransactionBlock
 ) => {
+    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
         arguments: [
@@ -96,18 +100,51 @@ export const checkManagerBalance = (
     });
 }
 
+export const generateProofAsOwner = (
+    managerAddress: string,
+    txb: TransactionBlock,
+) => {
+    return txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
+        arguments: [
+            txb.object(managerAddress),
+        ],
+    });
+}
+
+export const generateProofAsTrader = (
+    managerAddress: string,
+    tradeCapId: string,
+    txb: TransactionBlock,
+) => {
+    return txb.moveCall({
+        target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
+        arguments: [
+            txb.object(managerAddress),
+            txb.object(tradeCapId),
+        ],
+    });
+}
+
+export const generateProof = (managerKey: string, txb: TransactionBlock) => {
+    const { address, tradeCapId } = MANAGER_ADDRESSES[managerKey];
+    return tradeCapId
+        ? generateProofAsTrader(address, tradeCapId, txb)
+        : generateProofAsOwner(address, txb);
+}
+
 // Main entry points, comment out as needed...
 const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await createAndShareBalanceManager(txb);
-    // await depositIntoManager(5000, Coins.DEEP, txb);
-    // await depositIntoManager(40, Coins.SUI, txb);
-    // await depositIntoManager(5000, Coins.TONY, txb);
-    // await withdrawFromManager(5, Coins.SUI, txb);
-    // await withdrawAllFromManager(Coins.SUI, txb);
-    // await checkManagerBalance(Coins.DEEP, txb);
-    // await checkManagerBalance(Coins.SUI, txb);
+    // createAndShareBalanceManager(txb);
+    // depositIntoManager('MANAGER_1', 5000, Coins.DEEP, txb);
+    // depositIntoManager('MANAGER_1', 1, Coins.SUI, txb);
+    // depositIntoManager('MANAGER_1', 5000, Coins.TONY, txb);
+    // withdrawFromManager('MANAGER_1', 5, Coins.SUI, txb);
+    // withdrawAllFromManager('MANAGER_1', Coins.SUI, txb);
+    // checkManagerBalance('MANAGER_1', Coins.DEEP, txb);
+    // checkManagerBalance('MANAGER_1', Coins.SUI, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);

@@ -2,13 +2,19 @@ import { getActiveAddress } from "./utils";
 
 // Update env, package IDs, manager id as needed
 export const ENV = 'testnet';
-export const DEEPBOOK_PACKAGE_ID = `0x22ed917fa56afe09677314871a2997a111ebacd1f622b6cfed3a4422aa4d2e06`;
-export const REGISTRY_ID = `0x14614dfc9243fcb2ef7ac51efed5c6284ca701d55216e1f42b3eb22c541feaa6`;
+export const DEEPBOOK_PACKAGE_ID = `0x514048a778f0f0bd62a81aa30db8b92010b5531d71fcffc4542a73c5db66604d`;
+export const REGISTRY_ID = `0xbd59be189705cadaa2253fe06875da5afe1f5d8c6da49b8a30a909a8749fc933`;
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
 export const MY_ADDRESS = getActiveAddress();
 
+export const MANAGER_ADDRESSES: { [key: string]: { address: string, tradeCapId: string | null } } = {
+    'MANAGER_1': { address: '0x6354fc0a52ea336ffd6e1a0e36bba85f6f8055ecaf7687d6f2a13990a4e730b3', tradeCapId: null }, // Owner
+    // Add more entries here as needed
+    // 'managerName': { address: 'managerAddress', tradeCapId: 'tradeCapId' }, // For trader permissions
+};
+
 // Admin only
-export const ADMINCAP_ID = `0x30314edf9cfa6057722746f31b0973225b38437589b067d4ca6ad263cef9186a`;
+export const ADMINCAP_ID = `0xa210c26b2fffeaaff3d8415ace0523fb9113667adcfad1ffa4b88d26ae778b32`;
 
 export interface Coin {
     address: string;
@@ -35,13 +41,13 @@ export const Coins: { [key: string]: Coin } = {
         address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
         type: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`,
         scalar: 1000000,
-        coinId: `0x363fc7964af3ce74ec92ba37049601ffa88dfa432c488130b340b52d58bdcf50`
+        coinId: `0x16c00b1c55d94745bc7f949e11d456af12fd2b4084e89992b4df2c6a3e4ffac6`
     },
     SUI: {
         address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
         type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
         scalar: 1000000000,
-        coinId: `0x0064c4fd7c1c8f56ee8fb1d564bcd1c32a274156b942fd0ea25d605e3d2c5315`
+        coinId: `0x00306c77ad4ba06b70da516aa844747af4b7fc7a01ef4841568feea7c57b6126`
     }
     // Add more coins as needed
 };
@@ -55,12 +61,12 @@ export interface Pool {
 // Define the pools using the interface
 export const Pools: { [key: string]: Pool } = {
     TONY_SUI_POOL: {
-        address: `0x92083a73031ad86c6df401dc4a59b5dfa589db5937a921c2ec72a5629b715154`,
+        address: ``,
         baseCoin: Coins.TONY,
         quoteCoin: Coins.SUI,
     },
     DEEP_SUI_POOL: {
-        address: `0x9c29aa70749297fe4fc35403ae743cc8883ad26ba77b9ba214dbff7d5f9a5395`,
+        address: `0x47c9cd29216b8109c1cfa38ac20044d8bbd386a79d40cd635dc7e6d5817efed2`,
         baseCoin: Coins.DEEP,
         quoteCoin: Coins.SUI,
     },

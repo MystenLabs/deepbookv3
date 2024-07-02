@@ -7,7 +7,7 @@ import {
 // =================================================================
 // Transactions
 // =================================================================
-export const borrowAndReturnBaseAsset = async (
+export const borrowAndReturnBaseAsset = (
     pool: Pool,
     borrowAmount: number,
     txb: TransactionBlock,
@@ -35,7 +35,7 @@ export const borrowAndReturnBaseAsset = async (
     });
 }
 
-export const borrowAndReturnQuoteAsset = async (
+export const borrowAndReturnQuoteAsset = (
     pool: Pool,
     borrowAmount: number,
     txb: TransactionBlock,
@@ -67,8 +67,8 @@ export const borrowAndReturnQuoteAsset = async (
 export const executeTransaction = async () => {
     const txb = new TransactionBlock();
 
-    // await borrowAndReturnBaseAsset(Pools.TONY_SUI_POOL, 1, txb);
-    // await borrowAndReturnQuoteAsset(Pools.TONY_SUI_POOL, 1, txb);
+    // borrowAndReturnBaseAsset(Pools.TONY_SUI_POOL, 1, txb);
+    // borrowAndReturnQuoteAsset(Pools.TONY_SUI_POOL, 1, txb);
 
     // Run transaction against ENV
     const res = await signAndExecute(txb, ENV);
