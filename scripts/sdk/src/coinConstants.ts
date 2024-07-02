@@ -14,7 +14,7 @@ export const MANAGER_ADDRESSES: { [key: string]: { address: string, tradeCapId: 
 };
 
 // Admin only
-export const ADMINCAP_ID = `0xa210c26b2fffeaaff3d8415ace0523fb9113667adcfad1ffa4b88d26ae778b32`;
+export const ADMINCAP_ID = `0x1f58a7627ec7a7d32ab51371d3b6e7ee8d1a4ad5c031fdefa371de651b7184e3`;
 
 export interface Coin {
     address: string;
@@ -24,6 +24,7 @@ export interface Coin {
 }
 
 // Define coins using the structure
+// Only fill in coinId if there's a specific coin user wishes to use
 export const Coins: { [key: string]: Coin } = {
     DBUSDC: {
         address: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f`,
@@ -61,10 +62,25 @@ export interface Pool {
 // Define the pools using the interface
 export const Pools: { [key: string]: Pool } = {
     DEEP_SUI_POOL: {
-        address: ``,
+        address: `0x67800bae6808206915c7f09203a00031ce9ce8550008862dda3083191e3954ca`,
         baseCoin: Coins.DEEP,
         quoteCoin: Coins.SUI,
     },
+    SUI_DBUSDC_POOL: {
+        address: `0x9442afa775e90112448f26a8d58ca76f66cf46e4b77e74d6d85cea30bedc289c`,
+        baseCoin: Coins.SUI,
+        quoteCoin: Coins.DBUSDC,
+    },
+    DEEP_DBWETH_POOL: {
+        address: `0xe8d0f3525518aaaae64f3832a24606a9eadde8572d058c45626a4ab2cbfae1eb`,
+        baseCoin: Coins.DEEP,
+        quoteCoin: Coins.DBWETH,
+    },
+    DBWETH_DBUSDC_POOL: {
+        address: `0x31d41c00e99672b9f7896950fe24e4993f88fb30a8e05dcd75a24cefe7b7d2d1`,
+        baseCoin: Coins.DBWETH,
+        quoteCoin: Coins.DBUSDC,
+    }
     // Add more pools as needed
 };
 

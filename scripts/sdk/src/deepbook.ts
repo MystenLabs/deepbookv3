@@ -23,6 +23,7 @@ export const placeLimitOrder = (
     price: number,
     quantity: number,
     isBid: boolean,
+    expiration: number,
     orderType: number,
     selfMatchingOption: number,
     payWithDeep: boolean,
@@ -49,7 +50,7 @@ export const placeLimitOrder = (
             txb.pure.u64(inputQuantity),
             txb.pure.bool(isBid),
             txb.pure.bool(payWithDeep),
-            txb.pure.u64(Constants.LARGE_TIMESTAMP),
+            txb.pure.u64(expiration),
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -69,7 +70,7 @@ export const placeMarketOrder = (
     txb.setGasBudget(Constants.GAS_BUDGET);
     const baseScalar = pool.baseCoin.scalar;
 
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_market_order`,
@@ -95,7 +96,7 @@ export const modifyOrder = (
     newQuantity: number,
     txb: TransactionBlock,
  ) => {
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::modify_order`,
@@ -118,7 +119,7 @@ export const cancelOrder = (
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(Constants.GAS_BUDGET);
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
@@ -139,7 +140,7 @@ export const cancelAllOrders = (
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(Constants.GAS_BUDGET);
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
@@ -158,7 +159,7 @@ export const withdrawSettledAmounts = (
     managerKey: string,
     txb: TransactionBlock
 ) => {
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::withdraw_settled_amounts`,
@@ -192,7 +193,7 @@ export const claimRebates = (
     managerKey: string,
     txb: TransactionBlock
 ) => {
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::claim_rebates`,
@@ -538,11 +539,12 @@ export const getPoolIdByAssets = async (
 export const swapExactBaseForQuote = (
     pool: Pool,
     baseAmount: number,
+    baseCoinId: string,
     deepAmount: number,
+    deepCoinId: string,
     txb: TransactionBlock
 ) => {
     const baseScalar = pool.baseCoin.scalar;
-    const baseCoinId = pool.baseCoin.coinId;
 
     let baseCoin;
     if (pool.baseCoin.type === Coins.SUI.type) {
@@ -557,7 +559,7 @@ export const swapExactBaseForQuote = (
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(Coins.DEEP.coinId),
+        txb.object(deepCoinId),
         [txb.pure.u64(deepAmount * Coins.DEEP.scalar)]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
@@ -578,11 +580,12 @@ export const swapExactBaseForQuote = (
 export const swapExactQuoteForBase = (
     pool: Pool,
     quoteAmount: number,
+    quoteCoinId: string,
     deepAmount: number,
+    deepCoinId: string,
     txb: TransactionBlock
 ) => {
     const quoteScalar = pool.quoteCoin.scalar;
-    const quoteCoinId = pool.quoteCoin.coinId;
 
     let quoteCoin;
     if (pool.quoteCoin.type === Coins.SUI.type) {
@@ -597,7 +600,7 @@ export const swapExactQuoteForBase = (
         );
     }
     const [deepCoin] = txb.splitCoins(
-        txb.object(Coins.DEEP.coinId),
+        txb.object(deepCoinId),
         [txb.pure.u64(deepAmount * Coins.DEEP.scalar)]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({

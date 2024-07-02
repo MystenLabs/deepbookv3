@@ -21,7 +21,6 @@ export const depositIntoManager = (
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    console.log(coin);
     const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     let deposit;
 
