@@ -6,7 +6,7 @@ import { getFullnodeUrl, SuiClient, SuiObjectRef, SuiObjectResponse } from '@mys
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
-import { decodeSuiPrivateKey } from "@mysten/sui.js/cryptography";
+import { decodeSuiPrivateKey, Keypair } from "@mysten/sui.js/cryptography";
 import { TransactionBlock } from '@mysten/sui.js/transactions';
 import { fromB64, isValidSuiAddress } from '@mysten/sui.js/utils';
 import { execSync } from "child_process";
@@ -87,7 +87,7 @@ export const signAndExecute = async (txb: TransactionBlock, network: Network) =>
 export const signAndExecuteWithClientAndSigner = async (
     txb: TransactionBlock,
     client: SuiClient,
-    signer: Ed25519Keypair | Secp256k1Keypair | Secp256r1Keypair,
+    signer: Keypair,
 ) => {
     return client.signAndExecuteTransactionBlock({
         transactionBlock: txb,

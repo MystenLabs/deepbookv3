@@ -1,8 +1,9 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, Coin, Coins, Pools, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID, Constants
+    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID
 } from './coinConstants';
+import { Coin, FLOAT_SCALAR, POOL_CREATION_FEE, Pool } from "./config";
 
 // =================================================================
 // Transactions
@@ -21,13 +22,13 @@ export const createPoolAdmin = (
 ) => {
     const [creationFee] = txb.splitCoins(
         txb.object(deepCoinId),
-        [txb.pure.u64(Constants.POOL_CREATION_FEE)]
+        [txb.pure.u64(POOL_CREATION_FEE)]
     );
 
     const baseScalar = baseCoin.scalar;
     const quoteScalar = quoteCoin.scalar;
 
-    const adjustedTickSize = tickSize * Constants.FLOAT_SCALAR * quoteScalar / baseScalar;
+    const adjustedTickSize = tickSize * FLOAT_SCALAR * quoteScalar / baseScalar;
     const adjustedLotSize = lotSize * baseScalar;
     const adjustedMinSize = minSize * baseScalar;
 

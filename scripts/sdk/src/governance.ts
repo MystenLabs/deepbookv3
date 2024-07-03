@@ -1,9 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, Pools, Pool, Constants, Coins, MANAGER_ADDRESSES
+    ENV, DEEPBOOK_PACKAGE_ID, MANAGER_ADDRESSES
 } from './coinConstants';
 import { generateProof } from "./balanceManager";
+import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "./config";
 
 // =================================================================
 // Transactions
@@ -24,7 +25,7 @@ export const stake = (
             txb.object(pool.address),
             txb.object(managerAddress),
             tradeProof,
-            txb.pure.u64(stakeAmount * Coins.DEEP.scalar),
+            txb.pure.u64(stakeAmount * DEEP_SCALAR),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
@@ -66,9 +67,9 @@ export const submitProposal = (
             txb.object(pool.address),
             txb.object(managerAddress),
             tradeProof,
-            txb.pure.u64(takerFee * Constants.FLOAT_SCALAR),
-            txb.pure.u64(makerFee * Constants.FLOAT_SCALAR),
-            txb.pure.u64(stakeRequired * Coins.DEEP.scalar),
+            txb.pure.u64(takerFee * FLOAT_SCALAR),
+            txb.pure.u64(makerFee * FLOAT_SCALAR),
+            txb.pure.u64(stakeRequired * DEEP_SCALAR),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });

@@ -5,7 +5,7 @@ import { depositIntoManager } from "../balanceManager";
 import { placeLimitOrder } from "../deepbook";
 import { getSignerFromPK } from "../utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/dist/cjs/client";
-import { Constants } from "../coinConstants";
+import { CoinKey, LARGE_TIMESTAMP, PoolKey } from "../config";
 
 dotenv.config();
 
@@ -16,27 +16,17 @@ export const placeLimitOrderClient = async () => {
 
     const dbClient = new DeepBookClient("testnet", pk);
 
-    // optional: merge coins into one object if needed
-    // const deepType = dbClient.getDeepType();
-    // const gasId = await dbClient.getFirstSuiCoinId();
-    // await dbClient.mergeUntilComplete(deepType, gasId);
+    // Initialize the client. If true, then it will merge the client's whitelisted
+    // coins in your address into one object.
+    await dbClient.init(true);
 
-    // initialize coins, the client will fetch the whitelisted coins and set their object ID.
-    await dbClient.initCoins();
-
-    // client already comes with DEEP/SUI pool, but can use addPool() to add it to the client
-    // Deposit DEEP into the balance manager. 
-    let deepAddress = dbClient.getDeepAddress();
-    // This will split 1 DEEP (1000000) from the deep object ID that was set in initCoins()
+    // This will split 1 DEEP (1000000) from the deep object ID that was set in init()
     // and deposit it into the balance manager.
     let balanceManagerKey = "MANAGER_1";
-    await dbClient.depositIntoManager(balanceManagerKey, 1, deepAddress);
-
-    // This will place a sell order of 1 DEEP at 1 SUI/DEEP price.
-    let deepdbusdcPoolAddress = dbClient.getDeepDbUSDCPoolAddress();
+    await dbClient.depositIntoManager(balanceManagerKey, 1, CoinKey.DEEP);
 
     await dbClient.placeLimitOrder(
-        deepdbusdcPoolAddress,
+        PoolKey.DEEP_SUI,
         balanceManagerKey, // balanceManagerKey
         12345, // clientOrderId
         1, // quantity
@@ -54,18 +44,16 @@ export const placeLimitOrderPTB = async () => {
     const pk = process.env.PRIVATE_KEY as string;
     const balanceManagerKey = "MANAGER_1";
     const dbClient = new DeepBookClient("testnet", pk);
-    await dbClient.initCoins();
+    await dbClient.init(true);
 
     let txb = new TransactionBlock();
-    let deepAddress = dbClient.getDeepAddress();
-    let deepdbusdcPoolAddress = dbClient.getDeepDbUSDCPoolAddress();
-    let expirationTime = Constants.LARGE_TIMESTAMP;
-    let deepCoin = dbClient.getCoin(deepAddress);
-    let deepdbusdcPool = dbClient.getPool(deepdbusdcPoolAddress);
+
+    const deepCoin = dbClient.getConfig().getCoin(CoinKey.DEEP);
+    const deepSuiPool = dbClient.getConfig().getPool(PoolKey.DEEP_SUI);
 
     depositIntoManager(balanceManagerKey, 1, deepCoin, txb);
     // explicitely set order type, self matching, and payWithDeep
-    placeLimitOrder(deepdbusdcPool, balanceManagerKey, 12345, 1, 1, false, expirationTime, 0, 0, true, txb);
+    placeLimitOrder(deepSuiPool, balanceManagerKey, 12345, 1, 1, false, LARGE_TIMESTAMP, 0, 0, true, txb);
 
     await dbClient.signAndExecute(txb);
 }
