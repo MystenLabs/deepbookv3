@@ -4,11 +4,12 @@ import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    ENV, Coins, Pool, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, Constants, MY_ADDRESS,
-    Pools, OrderType, SelfMatchingOptions,
+    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, MY_ADDRESS,
+    OrderType, SelfMatchingOptions,
     MANAGER_ADDRESSES
 } from './coinConstants';
 import { generateProof } from "./balanceManager";
+import { CoinKey, DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET, Pool } from "./config";
 
 const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
@@ -29,10 +30,10 @@ export const placeLimitOrder = (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
-    txb.setGasBudget(Constants.GAS_BUDGET);
+    txb.setGasBudget(GAS_BUDGET);
     const baseScalar = pool.baseCoin.scalar;
     const quoteScalar = pool.quoteCoin.scalar;
-    const inputPrice = price * Constants.FLOAT_SCALAR * quoteScalar / baseScalar;
+    const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
 
     const tradeProof = generateProof(managerKey, txb);
@@ -67,7 +68,7 @@ export const placeMarketOrder = (
     payWithDeep: boolean,
     txb: TransactionBlock
 ) => {
-    txb.setGasBudget(Constants.GAS_BUDGET);
+    txb.setGasBudget(GAS_BUDGET);
     const baseScalar = pool.baseCoin.scalar;
 
     const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
@@ -118,7 +119,7 @@ export const cancelOrder = (
     orderId: number,
     txb: TransactionBlock
 ) => {
-    txb.setGasBudget(Constants.GAS_BUDGET);
+    txb.setGasBudget(GAS_BUDGET);
     const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
@@ -139,7 +140,7 @@ export const cancelAllOrders = (
     managerKey: string,
     txb: TransactionBlock
 ) => {
-    txb.setGasBudget(Constants.GAS_BUDGET);
+    txb.setGasBudget(GAS_BUDGET);
     const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
 
     txb.moveCall({
@@ -242,7 +243,7 @@ export const midPrice = async (
 
     const bytes = res.results![0].returnValues![0][0];
     const parsed_mid_price = Number(bcs.U64.parse(new Uint8Array(bytes)));
-    const adjusted_mid_price = parsed_mid_price * baseScalar / quoteScalar / Constants.FLOAT_SCALAR;
+    const adjusted_mid_price = parsed_mid_price * baseScalar / quoteScalar / FLOAT_SCALAR;
 
     return adjusted_mid_price;
 }
@@ -295,7 +296,7 @@ export const getQuoteQuantityOut = async (
     const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
 
-    console.log(`For ${baseQuantity} base in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
+    console.log(`For ${baseQuantity} base in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
 }
 
 export const getBaseQuantityOut = async (
@@ -324,7 +325,7 @@ export const getBaseQuantityOut = async (
     const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
 
-    console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
+    console.log(`For ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
 }
 
 export const getQuantityOut = async (
@@ -355,7 +356,7 @@ export const getQuantityOut = async (
     const quoteOut = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepRequired = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
 
-    console.log(`For ${basequantity} base and ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / Coins.DEEP.scalar} deep`);
+    console.log(`For ${basequantity} base and ${quoteQuantity} quote in, you will get ${baseOut / baseScalar} base, ${quoteOut / quoteScalar} quote, and requires ${deepRequired / DEEP_SCALAR} deep`);
 }
 
 export const accountOpenOrders = async (
@@ -401,8 +402,8 @@ export const getLevel2Range = async (
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_range`,
         arguments: [
             txb.object(pool.address),
-            txb.pure.u64(priceLow * Constants.FLOAT_SCALAR * quoteScalar / baseScalar),
-            txb.pure.u64(priceHigh * Constants.FLOAT_SCALAR * quoteScalar / baseScalar),
+            txb.pure.u64(priceLow * FLOAT_SCALAR * quoteScalar / baseScalar),
+            txb.pure.u64(priceHigh * FLOAT_SCALAR * quoteScalar / baseScalar),
             txb.pure.bool(isBid),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -504,9 +505,9 @@ export const vaultBalances = async (
     const baseInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![0][0])));
     const quoteInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![1][0])));
     const deepInVault = Number(bcs.U64.parse(new Uint8Array(res.results![0].returnValues![2][0])));
-    console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / Coins.DEEP.scalar}`);
+    console.log(`Base in vault: ${baseInVault / baseScalar}, Quote in vault: ${quoteInVault / quoteScalar}, Deep in vault: ${deepInVault / DEEP_SCALAR}`);
 
-    return [baseInVault / baseScalar, quoteInVault / quoteScalar, deepInVault / Coins.DEEP.scalar];
+    return [baseInVault / baseScalar, quoteInVault / quoteScalar, deepInVault / DEEP_SCALAR];
 }
 
 export const getPoolIdByAssets = async (
@@ -547,7 +548,7 @@ export const swapExactBaseForQuote = (
     const baseScalar = pool.baseCoin.scalar;
 
     let baseCoin;
-    if (pool.baseCoin.type === Coins.SUI.type) {
+    if (pool.baseCoin.key === CoinKey.SUI) {
         [baseCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(baseAmount * baseScalar)]
@@ -560,7 +561,7 @@ export const swapExactBaseForQuote = (
     }
     const [deepCoin] = txb.splitCoins(
         txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * Coins.DEEP.scalar)]
+        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_base_for_quote`,
@@ -588,7 +589,7 @@ export const swapExactQuoteForBase = (
     const quoteScalar = pool.quoteCoin.scalar;
 
     let quoteCoin;
-    if (pool.quoteCoin.type === Coins.SUI.type) {
+    if (pool.quoteCoin.key === CoinKey.SUI) {
         [quoteCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(quoteAmount * quoteScalar)]
@@ -601,7 +602,7 @@ export const swapExactQuoteForBase = (
     }
     const [deepCoin] = txb.splitCoins(
         txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * Coins.DEEP.scalar)]
+        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
     );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_quote_for_base`,

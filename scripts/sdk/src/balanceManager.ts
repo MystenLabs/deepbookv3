@@ -1,9 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecute, toSuiObjectRef } from "./utils";
 import {
-    ENV, Coin, Coins, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
+    ENV, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
 } from './coinConstants';
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
+import { Coin, CoinKey } from "./config";
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({
@@ -24,7 +25,7 @@ export const depositIntoManager = (
     const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     let deposit;
 
-    if (coin.type === Coins.SUI.type) {
+    if (coin.key === CoinKey.SUI) {
         [deposit] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(amountToDeposit * coin.scalar)]
