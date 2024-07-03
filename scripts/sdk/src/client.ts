@@ -500,8 +500,9 @@ export class DeepBookClient {
 }
 
 const testClient = async () => {
-    let client = new DeepBookClient("testnet");
+    let client = new DeepBookClient("testnet", process.env.PRIVATE_KEY!);
     await client.init(false); // true to merge coins of the same type
+    console.log(client.getConfig().coins);
 
     // await client.depositIntoManager("MANAGER_1", 10, "SUI");
     // await client.depositIntoManager("MANAGER_1", 1000, "DBUSDC");

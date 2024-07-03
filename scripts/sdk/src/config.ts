@@ -1,8 +1,7 @@
 import { SuiClient } from "@mysten/sui.js/client";
-import { Ed25519Keypair } from "@mysten/sui.js/dist/cjs/keypairs/ed25519";
-import { TransactionBlock } from "@mysten/sui.js/dist/cjs/transactions";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecuteWithClientAndSigner } from "./utils";
-import { Keypair } from "@mysten/sui.js/dist/cjs/cryptography";
+import { Keypair } from "@mysten/sui.js/cryptography";
 
 export enum CoinKey {
     "DEEP",
@@ -83,11 +82,14 @@ export class DeepBookConfig {
     }
 
     async getOwnedCoin(suiClient: SuiClient, owner: string, coinType: string): Promise<string> {
+        console.log(coinType);
         const res = await suiClient.getCoins({
             owner,
             coinType,
             limit: 1,
         });
+
+        console.log(res);
 
         if (res.data.length > 0) {
             return res.data[0].coinObjectId;

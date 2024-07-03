@@ -1,10 +1,8 @@
-import { TransactionBlock } from "@mysten/sui.js/dist/cjs/transactions";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { DeepBookClient } from "../client"
 import dotenv from 'dotenv';
 import { depositIntoManager } from "../balanceManager";
 import { placeLimitOrder } from "../deepbook";
-import { getSignerFromPK } from "../utils";
-import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/dist/cjs/client";
 import { CoinKey, LARGE_TIMESTAMP, PoolKey } from "../config";
 
 dotenv.config();
