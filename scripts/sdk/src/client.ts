@@ -502,17 +502,13 @@ export class DeepBookClient {
 const testClient = async () => {
     let client = new DeepBookClient("testnet", process.env.PRIVATE_KEY!);
     await client.init(false); // true to merge coins of the same type
-    console.log(client.getConfig().coins);
 
-    // await client.depositIntoManager("MANAGER_1", 10, "SUI");
-    // await client.depositIntoManager("MANAGER_1", 1000, "DBUSDC");
-    // await client.depositIntoManager("MANAGER_1", 1000, "DEEP");
-    // await client.depositIntoManager("MANAGER_1", 100, "DBWETH");
-    // await client.withdrawAllFromManager("MANAGER_1", "DBUSDC");
-    // await client.createPoolAdmin("DBWETH", "DBUSDC", 0.001, 0.001, 0.1, false, false);
-    // await client.addDeepPricePoint("DBWETH_DBUSDC_POOL", "DEEP_DBWETH_POOL");
-    // await client.placeLimitOrder("DBWETH_DBUSDC_POOL", "MANAGER_1", 888, 2, 1, true);
-    // await client.checkManagerBalance("MANAGER_1", "DBUSDC");
+    // await client.depositIntoManager("MANAGER_1", 10, CoinKey.SUI);
+    // await client.withdrawAllFromManager("MANAGER_1", CoinKey.SUI);
+    // await client.createPoolAdmin(CoinKey.DBWETH, CoinKey.DBUSDC, 0.001, 0.001, 0.1, false, false);
+    // await client.addDeepPricePoint(PoolKey.DBWETH_DBUSDC, PoolKey.DEEP_DBWETH);
+    // await client.placeLimitOrder(PoolKey.DBWETH_DBUSDC, "MANAGER_1", 888, 2, 1, true);
+    // await client.checkManagerBalance("MANAGER_1", CoinKey.DBUSDC);
 }
 
 testClient();

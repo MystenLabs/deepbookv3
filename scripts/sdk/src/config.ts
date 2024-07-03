@@ -82,14 +82,11 @@ export class DeepBookConfig {
     }
 
     async getOwnedCoin(suiClient: SuiClient, owner: string, coinType: string): Promise<string> {
-        console.log(coinType);
         const res = await suiClient.getCoins({
             owner,
             coinType,
             limit: 1,
         });
-
-        console.log(res);
 
         if (res.data.length > 0) {
             return res.data[0].coinObjectId;
