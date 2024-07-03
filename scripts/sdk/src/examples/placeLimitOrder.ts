@@ -67,21 +67,6 @@ export const placeLimitOrderPTB = async () => {
     // explicitely set order type, self matching, and payWithDeep
     placeLimitOrder(deepdbusdcPool, balanceManagerKey, 12345, 1, 1, false, expirationTime, 0, 0, true, txb);
 
-    // build signer and send transcation via SuiClient
-    // let signer = getSignerFromPK(pk);
-    // let suiClient = new SuiClient({ url: getFullnodeUrl("testnet") });
-    // let res = await suiClient.signAndExecuteTransactionBlock({
-    //     transactionBlock: txb,
-    //     signer,
-    //     options: {
-    //         showEffects: true,
-    //         showObjectChanges: true
-    //     }
-    // });
-    // console.log(res, { depth: null });
-
-    // OR
-    // use the client's signAndExecute method
     await dbClient.signAndExecute(txb);
 }
 
