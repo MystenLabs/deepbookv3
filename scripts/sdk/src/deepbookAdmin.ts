@@ -1,8 +1,7 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, ADMINCAP_ID
-} from './coinConstants';
+    DEEPBOOK_PACKAGE_ID, REGISTRY_ID
+} from './config';
 import { Coin, FLOAT_SCALAR, POOL_CREATION_FEE, Pool } from "./config";
 
 // =================================================================
@@ -31,6 +30,10 @@ export const createPoolAdmin = (
     const adjustedTickSize = tickSize * FLOAT_SCALAR * quoteScalar / baseScalar;
     const adjustedLotSize = lotSize * baseScalar;
     const adjustedMinSize = minSize * baseScalar;
+    const adminCap = process.env.ADMIN_CAP;
+    if (!adminCap) {
+        throw new Error("ADMIN_CAP environment variable not set");
+    }
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::create_pool_admin`,
@@ -42,7 +45,7 @@ export const createPoolAdmin = (
             creationFee, // 0x2::balance::Balance<0x2::sui::SUI>
             txb.pure.bool(whitelisted),
             txb.pure.bool(stablePool),
-            txb.object(ADMINCAP_ID), // admin_cap_id
+            txb.object(adminCap), // admin_cap_id
         ],
         typeArguments: [baseCoin.type, quoteCoin.type]
     });
@@ -52,11 +55,16 @@ export const unregisterPoolAdmin = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
+    const adminCap = process.env.ADMIN_CAP;
+    if (!adminCap) {
+        throw new Error("ADMIN_CAP environment variable not set");
+    }
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unregister_pool_admin`,
         arguments: [
             txb.object(REGISTRY_ID),
-            txb.object(ADMINCAP_ID),
+            txb.object(adminCap),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
@@ -66,12 +74,17 @@ export const updateDisabledVersions = (
     pool: Pool,
     txb: TransactionBlock,
 ) => {
+    const adminCap = process.env.ADMIN_CAP;
+    if (!adminCap) {
+        throw new Error("ADMIN_CAP environment variable not set");
+    }
+    
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::update_disabled_versions`,
         arguments: [
             txb.object(pool.address),
             txb.object(REGISTRY_ID),
-            txb.object(ADMINCAP_ID),
+            txb.object(adminCap),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });

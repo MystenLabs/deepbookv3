@@ -9,12 +9,29 @@ export enum CoinKey {
     "DBUSDC",
     "DBWETH",
 }
+
 export enum PoolKey {
     "DEEP_SUI",
     "SUI_DBUSDC",
     "DEEP_DBWETH",
     "DBWETH_DBUSDC",
 }
+
+// Trading constants
+export enum OrderType {
+    NO_RESTRICTION,
+    IMMEDIATE_OR_CANCEL,
+    FILL_OR_KILL,
+    POST_ONLY,
+};
+
+// Self matching options
+export enum SelfMatchingOptions {
+    SELF_MATCHING_ALLOWED,
+    CANCEL_TAKER,
+    CANCEL_MAKER,
+};
+
 export const FLOAT_SCALAR = 1000000000;
 export const POOL_CREATION_FEE = 10000 * 1000000;
 export const LARGE_TIMESTAMP = 1844674407370955161;
@@ -38,18 +55,19 @@ export interface Pool {
     quoteCoin: Coin;
 }
 
+
 export class DeepBookConfig {
     coins: { [key: string]: Coin } = {};
     pools: { [key: string]: Pool } = {};
 
     constructor() {}
 
-    async init(suiClient: SuiClient, owner: string, merge?: { signer: Keypair }) {
-        await this.initCoins(suiClient, owner, merge);
+    async init(suiClient: SuiClient, signer: Keypair, merge: boolean) {
+        await this.initCoins(suiClient, signer, merge);
         this.initPools();
     }
 
-    async initCoins(suiClient: SuiClient, owner: string, merge?: { signer: Keypair }) {
+    async initCoins(suiClient: SuiClient, signer: Keypair, merge: boolean) {
         this.coins[CoinKey.DEEP] = {
             key: CoinKey.DEEP,
             address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
@@ -78,15 +96,19 @@ export class DeepBookConfig {
             scalar: 100000000,
             coinId: ``
         }
-        await this.fetchCoinData(suiClient, owner, merge);
+        await this.fetchCoinData(suiClient, signer, merge);
     }
 
-    async getOwnedCoin(suiClient: SuiClient, owner: string, coinType: string): Promise<string> {
+    async getOwnedCoin(suiClient: SuiClient, signer: Keypair, coinType: string): Promise<string> {
+        console.log(coinType);
+        const owner = signer.getPublicKey().toBase64();
         const res = await suiClient.getCoins({
             owner,
             coinType,
             limit: 1,
         });
+
+        console.log(res);
 
         if (res.data.length > 0) {
             return res.data[0].coinObjectId;
@@ -95,15 +117,15 @@ export class DeepBookConfig {
         }
     }
 
-    async fetchCoinData(suiClient: SuiClient, owner: string, merge?: { signer: Keypair }) {
+    async fetchCoinData(suiClient: SuiClient, signer: Keypair, merge: boolean) {
         // if merge is true and signer provided, merge all whitelisted coins into one object.
         if (merge) {
-            let gasCoinId = await this.getOwnedCoin(suiClient, owner, this.coins[CoinKey.SUI].type);
+            let gasCoinId = await this.getOwnedCoin(suiClient, signer, this.coins[CoinKey.SUI].type);
             if (gasCoinId === '') {
                 throw new Error("Failed to find gas object. Cannot merge coins.");
             }
             for (const coinKey in this.coins) {
-                await this.mergeAllCoins(suiClient, merge.signer, owner, this.coins[coinKey].type, gasCoinId);
+                await this.mergeAllCoins(suiClient, signer, this.coins[coinKey].type, gasCoinId);
             }
         }
 
@@ -111,7 +133,7 @@ export class DeepBookConfig {
         for (const coinKey in this.coins) {
             const coin = this.coins[coinKey];
             if (!coin.coinId) {
-                const accountCoin = await this.getOwnedCoin(suiClient, owner, coin.type);
+                const accountCoin = await this.getOwnedCoin(suiClient, signer, coin.type);
                 this.coins[coinKey] = {
                     ...coin,
                     coinId: accountCoin,
@@ -126,11 +148,11 @@ export class DeepBookConfig {
     async mergeAllCoins(
         suiClient: SuiClient,
         signer: Keypair,
-        owner: string,
         coinType: string,
         gasCoinId: string,
     ): Promise<void> {
         let moreCoinsToMerge = true;
+        const owner = signer.getPublicKey().toBase64();
         while (moreCoinsToMerge) {
             moreCoinsToMerge = await this.mergeOwnedCoins(suiClient, signer, owner, coinType, gasCoinId);
         }

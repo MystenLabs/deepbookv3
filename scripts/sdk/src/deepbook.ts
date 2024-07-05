@@ -4,14 +4,13 @@ import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, MY_ADDRESS,
+    DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, 
     OrderType, SelfMatchingOptions,
-    MANAGER_ADDRESSES
-} from './coinConstants';
-import { generateProof } from "./balanceManager";
+} from './config';
+import { BalanceManager, generateProof } from "./balanceManager";
 import { CoinKey, DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET, Pool } from "./config";
 
-const client = new SuiClient({ url: getFullnodeUrl(ENV) });
+const client = new SuiClient({ url: getFullnodeUrl(process.env.ENVIRONMENT as "mainnet" | "testnet" | "devnet" | "localnet") });
 
 // =================================================================
 // Transactions
@@ -19,7 +18,7 @@ const client = new SuiClient({ url: getFullnodeUrl(ENV) });
 
 export const placeLimitOrder = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     clientOrderId: number,
     price: number,
     quantity: number,
@@ -36,13 +35,13 @@ export const placeLimitOrder = (
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
 
-    const tradeProof = generateProof(managerKey, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_limit_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(orderType),
@@ -60,7 +59,7 @@ export const placeLimitOrder = (
 
 export const placeMarketOrder = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     clientOrderId: number,
     quantity: number,
     isBid: boolean,
@@ -70,14 +69,13 @@ export const placeMarketOrder = (
 ) => {
     txb.setGasBudget(GAS_BUDGET);
     const baseScalar = pool.baseCoin.scalar;
-
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::place_market_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u64(clientOrderId),
             txb.pure.u8(selfMatchingOption),
@@ -92,18 +90,18 @@ export const placeMarketOrder = (
 
 export const modifyOrder = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     orderId: number,
     newQuantity: number,
     txb: TransactionBlock,
  ) => {
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::modify_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u128(orderId),
             txb.pure.u64(newQuantity),
@@ -115,18 +113,18 @@ export const modifyOrder = (
 
 export const cancelOrder = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     orderId: number,
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(GAS_BUDGET);
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_order`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u128(orderId),
             txb.object(SUI_CLOCK_OBJECT_ID),
@@ -137,17 +135,17 @@ export const cancelOrder = (
 
 export const cancelAllOrders = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     txb: TransactionBlock
 ) => {
     txb.setGasBudget(GAS_BUDGET);
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::cancel_all_orders`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.object(SUI_CLOCK_OBJECT_ID),
         ],
@@ -157,16 +155,16 @@ export const cancelAllOrders = (
 
 export const withdrawSettledAmounts = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     txb: TransactionBlock
 ) => {
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::withdraw_settled_amounts`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -191,16 +189,16 @@ export const addDeepPricePoint = (
 
 export const claimRebates = (
     pool: Pool,
-    managerKey: string,
+    balanceManager: BalanceManager,
     txb: TransactionBlock
 ) => {
-    const tradeProof = generateProof(MANAGER_ADDRESSES[managerKey].address, txb);
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::claim_rebates`,
         arguments: [
             txb.object(pool.address),
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(balanceManager.address),
             tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -237,7 +235,7 @@ export const midPrice = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -260,7 +258,7 @@ export const whiteListed = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -288,7 +286,7 @@ export const getQuoteQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -317,7 +315,7 @@ export const getBaseQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -348,7 +346,7 @@ export const getQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -361,20 +359,20 @@ export const getQuantityOut = async (
 
 export const accountOpenOrders = async (
     pool: Pool,
-    managerKey: string,
+    managerId: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::account_open_orders`,
         arguments: [
             txb.object(pool.address),
-            txb.pure.id(MANAGER_ADDRESSES[managerKey].address),
+            txb.pure.id(managerId),
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -410,7 +408,7 @@ export const getLevel2Range = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -439,7 +437,7 @@ export const getLevel2TickFromMid = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -468,7 +466,7 @@ export const getLevel2TicksFromMid = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -498,7 +496,7 @@ export const vaultBalances = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -524,7 +522,7 @@ export const getPoolIdByAssets = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress(MY_ADDRESS),
+        sender: normalizeSuiAddress("0xA"),
         transactionBlock: txb,
     });
 
@@ -543,6 +541,7 @@ export const swapExactBaseForQuote = (
     baseCoinId: string,
     deepAmount: number,
     deepCoinId: string,
+    recepient: string,
     txb: TransactionBlock
 ) => {
     const baseScalar = pool.baseCoin.scalar;
@@ -573,9 +572,9 @@ export const swapExactBaseForQuote = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], MY_ADDRESS);
-    txb.transferObjects([quoteOut], MY_ADDRESS);
-    txb.transferObjects([deepOut], MY_ADDRESS);
+    txb.transferObjects([baseOut], recepient);
+    txb.transferObjects([quoteOut], recepient);
+    txb.transferObjects([deepOut], recepient);
 }
 
 export const swapExactQuoteForBase = (
@@ -584,6 +583,7 @@ export const swapExactQuoteForBase = (
     quoteCoinId: string,
     deepAmount: number,
     deepCoinId: string,
+    recepient: string,
     txb: TransactionBlock
 ) => {
     const quoteScalar = pool.quoteCoin.scalar;
@@ -614,7 +614,7 @@ export const swapExactQuoteForBase = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], MY_ADDRESS);
-    txb.transferObjects([quoteOut], MY_ADDRESS);
-    txb.transferObjects([deepOut], MY_ADDRESS);
+    txb.transferObjects([baseOut], recepient);
+    txb.transferObjects([quoteOut], recepient);
+    txb.transferObjects([deepOut], recepient);
 }
