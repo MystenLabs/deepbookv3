@@ -1,10 +1,13 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { signAndExecute, toSuiObjectRef } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, MY_ADDRESS, MANAGER_ADDRESSES
-} from './coinConstants';
-import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
+    DEEPBOOK_PACKAGE_ID
+} from './config';
 import { Coin, CoinKey } from "./config";
+
+export interface BalanceManager {
+    address: string;
+    tradeCap: string | undefined;
+}
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({
@@ -17,12 +20,11 @@ export const createAndShareBalanceManager = (txb: TransactionBlock) => {
 };
 
 export const depositIntoManager = (
-    managerKey: string,
+    managerId: string,
     amountToDeposit: number,
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     let deposit;
 
     if (coin.key === CoinKey.SUI) {
@@ -40,135 +42,133 @@ export const depositIntoManager = (
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::deposit`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
             deposit,
         ],
         typeArguments: [coin.type]
     });
 
-    console.log(`Deposited ${amountToDeposit} of type ${coin.type} into manager ${managerAddress}`);
+    console.log(`Deposited ${amountToDeposit} of type ${coin.type} into manager ${managerId}`);
 };
 
 export const withdrawFromManager = (
-    managerKey: string,
+    managerId: string,
     amountToWithdraw: number,
     coin: Coin,
+    recipient: string,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
             txb.pure.u64(amountToWithdraw * coin.scalar),
         ],
         typeArguments: [coin.type]
     });
 
-    txb.transferObjects([coinObject], MY_ADDRESS);
-    console.log(`Withdrew ${amountToWithdraw} of type ${coin.type} from manager ${managerAddress}`);
+    txb.transferObjects([coinObject], recipient);
+    console.log(`Withdrew ${amountToWithdraw} of type ${coin.type} from manager ${managerId}`);
 };
 
 export const withdrawAllFromManager = (
-    managerKey: string,
+    managerId: string,
     coin: Coin,
+    recipient: string,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     const coinObject = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::withdraw_all`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
         ],
         typeArguments: [coin.type]
     });
 
-    txb.transferObjects([coinObject], MY_ADDRESS);
-    console.log(`Withdrew all of type ${coin.type} from manager ${managerAddress}`);
+    txb.transferObjects([coinObject], recipient);
+    console.log(`Withdrew all of type ${coin.type} from manager ${managerId}`);
 };
 
 export const checkManagerBalance = (
-    managerKey: string,
+    managerId: string,
     coin: Coin,
     txb: TransactionBlock
 ) => {
-    const managerAddress = MANAGER_ADDRESSES[managerKey].address;
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::balance`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
         ],
         typeArguments: [coin.type]
     });
 }
 
 export const generateProofAsOwner = (
-    managerAddress: string,
+    managerId: string,
     txb: TransactionBlock,
 ) => {
     return txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_owner`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
         ],
     });
 }
 
 export const generateProofAsTrader = (
-    managerAddress: string,
+    managerId: string,
     tradeCapId: string,
     txb: TransactionBlock,
 ) => {
     return txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::generate_proof_as_trader`,
         arguments: [
-            txb.object(managerAddress),
+            txb.object(managerId),
             txb.object(tradeCapId),
         ],
     });
 }
 
-export const generateProof = (managerKey: string, txb: TransactionBlock) => {
-    const { address, tradeCapId } = MANAGER_ADDRESSES[managerKey];
-    return tradeCapId
-        ? generateProofAsTrader(address, tradeCapId, txb)
-        : generateProofAsOwner(address, txb);
+export const generateProof = (balanceManager: BalanceManager, txb: TransactionBlock) => {
+    return balanceManager.tradeCap
+        ? generateProofAsTrader(balanceManager.address, balanceManager.tradeCap, txb)
+        : generateProofAsOwner(balanceManager.address, txb);
 }
 
 export const validateProof = (
-    managerKey: string,
+    managerId: string,
     tradeProofId: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::validate_proof`,
         arguments: [
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(managerId),
             txb.object(tradeProofId),
         ],
     });
 }
 
 export const owner = (
-    managerKey: string,
+    managerId: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::owner`,
         arguments: [
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(managerId),
         ],
     });
 }
 
 export const id = (
-    managerKey: string,
+    managerId: string,
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::balance_manager::id`,
         arguments: [
-            txb.object(MANAGER_ADDRESSES[managerKey].address),
+            txb.object(managerId),
         ],
     });
 }

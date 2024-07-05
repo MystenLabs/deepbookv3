@@ -1,8 +1,8 @@
 import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
 import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID
-} from './coinConstants';
+    DEEPBOOK_PACKAGE_ID
+} from './config';
 import { Pool } from "./config";
 
 // =================================================================
