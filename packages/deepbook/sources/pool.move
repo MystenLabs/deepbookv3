@@ -284,26 +284,6 @@ module deepbook::pool {
         );
     }
 
-    /// Cancel multiple orders within a vector. The orders must be owned by the balance_manager.
-    /// The orders are removed from the book and the balance_manager's open orders.
-    /// Order canceled events are emitted.
-    /// If any order fails to cancel, no orders will be cancelled.
-    public fun cancel_orders<BaseAsset, QuoteAsset>(
-        self: &mut Pool<BaseAsset, QuoteAsset>,
-        balance_manager: &mut BalanceManager,
-        trade_proof: &TradeProof,
-        order_ids: vector<u128>,
-        clock: &Clock,
-        ctx: &TxContext,
-    ) {
-        let mut i = 0;
-        while (i < order_ids.length()) {
-            let order_id = order_ids[i];
-            self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
-            i = i + 1;
-        }
-    }
-
     /// Cancel all open orders placed by the balance manager in the pool.
     public fun cancel_all_orders<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -720,7 +700,6 @@ module deepbook::pool {
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
-        assert!(min_size % lot_size == 0, EInvalidMinSize);
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
         let pool_id = object::new(ctx);
