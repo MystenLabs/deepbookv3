@@ -119,6 +119,9 @@ module deepbook::big_vector {
     /// hitting object size limits.
     const MAX_SLICE_SIZE: u64 = 256 * 1024;
 
+    /// Leaf nodes of `BigVector` should have at least 2 elements for maximum size
+    const MIN_SLICE_SIZE: u64 = 2;
+
     // === Removal fix-up strategies ===
 
     /// 0b000: No fix-up.
@@ -151,7 +154,7 @@ module deepbook::big_vector {
         max_fan_out: u64,
         ctx: &mut TxContext,
     ): BigVector<E> {
-        assert!(0 < max_slice_size, ESliceTooSmall);
+        assert!(MIN_SLICE_SIZE <= max_slice_size, ESliceTooSmall);
         assert!(max_slice_size <= MAX_SLICE_SIZE, ESliceTooBig);
         assert!(MIN_FAN_OUT <= max_fan_out, EFanOutTooSmall);
         assert!(max_fan_out <= MAX_FAN_OUT, EFanOutTooBig);
