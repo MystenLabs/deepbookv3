@@ -213,6 +213,7 @@ module deepbook::book {
         price_high: u64,
         ticks: u64,
         is_bid: bool,
+        current_timestamp: u64,
     ): (vector<u64>, vector<u64>) {
         assert!(price_low <= price_high, EInvalidPriceRange);
         assert!(ticks > 0, EInvalidTicks);
@@ -224,14 +225,21 @@ module deepbook::book {
         let key_low = (price_low as u128) << 64;
         let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
         let book_side = if (is_bid) &self.bids else &self.asks;
-        let (mut ref, mut offset) = if (is_bid) book_side.slice_before(key_high)
-        else book_side.slice_following(key_low);
+        let (mut ref, mut offset) = if (is_bid) {
+            book_side.slice_before(key_high)
+        } else {
+            book_side.slice_following(key_low)
+        };
         let mut ticks_left = ticks;
         let mut cur_price = 0;
         let mut cur_quantity = 0;
 
         while (!ref.is_null() && ticks_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
+            if (order.expire_timestamp() < current_timestamp) {
+                (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
+                continue
+            };
             let (_, order_price, _) = utils::decode_order_id(order.order_id());
             if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
             if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
