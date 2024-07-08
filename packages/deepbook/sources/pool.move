@@ -653,11 +653,12 @@ module deepbook::pool {
         price_low: u64,
         price_high: u64,
         is_bid: bool,
+        clock: &Clock,
     ): (vector<u64>, vector<u64>) {
         self
             .load_inner()
             .book
-            .get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid)
+            .get_level2_range_and_ticks(price_low, price_high, constants::max_u64(), is_bid, clock.timestamp_ms())
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
@@ -667,6 +668,7 @@ module deepbook::pool {
     public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         ticks: u64,
+        clock: &Clock,
     ): (vector<u64>, vector<u64>, vector<u64>, vector<u64>) {
         let self = self.load_inner();
         let (bid_price, bid_quantity) = self
@@ -676,6 +678,7 @@ module deepbook::pool {
                 constants::max_price(),
                 ticks,
                 true,
+                clock.timestamp_ms()
             );
         let (ask_price, ask_quantity) = self
             .book
@@ -684,6 +687,7 @@ module deepbook::pool {
                 constants::max_price(),
                 ticks,
                 false,
+                clock.timestamp_ms()
             );
 
         (bid_price, bid_quantity, ask_price, ask_quantity)
