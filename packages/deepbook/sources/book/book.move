@@ -25,7 +25,7 @@ module deepbook::book {
     const ENewQuantityMustBeLessThanOriginal: u64 = 7;
 
     // === Constants ===
-    const START_BID_ORDER_ID: u64 = (1u128 << 64 - 1) as u64;
+    const START_BID_ORDER_ID: u64 = ((1u128 << 64) - 1) as u64;
     const START_ASK_ORDER_ID: u64 = 1;
 
     // === Structs ===
@@ -223,7 +223,7 @@ module deepbook::book {
 
         // convert price_low and price_high to keys for searching
         let key_low = (price_low as u128) << 64;
-        let key_high = ((price_high as u128) << 64) + ((1u128 << 64 - 1) as u128);
+        let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128);
         let book_side = if (is_bid) &self.bids else &self.asks;
         let (mut ref, mut offset) = if (is_bid) {
             book_side.slice_before(key_high)

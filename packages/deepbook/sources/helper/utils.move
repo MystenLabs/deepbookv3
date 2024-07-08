@@ -73,8 +73,8 @@ module deepbook::utils {
         assert!(decoded_order_id == order_id, 0);
 
         let is_bid = true;
-        let price = (1u128 << 64 - 1) as u64 - 1;
-        let order_id = (1u128 << 64 - 1) as u64;
+        let price = ((1u128 << 63) - 1) as u64;
+        let order_id = ((1u128 << 64) - 1) as u64;
         let encoded_order_id = encode_order_id(is_bid, price, order_id);
         let (decoded_is_bid, decoded_price, decoded_order_id) = decode_order_id(encoded_order_id);
         assert!(decoded_is_bid == is_bid, 0);
