@@ -2,7 +2,7 @@ import { getActiveAddress } from "./utils";
 
 // Update env, package IDs, manager id as needed
 export const ENV = 'testnet';
-export const DEEPBOOK_PACKAGE_ID = `0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778`;
+export const DEEPBOOK_PACKAGE_ID = `0x16dfa5d75e978a3ec535188e904cb1fc238baff8bc1a7ac9a0d73e04559efad9`;
 export const REGISTRY_ID = `0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37`;
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
 export const MY_ADDRESS = getActiveAddress();
