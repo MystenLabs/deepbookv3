@@ -1,9 +1,8 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { signAndExecute } from "./utils";
 import {
-    ENV, DEEPBOOK_PACKAGE_ID, MANAGER_ADDRESSES
-} from './coinConstants';
-import { generateProof } from "./balanceManager";
+    DEEPBOOK_PACKAGE_ID
+} from './config';
+import { BalanceManager, generateProof } from "./balanceManager";
 import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "./config";
 
 // =================================================================
@@ -12,18 +11,17 @@ import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "./config";
 
 export const stake = (
     pool: Pool,
-    balanceManagerKey: string,
+    balanceManager: BalanceManager,
     stakeAmount: number,
     txb: TransactionBlock,
 ) => {
-    const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::stake`,
         arguments: [
             txb.object(pool.address),
-            txb.object(managerAddress),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u64(stakeAmount * DEEP_SCALAR),
         ],
@@ -33,17 +31,16 @@ export const stake = (
 
 export const unstake = (
     pool: Pool,
-    balanceManagerKey: string,
+    balanceManager: BalanceManager,
     txb: TransactionBlock,
 ) => {
-    const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::unstake`,
         arguments: [
             txb.object(pool.address),
-            txb.object(managerAddress),
+            txb.object(balanceManager.address),
             tradeProof,
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
@@ -52,20 +49,19 @@ export const unstake = (
 
 export const submitProposal = (
     pool: Pool,
-    balanceManagerKey: string,
+    balanceManager: BalanceManager,
     takerFee: number,
     makerFee: number,
     stakeRequired: number,
     txb: TransactionBlock,
 ) => {
-    const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::submit_proposal`,
         arguments: [
             txb.object(pool.address),
-            txb.object(managerAddress),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.u64(takerFee * FLOAT_SCALAR),
             txb.pure.u64(makerFee * FLOAT_SCALAR),
@@ -77,18 +73,17 @@ export const submitProposal = (
 
 export const vote = (
     pool: Pool,
-    balanceManagerKey: string,
+    balanceManager: BalanceManager,
     proposal_id: string,
     txb: TransactionBlock,
 ) => {
-    const tradeProof = generateProof(balanceManagerKey, txb);
-    const managerAddress = MANAGER_ADDRESSES[balanceManagerKey].address;
+    const tradeProof = generateProof(balanceManager, txb);
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::vote`,
         arguments: [
             txb.object(pool.address),
-            txb.object(managerAddress),
+            txb.object(balanceManager.address),
             tradeProof,
             txb.pure.id(proposal_id),
         ],

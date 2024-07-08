@@ -13,19 +13,24 @@ export const placeLimitOrderClient = async () => {
     const pk = process.env.PRIVATE_KEY as string;
 
     const dbClient = new DeepBookClient("testnet", pk);
+    const managerKey = "MANAGER_1";
+    const managerId = "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf";
 
     // Initialize the client. If true, then it will merge the client's whitelisted
     // coins in your address into one object.
     await dbClient.init(true);
+    dbClient.addBalanceManager(
+        managerKey,
+        managerId,
+    );
 
     // This will split 1 DEEP (1000000) from the deep object ID that was set in init()
     // and deposit it into the balance manager.
-    let balanceManagerKey = "MANAGER_1";
-    await dbClient.depositIntoManager(balanceManagerKey, 1, CoinKey.DEEP);
+    await dbClient.depositIntoManager(managerKey, 1, CoinKey.DEEP);
 
     await dbClient.placeLimitOrder(
         PoolKey.DEEP_SUI,
-        balanceManagerKey, // balanceManagerKey
+        managerKey, // balanceManagerKey
         12345, // clientOrderId
         1, // quantity
         1, // price
@@ -40,18 +45,24 @@ export const placeLimitOrderClient = async () => {
 // custom PTB to do all of the above in one single transaction.
 export const placeLimitOrderPTB = async () => {
     const pk = process.env.PRIVATE_KEY as string;
-    const balanceManagerKey = "MANAGER_1";
+    const managerKey = "MANAGER_1";
+    const managerId = "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf";
     const dbClient = new DeepBookClient("testnet", pk);
     await dbClient.init(true);
+    dbClient.addBalanceManager(
+        managerKey,
+        managerId,
+    )
+    const balanceManager = dbClient.getBalanceManager(managerKey);
 
     let txb = new TransactionBlock();
 
     const deepCoin = dbClient.getConfig().getCoin(CoinKey.DEEP);
     const deepSuiPool = dbClient.getConfig().getPool(PoolKey.DEEP_SUI);
 
-    depositIntoManager(balanceManagerKey, 1, deepCoin, txb);
+    depositIntoManager(balanceManager.address, 1, deepCoin, txb);
     // explicitely set order type, self matching, and payWithDeep
-    placeLimitOrder(deepSuiPool, balanceManagerKey, 12345, 1, 1, false, LARGE_TIMESTAMP, 0, 0, true, txb);
+    placeLimitOrder(deepSuiPool, balanceManager, 12345, 1, 1, false, LARGE_TIMESTAMP, 0, 0, true, txb);
 
     await dbClient.signAndExecute(txb);
 }
