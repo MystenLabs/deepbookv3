@@ -169,7 +169,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let base_in = coin::zero(ctx);
-        
+
         swap_exact_quantity(
             self,
             base_in,
@@ -282,6 +282,26 @@ module deepbook::pool {
             ctx.sender(),
             clock.timestamp_ms(),
         );
+    }
+
+    /// Cancel multiple orders within a vector. The orders must be owned by the balance_manager.
+    /// The orders are removed from the book and the balance_manager's open orders.
+    /// The balance_manager's balance is updated with the order's remaining quantity.
+    /// Order canceled events are emitted.
+    public fun cancel_orders<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &mut BalanceManager,
+        trade_proof: &TradeProof,
+        order_ids: vector<u128>,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
+        let mut i = 0;
+        while (i < order_ids.length()) {
+            let order_id = order_ids[i];
+            self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
+            i = i + 1;
+        }
     }
 
     /// Cancel all open orders placed by the balance manager in the pool.
