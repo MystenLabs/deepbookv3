@@ -286,8 +286,8 @@ module deepbook::pool {
 
     /// Cancel multiple orders within a vector. The orders must be owned by the balance_manager.
     /// The orders are removed from the book and the balance_manager's open orders.
-    /// The balance_manager's balance is updated with the order's remaining quantity.
     /// Order canceled events are emitted.
+    /// If any order fails to cancel, no orders will be cancelled.
     public fun cancel_orders<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         balance_manager: &mut BalanceManager,
