@@ -184,23 +184,6 @@ module deepbook::big_vector {
         id.delete();
     }
 
-    /// Destroy `self`, even if it contains elements, as long as they
-    /// are droppable.
-    public(package) fun drop<E: store + drop>(self: BigVector<E>) {
-        let BigVector {
-            mut id,
-            depth,
-            length: _,
-            max_slice_size: _,
-            max_fan_out: _,
-            root_id,
-            last_id: _,
-        } = self;
-
-        drop_slice<E>(&mut id, depth, root_id);
-        id.delete();
-    }
-
     // === BigVector Accessors ===
 
     /// Whether `self` contains no elements or not.
@@ -1273,6 +1256,24 @@ module deepbook::big_vector {
         };
 
         vals
+    }
+
+    #[test_only]
+    /// Destroy `self`, even if it contains elements, as long as they
+    /// are droppable.
+    public(package) fun drop<E: store + drop>(self: BigVector<E>) {
+        let BigVector {
+            mut id,
+            depth,
+            length: _,
+            max_slice_size: _,
+            max_fan_out: _,
+            root_id,
+            last_id: _,
+        } = self;
+
+        drop_slice<E>(&mut id, depth, root_id);
+        id.delete();
     }
 
     // === Tests ===
