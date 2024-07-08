@@ -720,6 +720,7 @@ module deepbook::pool {
         assert!(tick_size > 0, EInvalidTickSize);
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
+        assert!(min_size % lot_size == 0, EInvalidMinSize);
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
         let pool_id = object::new(ctx);
