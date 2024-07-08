@@ -1806,6 +1806,24 @@ module deepbook::master_tests {
             &mut test,
         );
 
+        // OWNER places a bid that will be expired, has no effect on level 2 range
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            3,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            pool_tests::get_time(&mut test) + 100,
+            &mut test,
+        );
+
+        pool_tests::set_time(200, &mut test);
+
         // Get level 2 range for the reference pool, should return correct vectors
         let is_bid = true;
         let (prices, quantities) = get_level2_range<SUI, DEEP>(
@@ -1854,7 +1872,7 @@ module deepbook::master_tests {
             OWNER,
             pool1_reference_id,
             owner_balance_manager_id,
-            3,
+            4,
             constants::no_restriction(),
             constants::self_matching_allowed(),
             price,
@@ -1864,6 +1882,24 @@ module deepbook::master_tests {
             constants::max_u64(),
             &mut test,
         );
+
+        // OWNER places another ask order that will be expired
+        pool_tests::place_limit_order<SUI, DEEP>(
+            OWNER,
+            pool1_reference_id,
+            owner_balance_manager_id,
+            5,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            false,
+            pool_tests::get_time(&mut test) + 100,
+            &mut test,
+        );
+
+        pool_tests::set_time(400, &mut test);
 
         // OWNER places another ask order at price 170 and quantity 5
         let price = 170 * constants::float_scaling();
@@ -2329,12 +2365,15 @@ module deepbook::master_tests {
         test.next_tx(sender);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
             let (prices, quantities) = pool.get_level2_range<BaseAsset, QuoteAsset>(
                 price_low,
                 price_high,
                 is_bid,
+                &clock,
             );
             return_shared(pool);
+            return_shared(clock);
 
             (prices, quantities)
         }
@@ -2349,10 +2388,13 @@ module deepbook::master_tests {
         test.next_tx(sender);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let clock = test.take_shared<Clock>();
             let (bid_prices, bid_quantities, ask_prices, ask_quantities) = pool.get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
                 ticks,
+                &clock,
             );
             return_shared(pool);
+            return_shared(clock);
 
             (bid_prices, bid_quantities, ask_prices, ask_quantities)
         }

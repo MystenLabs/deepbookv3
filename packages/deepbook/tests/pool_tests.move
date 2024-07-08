@@ -798,6 +798,20 @@ module deepbook::pool_tests {
         }
     }
 
+    #[test_only]
+    /// Get the time in the global clock
+    public(package) fun get_time(
+        test: &mut Scenario,
+    ): u64 {
+        test.next_tx(OWNER);
+        {
+            let clock = test.take_shared<Clock>();
+            let time =clock.timestamp_ms();
+            return_shared(clock);
+
+            time
+        }
+    }
 
     /// Alice places a worse order
     /// Alice places 3 bid/ask orders with at price 1
@@ -2871,20 +2885,6 @@ module deepbook::pool_tests {
             pool.load_inner().asks()
         };
         orderbook
-    }
-
-    /// Set the time in the global clock
-    fun get_time(
-        test: &mut Scenario,
-    ): u64 {
-        test.next_tx(OWNER);
-        {
-            let clock = test.take_shared<Clock>();
-            let time =clock.timestamp_ms();
-            return_shared(clock);
-
-            time
-        }
     }
 
     /// Place swap exact amount order
