@@ -10,7 +10,11 @@ import {
 import { BalanceManager, generateProof } from "./balanceManager";
 import { CoinKey, DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET, Pool } from "./config";
 
-const client = new SuiClient({ url: getFullnodeUrl(process.env.ENVIRONMENT as "mainnet" | "testnet" | "devnet" | "localnet") });
+let env = process.env.ENVIRONMENT;
+if (!env) {
+    env = "testnet";
+}
+const client = new SuiClient({ url: getFullnodeUrl(env as "mainnet" | "testnet" | "devnet" | "localnet") });
 
 // =================================================================
 // Transactions
@@ -235,7 +239,7 @@ export const midPrice = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -258,7 +262,7 @@ export const whiteListed = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -286,7 +290,7 @@ export const getQuoteQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -315,7 +319,7 @@ export const getBaseQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -346,7 +350,7 @@ export const getQuantityOut = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -372,7 +376,7 @@ export const accountOpenOrders = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -408,7 +412,7 @@ export const getLevel2Range = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -437,7 +441,7 @@ export const getLevel2TickFromMid = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -466,7 +470,7 @@ export const getLevel2TicksFromMid = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -496,7 +500,7 @@ export const vaultBalances = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
@@ -522,7 +526,7 @@ export const getPoolIdByAssets = async (
     });
 
     const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xA"),
+        sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
 
