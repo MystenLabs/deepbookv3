@@ -244,7 +244,15 @@ export class DeepBookClient {
         txb: TransactionBlock,
     ) {
         let pool = this.#config.getPool(poolKey);
-        returnBaseAsset(pool, borrowAmount, baseCoin, flashLoan, txb);
+        const borrowScalar = pool.baseCoin.scalar;
+
+        let baseCoinReturn;
+        [baseCoinReturn] = txb.splitCoins(
+            baseCoin,
+            [txb.pure.u64(borrowAmount * borrowScalar)]
+        );
+        returnBaseAsset(pool, baseCoinReturn, flashLoan, txb);
+        txb.transferObjects([baseCoin], this.getActiveAddress());
     }
 
     async signTransaction(txb: TransactionBlock) {

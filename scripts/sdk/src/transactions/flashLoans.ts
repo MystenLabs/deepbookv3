@@ -22,26 +22,10 @@ export const borrowBaseAsset =  (
 
 export const returnBaseAsset = (
     pool: Pool,
-    borrowAmount: number,
-    baseCoin: string,
+    baseCoin: any,
     flashLoan: any,
     txb: TransactionBlock,
 ) => {
-    // const borrowScalar = pool.baseCoin.scalar;
-
-    // let baseCoinReturn;
-    // if (pool.baseCoin.key === CoinKey.SUI) {
-    //     [baseCoinReturn] = txb.splitCoins(
-    //         txb.gas,
-    //         [txb.pure.u64(borrowAmount * borrowScalar)]
-    //     );
-    // } else {
-    //     [baseCoinReturn] = txb.splitCoins(
-    //         baseCoin,
-    //         [txb.pure.u64(borrowAmount * borrowScalar)]
-    //     );
-    // }
-
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,
         arguments: [
