@@ -19,7 +19,7 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
     swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whitelisted } from "./transactions/deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
-import { DeepBookConfig, LARGE_TIMESTAMP } from "./utils/config";
+import { DeepBookConfig, MAX_TIMESTAMP } from "./utils/config";
 import { BalanceManager, CoinKey, OrderType, PoolKey, SelfMatchingOptions, PlaceLimitOrderParams,
     PlaceMarketOrderParams, ProposalParams, SwapParams, CreatePoolAdminParams, Environment } from "./utils/interfaces";
 
@@ -134,7 +134,7 @@ export class DeepBookClient {
             price,
             quantity,
             isBid,
-            expiration = LARGE_TIMESTAMP,
+            expiration = MAX_TIMESTAMP,
             orderType = OrderType.NO_RESTRICTION,
             selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED,
             payWithDeep = true,

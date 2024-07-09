@@ -3,7 +3,7 @@ import { DeepBookClient } from "../src/client"
 import dotenv from 'dotenv';
 import { depositIntoManager } from "../src/transactions/balanceManager";
 import { placeLimitOrder } from "../src/transactions/deepbook";
-import { LARGE_TIMESTAMP } from "../src/utils/config";
+import { MAX_TIMESTAMP } from "../src/utils/config";
 import { CoinKey, PoolKey } from "../src/utils/interfaces";
 
 dotenv.config();
@@ -29,20 +29,20 @@ export const placeLimitOrderClient = async () => {
     // and deposit it into the balance manager.
     await dbClient.depositIntoManager(managerKey, 1, CoinKey.DEEP);
 
-    await dbClient.placeLimitOrder(
-        PoolKey.DEEP_SUI,
-        managerKey, // balanceManagerKey
-        12345, // clientOrderId
-        1, // quantity
-        1, // price
-        false, // isBid = false
+    await dbClient.placeLimitOrder({
+        poolKey: PoolKey.DBWETH_DBUSDC,
+        managerKey: 'MANAGER_1',
+        clientOrderId: 888,
+        price: 2,
+        quantity: 1,
+        isBid: true,
         // orderType is default: no restriction
-        // self matching is default: allow self matching
+        // selfMatchingOption is default: allow self matching
         // payWithDeep is default: true
-    )
+    })
 }
 
-// Here, instead of using multiple function calls that the client provides, we will construct a 
+// Here, instead of using multiple function calls that the client provides, we will construct a
 // custom PTB to do all of the above in one single transaction.
 export const placeLimitOrderPTB = async () => {
     const pk = process.env.PRIVATE_KEY as string;
@@ -63,7 +63,7 @@ export const placeLimitOrderPTB = async () => {
 
     depositIntoManager(balanceManager.address, 1, deepCoin, txb);
     // explicitely set order type, self matching, and payWithDeep
-    placeLimitOrder(deepSuiPool, balanceManager, 12345, 1, 1, false, LARGE_TIMESTAMP, 0, 0, true, txb);
+    placeLimitOrder(deepSuiPool, balanceManager, 12345, 1, 1, false, MAX_TIMESTAMP, 0, 0, true, txb);
 
     await dbClient.signAndExecute(txb);
 }

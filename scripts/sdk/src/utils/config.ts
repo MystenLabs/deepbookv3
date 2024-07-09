@@ -6,7 +6,7 @@ import { Coin, CoinKey, Pool, PoolKey } from "./interfaces";
 
 export const FLOAT_SCALAR = 1000000000;
 export const POOL_CREATION_FEE = 10000 * 1000000;
-export const LARGE_TIMESTAMP = 1844674407370955161;
+export const MAX_TIMESTAMP = 1844674407370955161;
 export const GAS_BUDGET = 0.5 * 500000000; // Adjust based on benchmarking
 export const DEEP_SCALAR = 1000000;
 export const DEEPBOOK_PACKAGE_ID = `0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778`;
