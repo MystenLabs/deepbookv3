@@ -3092,12 +3092,6 @@ module deepbook::pool_tests {
                 test.ctx()
             );
         };
-        test.next_tx(sender);
-        {
-            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-            pool.update_allowed_versions(&registry, &admin_cap);
-            return_shared(pool);
-        };
         return_shared(registry);
         test_utils::destroy(admin_cap);
 

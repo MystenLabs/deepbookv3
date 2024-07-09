@@ -69,16 +69,18 @@ module deepbook::registry {
 
     /// Enables a package version
     /// Only Admin can enable a package version
+    /// This function does not have version restrictions
     public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
-        let self = self.load_inner_mut();
+        let self: &mut RegistryInner = self.inner.load_value_mut();
         assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
         self.allowed_versions.insert(version);
     }
 
     /// Disables a package version
     /// Only Admin can disable a package version
+    /// This function does not have version restrictions
     public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
-        let self = self.load_inner_mut();
+        let self: &mut RegistryInner = self.inner.load_value_mut();
         assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
         assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
         self.allowed_versions.remove(&version);
@@ -149,7 +151,7 @@ module deepbook::registry {
         self.treasury_address
     }
 
-    public(package) fun get_allowed_versions(self: &Registry): VecSet<u64> {
+    public(package) fun allowed_versions(self: &Registry): VecSet<u64> {
         let self = self.load_inner();
 
         self.allowed_versions

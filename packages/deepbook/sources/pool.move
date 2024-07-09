@@ -569,13 +569,14 @@ module deepbook::pool {
 
     /// Takes the registry and updates the allowed version within pool
     /// Only admin can update the allowed versions
+    /// This function does not have version restrictions
     public fun update_allowed_versions<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &Registry,
         _cap: &DeepbookAdminCap,
     ) {
-        let allowed_versions = registry.get_allowed_versions();
-        let inner = self.load_inner_mut();
+        let allowed_versions = registry.allowed_versions();
+        let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
         inner.allowed_versions = allowed_versions;
     }
 
@@ -725,7 +726,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            allowed_versions: registry.get_allowed_versions(),
+            allowed_versions: registry.allowed_versions(),
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(stable_pool, ctx),
