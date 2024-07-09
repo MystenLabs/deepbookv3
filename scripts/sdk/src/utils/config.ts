@@ -20,15 +20,14 @@ export class DeepBookConfig {
     constructor() {}
 
     async init(suiClient: SuiClient, signer: Keypair, merge: boolean) {
-        let ENV = process.env.ENV;
-        if (!ENV) {
-            ENV = "testnet";
+        let env = process.env.ENV;
+        if (!env) {
+            env = "testnet";
         }
-        console.log(ENV);
-        if (ENV === "testnet") {
+        if (env === "testnet") {
             await this.initCoinsTestnet(suiClient, signer, merge);
             this.initPoolsTestnet();
-        } else if (ENV === "mainnet") {
+        } else if (env === "mainnet") {
             await this.initCoinsMainnet(suiClient, signer, merge);
             this.initPoolsMainnet();
         }

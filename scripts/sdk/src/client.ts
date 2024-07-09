@@ -503,7 +503,9 @@ const testClient = async () => {
     }
 
     let client = new DeepBookClient(env, process.env.PRIVATE_KEY!);
-    await client.init(false); // true to merge coins of the same type
+    let mergeCoins = false;
+    await client.init(mergeCoins);
+    client.addBalanceManager("MANAGER_1", "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf");
 
     // await client.depositIntoManager("MANAGER_1", 10, CoinKey.SUI);
     // await client.withdrawAllFromManager("MANAGER_1", CoinKey.SUI);
@@ -517,7 +519,7 @@ const testClient = async () => {
     //     stablePool: false,
     // });
     // await client.addDeepPricePoint(PoolKey.DBWETH_DBUSDC, PoolKey.DEEP_DBWETH);
-    await client.checkManagerBalance("MANAGER_1", CoinKey.DBUSDC);
+    // await client.checkManagerBalance("MANAGER_1", CoinKey.DBUSDC);
     // await client.placeLimitOrder({
     //     poolKey: PoolKey.DBWETH_DBUSDC,
     //     managerKey: 'MANAGER_1',
