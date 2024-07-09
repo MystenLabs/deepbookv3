@@ -9,7 +9,7 @@ module deepbook::pool {
         coin::{Self, Coin},
         clock::Clock,
         event,
-        vec_set::{Self, VecSet},
+        vec_set::VecSet,
         versioned::{Self, Versioned},
     };
     use deepbook::{
@@ -725,7 +725,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            allowed_versions: vec_set::empty(),
+            allowed_versions: registry.get_allowed_versions(),
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(stable_pool, ctx),

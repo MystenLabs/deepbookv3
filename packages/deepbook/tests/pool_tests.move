@@ -853,7 +853,7 @@ module deepbook::pool_tests {
 
         end(test);
     }
-    
+
     #[test_only]
     /// Get the time in the global clock
     public(package) fun get_time(
@@ -3091,6 +3091,12 @@ module deepbook::pool_tests {
                 &admin_cap,
                 test.ctx()
             );
+        };
+        test.next_tx(sender);
+        {
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            pool.update_allowed_versions(&registry, &admin_cap);
+            return_shared(pool);
         };
         return_shared(registry);
         test_utils::destroy(admin_cap);

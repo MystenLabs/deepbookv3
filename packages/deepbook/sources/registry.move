@@ -42,7 +42,7 @@ module deepbook::registry {
 
     fun init(_: REGISTRY, ctx: &mut TxContext) {
         let registry_inner = RegistryInner {
-            allowed_versions: vec_set::empty(),
+            allowed_versions: vec_set::singleton(constants::current_version()),
             pools: bag::new(ctx),
             treasury_address: ctx.sender(),
         };
@@ -80,6 +80,7 @@ module deepbook::registry {
     public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
         let self = self.load_inner_mut();
         assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
+        assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
         self.allowed_versions.remove(&version);
     }
 
@@ -157,8 +158,9 @@ module deepbook::registry {
     // === Test Functions ===
     #[test_only]
     public fun test_registry(ctx: &mut TxContext): ID {
+        let allowed_versions = vec_set::singleton(constants::current_version());
         let registry_inner = RegistryInner {
-            allowed_versions: vec_set::empty(),
+            allowed_versions: allowed_versions,
             pools: bag::new(ctx),
             treasury_address: ctx.sender(),
         };
