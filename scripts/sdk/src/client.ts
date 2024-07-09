@@ -9,18 +9,18 @@ import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
-import { BalanceManager, checkManagerBalance, createAndShareBalanceManager, depositIntoManager, withdrawAllFromManager, withdrawFromManager } from "./balanceManager";
+import { checkManagerBalance, createAndShareBalanceManager, depositIntoManager, withdrawAllFromManager, withdrawFromManager } from "./transactions/balanceManager";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner, validateAddressThrow } from "./utils";
+import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner, validateAddressThrow } from "./utils/utils";
 import { normalizeSuiAddress } from "@mysten/sui.js/utils";
-import { OrderType, SelfMatchingOptions } from "./config";
 import { bcs } from "@mysten/sui.js/bcs";
 import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut,
     getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder,
-    swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./deepbook";
-import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./deepbookAdmin";
-import { stake, submitProposal, unstake, vote } from "./governance";
-import { CoinKey, DeepBookConfig, LARGE_TIMESTAMP, PoolKey } from "./config";
+    swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./transactions/deepbook";
+import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
+import { stake, submitProposal, unstake, vote } from "./transactions/governance";
+import { DeepBookConfig, LARGE_TIMESTAMP } from "./utils/config";
+import { BalanceManager, CoinKey, OrderType, PoolKey, SelfMatchingOptions } from "./utils/interfaces";
 
 /// DeepBook Client. If a private key is provided, then all transactions
 /// will be signed with that key. Otherwise, the default key will be used.

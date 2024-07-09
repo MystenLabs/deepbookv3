@@ -1,9 +1,6 @@
-import { TransactionBlock, TransactionResult } from "@mysten/sui.js/transactions";
-import { signAndExecute } from "./utils";
-import {
-    DEEPBOOK_PACKAGE_ID
-} from './config';
-import { Pool } from "./config";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
+import { Pool } from "../utils/interfaces";
+import { DEEPBOOK_PACKAGE_ID } from "../utils/config";
 
 // =================================================================
 // Transactions

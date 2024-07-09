@@ -2,35 +2,7 @@ import { SuiClient } from "@mysten/sui.js/client";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecuteWithClientAndSigner } from "./utils";
 import { Keypair } from "@mysten/sui.js/cryptography";
-
-export enum CoinKey {
-    "DEEP",
-    "SUI",
-    "DBUSDC",
-    "DBWETH",
-}
-
-export enum PoolKey {
-    "DEEP_SUI",
-    "SUI_DBUSDC",
-    "DEEP_DBWETH",
-    "DBWETH_DBUSDC",
-}
-
-// Trading constants
-export enum OrderType {
-    NO_RESTRICTION,
-    IMMEDIATE_OR_CANCEL,
-    FILL_OR_KILL,
-    POST_ONLY,
-};
-
-// Self matching options
-export enum SelfMatchingOptions {
-    SELF_MATCHING_ALLOWED,
-    CANCEL_TAKER,
-    CANCEL_MAKER,
-};
+import { Coin, CoinKey, Pool, PoolKey } from "./interfaces";
 
 export const FLOAT_SCALAR = 1000000000;
 export const POOL_CREATION_FEE = 10000 * 1000000;
@@ -40,21 +12,6 @@ export const DEEP_SCALAR = 1000000;
 export const DEEPBOOK_PACKAGE_ID = `0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778`;
 export const REGISTRY_ID = `0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37`;
 export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
-
-export interface Coin {
-    key: CoinKey;
-    address: string;
-    type: string;
-    scalar: number;
-    coinId: string;
-}
-
-export interface Pool {
-    address: string;
-    baseCoin: Coin;
-    quoteCoin: Coin;
-}
-
 
 export class DeepBookConfig {
     coins: { [key: string]: Coin } = {};
@@ -269,3 +226,5 @@ export class DeepBookConfig {
         return pool;
     }
 }
+
+export { Pool };

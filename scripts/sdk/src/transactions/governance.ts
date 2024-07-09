@@ -1,9 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import {
     DEEPBOOK_PACKAGE_ID
-} from './config';
-import { BalanceManager, generateProof } from "./balanceManager";
-import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "./config";
+} from '../utils/config';
+import { generateProof } from "./balanceManager";
+import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "../utils/config";
+import { BalanceManager } from "../utils/interfaces";
 
 // =================================================================
 // Transactions

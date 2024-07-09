@@ -1,14 +1,13 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { signAndExecute } from "./utils";
 import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
     DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, 
-    OrderType, SelfMatchingOptions,
-} from './config';
-import { BalanceManager, generateProof } from "./balanceManager";
-import { CoinKey, DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET, Pool } from "./config";
+} from '../utils/config';
+import { generateProof } from "./balanceManager";
+import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/config";
+import { BalanceManager, CoinKey, Pool } from "../utils/interfaces";
 
 let env = process.env.ENVIRONMENT;
 if (!env) {
