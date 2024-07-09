@@ -127,31 +127,18 @@ export class DeepBookClient {
 
     /// DeepBook
     async placeLimitOrder(params: PlaceLimitOrderParams) {
-        var {
+        const {
             poolKey,
             managerKey,
             clientOrderId,
             price,
             quantity,
             isBid,
-            expiration,
-            orderType,
-            selfMatchingOption,
-            payWithDeep,
+            expiration = LARGE_TIMESTAMP,
+            orderType = OrderType.NO_RESTRICTION,
+            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED,
+            payWithDeep = true,
         } = params;
-
-        if (expiration === undefined) {
-            expiration = LARGE_TIMESTAMP;
-        }
-        if (orderType === undefined) {
-            orderType = OrderType.NO_RESTRICTION;
-        }
-        if (selfMatchingOption === undefined) {
-            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED;
-        }
-        if (payWithDeep === undefined) {
-            payWithDeep = true;
-        }
 
         if (!payWithDeep) {
             throw new Error("payWithDeep = false not yet supported.");
@@ -167,22 +154,15 @@ export class DeepBookClient {
     }
 
     async placeMarketOrder(params: PlaceMarketOrderParams) {
-        var {
+        const {
             poolKey,
             managerKey,
             clientOrderId,
             quantity,
             isBid,
-            selfMatchingOption,
-            payWithDeep,
+            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED,
+            payWithDeep = true,
         } = params;
-
-        if (selfMatchingOption === undefined) {
-            selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED;
-        }
-        if (payWithDeep === undefined) {
-            payWithDeep = true;
-        }
 
         if (!payWithDeep) {
             throw new Error("payWithDeep = false not supported.");
