@@ -15,10 +15,6 @@ if (!env) {
 }
 const client = new SuiClient({ url: getFullnodeUrl(env as "mainnet" | "testnet" | "devnet" | "localnet") });
 
-// =================================================================
-// Transactions
-// =================================================================
-
 export const placeLimitOrder = (
     pool: Pool,
     balanceManager: BalanceManager,
@@ -249,7 +245,7 @@ export const midPrice = async (
     return adjusted_mid_price;
 }
 
-export const whiteListed = async (
+export const whitelisted = async (
     pool: Pool,
     txb: TransactionBlock
 ) => {
@@ -406,35 +402,6 @@ export const getLevel2Range = async (
             txb.pure.u64(priceLow * FLOAT_SCALAR * quoteScalar / baseScalar),
             txb.pure.u64(priceHigh * FLOAT_SCALAR * quoteScalar / baseScalar),
             txb.pure.bool(isBid),
-        ],
-        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
-    });
-
-    const res = await client.devInspectTransactionBlock({
-        sender: normalizeSuiAddress("0xa"),
-        transactionBlock: txb,
-    });
-
-    const prices = res.results![0].returnValues![0][0];
-    const parsed_prices = bcs.vector(bcs.u64()).parse(new Uint8Array(prices));
-    const quantities = res.results![0].returnValues![1][0];
-    const parsed_quantities = bcs.vector(bcs.u64()).parse(new Uint8Array(quantities));
-    console.log(res.results![0].returnValues![0]);
-    console.log(parsed_prices);
-    console.log(parsed_quantities);
-    return [parsed_prices, parsed_quantities];
-}
-
-export const getLevel2TickFromMid = async (
-    pool: Pool,
-    tickFromMid: number,
-    txb: TransactionBlock,
-) => {
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_tick_from_mid`,
-        arguments: [
-            txb.object(pool.address),
-            txb.pure.u64(tickFromMid)
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
