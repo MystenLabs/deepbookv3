@@ -2,9 +2,6 @@ import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { Pool } from "../utils/interfaces";
 import { DEEPBOOK_PACKAGE_ID } from "../utils/config";
 
-// =================================================================
-// Transactions
-// =================================================================
 export const borrowAndReturnBaseAsset = (
     pool: Pool,
     borrowAmount: number,

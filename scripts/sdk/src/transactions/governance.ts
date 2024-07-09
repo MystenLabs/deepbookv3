@@ -6,10 +6,6 @@ import { generateProof } from "./balanceManager";
 import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "../utils/config";
 import { BalanceManager } from "../utils/interfaces";
 
-// =================================================================
-// Transactions
-// =================================================================
-
 export const stake = (
     pool: Pool,
     balanceManager: BalanceManager,

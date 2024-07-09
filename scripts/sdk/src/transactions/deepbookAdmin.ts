@@ -5,10 +5,6 @@ import {
 import { FLOAT_SCALAR, POOL_CREATION_FEE } from "../utils/config";
 import { Coin, Pool } from "../utils/interfaces";
 
-// =================================================================
-// Transactions
-// =================================================================
-
 export const createPoolAdmin = (
     baseCoin: Coin,
     quoteCoin: Coin,

@@ -58,7 +58,7 @@ export class DeepBookConfig {
 
     async getOwnedCoin(suiClient: SuiClient, signer: Keypair, coinType: string): Promise<string> {
         console.log(coinType);
-        const owner = signer.getPublicKey().toBase64();
+        const owner = signer.toSuiAddress();
         const res = await suiClient.getCoins({
             owner,
             coinType,

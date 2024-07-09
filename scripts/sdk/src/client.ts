@@ -11,12 +11,12 @@ import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
 import { checkManagerBalance, createAndShareBalanceManager, depositIntoManager, withdrawAllFromManager, withdrawFromManager } from "./transactions/balanceManager";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner, validateAddressThrow } from "./utils/utils";
+import { getSigner, getSignerFromPK, signAndExecuteWithClientAndSigner } from "./utils/utils";
 import { normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { bcs } from "@mysten/sui.js/bcs";
 import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancelOrder, claimRebates, getBaseQuantityOut,
     getLevel2Range, getLevel2TicksFromMid, getPoolIdByAssets, getQuoteQuantityOut, midPrice, placeLimitOrder, placeMarketOrder,
-    swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whiteListed } from "./transactions/deepbook";
+    swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whitelisted } from "./transactions/deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
 import { DeepBookConfig, LARGE_TIMESTAMP } from "./utils/config";
@@ -303,7 +303,7 @@ export class DeepBookClient {
     ): Promise<boolean> {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
-        return await whiteListed(pool, txb);
+        return await whitelisted(pool, txb);
     }
 
     async getQuoteQuantityOut(
