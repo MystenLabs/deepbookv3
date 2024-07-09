@@ -17,31 +17,30 @@ export const borrowBaseAsset =  (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseCoin], recepient);
-    return flashLoan;
+    return [baseCoin, flashLoan];
 }
 
 export const returnBaseAsset = (
     pool: Pool,
     borrowAmount: number,
-    baseCoinId: string,
+    baseCoin: string,
     flashLoan: any,
     txb: TransactionBlock,
 ) => {
-    const borrowScalar = pool.baseCoin.scalar;
+    // const borrowScalar = pool.baseCoin.scalar;
 
-    let baseCoin;
-    if (pool.baseCoin.key === CoinKey.SUI) {
-        [baseCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(borrowAmount * borrowScalar)]
-        );
-    } else {
-        [baseCoin] = txb.splitCoins(
-            txb.object(baseCoinId),
-            [txb.pure.u64(borrowAmount * borrowScalar)]
-        );
-    }
+    // let baseCoinReturn;
+    // if (pool.baseCoin.key === CoinKey.SUI) {
+    //     [baseCoinReturn] = txb.splitCoins(
+    //         txb.gas,
+    //         [txb.pure.u64(borrowAmount * borrowScalar)]
+    //     );
+    // } else {
+    //     [baseCoinReturn] = txb.splitCoins(
+    //         baseCoin,
+    //         [txb.pure.u64(borrowAmount * borrowScalar)]
+    //     );
+    // }
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,

@@ -63,7 +63,7 @@ export const placeLimitOrderPTB = async () => {
 export const placeLimitOrderBorrowDeep = async () => {
     const client = await init();
     const txb = new TransactionBlock();
-    const flashLoan = await client.borrowBaseAsset(
+    const [baseCoin, flashLoan] = await client.borrowBaseAsset(
         PoolKey.DEEP_SUI,
         10,
         txb
@@ -74,6 +74,7 @@ export const placeLimitOrderBorrowDeep = async () => {
     await client.returnBaseAsset(
         PoolKey.DEEP_SUI,
         10,
+        baseCoin,
         flashLoan,
         txb
     );
@@ -84,4 +85,4 @@ export const placeLimitOrderBorrowDeep = async () => {
     await client.signTransaction(txb);
 }
 
-// placeLimitOrderBorrowDeep();
+placeLimitOrderBorrowDeep();

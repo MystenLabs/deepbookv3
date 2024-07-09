@@ -239,15 +239,12 @@ export class DeepBookClient {
     returnBaseAsset(
         poolKey: PoolKey,
         borrowAmount: number,
+        baseCoin: any,
         flashLoan: any,
         txb: TransactionBlock,
     ) {
         let pool = this.#config.getPool(poolKey);
-        let baseKey = pool.baseCoin.key;
-        // get the base coin id based on the base asset of pool
-        let baseCoinId = this.#config.getCoin(baseKey).coinId;
-        console.log(`baseCoinId: ${baseCoinId}`);
-        returnBaseAsset(pool, borrowAmount, baseCoinId, flashLoan, txb);
+        returnBaseAsset(pool, borrowAmount, baseCoin, flashLoan, txb);
     }
 
     async signTransaction(txb: TransactionBlock) {
@@ -518,7 +515,7 @@ const testClient = async () => {
     await client.init(mergeCoins);
     client.addBalanceManager("MANAGER_1", "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf");
 
-    await client.depositIntoManager("MANAGER_1", 48000, CoinKey.DEEP);
+    // await client.depositIntoManager("MANAGER_1", 48000, CoinKey.DEEP);
     // await client.withdrawAllFromManager("MANAGER_1", CoinKey.SUI);
     // await client.vaultBalances(PoolKey.DEEP_SUI);
     // await client.createPoolAdmin({
@@ -574,4 +571,4 @@ const testClient = async () => {
     // });
 }
 
-testClient();
+// testClient();
