@@ -24,6 +24,7 @@ export class DeepBookConfig {
         if (!ENV) {
             ENV = "testnet";
         }
+        console.log(ENV);
         if (ENV === "testnet") {
             await this.initCoinsTestnet(suiClient, signer, merge);
             this.initPoolsTestnet();
@@ -129,15 +130,12 @@ export class DeepBookConfig {
     }
 
     async getOwnedCoin(suiClient: SuiClient, signer: Keypair, coinType: string): Promise<string> {
-        console.log(coinType);
-        const owner = signer.getPublicKey().toBase64();
+        const owner = signer.toSuiAddress();
         const res = await suiClient.getCoins({
             owner,
             coinType,
             limit: 1,
         });
-
-        console.log(res);
 
         if (res.data.length > 0) {
             return res.data[0].coinObjectId;

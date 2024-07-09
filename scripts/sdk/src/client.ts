@@ -20,7 +20,8 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
 import { DeepBookConfig, LARGE_TIMESTAMP } from "./utils/config";
-import { BalanceManager, CoinKey, OrderType, PoolKey, SelfMatchingOptions } from "./utils/interfaces";
+import { BalanceManager, CoinKey, OrderType, PoolKey, SelfMatchingOptions, PlaceLimitOrderParams,
+    PlaceMarketOrderParams, ProposalParams, SwapParams, CreatePoolAdminParams, Environment } from "./utils/interfaces";
 
 /// DeepBook Client. If a private key is provided, then all transactions
 /// will be signed with that key. Otherwise, the default key will be used.
@@ -125,18 +126,20 @@ export class DeepBookClient {
     }
 
     /// DeepBook
-    async placeLimitOrder(
-        poolKey: PoolKey,
-        managerKey: string,
-        clientOrderId: number,
-        price: number,
-        quantity: number,
-        isBid: boolean,
-        expiration?: number,
-        orderType?: OrderType,
-        selfMatchingOption?: SelfMatchingOptions,
-        payWithDeep?: boolean,
-    ) {
+    async placeLimitOrder(params: PlaceLimitOrderParams) {
+        var {
+            poolKey,
+            managerKey,
+            clientOrderId,
+            price,
+            quantity,
+            isBid,
+            expiration,
+            orderType,
+            selfMatchingOption,
+            payWithDeep,
+        } = params;
+
         if (expiration === undefined) {
             expiration = LARGE_TIMESTAMP;
         }
@@ -163,15 +166,17 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async placeMarketOrder(
-        poolKey: PoolKey,
-        managerKey: string,
-        clientOrderId: number,
-        quantity: number,
-        isBid: boolean,
-        selfMatchingOption?: SelfMatchingOptions,
-        payWithDeep?: boolean,
-    ) {
+    async placeMarketOrder(params: PlaceMarketOrderParams) {
+        var {
+            poolKey,
+            managerKey,
+            clientOrderId,
+            quantity,
+            isBid,
+            selfMatchingOption,
+            payWithDeep,
+        } = params;
+
         if (selfMatchingOption === undefined) {
             selfMatchingOption = SelfMatchingOptions.SELF_MATCHING_ALLOWED;
         }
@@ -219,12 +224,14 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async swapExactBaseForQuote(
-        poolKey: PoolKey,
-        baseKey: CoinKey,
-        baseAmount: number,
-        deepAmount: number,
-    ) {
+    async swapExactBaseForQuote(params: SwapParams) {
+        const {
+            poolKey,
+            coinKey: baseKey,
+            amount: baseAmount,
+            deepAmount,
+        } = params;
+
         let pool = this.#config.getPool(poolKey);
         let baseCoinId = this.#config.getCoin(baseKey).coinId;
         let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
@@ -237,12 +244,14 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async swapExactQuoteForBase(
-        poolKey: PoolKey,
-        quoteKey: CoinKey,
-        quoteAmount: number,
-        deepAmount: number,
-    ) {
+    async swapExactQuoteForBase(params: SwapParams) {
+        const {
+            poolKey,
+            coinKey: quoteKey,
+            amount: quoteAmount,
+            deepAmount,
+        } = params;
+
         let pool = this.#config.getPool(poolKey);
         let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
         let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
@@ -376,15 +385,17 @@ export class DeepBookClient {
     }
 
     /// DeepBook Admin
-    async createPoolAdmin(
-        baseCoinKey: CoinKey,
-        quoteCoinKey: CoinKey,
-        tickSize: number,
-        lotSize: number,
-        minSize: number,
-        whitelisted: boolean,
-        stablePool: boolean,
-    ) {
+    async createPoolAdmin(params: CreatePoolAdminParams) {
+        const {
+            baseCoinKey,
+            quoteCoinKey,
+            tickSize,
+            lotSize,
+            minSize,
+            whitelisted,
+            stablePool,
+        } = params;
+
         let txb = new TransactionBlock();
         let baseCoin = this.#config.getCoin(baseCoinKey);
         let quoteCoin = this.#config.getCoin(quoteCoinKey);
@@ -439,13 +450,15 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async submitProposal(
-        poolKey: PoolKey,
-        managerKey: string,
-        takerFee: number,
-        makerFee: number,
-        stakeRequired: number,
-    ) {
+    async submitProposal(params: ProposalParams) {
+        const {
+            poolKey,
+            managerKey,
+            takerFee,
+            makerFee,
+            stakeRequired,
+        } = params;
+
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
         const balanceManager = this.getBalanceManager(managerKey);
@@ -484,15 +497,61 @@ export class DeepBookClient {
 }
 
 const testClient = async () => {
-    let client = new DeepBookClient("testnet", process.env.PRIVATE_KEY!);
+    let env = process.env.ENV as Environment;
+    if (!env || !["mainnet", "testnet", "devnet", "localnet"].includes(env)) {
+        throw new Error(`Invalid environment: ${process.env.ENV}`);
+    }
+
+    let client = new DeepBookClient(env, process.env.PRIVATE_KEY!);
     await client.init(false); // true to merge coins of the same type
 
     // await client.depositIntoManager("MANAGER_1", 10, CoinKey.SUI);
     // await client.withdrawAllFromManager("MANAGER_1", CoinKey.SUI);
-    // await client.createPoolAdmin(CoinKey.DBWETH, CoinKey.DBUSDC, 0.001, 0.001, 0.1, false, false);
+    // await client.createPoolAdmin({
+    //     baseCoinKey: CoinKey.DBWETH,
+    //     quoteCoinKey: CoinKey.DBUSDC,
+    //     tickSize: 0.001,
+    //     lotSize: 0.001,
+    //     minSize: 0.01,
+    //     whitelisted: false,
+    //     stablePool: false,
+    // });
     // await client.addDeepPricePoint(PoolKey.DBWETH_DBUSDC, PoolKey.DEEP_DBWETH);
-    // await client.placeLimitOrder(PoolKey.DBWETH_DBUSDC, "MANAGER_1", 888, 2, 1, true);
-    // await client.checkManagerBalance("MANAGER_1", CoinKey.DBUSDC);
+    await client.checkManagerBalance("MANAGER_1", CoinKey.DBUSDC);
+    // await client.placeLimitOrder({
+    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     managerKey: 'MANAGER_1',
+    //     clientOrderId: 888,
+    //     price: 2,
+    //     quantity: 1,
+    //     isBid: true,
+    // })
+    // await client.placeMarketOrder({
+    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     managerKey: 'MANAGER_1',
+    //     clientOrderId: 888,
+    //     quantity: 1,
+    //     isBid: true,
+    // })
+    // await client.submitProposal({
+    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     managerKey: 'MANAGER_1',
+    //     takerFee: 0.003,
+    //     makerFee: 0.002,
+    //     stakeRequired: 1000,
+    // });
+    // await client.swapExactBaseForQuote({
+    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     coinKey: CoinKey.DBWETH,
+    //     amount: 1000,
+    //     deepAmount: 500,
+    // });
+    // await client.swapExactQuoteForBase({
+    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     coinKey: CoinKey.DBUSDC,
+    //     amount: 1000,
+    //     deepAmount: 500,
+    // });
 }
 
 testClient();
