@@ -160,9 +160,8 @@ module deepbook::registry {
     // === Test Functions ===
     #[test_only]
     public fun test_registry(ctx: &mut TxContext): ID {
-        let allowed_versions = vec_set::singleton(constants::current_version());
         let registry_inner = RegistryInner {
-            allowed_versions: allowed_versions,
+            allowed_versions: vec_set::singleton(constants::current_version()),
             pools: bag::new(ctx),
             treasury_address: ctx.sender(),
         };
