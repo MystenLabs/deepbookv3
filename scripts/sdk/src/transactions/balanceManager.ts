@@ -1,13 +1,8 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import {
     DEEPBOOK_PACKAGE_ID
-} from './config';
-import { Coin, CoinKey } from "./config";
-
-export interface BalanceManager {
-    address: string;
-    tradeCap: string | undefined;
-}
+} from '../utils/config';
+import { BalanceManager, Coin, CoinKey } from "../utils/interfaces";
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({

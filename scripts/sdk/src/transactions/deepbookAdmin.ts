@@ -1,8 +1,9 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import {
     DEEPBOOK_PACKAGE_ID, REGISTRY_ID
-} from './config';
-import { Coin, FLOAT_SCALAR, POOL_CREATION_FEE, Pool } from "./config";
+} from '../utils/config';
+import { FLOAT_SCALAR, POOL_CREATION_FEE } from "../utils/config";
+import { Coin, Pool } from "../utils/interfaces";
 
 // =================================================================
 // Transactions

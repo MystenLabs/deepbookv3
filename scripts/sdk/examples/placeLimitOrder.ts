@@ -1,9 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { DeepBookClient } from "../client"
+import { DeepBookClient } from "../src/client"
 import dotenv from 'dotenv';
-import { depositIntoManager } from "../balanceManager";
-import { placeLimitOrder } from "../deepbook";
-import { CoinKey, LARGE_TIMESTAMP, PoolKey } from "../config";
+import { depositIntoManager } from "../src/transactions/balanceManager";
+import { placeLimitOrder } from "../src/transactions/deepbook";
+import { LARGE_TIMESTAMP } from "../src/utils/config";
+import { CoinKey, PoolKey } from "../src/utils/interfaces";
 
 dotenv.config();
 
