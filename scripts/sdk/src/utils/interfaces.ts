@@ -96,4 +96,10 @@ export interface CreatePoolAdminParams {
     stablePool: boolean;
 }
 
+export interface Config {
+    DEEPBOOK_PACKAGE_ID: string;
+    REGISTRY_ID: string;
+    DEEP_TREASURY_ID: string;
+}
+
 export type Environment = "mainnet" | "testnet" | "devnet" | "localnet";

@@ -2,16 +2,39 @@ import { SuiClient } from "@mysten/sui.js/client";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecuteWithClientAndSigner } from "./utils";
 import { Keypair } from "@mysten/sui.js/cryptography";
-import { Coin, CoinKey, Pool, PoolKey } from "./interfaces";
+import { Coin, CoinKey, Pool, PoolKey, Config } from "./interfaces";
 
 export const FLOAT_SCALAR = 1000000000;
 export const POOL_CREATION_FEE = 10000 * 1000000;
 export const MAX_TIMESTAMP = 1844674407370955161;
 export const GAS_BUDGET = 0.5 * 500000000; // Adjust based on benchmarking
 export const DEEP_SCALAR = 1000000;
-export const DEEPBOOK_PACKAGE_ID = `0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778`;
-export const REGISTRY_ID = `0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37`;
-export const DEEP_TREASURY_ID = `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`;
+
+const getConfig = (): Config => {
+    let env = process.env.ENV;
+    if (!env || !["mainnet", "testnet", "devnet", "localnet"].includes(env)) {
+        throw new Error(`Invalid ENV value: ${process.env.ENV}`);
+    }
+
+    switch (env) {
+        case "mainnet":
+            return {
+                DEEPBOOK_PACKAGE_ID: "",
+                REGISTRY_ID: "",
+                DEEP_TREASURY_ID: ""
+            };
+        case "testnet":
+            return {
+                DEEPBOOK_PACKAGE_ID: "0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778",
+                REGISTRY_ID: "0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37",
+                DEEP_TREASURY_ID: "0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb"
+            };
+        default:
+            throw new Error(`Invalid ENV value: ${env}`);
+    }
+};
+
+export const { DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID } = getConfig();
 
 export class DeepBookConfig {
     coins: { [key: string]: Coin } = {};
