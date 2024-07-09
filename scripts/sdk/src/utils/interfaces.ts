@@ -22,6 +22,8 @@ export enum CoinKey {
     "SUI",
     "DBUSDC",
     "DBWETH",
+    "USDC",
+    "WETH"
 }
 
 export enum PoolKey {
@@ -45,3 +47,59 @@ export enum SelfMatchingOptions {
     CANCEL_TAKER,
     CANCEL_MAKER,
 };
+
+export interface PlaceLimitOrderParams {
+    poolKey: PoolKey;
+    managerKey: string;
+    clientOrderId: number;
+    price: number;
+    quantity: number;
+    isBid: boolean;
+    expiration?: number;
+    orderType?: OrderType;
+    selfMatchingOption?: SelfMatchingOptions;
+    payWithDeep?: boolean;
+}
+
+export interface PlaceMarketOrderParams {
+    poolKey: PoolKey;
+    managerKey: string;
+    clientOrderId: number;
+    quantity: number;
+    isBid: boolean;
+    selfMatchingOption?: SelfMatchingOptions;
+    payWithDeep?: boolean;
+}
+
+export interface ProposalParams {
+    poolKey: PoolKey;
+    managerKey: string;
+    takerFee: number;
+    makerFee: number;
+    stakeRequired: number;
+}
+
+export interface SwapParams {
+    poolKey: PoolKey;
+    coinKey: CoinKey;
+    amount: number;
+    deepAmount: number;
+}
+
+export interface CreatePoolAdminParams {
+    baseCoinKey: CoinKey;
+    quoteCoinKey: CoinKey;
+    tickSize: number;
+    lotSize: number;
+    minSize: number;
+    whitelisted: boolean;
+    stablePool: boolean;
+}
+
+export interface Config {
+    DEEPBOOK_PACKAGE_ID: string;
+    REGISTRY_ID: string;
+    DEEP_TREASURY_ID: string;
+}
+
+export type Environment = "mainnet" | "testnet" | "devnet" | "localnet";
