@@ -22,6 +22,8 @@ export enum CoinKey {
     "SUI",
     "DBUSDC",
     "DBWETH",
+    "USDC",
+    "WETH"
 }
 
 export enum PoolKey {

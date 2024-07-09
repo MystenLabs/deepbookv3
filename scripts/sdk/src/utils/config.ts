@@ -20,11 +20,20 @@ export class DeepBookConfig {
     constructor() {}
 
     async init(suiClient: SuiClient, signer: Keypair, merge: boolean) {
-        await this.initCoins(suiClient, signer, merge);
-        this.initPools();
+        let ENV = process.env.ENV;
+        if (!ENV) {
+            ENV = "testnet";
+        }
+        if (ENV === "testnet") {
+            await this.initCoinsTestnet(suiClient, signer, merge);
+            this.initPoolsTestnet();
+        } else if (ENV === "mainnet") {
+            await this.initCoinsMainnet(suiClient, signer, merge);
+            this.initPoolsMainnet();
+        }
     }
 
-    async initCoins(suiClient: SuiClient, signer: Keypair, merge: boolean) {
+    async initCoinsTestnet(suiClient: SuiClient, signer: Keypair, merge: boolean) {
         this.coins[CoinKey.DEEP] = {
             key: CoinKey.DEEP,
             address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
@@ -54,6 +63,69 @@ export class DeepBookConfig {
             coinId: ``
         }
         await this.fetchCoinData(suiClient, signer, merge);
+    }
+
+    async initCoinsMainnet(suiClient: SuiClient, signer: Keypair, merge: boolean) {
+        this.coins[CoinKey.DEEP] = {
+            key: CoinKey.DEEP,
+            address: `0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270`,
+            type: `0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP`,
+            scalar: 1000000,
+            coinId: ``
+        };
+        this.coins[CoinKey.SUI] = {
+            key: CoinKey.SUI,
+            address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
+            type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
+            scalar: 1000000000,
+            coinId: ``
+        };
+        this.coins[CoinKey.USDC] = {
+            key: CoinKey.USDC,
+            address: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf`,
+            type: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN`,
+            scalar: 1000000,
+            coinId: ``
+        };
+        this.coins[CoinKey.WETH] = {
+            key: CoinKey.WETH,
+            address: `0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5`,
+            type: `0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN`,
+            scalar: 100000000,
+            coinId: ``
+        }
+        await this.fetchCoinData(suiClient, signer, merge);
+    }
+
+    initPoolsTestnet() {
+        this.pools[PoolKey.DEEP_SUI] = {
+            address: `0x67800bae6808206915c7f09203a00031ce9ce8550008862dda3083191e3954ca`,
+            baseCoin: this.coins[CoinKey.DEEP],
+            quoteCoin: this.coins[CoinKey.SUI],
+        };
+        this.pools[PoolKey.SUI_DBUSDC] = {
+            address: `0x9442afa775e90112448f26a8d58ca76f66cf46e4b77e74d6d85cea30bedc289c`,
+            baseCoin: this.coins[CoinKey.SUI],
+            quoteCoin: this.coins[CoinKey.DBUSDC],
+        };
+        this.pools[PoolKey.DEEP_DBWETH] = {
+            address: `0xe8d0f3525518aaaae64f3832a24606a9eadde8572d058c45626a4ab2cbfae1eb`,
+            baseCoin: this.coins[CoinKey.DEEP],
+            quoteCoin: this.coins[CoinKey.DBWETH],
+        };
+        this.pools[PoolKey.DBWETH_DBUSDC] = {
+            address: `0x31d41c00e99672b9f7896950fe24e4993f88fb30a8e05dcd75a24cefe7b7d2d1`,
+            baseCoin: this.coins[CoinKey.DBWETH],
+            quoteCoin: this.coins[CoinKey.DBUSDC],
+        }
+    }
+
+    initPoolsMainnet() {
+        this.pools[PoolKey.DEEP_SUI] = {
+            address: ``,
+            baseCoin: this.coins[CoinKey.DEEP],
+            quoteCoin: this.coins[CoinKey.SUI],
+        };
     }
 
     async getOwnedCoin(suiClient: SuiClient, signer: Keypair, coinType: string): Promise<string> {
@@ -182,29 +254,6 @@ export class DeepBookConfig {
         console.dir(res, { depth: null });
 
         return true;
-    }
-
-    initPools() {
-        this.pools[PoolKey.DEEP_SUI] = {
-            address: `0x67800bae6808206915c7f09203a00031ce9ce8550008862dda3083191e3954ca`,
-            baseCoin: this.coins[CoinKey.DEEP],
-            quoteCoin: this.coins[CoinKey.SUI],
-        };
-        this.pools[PoolKey.SUI_DBUSDC] = {
-            address: `0x9442afa775e90112448f26a8d58ca76f66cf46e4b77e74d6d85cea30bedc289c`,
-            baseCoin: this.coins[CoinKey.SUI],
-            quoteCoin: this.coins[CoinKey.DBUSDC],
-        };
-        this.pools[PoolKey.DEEP_DBWETH] = {
-            address: `0xe8d0f3525518aaaae64f3832a24606a9eadde8572d058c45626a4ab2cbfae1eb`,
-            baseCoin: this.coins[CoinKey.DEEP],
-            quoteCoin: this.coins[CoinKey.DBWETH],
-        };
-        this.pools[PoolKey.DBWETH_DBUSDC] = {
-            address: `0x31d41c00e99672b9f7896950fe24e4993f88fb30a8e05dcd75a24cefe7b7d2d1`,
-            baseCoin: this.coins[CoinKey.DBWETH],
-            quoteCoin: this.coins[CoinKey.DBUSDC],
-        }
     }
 
     // Getters
