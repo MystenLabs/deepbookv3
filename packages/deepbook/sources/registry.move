@@ -67,20 +67,20 @@ module deepbook::registry {
         self.treasury_address = treasury_address;
     }
 
-    /// Disables a package version
-    /// Only Admin can disable a package version
+    /// Enables a package version
+    /// Only Admin can enable a package version
     public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
         let self = self.load_inner_mut();
         assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
         self.allowed_versions.insert(version);
     }
 
-    /// Enables a package version
-    /// Only Admin can enable a package version
+    /// Disables a package version
+    /// Only Admin can disable a package version
     public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
         let self = self.load_inner_mut();
-        assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
         assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
+        assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
         self.allowed_versions.remove(&version);
     }
 

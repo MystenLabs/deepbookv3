@@ -567,8 +567,8 @@ module deepbook::pool {
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
-    /// Takes the registry and updates the disabled version within pool
-    /// Only admin can update the disabled versions
+    /// Takes the registry and updates the allowed version within pool
+    /// Only admin can update the allowed versions
     public fun update_allowed_versions<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &Registry,
