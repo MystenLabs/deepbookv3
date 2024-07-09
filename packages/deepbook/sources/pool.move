@@ -49,7 +49,7 @@ module deepbook::pool {
     }
 
     public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
-        disabled_versions: VecSet<u64>,
+        allowed_versions: VecSet<u64>,
         pool_id: ID,
         book: Book,
         state: State,
@@ -569,14 +569,14 @@ module deepbook::pool {
 
     /// Takes the registry and updates the disabled version within pool
     /// Only admin can update the disabled versions
-    public fun update_disabled_versions<BaseAsset, QuoteAsset>(
+    public fun update_allowed_versions<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &Registry,
         _cap: &DeepbookAdminCap,
     ) {
-        let disabled_versions = registry.get_disabled_versions();
+        let allowed_versions = registry.get_allowed_versions();
         let inner = self.load_inner_mut();
-        inner.disabled_versions = disabled_versions;
+        inner.allowed_versions = allowed_versions;
     }
 
     // === Public-View Functions ===
@@ -725,7 +725,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            disabled_versions: vec_set::empty(),
+            allowed_versions: vec_set::empty(),
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(stable_pool, ctx),
@@ -779,7 +779,7 @@ module deepbook::pool {
     ): &PoolInner<BaseAsset, QuoteAsset> {
         let inner: &PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
     }
@@ -789,7 +789,7 @@ module deepbook::pool {
     ): &mut PoolInner<BaseAsset, QuoteAsset> {
         let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
     }
