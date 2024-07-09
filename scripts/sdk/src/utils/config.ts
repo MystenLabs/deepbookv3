@@ -30,7 +30,7 @@ const getConfig = (): Config => {
                 DEEP_TREASURY_ID: "0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb"
             };
         default:
-            throw new Error(`Invalid ENV value: ${env}`);
+            throw new Error(`Invalid environment: ${env}`);
     }
 };
 
