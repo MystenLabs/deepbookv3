@@ -2,13 +2,8 @@ import { SuiClient } from "@mysten/sui.js/client";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecuteWithClientAndSigner } from "./utils";
 import { Keypair } from "@mysten/sui.js/cryptography";
-import { Coin, CoinKey, Pool, PoolKey, Config } from "./interfaces";
-
-export const FLOAT_SCALAR = 1000000000;
-export const POOL_CREATION_FEE = 10000 * 1000000;
-export const MAX_TIMESTAMP = 1844674407370955161;
-export const GAS_BUDGET = 0.5 * 500000000; // Adjust based on benchmarking
-export const DEEP_SCALAR = 1000000;
+import { Coin, Pool, Config } from "./interfaces";
+import { DBUSDC_ID_TESTNET, DBUSDC_KEY, DBUSDC_SCALAR_TESTNET, DBUSDC_TYPE_TESTNET, DBWETH_DBUSDC_ID_TESTNET, DBWETH_DBUSDC_KEY, DBWETH_ID_TESTNET, DBWETH_KEY, DBWETH_SCALAR_TESTNET, DBWETH_TYPE_TESTNET, DEEPBOOK_PACKAGE_ID_MAINNET, DEEPBOOK_PACKAGE_ID_TESTNET, DEEP_DBWETH_ID_TESTNET, DEEP_DBWETH_KEY, DEEP_ID_MAINNET, DEEP_ID_TESTNET, DEEP_KEY, DEEP_SCALAR_MAINNET, DEEP_SCALAR_TESTNET, DEEP_SUI_ID_TESTNET, DEEP_SUI_KEY, DEEP_TREASURY_ID_MAINNET, DEEP_TREASURY_ID_TESTNET, DEEP_TYPE_MAINNET, DEEP_TYPE_TESTNET, REGISTRY_ID_MAINNET, REGISTRY_ID_TESTNET, SUI_DBUSDC_ID_TESTNET, SUI_DBUSDC_KEY, SUI_ID_MAINNET, SUI_ID_TESTNET, SUI_KEY, SUI_SCALAR_MAINNET, SUI_SCALAR_TESTNET, SUI_TYPE_MAINNET, SUI_TYPE_TESTNET, USDC_ID_MAINNET, USDC_KEY, USDC_SCALAR_MAINNET, USDC_TYPE_MAINNET, WETH_ID_MAINNET, WETH_KEY, WETH_SCALAR_MAINNET, WETH_TYPE_MAINNET } from "./constants";
 
 const getConfig = (): Config => {
     let env = process.env.ENV;
@@ -19,15 +14,15 @@ const getConfig = (): Config => {
     switch (env) {
         case "mainnet":
             return {
-                DEEPBOOK_PACKAGE_ID: "",
-                REGISTRY_ID: "",
-                DEEP_TREASURY_ID: ""
+                DEEPBOOK_PACKAGE_ID: DEEPBOOK_PACKAGE_ID_MAINNET,
+                REGISTRY_ID: REGISTRY_ID_MAINNET,
+                DEEP_TREASURY_ID: DEEP_TREASURY_ID_MAINNET
             };
         case "testnet":
             return {
-                DEEPBOOK_PACKAGE_ID: "0xdc1b11f060e96cb30092991d361aff6d78a7c3e9df946df5850a26f9a96b8778",
-                REGISTRY_ID: "0x57fea19ce09abf8879327507fa850753f7c6bd468a74971146c38e92aaa39e37",
-                DEEP_TREASURY_ID: "0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb"
+                DEEPBOOK_PACKAGE_ID: DEEPBOOK_PACKAGE_ID_TESTNET,
+                REGISTRY_ID: REGISTRY_ID_TESTNET,
+                DEEP_TREASURY_ID: DEEP_TREASURY_ID_TESTNET,
             };
         default:
             throw new Error(`Invalid environment: ${env}`);
@@ -57,97 +52,97 @@ export class DeepBookConfig {
     }
 
     async initCoinsTestnet(suiClient: SuiClient, signer: Keypair, merge: boolean) {
-        this.coins[CoinKey.DEEP] = {
-            key: CoinKey.DEEP,
-            address: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8`,
-            type: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`,
-            scalar: 1000000,
+        this.coins[DEEP_KEY] = {
+            key: DEEP_KEY,
+            address: DEEP_ID_TESTNET,
+            type: DEEP_TYPE_TESTNET,
+            scalar: DEEP_SCALAR_TESTNET,
             coinId: ``
         };
-        this.coins[CoinKey.SUI] = {
-            key: CoinKey.SUI,
-            address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
-            type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
-            scalar: 1000000000,
+        this.coins[SUI_KEY] = {
+            key: SUI_KEY,
+            address: SUI_ID_TESTNET,
+            type: SUI_TYPE_TESTNET,
+            scalar: SUI_SCALAR_TESTNET,
             coinId: ``
         };
-        this.coins[CoinKey.DBUSDC] = {
-            key: CoinKey.DBUSDC,
-            address: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f`,
-            type: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f::DBUSDC::DBUSDC`,
-            scalar: 1000000,
+        this.coins[DBUSDC_KEY] = {
+            key: DBUSDC_KEY,
+            address: DBUSDC_ID_TESTNET,
+            type: DBUSDC_TYPE_TESTNET,
+            scalar: DBUSDC_SCALAR_TESTNET,
             coinId: ``
         };
-        this.coins[CoinKey.DBWETH] = {
-            key: CoinKey.DBWETH,
-            address: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f`,
-            type: `0xd5aa5b65d97ed7fc0c2b063689805353d56f64f7e8407ac3b95b7e6fdea2256f::DBWETH::DBWETH`,
-            scalar: 100000000,
+        this.coins[DBWETH_KEY] = {
+            key: DBWETH_KEY,
+            address: DBWETH_ID_TESTNET,
+            type: DBWETH_TYPE_TESTNET,
+            scalar: DBWETH_SCALAR_TESTNET,
             coinId: ``
         }
         await this.fetchCoinData(suiClient, signer, merge);
     }
 
     async initCoinsMainnet(suiClient: SuiClient, signer: Keypair, merge: boolean) {
-        this.coins[CoinKey.DEEP] = {
-            key: CoinKey.DEEP,
-            address: `0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270`,
-            type: `0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP`,
-            scalar: 1000000,
+        this.coins[DEEP_KEY] = {
+            key: DEEP_KEY,
+            address: DEEP_ID_MAINNET,
+            type: DEEP_TYPE_MAINNET,
+            scalar: DEEP_SCALAR_MAINNET,
             coinId: ``
         };
-        this.coins[CoinKey.SUI] = {
-            key: CoinKey.SUI,
-            address: `0x0000000000000000000000000000000000000000000000000000000000000002`,
-            type: `0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI`,
-            scalar: 1000000000,
+        this.coins[SUI_KEY] = {
+            key: SUI_KEY,
+            address: SUI_ID_MAINNET,
+            type: SUI_TYPE_MAINNET,
+            scalar: SUI_SCALAR_MAINNET,
             coinId: ``
         };
-        this.coins[CoinKey.USDC] = {
-            key: CoinKey.USDC,
-            address: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf`,
-            type: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN`,
-            scalar: 1000000,
+        this.coins[USDC_KEY] = {
+            key: USDC_KEY,
+            address: USDC_ID_MAINNET,
+            type: USDC_TYPE_MAINNET,
+            scalar: USDC_SCALAR_MAINNET,
             coinId: ``
         };
-        this.coins[CoinKey.WETH] = {
-            key: CoinKey.WETH,
-            address: `0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5`,
-            type: `0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN`,
-            scalar: 100000000,
+        this.coins[WETH_KEY] = {
+            key: WETH_KEY,
+            address: WETH_ID_MAINNET,
+            type: WETH_TYPE_MAINNET,
+            scalar: WETH_SCALAR_MAINNET,
             coinId: ``
         }
         await this.fetchCoinData(suiClient, signer, merge);
     }
 
     initPoolsTestnet() {
-        this.pools[PoolKey.DEEP_SUI] = {
-            address: `0x67800bae6808206915c7f09203a00031ce9ce8550008862dda3083191e3954ca`,
-            baseCoin: this.coins[CoinKey.DEEP],
-            quoteCoin: this.coins[CoinKey.SUI],
+        this.pools[DEEP_SUI_KEY] = {
+            address: DEEP_SUI_ID_TESTNET,
+            baseCoin: this.coins[DEEP_KEY],
+            quoteCoin: this.coins[SUI_KEY],
         };
-        this.pools[PoolKey.SUI_DBUSDC] = {
-            address: `0x9442afa775e90112448f26a8d58ca76f66cf46e4b77e74d6d85cea30bedc289c`,
-            baseCoin: this.coins[CoinKey.SUI],
-            quoteCoin: this.coins[CoinKey.DBUSDC],
+        this.pools[SUI_DBUSDC_KEY] = {
+            address: SUI_DBUSDC_ID_TESTNET,
+            baseCoin: this.coins[SUI_KEY],
+            quoteCoin: this.coins[DBUSDC_KEY],
         };
-        this.pools[PoolKey.DEEP_DBWETH] = {
-            address: `0xe8d0f3525518aaaae64f3832a24606a9eadde8572d058c45626a4ab2cbfae1eb`,
-            baseCoin: this.coins[CoinKey.DEEP],
-            quoteCoin: this.coins[CoinKey.DBWETH],
+        this.pools[DEEP_DBWETH_KEY] = {
+            address: DEEP_DBWETH_ID_TESTNET,
+            baseCoin: this.coins[DEEP_KEY],
+            quoteCoin: this.coins[DBWETH_KEY],
         };
-        this.pools[PoolKey.DBWETH_DBUSDC] = {
-            address: `0x31d41c00e99672b9f7896950fe24e4993f88fb30a8e05dcd75a24cefe7b7d2d1`,
-            baseCoin: this.coins[CoinKey.DBWETH],
-            quoteCoin: this.coins[CoinKey.DBUSDC],
+        this.pools[DBWETH_DBUSDC_KEY] = {
+            address: DBWETH_DBUSDC_ID_TESTNET,
+            baseCoin: this.coins[DBWETH_KEY],
+            quoteCoin: this.coins[DBUSDC_KEY],
         }
     }
 
     initPoolsMainnet() {
-        this.pools[PoolKey.DEEP_SUI] = {
+        this.pools[DEEP_SUI_KEY] = {
             address: ``,
-            baseCoin: this.coins[CoinKey.DEEP],
-            quoteCoin: this.coins[CoinKey.SUI],
+            baseCoin: this.coins[DEEP_KEY],
+            quoteCoin: this.coins[SUI_KEY],
         };
     }
 
@@ -169,7 +164,7 @@ export class DeepBookConfig {
     async fetchCoinData(suiClient: SuiClient, signer: Keypair, merge: boolean) {
         // if merge is true and signer provided, merge all whitelisted coins into one object.
         if (merge) {
-            let gasCoinId = await this.getOwnedCoin(suiClient, signer, this.coins[CoinKey.SUI].type);
+            let gasCoinId = await this.getOwnedCoin(suiClient, signer, this.coins[SUI_KEY].type);
             if (gasCoinId === '') {
                 throw new Error("Failed to find gas object. Cannot merge coins.");
             }
@@ -277,7 +272,7 @@ export class DeepBookConfig {
     }
 
     // Getters
-    getCoin(key: CoinKey): Coin {
+    getCoin(key: string): Coin {
         const coin = this.coins[key];
         if (!coin) {
             throw new Error(`Coin not found for key: ${key}`);
@@ -286,7 +281,7 @@ export class DeepBookConfig {
         return coin;
     }
 
-    getPool(key: PoolKey): Pool {
+    getPool(key: string): Pool {
         const pool = this.pools[key];
         if (!pool) {
             throw new Error(`Pool not found for key: ${key}`);
