@@ -6,8 +6,9 @@ import {
     DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, 
 } from '../utils/config';
 import { generateProof } from "./balanceManager";
-import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/config";
-import { BalanceManager, CoinKey, Pool } from "../utils/interfaces";
+import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/constants";
+import { BalanceManager, Pool } from "../utils/interfaces";
+import { SUI_KEY } from "../utils/constants";
 
 let env = process.env.ENVIRONMENT;
 if (!env) {
@@ -517,7 +518,7 @@ export const swapExactBaseForQuote = (
     const baseScalar = pool.baseCoin.scalar;
 
     let baseCoin;
-    if (pool.baseCoin.key === CoinKey.SUI) {
+    if (pool.baseCoin.key === SUI_KEY) {
         [baseCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(baseAmount * baseScalar)]
@@ -559,7 +560,7 @@ export const swapExactQuoteForBase = (
     const quoteScalar = pool.quoteCoin.scalar;
 
     let quoteCoin;
-    if (pool.quoteCoin.key === CoinKey.SUI) {
+    if (pool.quoteCoin.key === SUI_KEY) {
         [quoteCoin] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(quoteAmount * quoteScalar)]
