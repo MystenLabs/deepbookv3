@@ -1,11 +1,10 @@
 import { TransactionBlock } from "@mysten/sui.js/transactions";
-import { Pool, CoinKey } from "../utils/interfaces";
+import { Pool } from "../utils/interfaces";
 import { DEEPBOOK_PACKAGE_ID } from "../utils/config";
 
 export const borrowBaseAsset =  (
     pool: Pool,
     borrowAmount: number,
-    recepient: string,
     txb: TransactionBlock,
 ) => {
     const baseScalar = pool.baseCoin.scalar;
@@ -37,35 +36,7 @@ export const returnBaseAsset = (
     });
 }
 
-export const borrowAndReturnBaseAsset = (
-    pool: Pool,
-    borrowAmount: number,
-    txb: TransactionBlock,
-) => {
-    const baseScalar = pool.baseCoin.scalar;
-    const [baseCoin, flashLoan] = txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::borrow_flashloan_base`,
-        arguments: [
-            txb.object(pool.address),
-            txb.pure.u64(borrowAmount * baseScalar),
-        ],
-        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
-    });
-
-    // Execute other move calls as necessary
-
-    txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_base`,
-        arguments: [
-            txb.object(pool.address),
-            baseCoin,
-            flashLoan,
-        ],
-        typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
-    });
-}
-
-export const borrowAndReturnQuoteAsset = (
+export const borrowQuoteAsset = (
     pool: Pool,
     borrowAmount: number,
     txb: TransactionBlock,
@@ -79,9 +50,15 @@ export const borrowAndReturnQuoteAsset = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
+    return [quoteCoin, flashLoan];
+}
 
-    // Execute other move calls as necessary
-
+export const returnQuoteAsset = (
+    pool: Pool,
+    quoteCoin: any,
+    flashLoan: any,
+    txb: TransactionBlock,
+) => {
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::return_flashloan_quote`,
         arguments: [

@@ -19,10 +19,11 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
     swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whitelisted } from "./transactions/deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
+import { borrowBaseAsset, returnBaseAsset } from "./transactions/flashLoans";
 import { DeepBookConfig } from "./utils/config";
 import { BalanceManager, OrderType, SelfMatchingOptions, PlaceLimitOrderParams,
     PlaceMarketOrderParams, ProposalParams, SwapParams, CreatePoolAdminParams, Environment } from "./utils/interfaces";
-import { DEEP_KEY, MAX_TIMESTAMP } from "./utils/constants";
+import { DEEP_KEY, MAX_TIMESTAMP, DEEP_SCALAR } from "./utils/constants";
 
 /// DeepBook Client. If a private key is provided, then all transactions
 /// will be signed with that key. Otherwise, the default key will be used.
@@ -206,18 +207,17 @@ export class DeepBookClient {
     }
 
     borrowBaseAsset(
-        poolKey: PoolKey,
+        poolKey: string,
         borrowAmount: number,
         txb: TransactionBlock,
     ) {
         let pool = this.#config.getPool(poolKey);
-        let receipient = this.getActiveAddress();
 
-        return borrowBaseAsset(pool, borrowAmount, receipient, txb);
+        return borrowBaseAsset(pool, borrowAmount, txb);
     }
 
     returnBaseAsset(
-        poolKey: PoolKey,
+        poolKey: string,
         borrowAmount: number,
         baseCoin: any,
         flashLoan: any,
@@ -239,7 +239,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
+    async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
             coinKey: baseKey,
@@ -250,11 +250,11 @@ async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
 
         let pool = this.#config.getPool(poolKey);
         let baseCoinId = this.#config.getCoin(baseKey).coinId;
-        let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
+        let deepCoinId = this.#config.getCoin("DEEP").coinId;
         const baseScalar = pool.baseCoin.scalar;
 
         let baseCoin;
-        if (pool.baseCoin.key === CoinKey.SUI) {
+        if (pool.baseCoin.key === "SUI") {
             [baseCoin] = txb.splitCoins(
                 txb.gas,
                 [txb.pure.u64(baseAmount * baseScalar)]
@@ -287,11 +287,11 @@ async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
 
         let pool = this.#config.getPool(poolKey);
         let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
-        let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId
+        let deepCoinId = this.#config.getCoin("DEEP").coinId
         const quoteScalar = pool.quoteCoin.scalar;
 
         let quoteCoin;
-        if (pool.quoteCoin.key === CoinKey.SUI) {
+        if (pool.quoteCoin.key === "SUI") {
             [quoteCoin] = txb.splitCoins(
                 txb.gas,
                 [txb.pure.u64(quoteAmount * quoteScalar)]
@@ -552,36 +552,28 @@ const testClient = async () => {
     }
 
     let client = new DeepBookClient(env, process.env.PRIVATE_KEY!);
-    let mergeCoins = true;
+    let mergeCoins = false;
     await client.init(mergeCoins);
     client.addBalanceManager("MANAGER_1", "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf");
 
-    // await client.cancelAllOrders(PoolKey.DEEP_SUI, "MANAGER_1");
-    // await client.unregisterPoolAdmin(PoolKey.SUI_DBUSDC);
-    // await client.depositIntoManager("MANAGER_1", 1000, CoinKey.DEEP);
-    // await client.withdrawAllFromManager("MANAGER_1", CoinKey.DEEP);
-    // await client.vaultBalances(PoolKey.DEEP_SUI);
+    // await client.cancelAllOrders("DEEP_SUI", "MANAGER_1");
+    // await client.unregisterPoolAdmin("SUI_DBUSDC");
+    // await client.depositIntoManager("MANAGER_1", 1000, "DEEP");
+    // await client.withdrawAllFromManager("MANAGER_1", "DEEP");
+    // await client.vaultBalances("DEEP_SUI");
     // await client.createPoolAdmin({
-    //     baseCoinKey: CoinKey.SUI,
-    //     quoteCoinKey: CoinKey.DBUSDC,
+    //     baseCoinKey: "SUI",
+    //     quoteCoinKey: "DBUSDC",
     //     tickSize: 0.001,
     //     lotSize: 0.001,
     //     minSize: 0.01,
     //     whitelisted: false,
     //     stablePool: false,
     // });
-    // await client.addDeepPricePoint(PoolKey.SUI_DBUSDC, PoolKey.DEEP_SUI);
-    // await client.checkManagerBalance("MANAGER_1", CoinKey.DEEP);
+    // await client.addDeepPricePoint("SUI_DBUSDC", "DEEP_SUI");
+    // await client.checkManagerBalance("MANAGER_1", "DEEP");
     // await client.placeLimitOrder({
-    //     poolKey: PoolKey.SUI_DBUSDC,
-    //     managerKey: 'MANAGER_1',
-    //     clientOrderId: 888,
-    //     price: 3,
-    //     quantity: 50,
-    //     isBid: false,
-    // })
-    // await client.placeLimitOrder({
-    //     poolKey: PoolKey.DEEP_SUI,
+    //     poolKey: "DEEP_SUI",
     //     managerKey: 'MANAGER_1',
     //     clientOrderId: 888,
     //     price: 3,
@@ -589,46 +581,34 @@ const testClient = async () => {
     //     isBid: false,
     // })
     // await client.placeMarketOrder({
-    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     poolKey: "DBWETH_DBUSDC",
     //     managerKey: 'MANAGER_1',
     //     clientOrderId: 888,
     //     quantity: 1,
     //     isBid: true,
     // })
     // await client.submitProposal({
-    //     poolKey: PoolKey.DBWETH_DBUSDC,
+    //     poolKey: "DBWETH_DBUSDC",
     //     managerKey: 'MANAGER_1',
     //     takerFee: 0.003,
     //     makerFee: 0.002,
     //     stakeRequired: 1000,
     // });
-    // await client.swapExactBaseForQuote({
-    //     poolKey: PoolKey.DBWETH_DBUSDC,
-    //     coinKey: CoinKey.DBWETH,
-    //     amount: 1000,
-    //     deepAmount: 500,
-    // });
     // const txb = new TransactionBlock();
-    // // const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
-    // //     poolKey: PoolKey.DEEP_SUI,
-    // //     coinKey: CoinKey.SUI,
-    // //     amount: 1,
-    // //     deepAmount: 0,
-    // // }, txb);
     // const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
-    //     poolKey: PoolKey.SUI_DBUSDC,
-    //     coinKey: CoinKey.DBUSDC,
+    //     poolKey: "SUI_DBUSDC",
+    //     coinKey: "DBUSDC",
     //     amount: 1,
     //     deepAmount: 10,
     // }, txb);
     // txb.transferObjects([baseOut, quoteOut, deepOut], client.getActiveAddress());
     // await client.signTransaction(txb);
     // await client.swapExactBaseForQuote({
-    //     poolKey: PoolKey.DBWETH_DBUSDC,
-    //     coinKey: CoinKey.DBWETH,
+    //     poolKey: "DBWETH_DBUSDC",
+    //     coinKey: "DBWETH",
     //     amount: 1000,
     //     deepAmount: 500,
-    // });
+    // }, txb);
 }
 
 // testClient();
