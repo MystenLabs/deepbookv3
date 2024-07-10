@@ -183,7 +183,7 @@ export class DeepBookClient {
         cancelAllOrders(pool, balanceManager, txb);
     }
 
-    borrowBaseAsset(
+    async borrowBaseAsset(
         poolKey: string,
         borrowAmount: number,
         txb: TransactionBlock,
@@ -193,7 +193,7 @@ export class DeepBookClient {
         return borrowBaseAsset(pool, borrowAmount, txb);
     }
 
-    returnBaseAsset(
+    async returnBaseAsset(
         poolKey: string,
         borrowAmount: number,
         baseCoin: any,

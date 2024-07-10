@@ -39,6 +39,9 @@ export const placeLimitOrderClient = async () => {
         price: 2,
         quantity: 1,
         isBid: true,
+        // orderType is default: no restriction
+        // selfMatchingOption is default: allow self matching
+        // payWithDeep is default: true
     }, txb);
 }
 
