@@ -399,22 +399,32 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_swap_exact_not_fully_filled_bid_ok(){
-        test_swap_exact_not_fully_filled(true, false);
+        test_swap_exact_not_fully_filled(true, false, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_ask_ok(){
-        test_swap_exact_not_fully_filled(false, false);
+        test_swap_exact_not_fully_filled(false, false, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_bid_low_qty_ok(){
-        test_swap_exact_not_fully_filled(true, true);
+        test_swap_exact_not_fully_filled(true, true, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_ask_low_qty_ok(){
-        test_swap_exact_not_fully_filled(false, true);
+        test_swap_exact_not_fully_filled(false, true, false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
+    fun test_swap_exact_not_fully_filled_bid_min_e(){
+        test_swap_exact_not_fully_filled(true, false, true);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
+    fun test_swap_exact_not_fully_filled_ask_min_e(){
+        test_swap_exact_not_fully_filled(false, false, true);
     }
 
     #[test]
@@ -1265,6 +1275,7 @@ module deepbook::pool_tests {
     fun test_swap_exact_not_fully_filled(
         is_bid: bool,
         low_quantity: bool,
+        minimum_enforced: bool,
     ) {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -1356,6 +1367,11 @@ module deepbook::pool_tests {
                 &mut test,
             )
         };
+        let min_out = if (minimum_enforced) {
+            10 * constants::float_scaling()
+        } else {
+            0
+        };
 
         let (base_out, quote_out, deep_out) =
             if (is_bid) {
@@ -1364,6 +1380,7 @@ module deepbook::pool_tests {
                     BOB,
                     base_in,
                     deep_in,
+                    min_out,
                     &mut test,
                 )
             } else {
@@ -1372,6 +1389,7 @@ module deepbook::pool_tests {
                     BOB,
                     quote_in,
                     deep_in,
+                    min_out,
                     &mut test,
                 )
             };
@@ -2152,6 +2170,7 @@ module deepbook::pool_tests {
                     BOB,
                     base_in,
                     deep_in,
+                    0,
                     &mut test,
                 )
             } else {
@@ -2160,6 +2179,7 @@ module deepbook::pool_tests {
                     BOB,
                     quote_in,
                     deep_in,
+                    0,
                     &mut test,
                 )
             };
@@ -2974,6 +2994,7 @@ module deepbook::pool_tests {
         trader: address,
         base_in: u64,
         deep_in: u64,
+        min_quote_out: u64,
         test: &mut Scenario,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         test.next_tx(trader);
@@ -2986,7 +3007,7 @@ module deepbook::pool_tests {
                 pool.swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
                     mint_for_testing<BaseAsset>(base_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
-                    0,
+                    min_quote_out,
                     &clock,
                     test.ctx()
                 );
@@ -3002,6 +3023,7 @@ module deepbook::pool_tests {
         trader: address,
         quote_in: u64,
         deep_in: u64,
+        min_base_out: u64,
         test: &mut Scenario,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         test.next_tx(trader);
@@ -3014,7 +3036,7 @@ module deepbook::pool_tests {
                 pool.swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
                     mint_for_testing<QuoteAsset>(quote_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
-                    0,
+                    min_base_out,
                     &clock,
                     test.ctx()
                 );

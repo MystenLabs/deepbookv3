@@ -207,7 +207,6 @@ module deepbook::pool {
         };
         base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
         if (base_quantity < self.load_inner().book.min_size()) {
-            std::debug::print(&888);
             return (base_in, quote_in, deep_in)
         };
 
