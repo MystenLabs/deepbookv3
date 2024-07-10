@@ -205,7 +205,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async swapExactBaseForQuote(params: SwapParams) {
+    async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
             coinKey: baseKey,
@@ -217,12 +217,7 @@ export class DeepBookClient {
         let pool = this.#config.getPool(poolKey);
         let baseCoinId = this.#config.getCoin(baseKey).coinId;
 
-        let txb = new TransactionBlock();
-        const recipient = this.getActiveAddress();
-        swapExactBaseForQuote(pool, baseAmount, baseCoinId, deepAmount, deepCoinId, recipient, txb);
-
-        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
-        console.dir(res, { depth: null });
+        return swapExactBaseForQuote(pool, baseAmount, baseCoinId, deepAmount, deepCoinId, txb);
     }
 
     borrowBaseAsset(
@@ -246,8 +241,7 @@ export class DeepBookClient {
         let pool = this.#config.getPool(poolKey);
         const borrowScalar = pool.baseCoin.scalar;
 
-        let baseCoinReturn;
-        [baseCoinReturn] = txb.splitCoins(
+        const [baseCoinReturn] = txb.splitCoins(
             baseCoin,
             [txb.pure.u64(borrowAmount * borrowScalar)]
         );
@@ -260,24 +254,19 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async swapExactQuoteForBase(params: SwapParams) {
+    async swapExactQuoteForBase(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
             coinKey: quoteKey,
             amount: quoteAmount,
             deepAmount,
+            deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId,
         } = params;
 
         let pool = this.#config.getPool(poolKey);
         let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
-        let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
 
-        let txb = new TransactionBlock();
-        const recipient = this.getActiveAddress();
-        swapExactQuoteForBase(pool, quoteAmount, quoteCoinId, deepAmount, deepCoinId, recipient, txb);
-
-        let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
-        console.dir(res, { depth: null });
+        return swapExactQuoteForBase(pool, quoteAmount, quoteCoinId, deepAmount, deepCoinId, txb);
     }
 
     async addDeepPricePoint(

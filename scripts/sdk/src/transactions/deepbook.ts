@@ -3,7 +3,7 @@ import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, 
+    DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID,
 } from '../utils/config';
 import { generateProof } from "./balanceManager";
 import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/config";
@@ -511,7 +511,6 @@ export const swapExactBaseForQuote = (
     baseCoinId: string,
     deepAmount: number,
     deepCoinId: string,
-    recepient: string,
     txb: TransactionBlock
 ) => {
     const baseScalar = pool.baseCoin.scalar;
@@ -542,9 +541,7 @@ export const swapExactBaseForQuote = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], recepient);
-    txb.transferObjects([quoteOut], recepient);
-    txb.transferObjects([deepOut], recepient);
+    return [baseOut, quoteOut, deepOut];
 }
 
 export const swapExactQuoteForBase = (
@@ -553,7 +550,6 @@ export const swapExactQuoteForBase = (
     quoteCoinId: string,
     deepAmount: number,
     deepCoinId: string,
-    recepient: string,
     txb: TransactionBlock
 ) => {
     const quoteScalar = pool.quoteCoin.scalar;
@@ -584,7 +580,5 @@ export const swapExactQuoteForBase = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], recepient);
-    txb.transferObjects([quoteOut], recepient);
-    txb.transferObjects([deepOut], recepient);
+    return [baseOut, quoteOut, deepOut];
 }

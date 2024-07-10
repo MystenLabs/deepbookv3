@@ -63,10 +63,21 @@ export const placeLimitOrderPTB = async () => {
 export const placeLimitOrderBorrowDeep = async () => {
     const client = await init();
     const txb = new TransactionBlock();
-    const [baseCoin, flashLoan] = await client.borrowBaseAsset(
+    const [deepCoin, flashLoan] = await client.borrowBaseAsset(
         PoolKey.DEEP_SUI,
         10,
         txb
+    );
+
+    coinKey: quoteKey,
+    amount: quoteAmount,
+    deepAmount,
+
+    await client.swapExactQuoteForBase(
+        PoolKey.SUI_DBUSDC,
+        CoinKey.DBUSDC,
+        5,
+        1,
     );
     // Get the correct coin IDs
     await client.init(false);
@@ -85,4 +96,4 @@ export const placeLimitOrderBorrowDeep = async () => {
     await client.signTransaction(txb);
 }
 
-placeLimitOrderBorrowDeep();
+// placeLimitOrderBorrowDeep();
