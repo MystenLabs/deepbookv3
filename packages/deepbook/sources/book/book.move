@@ -53,7 +53,7 @@ module deepbook::book {
     }
 
     public(package) fun min_size(self: &Book): u64 {
-        self.lot_size
+        self.min_size
     }
 
     public(package) fun empty(
