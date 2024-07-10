@@ -2,7 +2,7 @@ import { TransactionBlock } from "@mysten/sui.js/transactions";
 import {
     DEEPBOOK_PACKAGE_ID, REGISTRY_ID
 } from '../utils/config';
-import { FLOAT_SCALAR, POOL_CREATION_FEE } from "../utils/config";
+import { FLOAT_SCALAR, POOL_CREATION_FEE } from "../utils/constants";
 import { Coin, Pool } from "../utils/interfaces";
 
 export const createPoolAdmin = (

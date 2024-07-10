@@ -3,8 +3,8 @@ import {
     DEEPBOOK_PACKAGE_ID
 } from '../utils/config';
 import { generateProof } from "./balanceManager";
-import { DEEP_SCALAR, FLOAT_SCALAR, Pool } from "../utils/config";
-import { BalanceManager } from "../utils/interfaces";
+import { DEEP_SCALAR, FLOAT_SCALAR } from "../utils/constants";
+import { BalanceManager, Pool } from "../utils/interfaces";
 
 export const stake = (
     pool: Pool,

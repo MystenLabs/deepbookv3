@@ -19,10 +19,10 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
     swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whitelisted } from "./transactions/deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
-import { borrowBaseAsset, returnBaseAsset } from "./transactions/flashLoans";
-import { DeepBookConfig, MAX_TIMESTAMP, DEEP_SCALAR } from "./utils/config";
-import { BalanceManager, CoinKey, OrderType, PoolKey, SelfMatchingOptions, PlaceLimitOrderParams,
+import { DeepBookConfig } from "./utils/config";
+import { BalanceManager, OrderType, SelfMatchingOptions, PlaceLimitOrderParams,
     PlaceMarketOrderParams, ProposalParams, SwapParams, CreatePoolAdminParams, Environment } from "./utils/interfaces";
+import { DEEP_KEY, MAX_TIMESTAMP } from "./utils/constants";
 
 /// DeepBook Client. If a private key is provided, then all transactions
 /// will be signed with that key. Otherwise, the default key will be used.
@@ -74,7 +74,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async depositIntoManager(managerKey: string, amountToDeposit: number, coinKey: CoinKey) {
+    async depositIntoManager(managerKey: string, amountToDeposit: number, coinKey: string) {
         const balanceManager = this.getBalanceManager(managerKey);
         const coin = this.#config.getCoin(coinKey);
 
@@ -84,7 +84,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async withdrawFromManager(managerKey: string, amountToWithdraw: number, coinKey: CoinKey) {
+    async withdrawFromManager(managerKey: string, amountToWithdraw: number, coinKey: string) {
         const balanceManager = this.getBalanceManager(managerKey);
         const coin = this.#config.getCoin(coinKey);
 
@@ -95,7 +95,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async withdrawAllFromManager(managerKey: string, coinKey: CoinKey) {
+    async withdrawAllFromManager(managerKey: string, coinKey: string) {
         const balanceManager = this.getBalanceManager(managerKey);
         const coin = this.#config.getCoin(coinKey);
 
@@ -106,7 +106,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async checkManagerBalance(managerKey: string, coinKey: CoinKey) {
+    async checkManagerBalance(managerKey: string, coinKey: string) {
         const balanceManager = this.getBalanceManager(managerKey);
         const coin = this.#config.getCoin(coinKey);
 
@@ -179,7 +179,7 @@ export class DeepBookClient {
     }
 
     async cancelOrder(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string,
         clientOrderId: number,
     ) {
@@ -193,7 +193,7 @@ export class DeepBookClient {
     }
 
     async cancelAllOrders(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string,
     ) {
         let balanceManager = this.getBalanceManager(managerKey);
@@ -239,7 +239,7 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
+async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
             coinKey: baseKey,
@@ -314,8 +314,8 @@ export class DeepBookClient {
     }
 
     async addDeepPricePoint(
-        targetPoolKey: PoolKey,
-        referencePoolKey: PoolKey,
+        targetPoolKey: string,
+        referencePoolKey: string,
     ) {
         let targetPool = this.#config.getPool(targetPoolKey);
         let referencePool = this.#config.getPool(referencePoolKey);
@@ -326,7 +326,7 @@ export class DeepBookClient {
     }
 
     async claimRebates(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string,
     ) {
         const balanceManager = this.getBalanceManager(managerKey);
@@ -339,7 +339,7 @@ export class DeepBookClient {
     }
 
     async burnDeep(
-        poolKey: PoolKey,
+        poolKey: string,
     ) {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -349,7 +349,7 @@ export class DeepBookClient {
     }
 
     async midPrice(
-        poolKey: PoolKey,
+        poolKey: string,
     ): Promise<number> {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -357,7 +357,7 @@ export class DeepBookClient {
     }
 
     async whitelisted(
-        poolKey: PoolKey,
+        poolKey: string,
     ): Promise<boolean> {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -365,7 +365,7 @@ export class DeepBookClient {
     }
 
     async getQuoteQuantityOut(
-        poolKey: PoolKey,
+        poolKey: string,
         baseQuantity: number
     ) {
         let pool = this.#config.getPool(poolKey);
@@ -375,7 +375,7 @@ export class DeepBookClient {
     }
 
     async getBaseQuantityOut(
-        poolKey: PoolKey,
+        poolKey: string,
         quoteQuantity: number
     ) {
         let pool = this.#config.getPool(poolKey);
@@ -385,7 +385,7 @@ export class DeepBookClient {
     }
 
     async accountOpenOrders(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string
     ) {
         let pool = this.#config.getPool(poolKey);
@@ -394,7 +394,7 @@ export class DeepBookClient {
     }
 
     async getLevel2Range(
-        poolKey: PoolKey,
+        poolKey: string,
         priceLow: number,
         priceHigh: number,
         isBid: boolean,
@@ -406,7 +406,7 @@ export class DeepBookClient {
     }
 
     async getLevel2TicksFromMid(
-        poolKey: PoolKey,
+        poolKey: string,
         ticks: number,
     ): Promise<string[][]> {
         let pool = this.#config.getPool(poolKey);
@@ -416,7 +416,7 @@ export class DeepBookClient {
     }
 
     async vaultBalances(
-        poolKey: PoolKey,
+        poolKey: string,
     ): Promise<number[]> {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -448,14 +448,14 @@ export class DeepBookClient {
         let txb = new TransactionBlock();
         let baseCoin = this.#config.getCoin(baseCoinKey);
         let quoteCoin = this.#config.getCoin(quoteCoinKey);
-        let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
+        let deepCoinId = this.#config.getCoin(DEEP_KEY).coinId;
         createPoolAdmin(baseCoin, quoteCoin, deepCoinId, tickSize, lotSize, minSize, whitelisted, stablePool, txb);
         let res = await signAndExecuteWithClientAndSigner(txb, this.#client, this.#signer);
         console.dir(res, { depth: null });
     }
 
     async unregisterPoolAdmin(
-        poolKey: PoolKey,
+        poolKey: string,
     ) {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -465,7 +465,7 @@ export class DeepBookClient {
     }
 
     async updateDisabledVersions(
-        poolKey: PoolKey,
+        poolKey: string,
     ) {
         let pool = this.#config.getPool(poolKey);
         let txb = new TransactionBlock();
@@ -475,7 +475,7 @@ export class DeepBookClient {
     }
 
     async stake(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string,
         amount: number
     ) {
@@ -488,7 +488,7 @@ export class DeepBookClient {
     }
 
     async unstake(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string
     ) {
         let pool = this.#config.getPool(poolKey);
@@ -517,7 +517,7 @@ export class DeepBookClient {
     }
 
     async vote(
-        poolKey: PoolKey,
+        poolKey: string,
         managerKey: string,
         proposal_id: string
     ) {

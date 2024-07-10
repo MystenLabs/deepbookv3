@@ -2,7 +2,8 @@ import { TransactionBlock } from "@mysten/sui.js/transactions";
 import {
     DEEPBOOK_PACKAGE_ID
 } from '../utils/config';
-import { BalanceManager, Coin, CoinKey } from "../utils/interfaces";
+import { BalanceManager, Coin } from "../utils/interfaces";
+import { SUI_KEY } from "../utils/constants";
 
 export const createAndShareBalanceManager = (txb: TransactionBlock) => {
     const manager = txb.moveCall({
@@ -22,7 +23,7 @@ export const depositIntoManager = (
 ) => {
     let deposit;
 
-    if (coin.key === CoinKey.SUI) {
+    if (coin.key === SUI_KEY) {
         [deposit] = txb.splitCoins(
             txb.gas,
             [txb.pure.u64(amountToDeposit * coin.scalar)]
