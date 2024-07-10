@@ -67,25 +67,34 @@ export const placeLimitOrderBorrowDeep = async () => {
         PoolKey.DEEP_SUI,
         10,
         txb
-    );
+    )
 
-    coinKey: quoteKey,
-    amount: quoteAmount,
-    deepAmount,
+    const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
+        poolKey: PoolKey.SUI_DBUSDC,
+        coinKey: CoinKey.DBUSDC,
+        amount: 5,
+        deepAmount: 10,
+        deepCoin: deepCoin,
+    }, txb);
 
-    await client.swapExactQuoteForBase(
-        PoolKey.SUI_DBUSDC,
-        CoinKey.DBUSDC,
-        5,
-        1,
-    );
-    // Get the correct coin IDs
-    await client.init(false);
+    txb.transferObjects([baseOut], client.getActiveAddress());
+    txb.transferObjects([quoteOut], client.getActiveAddress())
+    txb.transferObjects([deepOut], client.getActiveAddress());
+
+    const [baseOut2, quoteOut2, deepOut2] = await client.swapExactQuoteForBase({
+        poolKey: PoolKey.DEEP_SUI,
+        coinKey: CoinKey.DBUSDC,
+        amount: 5,
+        deepAmount: 0,
+    }, txb);
+
+    txb.transferObjects([quoteOut2], client.getActiveAddress())
+    txb.transferObjects([deepOut2], client.getActiveAddress());
 
     await client.returnBaseAsset(
         PoolKey.DEEP_SUI,
         10,
-        baseCoin,
+        baseOut2,
         flashLoan,
         txb
     );

@@ -546,30 +546,10 @@ export const swapExactBaseForQuote = (
 
 export const swapExactQuoteForBase = (
     pool: Pool,
-    quoteAmount: number,
-    quoteCoinId: string,
-    deepAmount: number,
-    deepCoinId: string,
+    quoteCoin: any,
+    deepCoin: any,
     txb: TransactionBlock
 ) => {
-    const quoteScalar = pool.quoteCoin.scalar;
-
-    let quoteCoin;
-    if (pool.quoteCoin.key === CoinKey.SUI) {
-        [quoteCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    } else {
-        [quoteCoin] = txb.splitCoins(
-            txb.object(quoteCoinId),
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_quote_for_base`,
         arguments: [

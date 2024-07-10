@@ -84,7 +84,7 @@ export interface SwapParams {
     coinKey: CoinKey;
     amount: number;
     deepAmount: number;
-    deepCoinId?: string;
+    deepCoin?: any;
 }
 
 export interface CreatePoolAdminParams {
