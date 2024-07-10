@@ -33,7 +33,6 @@ export const placeLimitOrder = (
     const quoteScalar = pool.quoteCoin.scalar;
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
-    console.log(`inputPrice: ${inputPrice}, inputQuantity: ${inputQuantity}`)
 
     const tradeProof = generateProof(balanceManager, txb);
 
@@ -508,30 +507,10 @@ export const getPoolIdByAssets = async (
 
 export const swapExactBaseForQuote = (
     pool: Pool,
-    baseAmount: number,
-    baseCoinId: string,
-    deepAmount: number,
-    deepCoinId: string,
+    baseCoin: any,
+    deepCoin: any,
     txb: TransactionBlock
 ) => {
-    const baseScalar = pool.baseCoin.scalar;
-
-    let baseCoin;
-    if (pool.baseCoin.key === CoinKey.SUI) {
-        [baseCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    } else {
-        [baseCoin] = txb.splitCoins(
-            txb.object(baseCoinId),
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_base_for_quote`,
         arguments: [

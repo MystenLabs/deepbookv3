@@ -239,20 +239,42 @@ export class DeepBookClient {
         console.dir(res, { depth: null });
     }
 
-    // async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
-    //     const {
-    //         poolKey,
-    //         coinKey: baseKey,
-    //         amount: baseAmount,
-    //         deepAmount,
-    //         deepCoin,
-    //     } = params;
+    async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
+        const {
+            poolKey,
+            coinKey: baseKey,
+            amount: baseAmount,
+            deepAmount,
+            deepCoin,
+        } = params;
 
-    //     let pool = this.#config.getPool(poolKey);
-    //     let baseCoinId = this.#config.getCoin(baseKey).coinId;
+        let pool = this.#config.getPool(poolKey);
+        let baseCoinId = this.#config.getCoin(baseKey).coinId;
+        let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId;
+        const baseScalar = pool.baseCoin.scalar;
 
-    //     return swapExactBaseForQuote(pool, baseAmount, baseCoinId, deepAmount, deepCoinId, txb);
-    // }
+        let baseCoin;
+        if (pool.baseCoin.key === CoinKey.SUI) {
+            [baseCoin] = txb.splitCoins(
+                txb.gas,
+                [txb.pure.u64(baseAmount * baseScalar)]
+            );
+        } else {
+            [baseCoin] = txb.splitCoins(
+                txb.object(baseCoinId),
+                [txb.pure.u64(baseAmount * baseScalar)]
+            );
+        }
+        if (!deepCoin) {
+            var [deepCoinInput] = txb.splitCoins(
+                txb.object(deepCoinId),
+                [txb.pure.u64(deepAmount * DEEP_SCALAR)]
+            );
+            return swapExactBaseForQuote(pool, baseCoin, deepCoinInput, txb);
+        }
+
+        return swapExactBaseForQuote(pool, baseCoin, deepCoin, txb);
+    }
 
     async swapExactQuoteForBase(params: SwapParams, txb: TransactionBlock) {
         const {
@@ -267,8 +289,6 @@ export class DeepBookClient {
         let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
         let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId
         const quoteScalar = pool.quoteCoin.scalar;
-        console.log(quoteCoinId);
-        console.log(quoteAmount * quoteScalar);
 
         let quoteCoin;
         if (pool.quoteCoin.key === CoinKey.SUI) {
@@ -287,8 +307,6 @@ export class DeepBookClient {
                 txb.object(deepCoinId),
                 [txb.pure.u64(deepAmount * DEEP_SCALAR)]
             );
-            console.log(deepCoinId);
-            console.log(deepAmount * DEEP_SCALAR);
             return swapExactQuoteForBase(pool, quoteCoin, deepCoinInput, txb);
         }
 
@@ -540,7 +558,7 @@ const testClient = async () => {
 
     // await client.cancelAllOrders(PoolKey.DEEP_SUI, "MANAGER_1");
     // await client.unregisterPoolAdmin(PoolKey.SUI_DBUSDC);
-    await client.depositIntoManager("MANAGER_1", 49970.633168, CoinKey.DEEP);
+    // await client.depositIntoManager("MANAGER_1", 1000, CoinKey.DEEP);
     // await client.withdrawAllFromManager("MANAGER_1", CoinKey.DEEP);
     // await client.vaultBalances(PoolKey.DEEP_SUI);
     // await client.createPoolAdmin({
