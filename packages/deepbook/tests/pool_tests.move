@@ -399,12 +399,22 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_swap_exact_not_fully_filled_bid_ok(){
-        test_swap_exact_not_fully_filled(true);
+        test_swap_exact_not_fully_filled(true, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_ask_ok(){
-        test_swap_exact_not_fully_filled(false);
+        test_swap_exact_not_fully_filled(false, false);
+    }
+
+    #[test]
+    fun test_swap_exact_not_fully_filled_bid_low_qty_ok(){
+        test_swap_exact_not_fully_filled(true, true);
+    }
+
+    #[test]
+    fun test_swap_exact_not_fully_filled_ask_low_qty_ok(){
+        test_swap_exact_not_fully_filled(false, true);
     }
 
     #[test]
@@ -853,7 +863,7 @@ module deepbook::pool_tests {
 
         end(test);
     }
-    
+
     #[test_only]
     /// Get the time in the global clock
     public(package) fun get_time(
@@ -1254,6 +1264,7 @@ module deepbook::pool_tests {
     /// Make sure expired orders are skipped over
     fun test_swap_exact_not_fully_filled(
         is_bid: bool,
+        low_quantity: bool,
     ) {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -1306,14 +1317,22 @@ module deepbook::pool_tests {
         set_time(200, &mut test);
 
         let base_in = if (is_bid) {
-            4 * constants::float_scaling() + residual
+            if (low_quantity) {
+                100
+            } else {
+                4 * constants::float_scaling() + residual
+            }
         } else {
             0
         };
         let quote_in = if (is_bid) {
             0
         } else {
-            8 * constants::float_scaling() + 3 * residual
+            if (low_quantity) {
+                100
+            } else {
+                8 * constants::float_scaling() + 3 * residual
+            }
         };
         let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
 
@@ -1357,18 +1376,24 @@ module deepbook::pool_tests {
                 )
             };
 
-        if (is_bid) {
-            assert!(base_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
+        if (low_quantity) {
+            assert!(base_out.value() == base_in);
+            assert!(quote_out.value() == quote_in);
+            assert!(deep_out.value() == deep_in);
         } else {
-            assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
-            assert!(quote_out.value() == 2 * constants::float_scaling() + 3 * residual, constants::e_order_info_mismatch());
-        };
+            if (is_bid) {
+                assert!(base_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+                assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
+            } else {
+                assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
+                assert!(quote_out.value() == 2 * constants::float_scaling() + 3 * residual, constants::e_order_info_mismatch());
+            };
 
-        assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
-        assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
-        assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+            assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+            assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+            assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+            assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        };
 
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
@@ -2961,6 +2986,7 @@ module deepbook::pool_tests {
                 pool.swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
                     mint_for_testing<BaseAsset>(base_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
+                    0,
                     &clock,
                     test.ctx()
                 );
@@ -2988,6 +3014,7 @@ module deepbook::pool_tests {
                 pool.swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
                     mint_for_testing<QuoteAsset>(quote_in, test.ctx()),
                     mint_for_testing<DEEP>(deep_in, test.ctx()),
+                    0,
                     &clock,
                     test.ctx()
                 );
