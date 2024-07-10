@@ -30,7 +30,8 @@ export const placeLimitOrderClient = async () => {
     const client = await init();
     const managerKey = "MANAGER_1";
 
-    await client.depositIntoManager(managerKey, 2, "SUI");
+    const txb = new TransactionBlock();
+    await client.depositIntoManager(managerKey, 2, "SUI", txb);
     await client.placeLimitOrder({
         poolKey: "DEEP_SUI",
         managerKey: managerKey,
@@ -38,7 +39,7 @@ export const placeLimitOrderClient = async () => {
         price: 2,
         quantity: 1,
         isBid: true,
-    });
+    }, txb);
 }
 
 export const placeLimitOrderBorrowDeep = async () => {
@@ -83,4 +84,4 @@ export const placeLimitOrderBorrowDeep = async () => {
     await client.signTransaction(txb);
 }
 
-placeLimitOrderClient();
+placeLimitOrderBorrowDeep();
