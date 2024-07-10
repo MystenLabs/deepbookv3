@@ -219,14 +219,13 @@ export class DeepBookClient {
     async swapExactBaseForQuote(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
-            coinKey: baseKey,
             amount: baseAmount,
             deepAmount,
             deepCoin,
         } = params;
 
         let pool = this.#config.getPool(poolKey);
-        let baseCoinId = this.#config.getCoin(baseKey).coinId;
+        let baseCoinId = this.#config.getCoin(pool.quoteCoin.key).coinId;
         let deepCoinId = this.#config.getCoin("DEEP").coinId;
         const baseScalar = pool.baseCoin.scalar;
 
@@ -256,14 +255,13 @@ export class DeepBookClient {
     async swapExactQuoteForBase(params: SwapParams, txb: TransactionBlock) {
         const {
             poolKey,
-            coinKey: quoteKey,
             amount: quoteAmount,
             deepAmount,
             deepCoin,
         } = params;
 
         let pool = this.#config.getPool(poolKey);
-        let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
+        let quoteCoinId = this.#config.getCoin(pool.quoteCoin.key).coinId;
         let deepCoinId = this.#config.getCoin("DEEP").coinId
         const quoteScalar = pool.quoteCoin.scalar;
 

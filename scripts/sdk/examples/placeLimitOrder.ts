@@ -55,7 +55,6 @@ export const placeLimitOrderBorrowDeep = async () => {
     // Execute trade using borrowed DEEP
     const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
         poolKey: "SUI_DBUSDC",
-        coinKey: "DBUSDC",
         amount: 0.5,
         deepAmount: 10,
         deepCoin: deepCoin,
@@ -66,7 +65,6 @@ export const placeLimitOrderBorrowDeep = async () => {
     // Execute second trade to get back DEEP for repayment
     const [baseOut2, quoteOut2, deepOut2] = await client.swapExactQuoteForBase({
         poolKey: "DEEP_SUI",
-        coinKey: "SUI",
         amount: 35,
         deepAmount: 0,
     }, txb);
