@@ -267,6 +267,8 @@ export class DeepBookClient {
         let quoteCoinId = this.#config.getCoin(quoteKey).coinId;
         let deepCoinId = this.#config.getCoin(CoinKey.DEEP).coinId
         const quoteScalar = pool.quoteCoin.scalar;
+        console.log(quoteCoinId);
+        console.log(quoteAmount * quoteScalar);
 
         let quoteCoin;
         if (pool.quoteCoin.key === CoinKey.SUI) {
@@ -285,6 +287,8 @@ export class DeepBookClient {
                 txb.object(deepCoinId),
                 [txb.pure.u64(deepAmount * DEEP_SCALAR)]
             );
+            console.log(deepCoinId);
+            console.log(deepAmount * DEEP_SCALAR);
             return swapExactQuoteForBase(pool, quoteCoin, deepCoinInput, txb);
         }
 
@@ -530,15 +534,17 @@ const testClient = async () => {
     }
 
     let client = new DeepBookClient(env, process.env.PRIVATE_KEY!);
-    let mergeCoins = false;
+    let mergeCoins = true;
     await client.init(mergeCoins);
     client.addBalanceManager("MANAGER_1", "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf");
 
-    // await client.depositIntoManager("MANAGER_1", 48000, CoinKey.DEEP);
-    // await client.withdrawAllFromManager("MANAGER_1", CoinKey.SUI);
+    // await client.cancelAllOrders(PoolKey.DEEP_SUI, "MANAGER_1");
+    // await client.unregisterPoolAdmin(PoolKey.SUI_DBUSDC);
+    await client.depositIntoManager("MANAGER_1", 49970.633168, CoinKey.DEEP);
+    // await client.withdrawAllFromManager("MANAGER_1", CoinKey.DEEP);
     // await client.vaultBalances(PoolKey.DEEP_SUI);
     // await client.createPoolAdmin({
-    //     baseCoinKey: CoinKey.DBWETH,
+    //     baseCoinKey: CoinKey.SUI,
     //     quoteCoinKey: CoinKey.DBUSDC,
     //     tickSize: 0.001,
     //     lotSize: 0.001,
@@ -546,15 +552,23 @@ const testClient = async () => {
     //     whitelisted: false,
     //     stablePool: false,
     // });
-    // await client.addDeepPricePoint(PoolKey.DBWETH_DBUSDC, PoolKey.DEEP_DBWETH);
+    // await client.addDeepPricePoint(PoolKey.SUI_DBUSDC, PoolKey.DEEP_SUI);
     // await client.checkManagerBalance("MANAGER_1", CoinKey.DEEP);
     // await client.placeLimitOrder({
     //     poolKey: PoolKey.SUI_DBUSDC,
     //     managerKey: 'MANAGER_1',
     //     clientOrderId: 888,
-    //     price: 0.6,
-    //     quantity: 25,
-    //     isBid: true,
+    //     price: 3,
+    //     quantity: 50,
+    //     isBid: false,
+    // })
+    // await client.placeLimitOrder({
+    //     poolKey: PoolKey.DEEP_SUI,
+    //     managerKey: 'MANAGER_1',
+    //     clientOrderId: 888,
+    //     price: 3,
+    //     quantity: 50,
+    //     isBid: false,
     // })
     // await client.placeMarketOrder({
     //     poolKey: PoolKey.DBWETH_DBUSDC,
@@ -576,15 +590,21 @@ const testClient = async () => {
     //     amount: 1000,
     //     deepAmount: 500,
     // });
-    const txb = new TransactionBlock();
-    const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
-        poolKey: PoolKey.DEEP_SUI,
-        coinKey: CoinKey.SUI,
-        amount: 1,
-        deepAmount: 0,
-    }, txb);
-    txb.transferObjects([baseOut, quoteOut, deepOut], client.getActiveAddress());
-    await client.signTransaction(txb);
+    // const txb = new TransactionBlock();
+    // // const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
+    // //     poolKey: PoolKey.DEEP_SUI,
+    // //     coinKey: CoinKey.SUI,
+    // //     amount: 1,
+    // //     deepAmount: 0,
+    // // }, txb);
+    // const [baseOut, quoteOut, deepOut] = await client.swapExactQuoteForBase({
+    //     poolKey: PoolKey.SUI_DBUSDC,
+    //     coinKey: CoinKey.DBUSDC,
+    //     amount: 1,
+    //     deepAmount: 10,
+    // }, txb);
+    // txb.transferObjects([baseOut, quoteOut, deepOut], client.getActiveAddress());
+    // await client.signTransaction(txb);
     // await client.swapExactBaseForQuote({
     //     poolKey: PoolKey.DBWETH_DBUSDC,
     //     coinKey: CoinKey.DBWETH,
@@ -593,4 +613,4 @@ const testClient = async () => {
     // });
 }
 
-testClient();
+// testClient();

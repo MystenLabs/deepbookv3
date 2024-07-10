@@ -33,6 +33,7 @@ export const placeLimitOrder = (
     const quoteScalar = pool.quoteCoin.scalar;
     const inputPrice = price * FLOAT_SCALAR * quoteScalar / baseScalar;
     const inputQuantity = quantity * baseScalar;
+    console.log(`inputPrice: ${inputPrice}, inputQuantity: ${inputQuantity}`)
 
     const tradeProof = generateProof(balanceManager, txb);
 

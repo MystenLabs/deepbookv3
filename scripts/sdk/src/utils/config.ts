@@ -127,7 +127,7 @@ export class DeepBookConfig {
             quoteCoin: this.coins[CoinKey.SUI],
         };
         this.pools[PoolKey.SUI_DBUSDC] = {
-            address: `0x9442afa775e90112448f26a8d58ca76f66cf46e4b77e74d6d85cea30bedc289c`,
+            address: `0x95e7b7b9ac99327d1c1e2d0e650510849e64425c4b2fc676d49828f699024995`,
             baseCoin: this.coins[CoinKey.SUI],
             quoteCoin: this.coins[CoinKey.DBUSDC],
         };
