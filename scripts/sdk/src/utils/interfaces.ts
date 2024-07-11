@@ -65,9 +65,9 @@ export interface ProposalParams {
 
 export interface SwapParams {
     poolKey: string;
-    coinKey: string;
     amount: number;
     deepAmount: number;
+    deepCoin?: any;
 }
 
 export interface CreatePoolAdminParams {

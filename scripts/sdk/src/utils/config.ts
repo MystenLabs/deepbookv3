@@ -196,7 +196,7 @@ export class DeepBookConfig {
         gasCoinId: string,
     ): Promise<void> {
         let moreCoinsToMerge = true;
-        const owner = signer.getPublicKey().toBase64();
+        const owner = signer.toSuiAddress();
         while (moreCoinsToMerge) {
             moreCoinsToMerge = await this.mergeOwnedCoins(suiClient, signer, owner, coinType, gasCoinId);
         }

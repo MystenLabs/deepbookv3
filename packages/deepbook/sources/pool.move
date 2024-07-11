@@ -169,7 +169,7 @@ module deepbook::pool {
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let base_in = coin::zero(ctx);
-        
+
         swap_exact_quantity(
             self,
             base_in,

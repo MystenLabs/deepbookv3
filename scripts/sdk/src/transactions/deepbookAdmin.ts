@@ -75,7 +75,7 @@ export const updateDisabledVersions = (
     if (!adminCap) {
         throw new Error("ADMIN_CAP environment variable not set");
     }
-    
+
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::update_disabled_versions`,
         arguments: [

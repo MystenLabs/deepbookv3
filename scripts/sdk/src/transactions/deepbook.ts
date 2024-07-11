@@ -3,7 +3,7 @@ import { SUI_CLOCK_OBJECT_ID, normalizeSuiAddress } from "@mysten/sui.js/utils";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import { bcs } from "@mysten/sui.js/bcs";
 import {
-    DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID, 
+    DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID,
 } from '../utils/config';
 import { generateProof } from "./balanceManager";
 import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/constants";
@@ -508,31 +508,10 @@ export const getPoolIdByAssets = async (
 
 export const swapExactBaseForQuote = (
     pool: Pool,
-    baseAmount: number,
-    baseCoinId: string,
-    deepAmount: number,
-    deepCoinId: string,
-    recepient: string,
+    baseCoin: any,
+    deepCoin: any,
     txb: TransactionBlock
 ) => {
-    const baseScalar = pool.baseCoin.scalar;
-
-    let baseCoin;
-    if (pool.baseCoin.key === SUI_KEY) {
-        [baseCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    } else {
-        [baseCoin] = txb.splitCoins(
-            txb.object(baseCoinId),
-            [txb.pure.u64(baseAmount * baseScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_base_for_quote`,
         arguments: [
@@ -543,38 +522,15 @@ export const swapExactBaseForQuote = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], recepient);
-    txb.transferObjects([quoteOut], recepient);
-    txb.transferObjects([deepOut], recepient);
+    return [baseOut, quoteOut, deepOut];
 }
 
 export const swapExactQuoteForBase = (
     pool: Pool,
-    quoteAmount: number,
-    quoteCoinId: string,
-    deepAmount: number,
-    deepCoinId: string,
-    recepient: string,
+    quoteCoin: any,
+    deepCoin: any,
     txb: TransactionBlock
 ) => {
-    const quoteScalar = pool.quoteCoin.scalar;
-
-    let quoteCoin;
-    if (pool.quoteCoin.key === SUI_KEY) {
-        [quoteCoin] = txb.splitCoins(
-            txb.gas,
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    } else {
-        [quoteCoin] = txb.splitCoins(
-            txb.object(quoteCoinId),
-            [txb.pure.u64(quoteAmount * quoteScalar)]
-        );
-    }
-    const [deepCoin] = txb.splitCoins(
-        txb.object(deepCoinId),
-        [txb.pure.u64(deepAmount * DEEP_SCALAR)]
-    );
     let [baseOut, quoteOut, deepOut] = txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::swap_exact_quote_for_base`,
         arguments: [
@@ -585,7 +541,5 @@ export const swapExactQuoteForBase = (
         ],
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
-    txb.transferObjects([baseOut], recepient);
-    txb.transferObjects([quoteOut], recepient);
-    txb.transferObjects([deepOut], recepient);
+    return [baseOut, quoteOut, deepOut];
 }
