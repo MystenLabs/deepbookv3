@@ -74,13 +74,14 @@ export const placeLimitOrderBorrowDeep = async () => {
 
     txb.transferObjects([quoteOut2, deepOut2], client.getActiveAddress())
 
-    await client.returnBaseAsset(
+    const loanRemain = await client.returnBaseAsset(
         "DEEP_SUI",
         borrowAmount,
         baseOut2,
         flashLoan,
         txb
     );
+    txb.transferObjects([loanRemain], client.getActiveAddress());
 
     await client.signTransaction(txb);
 }

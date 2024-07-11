@@ -19,7 +19,7 @@ import { accountOpenOrders, addDeepPricePoint, burnDeep, cancelAllOrders, cancel
     swapExactBaseForQuote, swapExactQuoteForBase, vaultBalances, whitelisted } from "./transactions/deepbook";
 import { createPoolAdmin, unregisterPoolAdmin, updateDisabledVersions } from "./transactions/deepbookAdmin";
 import { stake, submitProposal, unstake, vote } from "./transactions/governance";
-import { borrowBaseAsset, returnBaseAsset } from "./transactions/flashLoans";
+import { borrowBaseAsset, returnBaseAsset, borrowQuoteAsset, returnQuoteAsset } from "./transactions/flashLoans";
 import { DeepBookConfig } from "./utils/config";
 import { BalanceManager, OrderType, SelfMatchingOptions, PlaceLimitOrderParams,
     PlaceMarketOrderParams, ProposalParams, SwapParams, CreatePoolAdminParams, Environment } from "./utils/interfaces";
@@ -208,7 +208,35 @@ export class DeepBookClient {
             [txb.pure.u64(borrowAmount * borrowScalar)]
         );
         returnBaseAsset(pool, baseCoinReturn, flashLoan, txb);
-        txb.transferObjects([baseCoin], this.getActiveAddress());
+        return baseCoin;
+    }
+
+    async borrowQuoteAsset(
+        poolKey: string,
+        borrowAmount: number,
+        txb: TransactionBlock,
+    ) {
+        let pool = this.#config.getPool(poolKey);
+
+        return borrowQuoteAsset(pool, borrowAmount, txb);
+    }
+
+    async returnQuoteAsset(
+        poolKey: string,
+        borrowAmount: number,
+        quoteCoin: any,
+        flashLoan: any,
+        txb: TransactionBlock,
+    ) {
+        let pool = this.#config.getPool(poolKey);
+        const borrowScalar = pool.quoteCoin.scalar;
+
+        const [quoteCoinReturn] = txb.splitCoins(
+            quoteCoin,
+            [txb.pure.u64(borrowAmount * borrowScalar)]
+        );
+        returnQuoteAsset(pool, quoteCoinReturn, flashLoan, txb);
+        return quoteCoin;
     }
 
     async signTransaction(txb: TransactionBlock) {
