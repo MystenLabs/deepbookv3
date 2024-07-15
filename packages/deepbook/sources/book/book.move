@@ -112,7 +112,7 @@ module deepbook::book {
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
-            if (current_timestamp < order.expire_timestamp()) {
+            if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
                 if (is_bid) {
                     matched_base_quantity = math::min(
