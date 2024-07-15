@@ -11,9 +11,9 @@ module deepbook::registry {
     // === Errors ===
     const EPoolAlreadyExists: u64 = 1;
     const EPoolDoesNotExist: u64 = 2;
-    const EPackageVersionDisabled: u64 = 3;
-    const EVersionNotDisabled: u64 = 4;
-    const EVersionAlreadyDisabled: u64 = 5;
+    const EPackageVersionNotEnabled: u64 = 3;
+    const EVersionNotEnabled: u64 = 4;
+    const EVersionAlreadyEnabled: u64 = 5;
     const ECannotDisableCurrentVersion: u64 = 6;
 
     public struct REGISTRY has drop {}
@@ -30,7 +30,7 @@ module deepbook::registry {
     }
 
     public struct RegistryInner has store {
-        disabled_versions: VecSet<u64>,
+        allowed_versions: VecSet<u64>,
         pools: Bag,
         treasury_address: address,
     }
@@ -42,7 +42,7 @@ module deepbook::registry {
 
     fun init(_: REGISTRY, ctx: &mut TxContext) {
         let registry_inner = RegistryInner {
-            disabled_versions: vec_set::empty(),
+            allowed_versions: vec_set::singleton(constants::current_version()),
             pools: bag::new(ctx),
             treasury_address: ctx.sender(),
         };
@@ -67,28 +67,30 @@ module deepbook::registry {
         self.treasury_address = treasury_address;
     }
 
-    /// Disables a package version
-    /// Only Admin can disable a package version
-    public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
-        let self = self.load_inner_mut();
-        assert!(!self.disabled_versions.contains(&version), EVersionAlreadyDisabled);
-        assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
-        self.disabled_versions.insert(version);
-    }
-
     /// Enables a package version
     /// Only Admin can enable a package version
+    /// This function does not have version restrictions
     public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
-        let self = self.load_inner_mut();
-        assert!(self.disabled_versions.contains(&version), EVersionNotDisabled);
-        self.disabled_versions.remove(&version);
+        let self: &mut RegistryInner = self.inner.load_value_mut();
+        assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
+        self.allowed_versions.insert(version);
+    }
+
+    /// Disables a package version
+    /// Only Admin can disable a package version
+    /// This function does not have version restrictions
+    public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
+        let self: &mut RegistryInner = self.inner.load_value_mut();
+        assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
+        assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
+        self.allowed_versions.remove(&version);
     }
 
     // === Public-Package Functions ===
     public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
         let inner: &mut RegistryInner = self.inner.load_value_mut();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionNotEnabled);
 
         inner
     }
@@ -126,7 +128,7 @@ module deepbook::registry {
     public(package) fun load_inner(self: &Registry): &RegistryInner {
         let inner: &RegistryInner = self.inner.load_value();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionNotEnabled);
 
         inner
     }
@@ -149,17 +151,17 @@ module deepbook::registry {
         self.treasury_address
     }
 
-    public(package) fun get_disabled_versions(self: &Registry): VecSet<u64> {
+    public(package) fun allowed_versions(self: &Registry): VecSet<u64> {
         let self = self.load_inner();
 
-        self.disabled_versions
+        self.allowed_versions
     }
 
     // === Test Functions ===
     #[test_only]
     public fun test_registry(ctx: &mut TxContext): ID {
         let registry_inner = RegistryInner {
-            disabled_versions: vec_set::empty(),
+            allowed_versions: vec_set::singleton(constants::current_version()),
             pools: bag::new(ctx),
             treasury_address: ctx.sender(),
         };
