@@ -41,6 +41,7 @@ module deepbook::pool {
     const EIneligibleTargetPool: u64 = 11;
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
+    const EMinimumQuantityOutNotMet: u64 = 14;
 
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -142,6 +143,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
         deep_in: Coin<DEEP>,
+        min_quote_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -152,6 +154,7 @@ module deepbook::pool {
             base_in,
             quote_in,
             deep_in,
+            min_quote_out,
             clock,
             ctx,
         )
@@ -165,6 +168,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
+        min_base_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -175,6 +179,7 @@ module deepbook::pool {
             base_in,
             quote_in,
             deep_in,
+            min_base_out,
             clock,
             ctx,
         )
@@ -186,6 +191,7 @@ module deepbook::pool {
         base_in: Coin<BaseAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
+        min_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -200,6 +206,9 @@ module deepbook::pool {
             (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
         };
         base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
+        if (base_quantity < self.load_inner().book.min_size()) {
+            return (base_in, quote_in, deep_in)
+        };
 
         let mut temp_balance_manager = balance_manager::new(ctx);
         let trade_proof = temp_balance_manager.generate_proof_as_owner(ctx);
@@ -224,6 +233,12 @@ module deepbook::pool {
         let quote_out = temp_balance_manager
             .withdraw_all<QuoteAsset>(ctx);
         let deep_out = temp_balance_manager.withdraw_all<DEEP>(ctx);
+
+        if (is_bid) {
+            assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
+        } else {
+            assert!(quote_out.value() >= min_out, EMinimumQuantityOutNotMet);
+        };
 
         temp_balance_manager.delete();
 
