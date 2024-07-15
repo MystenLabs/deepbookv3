@@ -62,6 +62,7 @@ module deepbook::vault {
         balance_manager: &mut BalanceManager,
         trade_proof: &TradeProof,
     ) {
+        balance_manager.validate_proof(trade_proof);
         if (balances_out.base() > balances_in.base()) {
             let balance = self.base_balance.split(balances_out.base() - balances_in.base());
             balance_manager.deposit_with_proof(trade_proof, balance);
