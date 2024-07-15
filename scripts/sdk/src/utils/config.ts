@@ -3,7 +3,7 @@ import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { signAndExecuteWithClientAndSigner } from "./utils";
 import { Keypair } from "@mysten/sui.js/cryptography";
 import { Coin, Pool, Config } from "./interfaces";
-import { DBUSDC_ID_TESTNET, DBUSDC_KEY, DBUSDC_SCALAR_TESTNET, DBUSDC_TYPE_TESTNET, DBWETH_DBUSDC_ID_TESTNET, DBWETH_DBUSDC_KEY, DBWETH_ID_TESTNET, DBWETH_KEY, DBWETH_SCALAR_TESTNET, DBWETH_TYPE_TESTNET, DEEPBOOK_PACKAGE_ID_MAINNET, DEEPBOOK_PACKAGE_ID_TESTNET, DEEP_DBWETH_ID_TESTNET, DEEP_DBWETH_KEY, DEEP_ID_MAINNET, DEEP_ID_TESTNET, DEEP_KEY, DEEP_SCALAR_MAINNET, DEEP_SCALAR_TESTNET, DEEP_SUI_ID_TESTNET, DEEP_SUI_KEY, DEEP_TREASURY_ID_MAINNET, DEEP_TREASURY_ID_TESTNET, DEEP_TYPE_MAINNET, DEEP_TYPE_TESTNET, REGISTRY_ID_MAINNET, REGISTRY_ID_TESTNET, SUI_DBUSDC_ID_TESTNET, SUI_DBUSDC_KEY, SUI_ID_MAINNET, SUI_ID_TESTNET, SUI_KEY, SUI_SCALAR_MAINNET, SUI_SCALAR_TESTNET, SUI_TYPE_MAINNET, SUI_TYPE_TESTNET, USDC_ID_MAINNET, USDC_KEY, USDC_SCALAR_MAINNET, USDC_TYPE_MAINNET, WETH_ID_MAINNET, WETH_KEY, WETH_SCALAR_MAINNET, WETH_TYPE_MAINNET } from "./constants";
+import { DBUSDT_DBUSDC_KEY, DBUSDT_DBUSDC_ID_TESTNET, DBUSDC_ID_TESTNET, DBUSDC_KEY, DBUSDC_SCALAR_TESTNET, DBUSDC_TYPE_TESTNET, DBUSDT_ID_TESTNET, DBUSDT_KEY, DBUSDT_SCALAR_TESTNET, DBUSDT_TYPE_TESTNET, DEEPBOOK_PACKAGE_ID_MAINNET, DEEPBOOK_PACKAGE_ID_TESTNET, DEEP_DBUSDC_ID_TESTNET, DEEP_ID_MAINNET, DEEP_ID_TESTNET, DEEP_KEY, DEEP_SCALAR_MAINNET, DEEP_SCALAR_TESTNET, DEEP_SUI_ID_TESTNET, DEEP_SUI_KEY, DEEP_TREASURY_ID_MAINNET, DEEP_TREASURY_ID_TESTNET, DEEP_TYPE_MAINNET, DEEP_TYPE_TESTNET, REGISTRY_ID_MAINNET, REGISTRY_ID_TESTNET, DEEP_DBUSDC_KEY, SUI_ID_MAINNET, SUI_ID_TESTNET, SUI_KEY, SUI_SCALAR_MAINNET, SUI_SCALAR_TESTNET, SUI_TYPE_MAINNET, SUI_TYPE_TESTNET, USDC_ID_MAINNET, USDC_KEY, USDC_SCALAR_MAINNET, USDC_TYPE_MAINNET, WETH_ID_MAINNET, WETH_KEY, WETH_SCALAR_MAINNET, WETH_TYPE_MAINNET, SUI_DBUSDC_KEY, SUI_DBUSDC_ID_TESTNET } from "./constants";
 
 const getConfig = (): Config => {
     let env = process.env.ENV;
@@ -73,11 +73,11 @@ export class DeepBookConfig {
             scalar: DBUSDC_SCALAR_TESTNET,
             coinId: ``
         };
-        this.coins[DBWETH_KEY] = {
-            key: DBWETH_KEY,
-            address: DBWETH_ID_TESTNET,
-            type: DBWETH_TYPE_TESTNET,
-            scalar: DBWETH_SCALAR_TESTNET,
+        this.coins[DBUSDT_KEY] = {
+            key: DBUSDT_KEY,
+            address: DBUSDT_ID_TESTNET,
+            type: DBUSDT_TYPE_TESTNET,
+            scalar: DBUSDT_SCALAR_TESTNET,
             coinId: ``
         }
         await this.fetchCoinData(suiClient, signer, merge);
@@ -121,21 +121,21 @@ export class DeepBookConfig {
             baseCoin: this.coins[DEEP_KEY],
             quoteCoin: this.coins[SUI_KEY],
         };
+        this.pools[DEEP_DBUSDC_KEY] = {
+            address: DEEP_DBUSDC_ID_TESTNET,
+            baseCoin: this.coins[DEEP_KEY],
+            quoteCoin: this.coins[DBUSDC_KEY],
+        };
         this.pools[SUI_DBUSDC_KEY] = {
             address: SUI_DBUSDC_ID_TESTNET,
             baseCoin: this.coins[SUI_KEY],
             quoteCoin: this.coins[DBUSDC_KEY],
         };
-        this.pools[DEEP_DBWETH_KEY] = {
-            address: DEEP_DBWETH_ID_TESTNET,
-            baseCoin: this.coins[DEEP_KEY],
-            quoteCoin: this.coins[DBWETH_KEY],
-        };
-        this.pools[DBWETH_DBUSDC_KEY] = {
-            address: DBWETH_DBUSDC_ID_TESTNET,
-            baseCoin: this.coins[DBWETH_KEY],
+        this.pools[DBUSDT_DBUSDC_KEY] = {
+            address: DBUSDT_DBUSDC_ID_TESTNET,
+            baseCoin: this.coins[DBUSDT_KEY],
             quoteCoin: this.coins[DBUSDC_KEY],
-        }
+        };
     }
 
     initPoolsMainnet() {

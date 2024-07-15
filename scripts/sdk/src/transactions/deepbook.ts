@@ -8,7 +8,6 @@ import {
 import { generateProof } from "./balanceManager";
 import { DEEP_SCALAR, FLOAT_SCALAR, GAS_BUDGET } from "../utils/constants";
 import { BalanceManager, Pool } from "../utils/interfaces";
-import { SUI_KEY } from "../utils/constants";
 
 let env = process.env.ENVIRONMENT;
 if (!env) {
@@ -395,6 +394,7 @@ export const getLevel2Range = async (
 ) => {
     const baseScalar = pool.baseCoin.scalar;
     const quoteScalar = pool.quoteCoin.scalar;
+    console.log("ok");
 
     txb.moveCall({
         target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_range`,
@@ -407,10 +407,14 @@ export const getLevel2Range = async (
         typeArguments: [pool.baseCoin.type, pool.quoteCoin.type]
     });
 
+    console.log("ok");
+
     const res = await client.devInspectTransactionBlock({
         sender: normalizeSuiAddress("0xa"),
         transactionBlock: txb,
     });
+
+    console.log("ok");
 
     const prices = res.results![0].returnValues![0][0];
     const parsed_prices = bcs.vector(bcs.u64()).parse(new Uint8Array(prices));
@@ -428,7 +432,7 @@ export const getLevel2TicksFromMid = async (
     txb: TransactionBlock,
 ) => {
     txb.moveCall({
-        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_tick_from_mid`,
+        target: `${DEEPBOOK_PACKAGE_ID}::pool::get_level2_ticks_from_mid`,
         arguments: [
             txb.object(pool.address),
             txb.pure.u64(tickFromMid)

@@ -535,32 +535,33 @@ const testClient = async () => {
     let client = new DeepBookClient(env, process.env.PRIVATE_KEY!);
     let mergeCoins = false;
     await client.init(mergeCoins);
-    client.addBalanceManager("MANAGER_1", "0x0c34e41694c5347c7a45978d161b5d6b543bec80702fee6e002118f333dbdfaf");
+    client.addBalanceManager("MANAGER_1", "0x9f4acee19891c08ec571629df0a81786a8df72f71f4e38d860564c9e54265179");
 
     const txb = new TransactionBlock();
+    // await client.createAndShareBalanceManager(txb);
     // await client.cancelAllOrders("DEEP_SUI", "MANAGER_1", txb);
     // await client.unregisterPoolAdmin("SUI_DBUSDC", txb);
-    // await client.depositIntoManager("MANAGER_1", 1, "SUI", txb);
+    // await client.depositIntoManager("MANAGER_1", 1000, "DBUSDC", txb);
     // await client.withdrawAllFromManager("MANAGER_1", "DBUSDC", txb);
     // await client.vaultBalances("DEEP_SUI", txb);
     // await client.createPoolAdmin({
-    //     baseCoinKey: "SUI",
+    //     baseCoinKey: "DBUSDT",
     //     quoteCoinKey: "DBUSDC",
     //     tickSize: 0.001,
     //     lotSize: 0.001,
     //     minSize: 0.01,
     //     whitelisted: false,
-    //     stablePool: false,
+    //     stablePool: true,
     // }, txb);
-    // await client.addDeepPricePoint("SUI_DBUSDC", "DEEP_SUI", txb);
+    // await client.addDeepPricePoint("DBUSDT_DBUSDC", "DEEP_DBUSDC", txb);
     // await client.checkManagerBalance("MANAGER_1", "DEEP", txb);
     // await client.placeLimitOrder({
-    //     poolKey: "DEEP_SUI",
+    //     poolKey: "SUI_DBUSDC",
     //     managerKey: 'MANAGER_1',
     //     clientOrderId: 888,
-    //     price: 3,
+    //     price: 0.5,
     //     quantity: 50,
-    //     isBid: false,
+    //     isBid: true,
     // }, txb)
     // await client.placeMarketOrder({
     //     poolKey: "DBWETH_DBUSDC",
@@ -590,8 +591,8 @@ const testClient = async () => {
     //     amount: 1000,
     //     deepAmount: 500,
     // }, txb);
-
-    client.signAndExecute(txb); // Complete and sign the transaction
+    console.log(await client.getLevel2TicksFromMid("DEEP_SUI", 5, txb));
+    // client.signAndExecute(txb); // Complete and sign the transaction
 }
 
 testClient();
