@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export { DeepBookClient } from './client.js';
 export { createAndShareBalanceManager, depositIntoManager, withdrawFromManager } from './transactions/balanceManager.js';
-export { 
+export {
     placeLimitOrder,
     placeMarketOrder,
     modifyOrder,
@@ -31,8 +31,10 @@ export {
     updateDisabledVersions,
 } from './transactions/deepbookAdmin.js'
 export {
-    borrowAndReturnBaseAsset,
-    borrowAndReturnQuoteAsset,
+    borrowBaseAsset,
+    borrowQuoteAsset,
+    returnBaseAsset,
+    returnQuoteAsset,
 } from './transactions/flashLoans.js'
 export {
     stake,
