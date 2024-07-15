@@ -113,6 +113,8 @@ module deepbook::order {
 
         fill::new(
             order_id,
+            self.client_order_id,
+            self.price(),
             balance_manager_id,
             expired,
             self.quantity == self.filled_quantity,

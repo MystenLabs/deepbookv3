@@ -293,6 +293,7 @@ module deepbook::book {
             else book_side.prev_slice(ref, offset);
         };
 
+        order_info.emit_orders_filled(timestamp);
         let fills = order_info.fills();
         let mut i = 0;
         while (i < fills.length()) {

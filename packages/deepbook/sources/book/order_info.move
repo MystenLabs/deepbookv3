@@ -66,6 +66,7 @@ module deepbook::order_info {
         fee_is_deep: bool,
         // Fees paid so far in base/quote/DEEP terms
         paid_fees: u64,
+        // Epoch this order was placed
         epoch: u64,
         // Status of the order
         status: u8,
@@ -87,6 +88,11 @@ module deepbook::order_info {
         maker_balance_manager_id: ID,
         taker_balance_manager_id: ID,
         timestamp: u64,
+    }
+
+    /// Fills are emitted in batches of 100.
+    public struct OrdersFilled has copy, store, drop {
+        fills: vector<OrderFilled>,
     }
 
     /// Emitted when a maker order is canceled.
@@ -426,15 +432,33 @@ module deepbook::order_info {
         self.status = constants::partially_filled();
         if (self.remaining_quantity() == 0) self.status = constants::filled();
 
-        self.emit_order_filled(
-            maker,
-            maker.price(),
-            fill.base_quantity(),
-            fill.quote_quantity(),
-            timestamp,
-        );
-
         true
+    }
+
+    /// Emit all fills for this order in a vector of `OrderFilled` events.
+    /// To avoid DOS attacks, 100 fills are emitted at a time. Up to 10,000
+    /// fills can be emitted in a single call.
+    public(package) fun emit_orders_filled(
+        self: &OrderInfo,
+        timestamp: u64,
+    ) {
+        if (self.fills.is_empty()) return;
+
+        let mut orders_filled = vector[];
+        let mut i = 0;
+        let mut j = 0;
+        while (i < self.fills.length() && j < 100) {
+            let fill = &self.fills[i];
+            orders_filled.push_back(self.order_filled_from_fill(fill, timestamp));
+            if (i % 100 == 0) {
+                event::emit(OrdersFilled { fills: orders_filled });
+                orders_filled = vector[];
+                j = j + 1;
+            };
+            i = i + 1;
+        };
+
+        event::emit(OrdersFilled { fills: orders_filled })
     }
 
     public(package) fun emit_order_placed(self: &OrderInfo) {
@@ -452,27 +476,24 @@ module deepbook::order_info {
     }
 
     // === Private Functions ===
-    fun emit_order_filled(
+    fun order_filled_from_fill(
         self: &OrderInfo,
-        maker: &Order,
-        price: u64,
-        filled_quantity: u64,
-        quote_quantity: u64,
+        fill: &Fill,
         timestamp: u64,
-    ) {
-        event::emit(OrderFilled {
+    ): OrderFilled {
+        OrderFilled {
             pool_id: self.pool_id,
-            maker_order_id: maker.order_id(),
+            maker_order_id: fill.maker_order_id(),
             taker_order_id: self.order_id,
-            maker_client_order_id: maker.client_order_id(),
+            maker_client_order_id: fill.maker_client_order_id(),
             taker_client_order_id: self.client_order_id,
-            base_quantity: filled_quantity,
-            quote_quantity: quote_quantity,
-            price,
-            maker_balance_manager_id: maker.balance_manager_id(),
-            taker_balance_manager_id: self.balance_manager_id,
+            price: fill.execution_price(),
             taker_is_bid: self.is_bid,
+            base_quantity: fill.base_quantity(),
+            quote_quantity: fill.quote_quantity(),
+            maker_balance_manager_id: fill.balance_manager_id(),
+            taker_balance_manager_id: self.balance_manager_id,
             timestamp,
-        });
+        }
     }
 }
