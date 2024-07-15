@@ -45,6 +45,41 @@ module deepbook::order_tests {
     }
 
     #[test]
+    fun generate_fill_multiple_partial_fill_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 15 * constants::usdc_unit();
+        let quantity = 12 * constants::sui_unit();
+        let is_bid = false;
+        let mut order = create_order_base(price, quantity, is_bid);
+
+        let fill = order.generate_fill(0, 5 * constants::sui_unit(), true, false);
+        assert!(!fill.expired(), 0);
+        assert!(!fill.completed(), 0);
+        assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
+        assert!(fill.taker_is_bid(), 0);
+        assert!(fill.quote_quantity() == 75 * constants::usdc_unit(), 0); // 5 * $15 = $75
+        assert_eq(fill.get_settled_maker_quantities(), balances::new(0, 75 * constants::usdc_unit(), 0));
+
+        assert!(order.status() == constants::partially_filled(), 0);
+        assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
+
+        let fill = order.generate_fill(0, 15 * constants::sui_unit(), true, false);
+        assert!(!fill.expired(), 0);
+        assert!(fill.completed(), 0);
+        assert!(fill.base_quantity() == 7 * constants::sui_unit(), 0);
+        assert!(fill.taker_is_bid(), 0);
+        assert!(fill.quote_quantity() == 105 * constants::usdc_unit(), 0); // 7 * $15 = $105
+        assert_eq(fill.get_settled_maker_quantities(), balances::new(0, 105 * constants::usdc_unit(), 0));
+
+        assert!(order.status() == constants::filled(), 0);
+        assert!(order.filled_quantity() == 12 * constants::sui_unit(), 0);
+
+        test.end();
+    }
+
+    #[test]
     // Maker has a sell order of 0.1 at $111.11. Gets matched for 0.1.
     fun generate_fill_full_fill_ok() {
         let mut test = begin(OWNER);
@@ -156,6 +191,56 @@ module deepbook::order_tests {
 
         assert!(order.status() == constants::expired(), 0);
         assert!(order.filled_quantity() == 0, 0);
+
+        test.end();
+    }
+
+    #[test]
+    // Maker has a buy order of 10 at $10, half is filled, rest is expired.
+    fun generate_fill_expired_partial_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let price = 10 * constants::usdc_unit();
+        let quantity = 10 * constants::sui_unit();
+        let is_bid = true;
+        let deep_per_asset = 1 * constants::float_scaling();
+        let order_id = 1;
+        let balance_manager_id = id_from_address(ALICE);
+        let epoch = 1;
+        let expire_timestamp = test.ctx().epoch_timestamp_ms();
+        let conversion_is_base = true;
+        let mut order = create_order(
+            price,
+            quantity,
+            is_bid,
+            order_id,
+            balance_manager_id,
+            deep_per_asset,
+            conversion_is_base,
+            epoch,
+            expire_timestamp,
+        );
+
+        let fill = order.generate_fill(test.ctx().epoch_timestamp_ms(), 5 * constants::sui_unit(), false, false);
+        assert!(!fill.expired(), 0);
+        assert!(!fill.completed(), 0);
+        assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
+        assert!(fill.quote_quantity() == 50 * constants::usdc_unit() , 0); // 5 * $10 = $50
+        assert_eq(fill.get_settled_maker_quantities(), balances::new(5 * constants::sui_unit(), 0, 0));
+
+        assert!(order.status() == constants::partially_filled(), 0);
+        assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
+
+        let fill = order.generate_fill(test.ctx().epoch_timestamp_ms() + 1, 5 * constants::sui_unit(), false, false);
+        assert!(fill.expired(), 0);
+        assert!(!fill.completed(), 0);
+        assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
+        assert!(fill.quote_quantity() == 0, 0);
+        assert_eq(fill.get_settled_maker_quantities(), balances::new(0, 50 * constants::usdc_unit(), 0));
+
+        assert!(order.status() == constants::expired(), 0);
+        assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
 
         test.end();
     }

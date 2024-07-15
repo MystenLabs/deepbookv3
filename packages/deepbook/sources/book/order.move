@@ -96,7 +96,8 @@ module deepbook::order {
         is_bid: bool,
         expire_maker: bool,
     ): Fill {
-        let base_quantity = math::min(self.quantity, quantity);
+        let remaining_quantity = self.quantity - self.filled_quantity;
+        let base_quantity = math::min(remaining_quantity, quantity);
         let quote_quantity = math::mul(base_quantity, self.price());
 
         let order_id = self.order_id;
