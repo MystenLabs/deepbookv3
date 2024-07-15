@@ -541,7 +541,7 @@ const testClient = async () => {
     // await client.cancelAllOrders("DEEP_SUI", "MANAGER_1", txb);
     // await client.unregisterPoolAdmin("SUI_DBUSDC", txb);
     // await client.depositIntoManager("MANAGER_1", 1, "SUI", txb);
-    // await client.withdrawAllFromManager("MANAGER_1", "DEEP", txb);
+    // await client.withdrawAllFromManager("MANAGER_1", "DBUSDC", txb);
     // await client.vaultBalances("DEEP_SUI", txb);
     // await client.createPoolAdmin({
     //     baseCoinKey: "SUI",
@@ -594,4 +594,4 @@ const testClient = async () => {
     client.signAndExecute(txb); // Complete and sign the transaction
 }
 
-// testClient();
+testClient();
