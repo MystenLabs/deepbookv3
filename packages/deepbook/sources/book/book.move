@@ -216,14 +216,17 @@ module deepbook::book {
         current_timestamp: u64,
     ): (vector<u64>, vector<u64>) {
         assert!(price_low <= price_high, EInvalidPriceRange);
+        assert!(price_low >= constants::min_price() && price_low <= constants::max_price(), EInvalidPriceRange);
+        assert!(price_high >= constants::min_price() && price_high <= constants::max_price(), EInvalidPriceRange);
         assert!(ticks > 0, EInvalidTicks);
 
         let mut price_vec = vector[];
         let mut quantity_vec = vector[];
 
         // convert price_low and price_high to keys for searching
-        let key_low = (price_low as u128) << 64;
-        let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128);
+        let msb = if (is_bid) {(0 as u128)} else {(1 as u128) << 127};
+        let key_low = ((price_low as u128) << 64) + msb;
+        let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128) + msb;
         let book_side = if (is_bid) &self.bids else &self.asks;
         let (mut ref, mut offset) = if (is_bid) {
             book_side.slice_before(key_high)
