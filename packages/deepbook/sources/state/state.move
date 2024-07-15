@@ -16,6 +16,7 @@ module deepbook::state {
         account::{Self, Account},
         balances::{Self, Balances},
         fill::Fill,
+        constants,
     };
 
     // === Errors ===
@@ -80,7 +81,7 @@ module deepbook::state {
             .taker_fee_for_user(account_stake, account_volume_in_deep);
         let maker_fee = self.governance.trade_params().maker_fee();
 
-        if (order_info.remaining_quantity() > 0) {
+        if (order_info.remaining_quantity() > 0 && order_info.order_type() != constants::immediate_or_cancel()) {
             account.add_order(order_info.order_id());
         };
         account.add_taker_volume(order_info.executed_quantity());
