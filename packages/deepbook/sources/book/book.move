@@ -116,7 +116,7 @@ module deepbook::book {
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
-            if (current_timestamp < order.expire_timestamp()) {
+            if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
                 if (is_bid) {
                     matched_base_quantity = math::min(
@@ -192,14 +192,14 @@ module deepbook::book {
         while (!ask_ref.is_null()) {
             let best_ask_order = slice_borrow(self.asks.borrow_slice(ask_ref), ask_offset);
             best_ask_price = best_ask_order.price();
-            if (best_ask_order.expire_timestamp() > current_timestamp) break;
+            if (current_timestamp <= best_ask_order.expire_timestamp()) break;
             (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
         };
 
         while (!bid_ref.is_null()) {
             let best_bid_order = slice_borrow(self.bids.borrow_slice(bid_ref), bid_offset);
             best_bid_price = best_bid_order.price();
-            if (best_bid_order.expire_timestamp() > current_timestamp) break;
+            if (current_timestamp <= best_bid_order.expire_timestamp()) break;
             (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
         };
 
@@ -240,26 +240,25 @@ module deepbook::book {
 
         while (!ref.is_null() && ticks_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
-            if (order.expire_timestamp() < current_timestamp) {
-                (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
-                continue
-            };
-            let (_, order_price, _) = utils::decode_order_id(order.order_id());
-            if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
-            if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
-                cur_price = order_price
+            if (current_timestamp <= order.expire_timestamp()) {
+                let (_, order_price, _) = utils::decode_order_id(order.order_id());
+                if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
+                if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
+                    cur_price = order_price
+                };
+
+                if (cur_price != 0 && order_price != cur_price) {
+                    price_vec.push_back(cur_price);
+                    quantity_vec.push_back(cur_quantity);
+                    cur_price = order_price;
+                    cur_quantity = 0;
+                    ticks_left = ticks_left - 1;
+                };
+                if (cur_price != 0) {
+                    cur_quantity = cur_quantity + order.quantity();
+                };
             };
 
-            if (cur_price != 0 && order_price != cur_price) {
-                price_vec.push_back(cur_price);
-                quantity_vec.push_back(cur_quantity);
-                cur_price = order_price;
-                cur_quantity = 0;
-                ticks_left = ticks_left - 1;
-            };
-            if (cur_price != 0) {
-                cur_quantity = cur_quantity + order.quantity();
-            };
             (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
         };
 
