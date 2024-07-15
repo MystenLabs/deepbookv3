@@ -853,7 +853,7 @@ module deepbook::pool_tests {
 
         end(test);
     }
-    
+
     #[test_only]
     /// Get the time in the global clock
     public(package) fun get_time(

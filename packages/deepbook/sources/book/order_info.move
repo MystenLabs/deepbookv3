@@ -335,7 +335,7 @@ module deepbook::order_info {
     ) {
         assert!(order_info.original_quantity >= min_size, EOrderBelowMinimumSize);
         assert!(order_info.original_quantity % lot_size == 0, EOrderInvalidLotSize);
-        assert!(order_info.expire_timestamp >= timestamp, EInvalidExpireTimestamp);
+        assert!(timestamp <= order_info.expire_timestamp, EInvalidExpireTimestamp);
         assert!(
             order_info.order_type >= constants::no_restriction() &&
             order_info.order_type <= constants::max_restriction(),
