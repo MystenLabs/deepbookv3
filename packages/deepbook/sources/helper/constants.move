@@ -2,7 +2,9 @@ module deepbook::constants {
     const CURRENT_VERSION: u64 = 1; // Update version during upgrades
     const POOL_CREATION_FEE: u64 = 10000 * 1_000_000; // 10000 DEEP
     const FLOAT_SCALING: u64 = 1_000_000_000;
+    const FLOAT_SCALING_U128: u128 = 1_000_000_000;
     const MAX_U64: u64 = ((1u128 << 64) - 1) as u64;
+    const MAX_U128: u128 = ((1u256 << 128) - 1) as u128;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = ((1u128 << 63) - 1) as u64;
     const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
@@ -88,8 +90,16 @@ module deepbook::constants {
         FLOAT_SCALING
     }
 
+    public fun float_scaling_u128(): u128 {
+        FLOAT_SCALING_U128
+    }
+
     public fun max_u64(): u64 {
         MAX_U64
+    }
+
+    public fun max_u128(): u128 {
+        MAX_U128
     }
 
     public fun no_restriction(): u8 {

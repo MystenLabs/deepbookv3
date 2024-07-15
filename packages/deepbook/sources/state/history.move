@@ -15,11 +15,14 @@ module deepbook::history {
 
     // === Structs ===
     /// `Volumes` represents volume data for a single epoch.
+    /// Using flashloans on a whitelisted pool, assuming 1_000_000 * 1_000_000_000
+    /// in volume per trade, at 1 trade per millisecond, the total volume can reach
+    /// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one epoch.
     public struct Volumes has store, copy, drop {
-        total_volume: u64,
-        total_staked_volume: u64,
+        total_volume: u128,
+        total_staked_volume: u128,
         total_fees_collected: Balances,
-        historic_median: u64,
+        historic_median: u128,
         trade_params: TradeParams,
     }
 
@@ -98,25 +101,27 @@ module deepbook::history {
         let volumes = &mut self.historic_volumes[prev_epoch];
         if (volumes.trade_params.stake_required() > account_stake) return balances::empty();
 
+        let maker_volume = maker_volume as u128;
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = if (volumes.historic_median > 0) {
-            constants::float_scaling() -
-            math::min(
-                constants::float_scaling(),
-                math::div(other_maker_liquidity, volumes.historic_median),
+            constants::float_scaling_u128() -
+            math::min_u128(
+                constants::float_scaling_u128(),
+                math::div_u128(other_maker_liquidity, volumes.historic_median),
             )
         } else {
             0
         };
+        let maker_rebate_percentage = maker_rebate_percentage as u64;
         let maker_volume_proportion = if (volumes.total_staked_volume > 0) {
-            math::div(maker_volume, volumes.total_staked_volume)
+            math::div_u128(maker_volume, volumes.total_staked_volume)
         } else {
             0
         };
-        let maker_fee_proportion = math::mul(
+        let maker_fee_proportion = math::mul_u128(
             maker_volume_proportion,
-            volumes.total_fees_collected.deep(),
-        );
+            volumes.total_fees_collected.deep() as u128,
+        ) as u64;
         let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
         let maker_burn = maker_fee_proportion - maker_rebate;
 
@@ -129,10 +134,10 @@ module deepbook::history {
     public(package) fun update_historic_median(self: &mut History) {
         let epochs_since_creation = self.epoch - self.epoch_created;
         if (epochs_since_creation < constants::phase_out_epochs()) {
-            self.volumes.historic_median = constants::max_u64();
+            self.volumes.historic_median = constants::max_u128();
             return
         };
-        let mut median_vec = vector<u64>[];
+        let mut median_vec = vector<u128>[];
         let mut i = self.epoch - constants::phase_out_epochs();
         while (i < self.epoch) {
             if (self.historic_volumes.contains(i)) {
@@ -150,7 +155,8 @@ module deepbook::history {
     /// Increments the total volume and total staked volume.
     public(package) fun add_volume(self: &mut History, maker_volume: u64, account_stake: u64) {
         if (maker_volume == 0) return;
-
+        
+        let maker_volume = maker_volume as u128;
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
         if (account_stake >= self.volumes.trade_params.stake_required()) {
             self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
@@ -186,6 +192,9 @@ module deepbook::history {
         total_staked_volume: u64,
         total_fees_collected: Balances,
     ) {
+        let total_volume = total_volume as u128;
+        let total_staked_volume = total_staked_volume as u128;
+        
         let volumes = &mut history.volumes;
         volumes.total_volume = total_volume;
         volumes.total_staked_volume = total_staked_volume;
