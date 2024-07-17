@@ -29,7 +29,6 @@ module deepbook::big_vector_tests {
         bv.destroy_empty();
     }
 
-
     #[test]
     fun test_drop() {
         let mut bv = empty_for_test();
