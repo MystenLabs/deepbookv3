@@ -304,7 +304,7 @@ module deepbook::book {
         };
 
         if (order_info.fills().length() == constants::max_fills()) {
-            order_info.set_full_execution_false();
+            order_info.set_fill_limit_reached();
         }
     }
 
