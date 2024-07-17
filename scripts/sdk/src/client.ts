@@ -545,13 +545,13 @@ const testClient = async () => {
     // await client.withdrawAllFromManager("MANAGER_1", "DBUSDC", txb);
     // await client.vaultBalances("DEEP_SUI", txb);
     // await client.createPoolAdmin({
-    //     baseCoinKey: "DBUSDT",
-    //     quoteCoinKey: "DBUSDC",
+    //     baseCoinKey: "DEEP",
+    //     quoteCoinKey: "SUI",
     //     tickSize: 0.001,
     //     lotSize: 0.001,
     //     minSize: 0.01,
-    //     whitelisted: false,
-    //     stablePool: true,
+    //     whitelisted: true,
+    //     stablePool: false,
     // }, txb);
     // await client.addDeepPricePoint("DBUSDT_DBUSDC", "DEEP_DBUSDC", txb);
     // await client.checkManagerBalance("MANAGER_1", "DEEP", txb);
@@ -591,7 +591,7 @@ const testClient = async () => {
     //     amount: 1000,
     //     deepAmount: 500,
     // }, txb);
-    console.log(await client.getLevel2TicksFromMid("DEEP_SUI", 5, txb));
+    // console.log(await client.getLevel2TicksFromMid("DEEP_SUI", 5, txb));
     // client.signAndExecute(txb); // Complete and sign the transaction
 }
 
