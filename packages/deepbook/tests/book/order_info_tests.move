@@ -454,9 +454,8 @@ module deepbook::order_info_tests {
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
-        let max_reached = false;
         order_info.match_maker(&mut maker_order, 0);
-        order_info.assert_execution(max_reached);
+        order_info.assert_execution();
 
         abort(0)
     }
@@ -490,9 +489,8 @@ module deepbook::order_info_tests {
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
-        let max_reached = false;
         order_info.match_maker(&mut maker_order, 0);
-        order_info.assert_execution(max_reached);
+        order_info.assert_execution();
 
         abort(0)
     }
@@ -526,9 +524,8 @@ module deepbook::order_info_tests {
             market_order
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
-        let max_reached = false;
         order_info.match_maker(&mut maker_order, 0);
-        order_info.assert_execution(max_reached);
+        order_info.assert_execution();
         assert!(order_info.status() == constants::canceled(), 0);
 
         end(test);

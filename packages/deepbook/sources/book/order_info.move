@@ -203,6 +203,10 @@ module deepbook::order_info {
         self.full_execution
     }
 
+    public fun set_full_execution_false(self: &mut OrderInfo) {
+        self.full_execution = false;
+    }
+
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
@@ -361,7 +365,7 @@ module deepbook::order_info {
     }
 
     /// Assert order types after partial fill against the order book.
-    public(package) fun assert_execution(self: &mut OrderInfo, max_reached: bool): bool {
+    public(package) fun assert_execution(self: &mut OrderInfo): bool {
         if (self.order_type == constants::post_only()) {
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook)
         };
@@ -384,9 +388,7 @@ module deepbook::order_info {
             return true
         };
 
-        if (max_reached) {
-            self.full_execution = false;
-
+        if (!self.full_execution) {
             return true
         };
 
