@@ -72,6 +72,8 @@ module deepbook::order_info {
         status: u8,
         // Is a market_order
         market_order: bool,
+        // Executed in one transaction
+        fill_limit_reached: bool
     }
 
     /// Emitted when a maker order is filled.
@@ -203,6 +205,10 @@ module deepbook::order_info {
         self.fills
     }
 
+    public fun fill_limit_reached(self: &OrderInfo): bool {
+        self.fill_limit_reached
+    }
+
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
@@ -241,6 +247,7 @@ module deepbook::order_info {
             paid_fees: 0,
             status: constants::live(),
             market_order,
+            fill_limit_reached: false,
         }
     }
 
@@ -383,6 +390,10 @@ module deepbook::order_info {
             return true
         };
 
+        if (self.fill_limit_reached) {
+            return true
+        };
+
         false
     }
 
@@ -473,6 +484,10 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
+    }
+
+    public(package) fun set_fill_limit_reached(self: &mut OrderInfo) {
+        self.fill_limit_reached = true;
     }
 
     // === Private Functions ===

@@ -66,8 +66,8 @@ module deepbook::book {
             tick_size,
             lot_size,
             min_size,
-            bids: big_vector::empty(64, 64, ctx),
-            asks: big_vector::empty(64, 64, ctx),
+            bids: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
+            asks: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
         }
@@ -292,7 +292,7 @@ module deepbook::book {
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (!ref.is_null()) {
+        while (!ref.is_null() && order_info.fills().length() < constants::max_fills()) {
             let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
@@ -309,6 +309,10 @@ module deepbook::book {
             };
             i = i + 1;
         };
+
+        if (order_info.fills().length() == constants::max_fills()) {
+            order_info.set_fill_limit_reached();
+        }
     }
 
     fun get_order_id(self: &mut Book, is_bid: bool): u64 {
