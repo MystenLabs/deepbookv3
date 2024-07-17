@@ -203,10 +203,6 @@ module deepbook::order_info {
         self.full_execution
     }
 
-    public fun set_full_execution_false(self: &mut OrderInfo) {
-        self.full_execution = false;
-    }
-
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
@@ -464,6 +460,10 @@ module deepbook::order_info {
             price: self.price,
             expire_timestamp: self.expire_timestamp,
         });
+    }
+
+    public(package) fun set_full_execution_false(self: &mut OrderInfo) {
+        self.full_execution = false;
     }
 
     // === Private Functions ===
