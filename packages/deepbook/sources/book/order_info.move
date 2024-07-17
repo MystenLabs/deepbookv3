@@ -71,6 +71,8 @@ module deepbook::order_info {
         status: u8,
         // Is a market_order
         market_order: bool,
+        // Executed in one transaction
+        full_execution: bool
     }
 
     /// Emitted when a maker order is filled.
@@ -197,6 +199,10 @@ module deepbook::order_info {
         self.fills
     }
 
+    public fun full_execution(self: &OrderInfo): bool {
+        self.full_execution
+    }
+
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
@@ -235,6 +241,7 @@ module deepbook::order_info {
             paid_fees: 0,
             status: constants::live(),
             market_order,
+            full_execution: true,
         }
     }
 
@@ -354,7 +361,7 @@ module deepbook::order_info {
     }
 
     /// Assert order types after partial fill against the order book.
-    public(package) fun assert_execution(self: &mut OrderInfo): bool {
+    public(package) fun assert_execution(self: &mut OrderInfo, max_reached: bool): bool {
         if (self.order_type == constants::post_only()) {
             assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook)
         };
@@ -373,6 +380,12 @@ module deepbook::order_info {
 
         if (self.remaining_quantity() == 0) {
             self.status = constants::filled();
+
+            return true
+        };
+
+        if (max_reached) {
+            self.full_execution = false;
 
             return true
         };

@@ -36,6 +36,9 @@ module deepbook::constants {
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
+    // Maximum number of fills per transaction
+    const MAX_FILLS: u64 = 200;
+
     // History constants
     const PHASE_OUT_EPOCHS: u64 = 28;
 
@@ -130,6 +133,10 @@ module deepbook::constants {
 
     public fun expired(): u8 {
         EXPIRED
+    }
+
+    public fun max_fills(): u64 {
+        MAX_FILLS
     }
 
     public fun self_matching_allowed(): u8 {

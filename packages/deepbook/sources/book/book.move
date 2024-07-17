@@ -80,8 +80,8 @@ module deepbook::book {
             self.get_order_id(order_info.is_bid()),
         );
         order_info.set_order_id(order_id);
-        self.match_against_book(order_info, timestamp);
-        if (order_info.assert_execution()) return;
+        let max_reached = self.match_against_book(order_info, timestamp);
+        if (order_info.assert_execution(max_reached)) return;
         self.inject_limit_order(order_info);
     }
 
@@ -281,12 +281,12 @@ module deepbook::book {
     /// Matches the given order and quantity against the order book.
     /// If is_bid, it will match against asks, otherwise against bids.
     /// Mutates the order and the maker order as necessary.
-    fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
+    fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64): bool {
         let is_bid = order_info.is_bid();
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (!ref.is_null()) {
+        while (!ref.is_null() && order_info.fills().length() < constants::max_fills()) {
             let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
@@ -302,6 +302,8 @@ module deepbook::book {
             };
             i = i + 1;
         };
+
+        order_info.fills().length() == constants::max_fills()
     }
 
     fun get_order_id(self: &mut Book, is_bid: bool): u64 {

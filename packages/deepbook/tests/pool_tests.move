@@ -494,17 +494,32 @@ module deepbook::pool_tests {
 
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
     fun test_place_order_with_maxu64_as_price_e(){
-        test_place_order_edge_price(constants::max_u64())
+        test_place_order_edge_price(1 * constants::float_scaling(), constants::max_u64() - constants::max_u64() % constants::tick_size())
     }
 
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidPrice)]
     fun test_place_order_with_zero_as_price_e(){
-        test_place_order_edge_price(0)
+        test_place_order_edge_price(1 * constants::float_scaling(), 0)
     }
 
     #[test]
     fun test_place_order_with_maxprice_ok(){
-        test_place_order_edge_price(constants::max_price() - constants::max_price() % constants::tick_size())
+        test_place_order_edge_price(1 * constants::float_scaling(), constants::max_price() - constants::max_price() % constants::tick_size())
+    }
+
+    #[test]
+    fun test_place_order_with_minprice_ok(){
+        test_place_order_edge_price(1 * constants::float_scaling(), constants::tick_size())
+    }
+
+    #[test]
+    fun test_place_order_with_min_quantity_ok(){
+        test_place_order_edge_price(constants::min_size(), constants::tick_size())
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderBelowMinimumSize)]
+    fun test_place_order_with_lower_min_quantity_e(){
+        test_place_order_edge_price(constants::lot_size(), constants::tick_size())
     }
 
     #[test_only]
@@ -824,6 +839,7 @@ module deepbook::pool_tests {
     }
 
     fun test_place_order_edge_price(
+        quantity: u64,
         price: u64,
     ){
         let mut test = begin(OWNER);
@@ -832,7 +848,6 @@ module deepbook::pool_tests {
         let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
 
         let client_order_id = 1;
-        let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
 
@@ -853,7 +868,7 @@ module deepbook::pool_tests {
 
         end(test);
     }
-    
+
     #[test_only]
     /// Get the time in the global clock
     public(package) fun get_time(
