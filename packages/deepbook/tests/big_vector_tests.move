@@ -29,6 +29,18 @@ module deepbook::big_vector_tests {
         bv.destroy_empty();
     }
 
+    // #[test]
+    // fun test_capacity() {
+    //     let mut bv = empty_for_test();
+    //     let mut num = 1000;
+    //     while (num > 0){
+    //         std::debug::print(&num);
+    //         bv.insert(num, 1);
+    //         num = num - 1;
+    //     };
+    //     bv.drop()
+    // }
+
     #[test]
     fun test_drop() {
         let mut bv = empty_for_test();

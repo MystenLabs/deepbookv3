@@ -62,8 +62,8 @@ module deepbook::book {
             tick_size,
             lot_size,
             min_size,
-            bids: big_vector::empty(64, 64, ctx),
-            asks: big_vector::empty(64, 64, ctx),
+            bids: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
+            asks: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
         }

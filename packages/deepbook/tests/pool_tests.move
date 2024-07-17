@@ -694,9 +694,16 @@ module deepbook::pool_tests {
             let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let clock = test.take_shared<Clock>();
             let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-            let trade_cap = test.take_from_sender<TradeCap>();
-            let trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
-            // let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+            let trade_proof;
+
+            let is_owner = balance_manager.owner() == trader;
+            if (is_owner) {
+                trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+            } else {
+                let trade_cap = test.take_from_sender<TradeCap>();
+                trade_proof = balance_manager.generate_proof_as_trader(&trade_cap, test.ctx());
+                test.return_to_sender(trade_cap);
+            };
 
             // Place order in pool
             let order_info = pool.place_limit_order<BaseAsset, QuoteAsset>(
@@ -713,7 +720,6 @@ module deepbook::pool_tests {
                 &clock,
                 test.ctx()
             );
-            test.return_to_sender(trade_cap);
             return_shared(pool);
             return_shared(clock);
             return_shared(balance_manager);
@@ -1142,6 +1148,88 @@ module deepbook::pool_tests {
             constants::live(),
             expire_timestamp,
             &mut test,
+        );
+
+        end(test);
+    }
+
+    #[test]
+    fun test_order_limit_bid_ok(){
+        test_order_limit(true);
+    }
+
+    #[test]
+    fun test_order_limit_ask_ok(){
+        test_order_limit(false);
+    }
+
+    fun test_order_limit(
+        is_bid: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+
+        let client_order_id = 1;
+        let price = 2 * constants::float_scaling();
+        let quantity = 1 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+        let mut num_orders = 200;
+
+        while (num_orders > 0) {
+            std::debug::print(&test.num_concluded_txes());
+            place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+            );
+
+            num_orders = num_orders - 1;
+        };
+
+        let match_quantity = 1000 * constants::float_scaling();
+
+        let order_info = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            match_quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let expected_status = constants::partially_filled();
+        let expected_cumulative_quote_quantity = constants::max_fills() * price;
+        let paid_fees = constants::max_fills() * math::mul(constants::taker_fee(), constants::deep_multiplier());
+
+        verify_order_info(
+            &order_info,
+            client_order_id,
+            price,
+            match_quantity,
+            constants::max_fills(),
+            expected_cumulative_quote_quantity,
+            paid_fees,
+            true,
+            expected_status,
+            expire_timestamp,
         );
 
         end(test);
