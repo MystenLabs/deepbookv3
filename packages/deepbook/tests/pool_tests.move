@@ -1176,10 +1176,9 @@ module deepbook::pool_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
-        let mut num_orders = 200;
+        let mut num_orders = 300;
 
         while (num_orders > 0) {
-            std::debug::print(&test.num_concluded_txes());
             place_limit_order<SUI, USDC>(
             ALICE,
             pool_id,
@@ -1200,6 +1199,7 @@ module deepbook::pool_tests {
 
         let match_quantity = 1000 * constants::float_scaling();
 
+        // Place first order, should only match with 200 of the orders.
         let order_info = place_limit_order<SUI, USDC>(
             ALICE,
             pool_id,
@@ -1224,7 +1224,40 @@ module deepbook::pool_tests {
             client_order_id,
             price,
             match_quantity,
-            constants::max_fills(),
+            constants::max_fills() * quantity,
+            expected_cumulative_quote_quantity,
+            paid_fees,
+            true,
+            expected_status,
+            expire_timestamp,
+        );
+
+        // Place second order, should match with 100 of the remaining orders.
+        let order_info = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            match_quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let expected_status = constants::partially_filled();
+        let expected_cumulative_quote_quantity = 100 * price;
+        let paid_fees = 100 * math::mul(constants::taker_fee(), constants::deep_multiplier());
+
+        verify_order_info(
+            &order_info,
+            client_order_id,
+            price,
+            match_quantity,
+            100 * quantity,
             expected_cumulative_quote_quantity,
             paid_fees,
             true,
