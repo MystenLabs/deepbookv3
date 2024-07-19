@@ -910,6 +910,24 @@ module deepbook::pool_tests {
         }
     }
 
+    #[test_only]
+    public(package) fun validate_open_orders<BaseAsset, QuoteAsset>(
+        sender: address,
+        pool_id: ID,
+        balance_manager_id: ID,
+        expected_open_orders: u64,
+        test: &mut Scenario,
+    ){
+        test.next_tx(sender);
+        {
+            let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+
+            assert!(pool.account_open_orders(balance_manager_id).size() == expected_open_orders, 1);
+
+            return_shared(pool);
+        }
+    }
+
     /// Alice places a worse order
     /// Alice places 3 bid/ask orders with at price 1
     /// Alice matches the order with an ask/bid order at price 1
@@ -2902,6 +2920,7 @@ module deepbook::pool_tests {
         let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
         let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
 
+        validate_open_orders<SUI, USDC>(ALICE, pool_id, balance_manager_id_alice, 0, &mut test);
         // variables to input into order
         let client_order_id = 1;
         let order_type = constants::no_restriction();
@@ -2958,6 +2977,8 @@ module deepbook::pool_tests {
             expire_timestamp,
             &mut test,
         );
+        validate_open_orders<SUI, USDC>(ALICE, pool_id, balance_manager_id_alice, 1, &mut test);
+        
         end(test);
     }
 

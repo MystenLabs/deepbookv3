@@ -655,7 +655,12 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: ID,
     ): VecSet<u128> {
-        self.load_inner().state.account(balance_manager).open_orders()
+        let self = self.load_inner();
+        if (!self.state.account_exists(balance_manager)) {
+            return vec_set::empty()
+        };
+
+        self.state.account(balance_manager).open_orders()
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
