@@ -259,6 +259,10 @@ module deepbook::state {
         &mut self.governance
     }
 
+    public(package) fun account_exists(self: &State, account_id: ID): bool {
+        self.accounts.contains(account_id)
+    }
+
     public(package) fun account(self: &State, account_id: ID): &Account {
         &self.accounts[account_id]
     }
