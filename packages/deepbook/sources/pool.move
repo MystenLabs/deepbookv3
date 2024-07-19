@@ -9,7 +9,7 @@ module deepbook::pool {
         coin::{Self, Coin},
         clock::Clock,
         event,
-        vec_set::VecSet,
+        vec_set::{Self, VecSet},
         versioned::{Self, Versioned},
     };
     use deepbook::{
