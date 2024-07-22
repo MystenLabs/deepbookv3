@@ -58,6 +58,7 @@ module deepbook::master_tests {
     const EInvalidTrader: u64 = 16;
     const EIncorrectLevel2Price: u64 = 17;
     const EIncorrectLevel2Quantity: u64 = 18;
+    const EInvalidStake: u64 = 19;
 
     #[test]
     fun test_master_ok() {
@@ -77,6 +78,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
     fun test_master_incorrect_stake_owner_e() {
         test_master(EIncorrectStakeOwner)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidStake)]
+    fun test_master_invalid_stake_e() {
+        test_master(EInvalidStake)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::state::ENoStake)]
@@ -314,6 +320,16 @@ module deepbook::master_tests {
             &alice_balance,
             &mut test
         );
+
+        if (error_code == EInvalidStake) {
+            stake<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                0,
+                &mut test
+            );
+        };
 
         // Alice stakes 100 DEEP into pool 1 during epoch 0 to be effective in epoch 1
         stake<SUI, USDC>(
