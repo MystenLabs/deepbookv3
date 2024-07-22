@@ -921,10 +921,12 @@ module deepbook::pool_tests {
         test.next_tx(sender);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            assert!(pool.account_open_orders(balance_manager_id).size() == expected_open_orders, 1);
+            assert!(pool.account_open_orders(&balance_manager).size() == expected_open_orders, 1);
 
             return_shared(pool);
+            return_shared(balance_manager);
         }
     }
 
@@ -2978,7 +2980,7 @@ module deepbook::pool_tests {
             &mut test,
         );
         validate_open_orders<SUI, USDC>(ALICE, pool_id, balance_manager_id_alice, 1, &mut test);
-        
+
         end(test);
     }
 
