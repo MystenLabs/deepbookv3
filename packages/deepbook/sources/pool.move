@@ -42,6 +42,7 @@ module deepbook::pool {
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
     const EMinimumQuantityOutNotMet: u64 = 14;
+    const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
 
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -739,6 +740,7 @@ module deepbook::pool {
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
         assert!(min_size % lot_size == 0, EInvalidMinSize);
+        assert!(!(whitelisted_pool && stable_pool), EPoolCannotBeBothWhitelistedAndStable);
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
         let pool_id = object::new(ctx);
