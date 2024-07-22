@@ -82,6 +82,18 @@ module deepbook::deep_price {
         }
     }
 
+    public(package) fun deep_quantity_u128(
+        self: &OrderDeepPrice,
+        base_quantity: u128,
+        quote_quantity: u128,
+    ): u128 {
+        if (self.asset_is_base) {
+            math::mul_u128_u64(base_quantity, self.deep_per_asset)
+        } else {
+            math::mul_u128_u64(quote_quantity, self.deep_per_asset)
+        }
+    }
+
     /// Add a price point. If max data points are reached, the oldest data point is removed.
     /// Remove all data points older than MAX_DATA_POINT_AGE_MS.
     public(package) fun add_price_point(
