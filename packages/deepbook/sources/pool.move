@@ -42,8 +42,9 @@ module deepbook::pool {
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
     const EMinimumQuantityOutNotMet: u64 = 14;
-    const EPoolNotRegistered: u64 = 15;
-    const EPoolCannotBeBothWhitelistedAndStable: u64 = 16;
+    const EInvalidStake: u64 = 15;
+    const EPoolNotRegistered: u64 = 16;
+    const EPoolCannotBeBothWhitelistedAndStable: u64 = 17;
     
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -362,6 +363,7 @@ module deepbook::pool {
         amount: u64,
         ctx: &TxContext,
     ) {
+        assert!(amount > 0, EInvalidStake);
         let self = self.load_inner_mut();
         let (settled, owed) = self.state.process_stake(balance_manager.id(), amount, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
