@@ -88,9 +88,9 @@ module deepbook::deep_price {
         quote_quantity: u128,
     ): u128 {
         if (self.asset_is_base) {
-            math::mul_u128_u64(base_quantity, self.deep_per_asset)
+            math::mul_u128(base_quantity, self.deep_per_asset as u128)
         } else {
-            math::mul_u128_u64(quote_quantity, self.deep_per_asset)
+            math::mul_u128(quote_quantity, self.deep_per_asset as u128)
         }
     }
 

@@ -26,14 +26,6 @@ module deepbook::math {
         result
     }
 
-    /// Multiply a u128 and a u64 floating numbers.
-    /// This function will round down the result.
-    public(package) fun mul_u128_u64(x: u128, y: u64): u128 {
-        let (_, result) = mul_internal_u128_u64(x, y);
-
-        result
-    }
-
     /// Multiply two floating numbers.
     /// This function will round up the result.
     public(package) fun mul_round_up(x: u64, y: u64): u64 {
@@ -151,14 +143,6 @@ module deepbook::math {
     }
 
     fun mul_internal_u128(x: u128, y: u128): (u128, u128) {
-        let x = x as u256;
-        let y = y as u256;
-        let round = if ((x * y) % FLOAT_SCALING_U256 == 0) 0 else 1;
-
-        (round, (x * y / FLOAT_SCALING_U256) as u128)
-    }
-
-    fun mul_internal_u128_u64(x: u128, y: u64): (u128, u128) {
         let x = x as u256;
         let y = y as u256;
         let round = if ((x * y) % FLOAT_SCALING_U256 == 0) 0 else 1;
