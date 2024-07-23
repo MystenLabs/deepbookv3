@@ -73,7 +73,9 @@ module deepbook::order_info {
         // Is a market_order
         market_order: bool,
         // Executed in one transaction
-        fill_limit_reached: bool
+        fill_limit_reached: bool,
+        // Whether order is inserted
+        order_inserted: bool,
     }
 
     /// Emitted when a maker order is filled.
@@ -209,6 +211,10 @@ module deepbook::order_info {
         self.fill_limit_reached
     }
 
+    public fun order_inserted(self: &OrderInfo): bool {
+        self.order_inserted
+    }
+
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
@@ -248,6 +254,7 @@ module deepbook::order_info {
             status: constants::live(),
             market_order,
             fill_limit_reached: false,
+            order_inserted: false,
         }
     }
 
@@ -300,7 +307,7 @@ module deepbook::order_info {
         };
 
         let remaining_quantity = self.remaining_quantity();
-        if (remaining_quantity > 0 && !(self.order_type() == constants::immediate_or_cancel())) {
+        if (self.order_inserted()) {
             let maker_deep_in = math::mul(
                 maker_fee,
                 self
@@ -488,6 +495,10 @@ module deepbook::order_info {
 
     public(package) fun set_fill_limit_reached(self: &mut OrderInfo) {
         self.fill_limit_reached = true;
+    }
+
+    public(package) fun set_order_inserted(self: &mut OrderInfo) {
+        self.order_inserted = true;
     }
 
     // === Private Functions ===
