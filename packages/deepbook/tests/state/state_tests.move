@@ -107,6 +107,8 @@ module deepbook::state_tests {
         let market_order = false;
         let expire_timestamp = 1;
         let conversion_is_deep = true;
+        let fill_limit_reached = false;
+        let order_inserted = true;
         let mut order_info1 = create_order_info(
             balance_manager_id,
             ALICE,
@@ -119,7 +121,9 @@ module deepbook::state_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_deep,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
         let (settled, owed) = state.process_create(&mut order_info1, test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
