@@ -313,13 +313,23 @@ module deepbook::pool_tests {
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun test_cancel_all_orders_bid() {
-        test_cancel_all_orders(true);
+    fun test_cancel_all_orders_bid_e() {
+        test_cancel_all_orders(true, true);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun test_cancel_all_orders_ask() {
-        test_cancel_all_orders(false);
+    fun test_cancel_all_orders_ask_e() {
+        test_cancel_all_orders(false, true);
+    }
+
+    #[test]
+    fun test_cancel_all_orders_bid_ok() {
+        test_cancel_all_orders(true, false);
+    }
+
+    #[test]
+    fun test_cancel_all_orders_ask_ok() {
+        test_cancel_all_orders(false, false);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
@@ -542,6 +552,55 @@ module deepbook::pool_tests {
         test_place_order_edge_price(constants::lot_size(), constants::tick_size())
     }
 
+    #[test]
+    fun test_order_limit_bid_ok(){
+        test_order_limit(true);
+    }
+
+    #[test]
+    fun test_order_limit_ask_ok(){
+        test_order_limit(false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
+    fun test_using_unregistered_as_reference(){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        setup_pool_with_default_fees_and_reference_pool_unregistered<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        end(test);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EPoolCannotBeBothWhitelistedAndStable)]
+    fun test_create_pool_e(){
+        test_create_pool(true, true);
+    }
+
+    #[test]
+    fun test_create_pool_1_ok(){
+        test_create_pool(false, true);
+    }
+
+    #[test]
+    fun test_create_pool_2_ok(){
+        test_create_pool(true, false);
+    }
+
+    #[test]
+    fun test_create_pool_3_ok(){
+        test_create_pool(false, false);
+    }
+
+    fun test_create_pool(
+        whitelisted_pool: bool,
+        stable_pool: bool,
+    ){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        setup_pool_with_default_fees<SUI, DEEP>(OWNER, registry_id, whitelisted_pool, stable_pool, &mut test);
+        end(test);
+    }
+
     #[test_only]
     public(package) fun setup_test(
         owner: address,
@@ -588,6 +647,7 @@ module deepbook::pool_tests {
             sender,
             registry_id,
             true,
+            false,
             test,
         );
 
@@ -629,10 +689,10 @@ module deepbook::pool_tests {
         sender: address,
         registry_id: ID,
         whitelisted_pool: bool,
+        stable_pool: bool,
         test: &mut Scenario,
     ): ID {
         let creation_fee = coin::mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx());
-        let stable_pool = false;
         setup_pool<BaseAsset, QuoteAsset>(
             sender,
             constants::tick_size(), // tick size
@@ -921,10 +981,12 @@ module deepbook::pool_tests {
         test.next_tx(sender);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            assert!(pool.account_open_orders(balance_manager_id).size() == expected_open_orders, 1);
+            assert!(pool.account_open_orders(&balance_manager).size() == expected_open_orders, 1);
 
             return_shared(pool);
+            return_shared(balance_manager);
         }
     }
 
@@ -1191,22 +1253,13 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test]
-    fun test_order_limit_bid_ok(){
-        test_order_limit(true);
-    }
-
-    #[test]
-    fun test_order_limit_ask_ok(){
-        test_order_limit(false);
-    }
-
     fun test_order_limit(
         is_bid: bool,
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
         let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
         let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
 
         let client_order_id = 1;
@@ -1214,13 +1267,32 @@ module deepbook::pool_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
-        let mut num_orders = 300;
+        let mut num_orders = 150;
 
-        while (num_orders > 0) {
+        while (num_orders > 100) {
             place_limit_order<SUI, USDC>(
             ALICE,
             pool_id,
             balance_manager_id_alice,
+            client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+            );
+
+            num_orders = num_orders - 1;
+        };
+
+        while (num_orders > 0) {
+            place_limit_order<SUI, USDC>(
+            BOB,
+            pool_id,
+            balance_manager_id_bob,
             client_order_id,
             constants::no_restriction(),
             constants::self_matching_allowed(),
@@ -1287,15 +1359,16 @@ module deepbook::pool_tests {
         );
 
         let expected_status = constants::partially_filled();
-        let expected_cumulative_quote_quantity = 100 * price;
-        let paid_fees = 100 * math::mul(constants::taker_fee(), constants::deep_multiplier());
+        let expected_cumulative_quote_quantity = 50 * price;
+        let expected_executed_quantity = 50 * quantity;
+        let paid_fees = 50 * math::mul(constants::taker_fee(), constants::deep_multiplier());
 
         verify_order_info(
             &order_info,
             client_order_id,
             price,
             match_quantity,
-            100 * quantity,
+            expected_executed_quantity,
             expected_cumulative_quote_quantity,
             paid_fees,
             true,
@@ -1309,8 +1382,8 @@ module deepbook::pool_tests {
     fun test_get_pool_id_by_asset(){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
-        let pool_id_2 = setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
+        let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
+        let pool_id_2 = setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, false, &mut test);
         let pool_id_1_returned = get_pool_id_by_asset<SUI, USDC>(registry_id, &mut test);
         let pool_id_2_returned = get_pool_id_by_asset<SPAM, USDC>(registry_id, &mut test);
 
@@ -1338,25 +1411,28 @@ module deepbook::pool_tests {
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        let pool_id = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
         if (unregister) {
-            unregister_pool<SUI, USDC>(registry_id, &mut test);
+            unregister_pool<SUI, USDC>(pool_id, registry_id, &mut test);
         };
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
 
         end(test);
     }
 
     fun unregister_pool<BaseAsset, QuoteAsset>(
+        pool_id: ID,
         registry_id: ID,
         test: &mut Scenario,
     ) {
         test.next_tx(OWNER);
         {
             let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut registry = test.take_shared_by_id<Registry>(registry_id);
 
-            pool::unregister_pool_admin<BaseAsset, QuoteAsset>(&mut registry, &admin_cap);
+            pool::unregister_pool_admin<BaseAsset, QuoteAsset>(&mut pool, &mut registry, &admin_cap);
+            return_shared(pool);
             return_shared(registry);
             test_utils::destroy(admin_cap);
         }
@@ -1372,6 +1448,7 @@ module deepbook::pool_tests {
             OWNER,
             registry_id,
             false,
+            false,
             test,
         );
         let reference_pool_id = setup_reference_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(
@@ -1382,6 +1459,38 @@ module deepbook::pool_tests {
             test,
         );
         set_time(0, test);
+        add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            target_pool_id,
+            reference_pool_id,
+            test,
+        );
+
+        target_pool_id
+    }
+
+    fun setup_pool_with_default_fees_and_reference_pool_unregistered<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        balance_manager_id: ID,
+        test: &mut Scenario,
+    ): ID {
+        let target_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+            OWNER,
+            registry_id,
+            false,
+            false,
+            test,
+        );
+        let reference_pool_id = setup_reference_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            registry_id,
+            balance_manager_id,
+            100 * constants::float_scaling(),
+            test,
+        );
+        set_time(0, test);
+        unregister_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(reference_pool_id, registry_id, test);
         add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
             sender,
             target_pool_id,
@@ -2156,6 +2265,7 @@ module deepbook::pool_tests {
 
     fun test_cancel_all_orders(
         is_bid: bool,
+        has_open_orders: bool,
     ) {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -2168,50 +2278,53 @@ module deepbook::pool_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
+        let mut order_info_1_id = 0;
 
-        let order_info_1 = place_limit_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+        if (has_open_orders) {
+            order_info_1_id = place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            ).order_id();
 
-        let client_order_id = 2;
+            let client_order_id = 2;
 
-        let order_info_2 = place_limit_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+            let order_info_2_id = place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            ).order_id();
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_1.order_id(),
-            &mut test,
-        );
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_1_id,
+                &mut test,
+            );
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_2.order_id(),
-            &mut test,
-        );
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_2_id,
+                &mut test,
+            );
+        };
 
         cancel_all_orders<SUI, USDC>(
             pool_id,
@@ -2220,11 +2333,13 @@ module deepbook::pool_tests {
             &mut test
         );
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_1.order_id(),
-            &mut test,
-        );
+        if (has_open_orders) {
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_1_id,
+                &mut test,
+            );
+        };
         end(test);
     }
 
@@ -2978,7 +3093,7 @@ module deepbook::pool_tests {
             &mut test,
         );
         validate_open_orders<SUI, USDC>(ALICE, pool_id, balance_manager_id_alice, 1, &mut test);
-        
+
         end(test);
     }
 
