@@ -3093,7 +3093,6 @@ module deepbook::pool_tests {
             &mut test,
         );
         validate_open_orders<SUI, USDC>(ALICE, pool_id, balance_manager_id_alice, 1, &mut test);
-
         end(test);
     }
 

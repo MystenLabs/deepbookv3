@@ -301,7 +301,12 @@ module deepbook::state {
             } else {
                 math::mul(fee_volume, historic_maker_fee)
             };
-            self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+
+            if (!fill.expired()) {
+                self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+            } else {
+                account.add_settled_balances(balances::new(0, 0, order_maker_fee));
+            };
 
             i = i + 1;
         };

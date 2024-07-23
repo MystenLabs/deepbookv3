@@ -66,7 +66,7 @@ module deepbook::balance_manager {
         transfer::share_object(balance_manager);
     }
 
-    /// Returns the balance of a Coin in an balance_manager.
+    /// Returns the balance of a Coin in a balance_manager.
     public fun balance<T>(balance_manager: &BalanceManager): u64 {
         let key = BalanceKey<T> {};
         if (!balance_manager.balances.contains(key)) {
@@ -121,7 +121,7 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Deposit funds to an balance_manager. Only owner can call this directly.
+    /// Deposit funds to a balance_manager. Only owner can call this directly.
     public fun deposit<T>(
         balance_manager: &mut BalanceManager,
         coin: Coin<T>,
@@ -132,7 +132,7 @@ module deepbook::balance_manager {
         balance_manager.deposit_with_proof(&proof, coin.into_balance());
     }
 
-    /// Withdraw funds from an balance_manager. Only owner can call this directly.
+    /// Withdraw funds from a balance_manager. Only owner can call this directly.
     /// If withdraw_all is true, amount is ignored and full balance withdrawn.
     /// If withdraw_all is false, withdraw_amount will be withdrawn.
     public fun withdraw<T>(
@@ -169,7 +169,7 @@ module deepbook::balance_manager {
     }
 
     // === Public-Package Functions ===
-    /// Deposit funds to an balance_manager. Pool will call this to deposit funds.
+    /// Deposit funds to a balance_manager. Pool will call this to deposit funds.
     public(package) fun deposit_with_proof<T>(
         balance_manager: &mut BalanceManager,
         proof: &TradeProof,
@@ -187,7 +187,7 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Withdraw funds from an balance_manager. Pool will call this to withdraw funds.
+    /// Withdraw funds from a balance_manager. Pool will call this to withdraw funds.
     public(package) fun withdraw_with_proof<T>(
         balance_manager: &mut BalanceManager,
         proof: &TradeProof,
@@ -217,7 +217,7 @@ module deepbook::balance_manager {
         }
     }
 
-    /// Deletes an balance_manager.
+    /// Deletes a balance_manager.
     /// This is used for deleting temporary balance_managers for direct swap with pool.
     public(package) fun delete(balance_manager: BalanceManager) {
         let BalanceManager {
