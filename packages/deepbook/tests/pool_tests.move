@@ -568,6 +568,8 @@ module deepbook::pool_tests {
         let registry_id = setup_test(OWNER, &mut test);
         let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
         setup_pool_with_default_fees_and_reference_pool_unregistered<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        end(test);
+    }
 
     #[test, expected_failure(abort_code = ::deepbook::pool::EPoolCannotBeBothWhitelistedAndStable)]
     fun test_create_pool_e(){
@@ -1388,8 +1390,7 @@ module deepbook::pool_tests {
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        let pool_id = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
+        let pool_id = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
         if (unregister) {
             unregister_pool<SUI, USDC>(pool_id, registry_id, &mut test);
         };
@@ -1456,6 +1457,7 @@ module deepbook::pool_tests {
         let target_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
             OWNER,
             registry_id,
+            false,
             false,
             test,
         );
