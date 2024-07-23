@@ -86,6 +86,65 @@ module deepbook::state_tests {
         test.end();
     }
 
+    // Alice places a buy order of size 10. Bob fills 5 of it. The remaining 5 is expireed.
+    #[test]
+    fun process_create_expired_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let taker_price = 1 * constants::usdc_unit();
+        let taker_quantity = 5 * constants::sui_unit();
+        let mut taker_order = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
+
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        let price = 1 * constants::usdc_unit();
+        let quantity = 10 * constants::sui_unit();
+        let balance_manager_id = id_from_address(ALICE);
+        let order_type = 0;
+        let fee_is_deep = true;
+        let deep_per_asset = 1 * constants::float_scaling();
+        let market_order = false;
+        let expire_timestamp = 1;
+        let conversion_is_deep = true;
+        let mut order_info1 = create_order_info(
+            balance_manager_id,
+            ALICE,
+            order_type,
+            price,
+            quantity,
+            true,
+            fee_is_deep,
+            test.ctx().epoch(),
+            expire_timestamp,
+            deep_per_asset,
+            conversion_is_deep,
+            market_order
+        );
+        let (settled, owed) = state.process_create(&mut order_info1, test.ctx());
+        assert_eq(settled, balances::new(0, 0, 0));
+        assert_eq(owed, balances::new(0, 10 * constants::usdc_unit(), 5_000_000));
+        let mut order = order_info1.to_order();
+        taker_order.match_maker(&mut order, 0);
+        let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+        assert_eq(settled, balances::new(0, 5 * constants::usdc_unit(), 0));
+        assert_eq(owed, balances::new(5 * constants::sui_unit(), 0, 5_000_000));
+
+        let mut taker_order2 = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
+        taker_order2.match_maker(&mut order, 10);
+        let (settled, owed) = state.process_create(&mut taker_order2, test.ctx());
+        assert_eq(settled, balances::new(0, 0, 0));
+        assert_eq(owed, balances::new(5 * constants::sui_unit(), 0, 2_500_000));
+
+        // maker had 5 SUI filled, 5 SUI expired
+        let (settled, owed) = state.withdraw_settled_amounts(id_from_address(ALICE));
+        assert_eq(settled, balances::new(5 * constants::sui_unit(), 5 * constants::usdc_unit(), 2_500_000));
+        assert_eq(owed, balances::new(0, 0, 0));
+
+        destroy(state);
+        test.end();
+    }
+
     #[test]
     // BOB sells 10 SUI at $1 with deep_per_base of 21
     // gets matched with ALICE who has 13 buys at $13
@@ -391,7 +450,7 @@ module deepbook::state_tests {
 
     // process cancel after modify after epoch change & maker fee change
     #[test]
-    fun process_canecel_after_modify_epoch_change_ok() {
+    fun process_cancel_after_modify_epoch_change_ok() {
         let mut test = begin(OWNER);
 
         test.next_tx(ALICE);

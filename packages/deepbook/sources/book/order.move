@@ -97,8 +97,8 @@ module deepbook::order {
         expire_maker: bool,
     ): Fill {
         let remaining_quantity = self.quantity - self.filled_quantity;
-        let base_quantity = math::min(remaining_quantity, quantity);
-        let quote_quantity = math::mul(base_quantity, self.price());
+        let mut base_quantity = math::min(remaining_quantity, quantity);
+        let mut quote_quantity = math::mul(base_quantity, self.price());
 
         let order_id = self.order_id;
         let balance_manager_id = self.balance_manager_id;
@@ -106,6 +106,8 @@ module deepbook::order {
 
         if (expired) {
             self.status = constants::expired();
+            base_quantity = remaining_quantity;
+            quote_quantity = math::mul(base_quantity, self.price());
         } else {
             self.filled_quantity = self.filled_quantity + base_quantity;
             self.status = if (self.quantity == self.filled_quantity) constants::filled()

@@ -180,7 +180,7 @@ module deepbook::pool {
         )
     }
 
-    /// Swap exact quantity without needing an balance_manager.
+    /// Swap exact quantity without needing a balance_manager.
     public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
