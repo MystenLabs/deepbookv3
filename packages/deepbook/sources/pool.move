@@ -42,7 +42,9 @@ module deepbook::pool {
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
     const EMinimumQuantityOutNotMet: u64 = 14;
-
+    const EPoolNotRegistered: u64 = 15;
+    const EPoolCannotBeBothWhitelistedAndStable: u64 = 16;
+    
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -56,6 +58,7 @@ module deepbook::pool {
         state: State,
         vault: Vault<BaseAsset, QuoteAsset>,
         deep_price: DeepPrice,
+        registered_pool: bool,
     }
 
     public struct PoolCreated<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
@@ -324,8 +327,12 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let inner = self.load_inner();
-        let open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
+        let inner = self.load_inner_mut();
+        let mut open_orders = vector[];
+        if (inner.state.account_exists(balance_manager.id())) {
+            open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
+        };
+
         let mut i = 0;
         while (i < open_orders.length()) {
             let order_id = open_orders[i];
@@ -479,7 +486,7 @@ module deepbook::pool {
         reference_pool: &Pool<ReferenceBaseAsset, ReferenceQuoteAsset>,
         clock: &Clock,
     ) {
-        assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
+        assert!(reference_pool.whitelisted() && reference_pool.registered_pool(), EIneligibleReferencePool);
         let reference_pool_price = reference_pool.mid_price(clock);
 
         let target_pool = target_pool.load_inner_mut();
@@ -573,9 +580,13 @@ module deepbook::pool {
 
     /// Unregister a pool in case it needs to be redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &mut Registry,
         _cap: &DeepbookAdminCap,
     ) {
+        let self = self.load_inner_mut();
+        assert!(self.registered_pool, EPoolNotRegistered);
+        self.registered_pool = false;
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
@@ -596,6 +607,10 @@ module deepbook::pool {
     /// Accessor to check if the pool is whitelisted.
     public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.load_inner().state.governance().whitelisted()
+    }
+
+    public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+        self.load_inner().registered_pool
     }
 
     /// Dry run to determine the quote quantity out for a given base quantity.
@@ -653,14 +668,14 @@ module deepbook::pool {
     /// Returns the order_id for all open order for the balance_manager in the pool.
     public fun account_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
-        balance_manager: ID,
+        balance_manager: &BalanceManager,
     ): VecSet<u128> {
         let self = self.load_inner();
-        if (!self.state.account_exists(balance_manager)) {
+        if (!self.state.account_exists(balance_manager.id())) {
             return vec_set::empty()
         };
 
-        self.state.account(balance_manager).open_orders()
+        self.state.account(balance_manager.id()).open_orders()
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
@@ -739,6 +754,7 @@ module deepbook::pool {
         assert!(lot_size > 0, EInvalidLotSize);
         assert!(min_size > 0, EInvalidMinSize);
         assert!(min_size % lot_size == 0, EInvalidMinSize);
+        assert!(!(whitelisted_pool && stable_pool), EPoolCannotBeBothWhitelistedAndStable);
         assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
         let pool_id = object::new(ctx);
@@ -749,6 +765,7 @@ module deepbook::pool {
             state: state::empty(stable_pool, ctx),
             vault: vault::empty(),
             deep_price: deep_price::empty(),
+            registered_pool: true,
         };
         if (whitelisted_pool) {
             pool_inner.set_whitelist(ctx);

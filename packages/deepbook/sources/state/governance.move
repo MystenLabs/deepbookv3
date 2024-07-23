@@ -87,22 +87,11 @@ module deepbook::governance {
     /// other pools. This pool will have zero fees.
     public(package) fun set_whitelist(self: &mut Governance, whitelisted: bool) {
         self.whitelisted = whitelisted;
-        self.stable = false;
         self.reset_trade_params();
     }
 
     public(package) fun whitelisted(self: &Governance): bool {
         self.whitelisted
-    }
-
-    /// Set the pool to stable or volatile. If stable, the fees are set to
-    /// stable fees. If volatile, the fees are set to volatile fees.
-    /// This resets governance. A whitelisted pool cannot be set to stable.
-    public(package) fun set_stable(self: &mut Governance, stable: bool) {
-        assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
-
-        self.stable = stable;
-        self.reset_trade_params();
     }
 
     /// Update the governance state. This is called at the start of every epoch.
