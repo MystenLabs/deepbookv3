@@ -313,13 +313,23 @@ module deepbook::pool_tests {
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun test_cancel_all_orders_bid() {
-        test_cancel_all_orders(true);
+    fun test_cancel_all_orders_bid_e() {
+        test_cancel_all_orders(true, true);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
-    fun test_cancel_all_orders_ask() {
-        test_cancel_all_orders(false);
+    fun test_cancel_all_orders_ask_e() {
+        test_cancel_all_orders(false, true);
+    }
+
+    #[test]
+    fun test_cancel_all_orders_bid_ok() {
+        test_cancel_all_orders(true, false);
+    }
+
+    #[test]
+    fun test_cancel_all_orders_ask_ok() {
+        test_cancel_all_orders(false, false);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
@@ -952,10 +962,12 @@ module deepbook::pool_tests {
         test.next_tx(sender);
         {
             let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+            let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
 
-            assert!(pool.account_open_orders(balance_manager_id).size() == expected_open_orders, 1);
+            assert!(pool.account_open_orders(&balance_manager).size() == expected_open_orders, 1);
 
             return_shared(pool);
+            return_shared(balance_manager);
         }
     }
 
@@ -2188,6 +2200,7 @@ module deepbook::pool_tests {
 
     fun test_cancel_all_orders(
         is_bid: bool,
+        has_open_orders: bool,
     ) {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -2200,50 +2213,53 @@ module deepbook::pool_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
+        let mut order_info_1_id = 0;
 
-        let order_info_1 = place_limit_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+        if (has_open_orders) {
+            order_info_1_id = place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            ).order_id();
 
-        let client_order_id = 2;
+            let client_order_id = 2;
 
-        let order_info_2 = place_limit_order<SUI, USDC>(
-            ALICE,
-            pool_id,
-            balance_manager_id_alice,
-            client_order_id,
-            order_type,
-            constants::self_matching_allowed(),
-            price,
-            quantity,
-            is_bid,
-            pay_with_deep,
-            expire_timestamp,
-            &mut test,
-        );
+            let order_info_2_id = place_limit_order<SUI, USDC>(
+                ALICE,
+                pool_id,
+                balance_manager_id_alice,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            ).order_id();
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_1.order_id(),
-            &mut test,
-        );
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_1_id,
+                &mut test,
+            );
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_2.order_id(),
-            &mut test,
-        );
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_2_id,
+                &mut test,
+            );
+        };
 
         cancel_all_orders<SUI, USDC>(
             pool_id,
@@ -2252,11 +2268,13 @@ module deepbook::pool_tests {
             &mut test
         );
 
-        borrow_order_ok<SUI, USDC>(
-            pool_id,
-            order_info_1.order_id(),
-            &mut test,
-        );
+        if (has_open_orders) {
+            borrow_order_ok<SUI, USDC>(
+                pool_id,
+                order_info_1_id,
+                &mut test,
+            );
+        };
         end(test);
     }
 
