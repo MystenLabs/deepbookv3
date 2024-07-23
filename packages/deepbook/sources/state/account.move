@@ -13,8 +13,8 @@ module deepbook::account {
     public struct Account has store, copy, drop {
         epoch: u64,
         open_orders: VecSet<u128>,
-        taker_volume: u64,
-        maker_volume: u64,
+        taker_volume: u128,
+        maker_volume: u128,
         active_stake: u64,
         inactive_stake: u64,
         voted_proposal: Option<ID>,
@@ -47,7 +47,7 @@ module deepbook::account {
         self.inactive_stake
     }
 
-    public(package) fun total_volume(self: &Account): u64 {
+    public(package) fun total_volume(self: &Account): u128 {
         self.taker_volume + self.maker_volume
     }
 
@@ -61,7 +61,7 @@ module deepbook::account {
 
     /// Update the account data for the new epoch.
     /// Returns the previous epoch, maker volume, and active stake.
-    public(package) fun update(self: &mut Account, ctx: &TxContext): (u64, u64, u64) {
+    public(package) fun update(self: &mut Account, ctx: &TxContext): (u64, u128, u64) {
         if (self.epoch == ctx.epoch()) return (0, 0, 0);
 
         let prev_epoch = self.epoch;
@@ -83,7 +83,7 @@ module deepbook::account {
         let settled_balances = fill.get_settled_maker_quantities();
         self.settled_balances.add_balances(settled_balances);
         if (!fill.expired()) {
-            self.maker_volume = self.maker_volume + fill.base_quantity();
+            self.maker_volume = self.maker_volume + (fill.base_quantity() as u128);
         };
         if (fill.expired() || fill.completed()) {
             self.open_orders.remove(&fill.maker_order_id());
@@ -91,7 +91,7 @@ module deepbook::account {
     }
 
     public(package) fun add_taker_volume(self: &mut Account, volume: u64) {
-        self.taker_volume = self.taker_volume + volume;
+        self.taker_volume = self.taker_volume + (volume as u128);
     }
 
     /// Set the voted proposal for the account and return the
