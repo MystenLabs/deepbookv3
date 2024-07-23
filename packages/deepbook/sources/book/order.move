@@ -101,7 +101,7 @@ module deepbook::order {
 
         let order_id = self.order_id;
         let balance_manager_id = self.balance_manager_id;
-        let expired = self.expire_timestamp < timestamp || expire_maker;
+        let expired = timestamp > self.expire_timestamp || expire_maker;
 
         if (expired) {
             self.status = constants::expired();
