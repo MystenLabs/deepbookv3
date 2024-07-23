@@ -42,8 +42,9 @@ module deepbook::pool {
     const ENoAmountToBurn: u64 = 12;
     const EPackageVersionDisabled: u64 = 13;
     const EMinimumQuantityOutNotMet: u64 = 14;
-    const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
-
+    const EPoolNotRegistered: u64 = 15;
+    const EPoolCannotBeBothWhitelistedAndStable: u64 = 16;
+    
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -57,6 +58,7 @@ module deepbook::pool {
         state: State,
         vault: Vault<BaseAsset, QuoteAsset>,
         deep_price: DeepPrice,
+        registered_pool: bool,
     }
 
     public struct PoolCreated<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
@@ -484,7 +486,7 @@ module deepbook::pool {
         reference_pool: &Pool<ReferenceBaseAsset, ReferenceQuoteAsset>,
         clock: &Clock,
     ) {
-        assert!(reference_pool.whitelisted(), EIneligibleReferencePool);
+        assert!(reference_pool.whitelisted() && reference_pool.registered_pool(), EIneligibleReferencePool);
         let reference_pool_price = reference_pool.mid_price(clock);
 
         let target_pool = target_pool.load_inner_mut();
@@ -578,9 +580,13 @@ module deepbook::pool {
 
     /// Unregister a pool in case it needs to be redeployed.
     public fun unregister_pool_admin<BaseAsset, QuoteAsset>(
+        self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &mut Registry,
         _cap: &DeepbookAdminCap,
     ) {
+        let self = self.load_inner_mut();
+        assert!(self.registered_pool, EPoolNotRegistered);
+        self.registered_pool = false;
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
@@ -601,6 +607,10 @@ module deepbook::pool {
     /// Accessor to check if the pool is whitelisted.
     public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.load_inner().state.governance().whitelisted()
+    }
+
+    public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+        self.load_inner().registered_pool
     }
 
     /// Dry run to determine the quote quantity out for a given base quantity.
@@ -755,6 +765,7 @@ module deepbook::pool {
             state: state::empty(stable_pool, ctx),
             vault: vault::empty(),
             deep_price: deep_price::empty(),
+            registered_pool: true,
         };
         if (whitelisted_pool) {
             pool_inner.set_whitelist(ctx);

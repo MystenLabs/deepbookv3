@@ -552,6 +552,25 @@ module deepbook::pool_tests {
         test_place_order_edge_price(constants::lot_size(), constants::tick_size())
     }
 
+    #[test]
+    fun test_order_limit_bid_ok(){
+        test_order_limit(true);
+    }
+
+    #[test]
+    fun test_order_limit_ask_ok(){
+        test_order_limit(false);
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
+    fun test_using_unregistered_as_reference(){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        setup_pool_with_default_fees_and_reference_pool_unregistered<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        end(test);
+    }
+
     #[test, expected_failure(abort_code = ::deepbook::pool::EPoolCannotBeBothWhitelistedAndStable)]
     fun test_create_pool_e(){
         test_create_pool(true, true);
@@ -1234,16 +1253,6 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test]
-    fun test_order_limit_bid_ok(){
-        test_order_limit(true);
-    }
-
-    #[test]
-    fun test_order_limit_ask_ok(){
-        test_order_limit(false);
-    }
-
     fun test_order_limit(
         is_bid: bool,
     ){
@@ -1381,9 +1390,9 @@ module deepbook::pool_tests {
     ){
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
-        setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
+        let pool_id = setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
         if (unregister) {
-            unregister_pool<SUI, USDC>(registry_id, &mut test);
+            unregister_pool<SUI, USDC>(pool_id, registry_id, &mut test);
         };
         setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
 
@@ -1391,15 +1400,18 @@ module deepbook::pool_tests {
     }
 
     fun unregister_pool<BaseAsset, QuoteAsset>(
+        pool_id: ID,
         registry_id: ID,
         test: &mut Scenario,
     ) {
         test.next_tx(OWNER);
         {
             let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+            let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
             let mut registry = test.take_shared_by_id<Registry>(registry_id);
 
-            pool::unregister_pool_admin<BaseAsset, QuoteAsset>(&mut registry, &admin_cap);
+            pool::unregister_pool_admin<BaseAsset, QuoteAsset>(&mut pool, &mut registry, &admin_cap);
+            return_shared(pool);
             return_shared(registry);
             test_utils::destroy(admin_cap);
         }
@@ -1426,6 +1438,38 @@ module deepbook::pool_tests {
             test,
         );
         set_time(0, test);
+        add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            target_pool_id,
+            reference_pool_id,
+            test,
+        );
+
+        target_pool_id
+    }
+
+    fun setup_pool_with_default_fees_and_reference_pool_unregistered<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+        sender: address,
+        registry_id: ID,
+        balance_manager_id: ID,
+        test: &mut Scenario,
+    ): ID {
+        let target_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+            OWNER,
+            registry_id,
+            false,
+            false,
+            test,
+        );
+        let reference_pool_id = setup_reference_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(
+            sender,
+            registry_id,
+            balance_manager_id,
+            100 * constants::float_scaling(),
+            test,
+        );
+        set_time(0, test);
+        unregister_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(reference_pool_id, registry_id, test);
         add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
             sender,
             target_pool_id,
