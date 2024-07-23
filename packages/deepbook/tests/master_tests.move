@@ -58,6 +58,7 @@ module deepbook::master_tests {
     const EInvalidTrader: u64 = 16;
     const EIncorrectLevel2Price: u64 = 17;
     const EIncorrectLevel2Quantity: u64 = 18;
+    const EInvalidStake: u64 = 19;
 
     #[test]
     fun test_master_ok() {
@@ -77,6 +78,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
     fun test_master_incorrect_stake_owner_e() {
         test_master(EIncorrectStakeOwner)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidStake)]
+    fun test_master_invalid_stake_e() {
+        test_master(EInvalidStake)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::state::ENoStake)]
@@ -189,11 +195,11 @@ module deepbook::master_tests {
         let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
         if (error_code == EDuplicatePool) {
-            pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, false, &mut test);
+            pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, false, false, &mut test);
         };
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, false, &mut test);
 
         // Default price point of 100 deep per base will be added
         pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
@@ -314,6 +320,16 @@ module deepbook::master_tests {
             &alice_balance,
             &mut test
         );
+
+        if (error_code == EInvalidStake) {
+            stake<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                0,
+                &mut test
+            );
+        };
 
         // Alice stakes 100 DEEP into pool 1 during epoch 0 to be effective in epoch 1
         stake<SUI, USDC>(
@@ -828,7 +844,7 @@ module deepbook::master_tests {
 
         // Create two pools, pool 1 will be used as reference pool
         let pool1_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
-        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, false, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, SUI>(OWNER, registry_id, false, false, &mut test);
 
         // Default price point of 10 deep per base (SPAM) will be added
         pool_tests::set_time(0, &mut test);
@@ -1171,7 +1187,7 @@ module deepbook::master_tests {
         // Create the DEEP reference pool SUI/DEEP
         let reference_pool_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
         // Create the SUI/USDT pool
-        let pool_id = pool_tests::setup_pool_with_default_fees<SUI, USDT>(OWNER, registry_id, false, &mut test);
+        let pool_id = pool_tests::setup_pool_with_default_fees<SUI, USDT>(OWNER, registry_id, false, false, &mut test);
 
         // Alice now has no DEEP and SUI after withdrawal and burn for testing
         withdraw_and_burn<DEEP>(
@@ -1441,7 +1457,7 @@ module deepbook::master_tests {
         let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 95 * constants::float_scaling(), &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, SPAM>(OWNER, registry_id, false, &mut test);
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, SPAM>(OWNER, registry_id, false, false, &mut test);
 
         // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
         pool_tests::add_deep_price_point<SUI, SPAM, SUI, DEEP>(
@@ -1598,7 +1614,7 @@ module deepbook::master_tests {
         );
 
         // Create pool and reference pool
-        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, &mut test);
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
         let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
 
         // Default price point of 100 deep per base will be added

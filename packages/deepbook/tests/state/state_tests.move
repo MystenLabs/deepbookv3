@@ -161,6 +161,8 @@ module deepbook::state_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = true;
         let mut taker_order = create_order_info(
             balance_manager_id,
             BOB,
@@ -173,7 +175,9 @@ module deepbook::state_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
 
         let stable_pool = false;

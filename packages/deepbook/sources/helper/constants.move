@@ -2,7 +2,9 @@ module deepbook::constants {
     const CURRENT_VERSION: u64 = 1; // Update version during upgrades
     const POOL_CREATION_FEE: u64 = 10000 * 1_000_000; // 10000 DEEP
     const FLOAT_SCALING: u64 = 1_000_000_000;
+    const FLOAT_SCALING_U128: u128 = 1_000_000_000;
     const MAX_U64: u64 = ((1u128 << 64) - 1) as u64;
+    const MAX_U128: u128 = ((1u256 << 128) - 1) as u128;
     const MIN_PRICE: u64 = 1;
     const MAX_PRICE: u64 = ((1u128 << 63) - 1) as u64;
     const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
@@ -35,6 +37,16 @@ module deepbook::constants {
     const FILLED: u8 = 2;
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
+
+    // Maximum number of fills per transaction
+    const MAX_FILLS: u64 = 100;
+
+    // Maximum number of open orders per balance manager
+    const MAX_OPEN_ORDERS: u64 = 100;
+
+    // Big vector params
+    const MAX_SLICE_SIZE: u64 = 64;
+    const MAX_FAN_OUT: u64 = 64;
 
     // History constants
     const PHASE_OUT_EPOCHS: u64 = 28;
@@ -88,8 +100,16 @@ module deepbook::constants {
         FLOAT_SCALING
     }
 
+    public fun float_scaling_u128(): u128 {
+        FLOAT_SCALING_U128
+    }
+
     public fun max_u64(): u64 {
         MAX_U64
+    }
+
+    public fun max_u128(): u128 {
+        MAX_U128
     }
 
     public fun no_restriction(): u8 {
@@ -170,6 +190,22 @@ module deepbook::constants {
 
     public fun deep_unit(): u64 {
         DEEP_UNIT
+    }
+
+    public fun max_fills(): u64 {
+        MAX_FILLS
+    }
+
+    public fun max_open_orders(): u64 {
+        MAX_OPEN_ORDERS
+    }
+
+    public fun max_slice_size(): u64 {
+        MAX_SLICE_SIZE
+    }
+
+    public fun max_fan_out(): u64 {
+        MAX_FAN_OUT
     }
 
     #[test_only]

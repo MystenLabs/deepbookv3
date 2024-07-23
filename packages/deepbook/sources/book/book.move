@@ -52,6 +52,10 @@ module deepbook::book {
         self.lot_size
     }
 
+    public(package) fun min_size(self: &Book): u64 {
+        self.min_size
+    }
+
     public(package) fun empty(
         tick_size: u64,
         lot_size: u64,
@@ -62,8 +66,8 @@ module deepbook::book {
             tick_size,
             lot_size,
             min_size,
-            bids: big_vector::empty(64, 64, ctx),
-            asks: big_vector::empty(64, 64, ctx),
+            bids: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
+            asks: big_vector::empty(constants::max_slice_size(), constants::max_fan_out(), ctx),
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
         }
@@ -83,6 +87,8 @@ module deepbook::book {
         self.match_against_book(order_info, timestamp);
         if (order_info.assert_execution()) return;
         self.inject_limit_order(order_info);
+        order_info.set_order_inserted();
+        order_info.emit_order_placed();
     }
 
     /// Given base_quantity and quote_quantity, calculate the base_quantity_out and quote_quantity_out.
@@ -288,13 +294,14 @@ module deepbook::book {
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (!ref.is_null()) {
+        while (!ref.is_null() && order_info.fills().length() < constants::max_fills()) {
             let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
             else book_side.prev_slice(ref, offset);
         };
 
+        order_info.emit_orders_filled(timestamp);
         let fills = order_info.fills();
         let mut i = 0;
         while (i < fills.length()) {
@@ -304,6 +311,10 @@ module deepbook::book {
             };
             i = i + 1;
         };
+
+        if (order_info.fills().length() == constants::max_fills()) {
+            order_info.set_fill_limit_reached();
+        }
     }
 
     fun get_order_id(self: &mut Book, is_bid: bool): u64 {

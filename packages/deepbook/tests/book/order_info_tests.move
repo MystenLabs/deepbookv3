@@ -351,6 +351,8 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = true;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -363,7 +365,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
 
         abort(0)
@@ -383,6 +387,8 @@ module deepbook::order_info_tests {
         let market_order = true;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = false;
         create_order_info(
             balance_manager_id,
             ALICE,
@@ -395,7 +401,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
 
         abort(0)
@@ -439,6 +447,8 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = true;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -451,7 +461,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, false, test.ctx().epoch()).to_order();
         order_info.match_maker(&mut maker_order, 0);
@@ -474,6 +486,8 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = false;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -486,7 +500,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
         order_info.match_maker(&mut maker_order, 0);
@@ -509,6 +525,8 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_base = true;
+        let fill_limit_reached = false;
+        let order_inserted = false;
         let mut order_info = create_order_info(
             balance_manager_id,
             ALICE,
@@ -521,7 +539,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_base,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         );
         let mut maker_order = create_order_info_base(BOB, price, 1_000_000, true, test.ctx().epoch()).to_order();
         order_info.match_maker(&mut maker_order, 0);
@@ -546,6 +566,8 @@ module deepbook::order_info_tests {
         let market_order = false;
         let expire_timestamp = constants::max_u64();
         let conversion_is_deep = true;
+        let fill_limit_reached = false;
+        let order_inserted = true;
 
         create_order_info(
             balance_manager_id,
@@ -559,7 +581,9 @@ module deepbook::order_info_tests {
             expire_timestamp,
             deep_per_asset,
             conversion_is_deep,
-            market_order
+            market_order,
+            fill_limit_reached,
+            order_inserted,
         )
     }
 
@@ -577,6 +601,8 @@ module deepbook::order_info_tests {
         deep_per_asset: u64,
         conversion_is_base: bool,
         market_order: bool,
+        fill_limit_reached: bool,
+        order_inserted: bool,
     ): OrderInfo {
         let pool_id = id_from_address(@0x2);
         let client_order_id = 1;
@@ -605,6 +631,14 @@ module deepbook::order_info_tests {
             constants::lot_size(),
             0
         );
+
+        if (fill_limit_reached){
+            order_info.set_fill_limit_reached();
+        };
+
+        if (order_inserted){
+            order_info.set_order_inserted();
+        };
 
         order_info
     }
