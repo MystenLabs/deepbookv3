@@ -21,6 +21,7 @@ module deepbook::state {
 
     // === Errors ===
     const ENoStake: u64 = 1;
+    const EMaxOpenOrders: u64 = 2;
 
     // === Structs ===
     public struct State has store {
@@ -82,6 +83,7 @@ module deepbook::state {
         let maker_fee = self.governance.trade_params().maker_fee();
 
         if (order_info.remaining_quantity() > 0 && order_info.order_type() != constants::immediate_or_cancel()) {
+            assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
             account.add_order(order_info.order_id());
         };
         account.add_taker_volume(order_info.executed_quantity());

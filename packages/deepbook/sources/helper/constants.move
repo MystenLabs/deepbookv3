@@ -39,7 +39,10 @@ module deepbook::constants {
     const EXPIRED: u8 = 4;
 
     // Maximum number of fills per transaction
-    const MAX_FILLS: u64 = 200;
+    const MAX_FILLS: u64 = 100;
+
+    // Maximum number of open orders per balance manager
+    const MAX_OPEN_ORDERS: u64 = 100;
 
     // Big vector params
     const MAX_SLICE_SIZE: u64 = 64;
@@ -191,6 +194,10 @@ module deepbook::constants {
 
     public fun max_fills(): u64 {
         MAX_FILLS
+    }
+
+    public fun max_open_orders(): u64 {
+        MAX_OPEN_ORDERS
     }
 
     public fun max_slice_size(): u64 {
