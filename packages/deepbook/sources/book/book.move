@@ -62,8 +62,8 @@ module deepbook::book {
             tick_size,
             lot_size,
             min_size,
-            bids: big_vector::empty(10000, 1000, ctx),
-            asks: big_vector::empty(10000, 1000, ctx),
+            bids: big_vector::empty(64, 64, ctx),
+            asks: big_vector::empty(64, 64, ctx),
             next_bid_order_id: START_BID_ORDER_ID,
             next_ask_order_id: START_ASK_ORDER_ID,
         }
@@ -112,7 +112,7 @@ module deepbook::book {
             let cur_price = order.price();
             let cur_quantity = order.quantity();
 
-            if (current_timestamp < order.expire_timestamp()) {
+            if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
                 if (is_bid) {
                     matched_base_quantity = math::min(
@@ -188,14 +188,14 @@ module deepbook::book {
         while (!ask_ref.is_null()) {
             let best_ask_order = slice_borrow(self.asks.borrow_slice(ask_ref), ask_offset);
             best_ask_price = best_ask_order.price();
-            if (best_ask_order.expire_timestamp() > current_timestamp) break;
+            if (current_timestamp <= best_ask_order.expire_timestamp()) break;
             (ask_ref, ask_offset) = self.asks.next_slice(ask_ref, ask_offset);
         };
 
         while (!bid_ref.is_null()) {
             let best_bid_order = slice_borrow(self.bids.borrow_slice(bid_ref), bid_offset);
             best_bid_price = best_bid_order.price();
-            if (best_bid_order.expire_timestamp() > current_timestamp) break;
+            if (current_timestamp <= best_bid_order.expire_timestamp()) break;
             (bid_ref, bid_offset) = self.bids.prev_slice(bid_ref, bid_offset);
         };
 
@@ -216,14 +216,17 @@ module deepbook::book {
         current_timestamp: u64,
     ): (vector<u64>, vector<u64>) {
         assert!(price_low <= price_high, EInvalidPriceRange);
+        assert!(price_low >= constants::min_price() && price_low <= constants::max_price(), EInvalidPriceRange);
+        assert!(price_high >= constants::min_price() && price_high <= constants::max_price(), EInvalidPriceRange);
         assert!(ticks > 0, EInvalidTicks);
 
         let mut price_vec = vector[];
         let mut quantity_vec = vector[];
 
         // convert price_low and price_high to keys for searching
-        let key_low = (price_low as u128) << 64;
-        let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128);
+        let msb = if (is_bid) {(0 as u128)} else {(1 as u128) << 127};
+        let key_low = ((price_low as u128) << 64) + msb;
+        let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128) + msb;
         let book_side = if (is_bid) &self.bids else &self.asks;
         let (mut ref, mut offset) = if (is_bid) {
             book_side.slice_before(key_high)
@@ -236,26 +239,25 @@ module deepbook::book {
 
         while (!ref.is_null() && ticks_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
-            if (order.expire_timestamp() < current_timestamp) {
-                (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
-                continue
-            };
-            let (_, order_price, _) = utils::decode_order_id(order.order_id());
-            if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
-            if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
-                cur_price = order_price
+            if (current_timestamp <= order.expire_timestamp()) {
+                let (_, order_price, _) = utils::decode_order_id(order.order_id());
+                if ((is_bid && order_price < price_low) || (!is_bid && order_price > price_high)) break;
+                if (cur_price == 0 && ((is_bid && order_price <= price_high) || (!is_bid && order_price >= price_low))) {
+                    cur_price = order_price
+                };
+
+                if (cur_price != 0 && order_price != cur_price) {
+                    price_vec.push_back(cur_price);
+                    quantity_vec.push_back(cur_quantity);
+                    cur_price = order_price;
+                    cur_quantity = 0;
+                    ticks_left = ticks_left - 1;
+                };
+                if (cur_price != 0) {
+                    cur_quantity = cur_quantity + order.quantity();
+                };
             };
 
-            if (cur_price != 0 && order_price != cur_price) {
-                price_vec.push_back(cur_price);
-                quantity_vec.push_back(cur_quantity);
-                cur_price = order_price;
-                cur_quantity = 0;
-                ticks_left = ticks_left - 1;
-            };
-            if (cur_price != 0) {
-                cur_quantity = cur_quantity + order.quantity();
-            };
             (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset) else book_side.next_slice(ref, offset);
         };
 

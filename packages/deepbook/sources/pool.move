@@ -147,8 +147,7 @@ module deepbook::pool {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let quote_in = coin::zero(ctx);
 
-        swap_exact_quantity(
-            self,
+        self.swap_exact_quantity(
             base_in,
             quote_in,
             deep_in,
@@ -170,8 +169,7 @@ module deepbook::pool {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let base_in = coin::zero(ctx);
 
-        swap_exact_quantity(
-            self,
+        self.swap_exact_quantity(
             base_in,
             quote_in,
             deep_in,
@@ -191,8 +189,7 @@ module deepbook::pool {
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
         let mut base_quantity = base_in.value();
         let quote_quantity = quote_in.value();
-        assert!(base_quantity > 0 || quote_quantity > 0, EInvalidQuantityIn);
-        assert!(!(base_quantity > 0 && quote_quantity > 0), EInvalidQuantityIn);
+        assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidQuantityIn);
 
         let pay_with_deep = deep_in.value() > 0;
         let is_bid = quote_quantity > 0;
@@ -642,7 +639,12 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: ID,
     ): VecSet<u128> {
-        self.load_inner().state.account(balance_manager).open_orders()
+        let self = self.load_inner();
+        if (!self.state.account_exists(balance_manager)) {
+            return vec_set::empty()
+        };
+
+        self.state.account(balance_manager).open_orders()
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.

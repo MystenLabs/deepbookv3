@@ -1829,7 +1829,7 @@ module deepbook::master_tests {
         let (prices, quantities) = get_level2_range<SUI, DEEP>(
             OWNER,
             pool1_reference_id,
-            0,
+            1,
             30 * constants::float_scaling(),
             is_bid,
             &mut test
@@ -1843,7 +1843,7 @@ module deepbook::master_tests {
         let (prices, quantities) = get_level2_range<SUI, DEEP>(
             OWNER,
             pool1_reference_id,
-            0,
+            1,
             20 * constants::float_scaling(),
             is_bid,
             &mut test
