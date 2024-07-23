@@ -15,6 +15,7 @@ module deepbook::state_tests {
     const OWNER: address = @0xF;
     const ALICE: address = @0xA;
     const BOB: address = @0xB;
+    const CHARLIE: address = @0xC;
 
     #[test]
     fun process_create_ok() {
@@ -134,7 +135,7 @@ module deepbook::state_tests {
         assert_eq(settled, balances::new(0, 5 * constants::usdc_unit(), 0));
         assert_eq(owed, balances::new(5 * constants::sui_unit(), 0, 5_000_000));
 
-        let mut taker_order2 = create_order_info_base(BOB, taker_price, taker_quantity, false, test.ctx().epoch());
+        let mut taker_order2 = create_order_info_base(CHARLIE, taker_price, taker_quantity, false, test.ctx().epoch());
         taker_order2.match_maker(&mut order, 10);
         let (settled, owed) = state.process_create(&mut taker_order2, test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
