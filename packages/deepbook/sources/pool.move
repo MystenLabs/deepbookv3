@@ -309,8 +309,12 @@ module deepbook::pool {
         clock: &Clock,
         ctx: &TxContext,
     ) {
-        let inner = self.load_inner();
-        let open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
+        let inner = self.load_inner_mut();
+        let mut open_orders = vector[];
+        if (inner.state.account_exists(balance_manager.id())) {
+            open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
+        };
+
         let mut i = 0;
         while (i < open_orders.length()) {
             let order_id = open_orders[i];
@@ -637,14 +641,14 @@ module deepbook::pool {
     /// Returns the order_id for all open order for the balance_manager in the pool.
     public fun account_open_orders<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
-        balance_manager: ID,
+        balance_manager: &BalanceManager,
     ): VecSet<u128> {
         let self = self.load_inner();
-        if (!self.state.account_exists(balance_manager)) {
+        if (!self.state.account_exists(balance_manager.id())) {
             return vec_set::empty()
         };
 
-        self.state.account(balance_manager).open_orders()
+        self.state.account(balance_manager.id()).open_orders()
     }
 
     /// Returns the (price_vec, quantity_vec) for the level2 order book.
