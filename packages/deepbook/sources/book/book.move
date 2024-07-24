@@ -9,7 +9,7 @@ module deepbook::book {
         big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
         utils,
         math,
-        order::{Self, Order},
+        order::Order,
         order_info::OrderInfo,
         constants,
         deep_price::OrderDeepPrice,

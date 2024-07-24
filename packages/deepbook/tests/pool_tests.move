@@ -591,6 +591,52 @@ module deepbook::pool_tests {
         test_create_pool(false, false);
     }
 
+    #[test]
+    fun test_get_order(){
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        let order_info = place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            100 * constants::float_scaling(),
+            1 * constants::float_scaling(),
+            true,
+            true,
+            constants::max_u64(),
+            &mut test,
+        );
+        let order = get_order(pool_id, order_info.order_id(), &mut test);
+        assert!(order.order_id() == order_info.order_id(), 0);
+        assert!(order.client_order_id() == 1, 0);
+        assert!(order.balance_manager_id() == balance_manager_id_alice, 0);
+        assert!(order.quantity() == 1 * constants::float_scaling(), 0);
+        assert!(order.filled_quantity() == 0, 0);
+        assert!(order.fee_is_deep() == true, 0);
+        assert!(order.order_deep_price().deep_per_asset() == constants::deep_multiplier(), 0);
+        assert!(order.epoch() == 0, 0);
+        assert!(order.status() == constants::live(), 0);
+        assert!(order.expire_timestamp() == constants::max_u64(), 0);
+
+        end(test);
+    }
+
+    fun get_order(pool_id: ID, order_id: u128, test: &mut Scenario): Order {
+        test.next_tx(OWNER);
+        {
+            let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+            let order = pool.get_order(order_id);
+            return_shared(pool);
+
+            order
+        }
+    }
+
     fun test_create_pool(
         whitelisted_pool: bool,
         stable_pool: bool,
