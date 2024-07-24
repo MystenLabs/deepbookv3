@@ -37,7 +37,7 @@ module deepbook::constants {
     const EXPIRED: u8 = 4;
 
     // Maximum number of fills per transaction
-    const MAX_FILLS: u64 = 200;
+    const MAX_FILLS: u64 = 100;
 
     // Big vector params
     const MAX_SLICE_SIZE: u64 = 64;

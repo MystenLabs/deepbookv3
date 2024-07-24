@@ -1176,7 +1176,7 @@ module deepbook::pool_tests {
         let quantity = 1 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let pay_with_deep = true;
-        let mut num_orders = 300;
+        let mut num_orders = 150;
 
         while (num_orders > 0) {
             place_limit_order<SUI, USDC>(
@@ -1249,15 +1249,16 @@ module deepbook::pool_tests {
         );
 
         let expected_status = constants::partially_filled();
-        let expected_cumulative_quote_quantity = 100 * price;
-        let paid_fees = 100 * math::mul(constants::taker_fee(), constants::deep_multiplier());
+        let expected_cumulative_quote_quantity = 50 * price;
+        let expected_executed_quantity = 50 * quantity;
+        let paid_fees = 50 * math::mul(constants::taker_fee(), constants::deep_multiplier());
 
         verify_order_info(
             &order_info,
             client_order_id,
             price,
             match_quantity,
-            100 * quantity,
+            expected_executed_quantity,
             expected_cumulative_quote_quantity,
             paid_fees,
             true,
