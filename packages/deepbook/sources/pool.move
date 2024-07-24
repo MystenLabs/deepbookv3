@@ -45,7 +45,7 @@ module deepbook::pool {
     const EInvalidStake: u64 = 15;
     const EPoolNotRegistered: u64 = 16;
     const EPoolCannotBeBothWhitelistedAndStable: u64 = 17;
-    
+
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -673,7 +673,7 @@ module deepbook::pool {
         balance_manager: &BalanceManager,
     ): VecSet<u128> {
         let self = self.load_inner();
-        
+
         if (!self.state.account_exists(balance_manager.id())) {
             return vec_set::empty()
         };
@@ -739,6 +739,14 @@ module deepbook::pool {
     /// Get the ID of the pool given the asset types.
     public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(registry: &Registry): ID {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
+    }
+
+    /// Get the Order struct
+    public fun get_order<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+    ): Order {
+        self.load_inner().book.get_order(order_id)
     }
 
     // === Public-Package Functions ===
