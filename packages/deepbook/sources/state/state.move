@@ -71,7 +71,7 @@ module deepbook::state {
         };
         let account_volume_in_deep = order_info
             .order_deep_price()
-            .deep_quantity(account_volume, math::mul(account_volume, avg_executed_price));
+            .deep_quantity_u128(account_volume, math::mul_u128(account_volume, avg_executed_price as u128));
 
         // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
         let taker_fee = self
