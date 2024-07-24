@@ -83,6 +83,8 @@ module deepbook::book {
         self.match_against_book(order_info, timestamp);
         if (order_info.assert_execution()) return;
         self.inject_limit_order(order_info);
+        order_info.set_order_inserted();
+        order_info.emit_order_placed();
     }
 
     /// Given base_quantity and quote_quantity, calculate the base_quantity_out and quote_quantity_out.

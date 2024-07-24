@@ -12,6 +12,10 @@ module deepbook::fill {
     public struct Fill has store, drop, copy {
         // ID of the maker order
         maker_order_id: u128,
+        // Client Order ID of the maker order
+        maker_client_order_id: u64,
+        // Execution price
+        execution_price: u64,
         // account_id of the maker order
         balance_manager_id: ID,
         // Whether the maker order is expired
@@ -33,6 +37,8 @@ module deepbook::fill {
     // === Public-Package Functions ===
     public(package) fun new(
         maker_order_id: u128,
+        maker_client_order_id: u64,
+        execution_price: u64,
         balance_manager_id: ID,
         expired: bool,
         completed: bool,
@@ -44,6 +50,8 @@ module deepbook::fill {
     ): Fill {
         Fill {
             maker_order_id,
+            maker_client_order_id,
+            execution_price,
             balance_manager_id,
             expired,
             completed,
@@ -57,6 +65,14 @@ module deepbook::fill {
 
     public(package) fun maker_order_id(self: &Fill): u128 {
         self.maker_order_id
+    }
+
+    public(package) fun maker_client_order_id(self: &Fill): u64 {
+        self.maker_client_order_id
+    }
+
+    public(package) fun execution_price(self: &Fill): u64 {
+        self.execution_price
     }
 
     public(package) fun balance_manager_id(self: &Fill): ID {
