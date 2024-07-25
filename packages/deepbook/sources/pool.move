@@ -708,6 +708,14 @@ module deepbook::pool {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
+    /// Get the Order struct
+    public fun get_order<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+    ): Order {
+        self.load_inner().book.get_order(order_id)
+    }
+
     // === Public-Package Functions ===
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,
