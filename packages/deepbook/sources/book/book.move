@@ -110,7 +110,7 @@ module deepbook::book {
         while (!ref.is_null() && quantity_in_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let cur_price = order.price();
-            let cur_quantity = order.quantity();
+            let cur_quantity = order.quantity() - order.filled_quantity();
 
             if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
@@ -254,7 +254,7 @@ module deepbook::book {
                     ticks_left = ticks_left - 1;
                 };
                 if (cur_price != 0) {
-                    cur_quantity = cur_quantity + order.quantity();
+                    cur_quantity = cur_quantity + order.quantity() - order.filled_quantity();
                 };
             };
 
