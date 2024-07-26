@@ -96,11 +96,7 @@ module deepbook::fill {
     }
 
     public(package) fun quote_quantity(self: &Fill): u64 {
-        if (self.expired) {
-            0
-        } else {
-            self.quote_quantity
-        }
+        self.quote_quantity
     }
 
     public(package) fun maker_epoch(self: &Fill): u64 {
