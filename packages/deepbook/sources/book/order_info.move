@@ -214,7 +214,7 @@ module deepbook::order_info {
     public fun order_inserted(self: &OrderInfo): bool {
         self.order_inserted
     }
-
+    
     // === Public-Package Functions ===
     public(package) fun new(
         pool_id: ID,
