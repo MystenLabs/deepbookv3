@@ -36,6 +36,9 @@ module deepbook::constants {
     const CANCELED: u8 = 3;
     const EXPIRED: u8 = 4;
 
+    // Maximum number of open orders per balance manager
+    const MAX_OPEN_ORDERS: u64 = 100;
+
     // Maximum number of fills per transaction
     const MAX_FILLS: u64 = 100;
 
@@ -177,6 +180,10 @@ module deepbook::constants {
 
     public fun deep_unit(): u64 {
         DEEP_UNIT
+    }
+
+    public fun max_open_orders(): u64 {
+        MAX_OPEN_ORDERS
     }
 
     public fun max_fills(): u64 {
