@@ -39,6 +39,13 @@ module deepbook::constants {
     // Maximum number of open orders per balance manager
     const MAX_OPEN_ORDERS: u64 = 100;
 
+    // Maximum number of fills per transaction
+    const MAX_FILLS: u64 = 100;
+
+    // Big vector params
+    const MAX_SLICE_SIZE: u64 = 64;
+    const MAX_FAN_OUT: u64 = 64;
+
     // History constants
     const PHASE_OUT_EPOCHS: u64 = 28;
 
@@ -177,6 +184,17 @@ module deepbook::constants {
 
     public fun max_open_orders(): u64 {
         MAX_OPEN_ORDERS
+
+    public fun max_fills(): u64 {
+        MAX_FILLS
+    }
+
+    public fun max_slice_size(): u64 {
+        MAX_SLICE_SIZE
+    }
+
+    public fun max_fan_out(): u64 {
+        MAX_FAN_OUT
     }
 
     #[test_only]
