@@ -52,6 +52,10 @@ module deepbook::book {
         self.lot_size
     }
 
+    public(package) fun min_size(self: &Book): u64 {
+        self.min_size
+    }
+
     public(package) fun empty(
         tick_size: u64,
         lot_size: u64,
