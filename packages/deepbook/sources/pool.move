@@ -51,7 +51,7 @@ module deepbook::pool {
     }
 
     public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
-        disabled_versions: VecSet<u64>,
+        allowed_versions: VecSet<u64>,
         pool_id: ID,
         book: Book,
         state: State,
@@ -144,6 +144,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         base_in: Coin<BaseAsset>,
         deep_in: Coin<DEEP>,
+        min_quote_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -153,6 +154,7 @@ module deepbook::pool {
             base_in,
             quote_in,
             deep_in,
+            min_quote_out,
             clock,
             ctx,
         )
@@ -166,6 +168,7 @@ module deepbook::pool {
         self: &mut Pool<BaseAsset, QuoteAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
+        min_base_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -175,6 +178,7 @@ module deepbook::pool {
             base_in,
             quote_in,
             deep_in,
+            min_base_out,
             clock,
             ctx,
         )
@@ -186,6 +190,7 @@ module deepbook::pool {
         base_in: Coin<BaseAsset>,
         quote_in: Coin<QuoteAsset>,
         deep_in: Coin<DEEP>,
+        min_out: u64,
         clock: &Clock,
         ctx: &mut TxContext,
     ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
@@ -199,6 +204,9 @@ module deepbook::pool {
             (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
         };
         base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
+        if (base_quantity < self.load_inner().book.min_size()) {
+            return (base_in, quote_in, deep_in)
+        };
 
         let mut temp_balance_manager = balance_manager::new(ctx);
         let trade_proof = temp_balance_manager.generate_proof_as_owner(ctx);
@@ -223,6 +231,12 @@ module deepbook::pool {
         let quote_out = temp_balance_manager
             .withdraw_all<QuoteAsset>(ctx);
         let deep_out = temp_balance_manager.withdraw_all<DEEP>(ctx);
+
+        if (is_bid) {
+            assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
+        } else {
+            assert!(quote_out.value() >= min_out, EMinimumQuantityOutNotMet);
+        };
 
         temp_balance_manager.delete();
 
@@ -566,16 +580,17 @@ module deepbook::pool {
         registry.unregister_pool<BaseAsset, QuoteAsset>();
     }
 
-    /// Takes the registry and updates the disabled version within pool
-    /// Only admin can update the disabled versions
-    public fun update_disabled_versions<BaseAsset, QuoteAsset>(
+    /// Takes the registry and updates the allowed version within pool
+    /// Only admin can update the allowed versions
+    /// This function does not have version restrictions
+    public fun update_allowed_versions<BaseAsset, QuoteAsset>(
         self: &mut Pool<BaseAsset, QuoteAsset>,
         registry: &Registry,
         _cap: &DeepbookAdminCap,
     ) {
-        let disabled_versions = registry.get_disabled_versions();
-        let inner = self.load_inner_mut();
-        inner.disabled_versions = disabled_versions;
+        let allowed_versions = registry.allowed_versions();
+        let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
+        inner.allowed_versions = allowed_versions;
     }
 
     // === Public-View Functions ===
@@ -730,7 +745,7 @@ module deepbook::pool {
 
         let pool_id = object::new(ctx);
         let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
-            disabled_versions: vec_set::empty(),
+            allowed_versions: registry.allowed_versions(),
             pool_id: pool_id.to_inner(),
             book: book::empty(tick_size, lot_size, min_size, ctx),
             state: state::empty(stable_pool, ctx),
@@ -784,7 +799,7 @@ module deepbook::pool {
     ): &PoolInner<BaseAsset, QuoteAsset> {
         let inner: &PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
     }
@@ -794,7 +809,7 @@ module deepbook::pool {
     ): &mut PoolInner<BaseAsset, QuoteAsset> {
         let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
         let package_version = constants::current_version();
-        assert!(!inner.disabled_versions.contains(&package_version), EPackageVersionDisabled);
+        assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
     }
