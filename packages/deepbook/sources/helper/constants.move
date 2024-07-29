@@ -184,6 +184,7 @@ module deepbook::constants {
 
     public fun max_open_orders(): u64 {
         MAX_OPEN_ORDERS
+    }
 
     public fun max_fills(): u64 {
         MAX_FILLS
