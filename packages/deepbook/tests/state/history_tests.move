@@ -58,7 +58,7 @@ module deepbook::history_tests {
 
         let rebate = history.calculate_rebate_amount(
             29,
-            3 * FLOAT_SCALING,
+            (3 * FLOAT_SCALING) as u128,
             1_000_000
         );
         assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
@@ -121,7 +121,7 @@ module deepbook::history_tests {
 
         let rebate_epoch_1_bob = history.calculate_rebate_amount(
             29,
-            3 * FLOAT_SCALING,
+            (3 * FLOAT_SCALING) as u128,
             1_000_000 // stake
         );
         assert!(rebate_epoch_1_bob.deep() == 180_000_000, EWrongRebateAmount);
@@ -168,7 +168,7 @@ module deepbook::history_tests {
 
         let rebate = history.calculate_rebate_amount(
             29,
-            3 * FLOAT_SCALING,
+            (3 * FLOAT_SCALING) as u128,
             1_000_000
         );
         assert!(rebate.deep() == 0, EWrongRebateAmount);
@@ -205,7 +205,7 @@ module deepbook::history_tests {
             );
             let rebate = history.calculate_rebate_amount(
                 0, //test.ctx().epoch() - 1,
-                3 * FLOAT_SCALING,
+                (3 * FLOAT_SCALING) as u128,
                 1_000_000
             );
             assert!(rebate.deep() == 300_000_000, EWrongRebateAmount);
@@ -228,7 +228,7 @@ module deepbook::history_tests {
 
         let rebate = history.calculate_rebate_amount(
             28,
-            3 * FLOAT_SCALING,
+            (3 * FLOAT_SCALING) as u128,
             1_000_000
         );
         assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
