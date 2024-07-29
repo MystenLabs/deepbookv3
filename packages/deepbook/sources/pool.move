@@ -890,7 +890,6 @@ module deepbook::pool {
                     ctx,
             );
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
-        if (order_info.remaining_quantity() > 0) order_info.emit_order_placed();
 
         order_info
     }

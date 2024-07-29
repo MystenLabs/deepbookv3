@@ -82,7 +82,7 @@ module deepbook::state {
             .taker_fee_for_user(account_stake, account_volume_in_deep);
         let maker_fee = self.governance.trade_params().maker_fee();
 
-        if (order_info.remaining_quantity() > 0) {
+        if (order_info.order_inserted()) {
             account.add_order(order_info.order_id());
             assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
         };
