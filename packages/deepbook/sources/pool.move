@@ -20,7 +20,7 @@ module deepbook::pool {
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, FlashLoan},
-        deep_price::{Self, DeepPrice},
+        deep_price::{Self, DeepPrice, emit_deep_price_added},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
@@ -527,13 +527,14 @@ module deepbook::pool {
 
         // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
         // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
-        if (reference_other_is_target_base) {
-            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
-        } else {
-            target_pool
-                .deep_price
-                .add_price_point(deep_per_reference_other_price, timestamp, false);
-        }
+        target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, reference_other_is_target_base);
+        emit_deep_price_added(
+            deep_per_reference_other_price,
+            timestamp,
+            reference_other_is_target_base,
+            reference_pool.load_inner().pool_id,
+            target_pool.pool_id,
+        );
     }
 
     /// Burns DEEP tokens from the pool. Amount to burn is within history

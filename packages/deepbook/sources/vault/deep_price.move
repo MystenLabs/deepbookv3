@@ -5,6 +5,7 @@
 /// between DEEP and the base and quote assets.
 module deepbook::deep_price {
     // === Imports ===
+    use sui::event;
     use deepbook::math;
 
     // === Errors ===
@@ -24,6 +25,15 @@ module deepbook::deep_price {
     public struct Price has store, drop {
         conversion_rate: u64,
         timestamp: u64,
+    }
+
+    /// DEEP price point added event.
+    public struct PriceAdded has copy, drop {
+        conversion_rate: u64,
+        timestamp: u64,
+        is_base_conversion: bool,
+        reference_pool: ID,
+        target_pool: ID,
     }
 
     /// DEEP price points used for trading fee calculations.
@@ -133,6 +143,22 @@ module deepbook::deep_price {
                 asset_prices.remove(0);
             }
         };
+    }
+
+    public(package) fun emit_deep_price_added(
+        conversion_rate: u64,
+        timestamp: u64,
+        is_base_conversion: bool,
+        reference_pool: ID,
+        target_pool: ID,
+    ) {
+        event::emit(PriceAdded {
+            conversion_rate,
+            timestamp,
+            is_base_conversion,
+            reference_pool,
+            target_pool,
+        });
     }
 
     // === Private Functions ===
