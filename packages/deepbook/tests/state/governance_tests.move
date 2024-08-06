@@ -8,6 +8,7 @@ module deepbook::governance_tests {
     };
     use deepbook::{
         governance,
+        state,
         constants,
     };
 
@@ -128,7 +129,7 @@ module deepbook::governance_tests {
         abort 0
     }
 
-    #[test, expected_failure(abort_code = governance::EAlreadyProposed)]
+    #[test, expected_failure(abort_code = state::EAlreadyProposed)]
     fun add_proposal_already_proposed_e() {
         let mut test = begin(OWNER);
         let alice = ALICE;
