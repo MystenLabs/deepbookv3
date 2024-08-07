@@ -766,6 +766,27 @@ module deepbook::pool {
         orders
     }
 
+    /// Get the deep required for placing a maker order of base_quantity at price
+    public fun maker_order_deep_required<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        base_quantity: u64,
+        price: u64,
+    ): u64 {
+        let whitelist = self.whitelisted();
+        let self = self.load_inner();
+        let maker_fee = self.state.governance().trade_params().maker_fee();
+        let order_deep_price = self.deep_price.get_order_deep_price(whitelist);
+
+        math::mul(
+            maker_fee,
+            order_deep_price
+                .deep_quantity(
+                    base_quantity,
+                    math::mul(base_quantity, price),
+                ),
+        )
+    }
+
     // === Public-Package Functions ===
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,

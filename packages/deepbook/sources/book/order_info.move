@@ -64,8 +64,10 @@ module deepbook::order_info {
         fills: vector<Fill>,
         // Whether the fee is in DEEP terms
         fee_is_deep: bool,
-        // Fees paid so far in base/quote/DEEP terms
+        // Fees paid so far in base/quote/DEEP terms for taker orders
         paid_fees: u64,
+        // Fees transferred to pool vault but not yet paid for maker order
+        maker_fees: u64,
         // Epoch this order was placed
         epoch: u64,
         // Status of the order
@@ -246,6 +248,7 @@ module deepbook::order_info {
             fee_is_deep,
             epoch,
             paid_fees: 0,
+            maker_fees: 0,
             status: constants::live(),
             market_order,
             fill_limit_reached: false,
@@ -312,6 +315,7 @@ module deepbook::order_info {
                         math::mul(remaining_quantity, self.price()),
                     ),
             );
+            self.maker_fees = maker_deep_in;
             owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
