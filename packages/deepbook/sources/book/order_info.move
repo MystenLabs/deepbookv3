@@ -94,11 +94,6 @@ module deepbook::order_info {
         timestamp: u64,
     }
 
-    /// Fills are emitted in batches of 100.
-    public struct OrdersFilled has copy, store, drop {
-        fills: vector<OrderFilled>,
-    }
-
     /// Emitted when a maker order is canceled.
     public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
         pool_id: ID,
@@ -460,23 +455,14 @@ module deepbook::order_info {
         self: &OrderInfo,
         timestamp: u64,
     ) {
-        if (self.fills.is_empty()) return;
-
-        let mut orders_filled = vector[];
         let mut i = 0;
-        let mut j = 0;
-        while (i < self.fills.length() && j < 100) {
+        while (i < self.fills.length()) {
             let fill = &self.fills[i];
-            orders_filled.push_back(self.order_filled_from_fill(fill, timestamp));
-            if (i % 100 == 0) {
-                event::emit(OrdersFilled { fills: orders_filled });
-                orders_filled = vector[];
-                j = j + 1;
+            if (!fill.expired()) {
+                event::emit(self.order_filled_from_fill(fill, timestamp));
             };
             i = i + 1;
         };
-
-        event::emit(OrdersFilled { fills: orders_filled })
     }
 
     public(package) fun emit_order_placed(self: &OrderInfo) {
