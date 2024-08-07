@@ -766,16 +766,23 @@ module deepbook::pool {
         orders
     }
 
+    public fun get_order_deep_price<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): OrderDeepPrice {
+        let whitelist = self.whitelisted();
+        let self = self.load_inner();
+        self.deep_price.get_order_deep_price(whitelist)
+    }
+
     /// Get the deep required for placing a maker order of base_quantity at price
     public fun maker_order_deep_required<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_quantity: u64,
         price: u64,
     ): u64 {
-        let whitelist = self.whitelisted();
+        let order_deep_price = self.get_order_deep_price();
         let self = self.load_inner();
         let maker_fee = self.state.governance().trade_params().maker_fee();
-        let order_deep_price = self.deep_price.get_order_deep_price(whitelist);
 
         math::mul(
             maker_fee,
@@ -876,14 +883,6 @@ module deepbook::pool {
         assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
-    }
-
-    public fun get_order_deep_price<BaseAsset, QuoteAsset>(
-        self: &Pool<BaseAsset, QuoteAsset>,
-    ): OrderDeepPrice {
-        let whitelist = self.whitelisted();
-        let self = self.load_inner();
-        self.deep_price.get_order_deep_price(whitelist)
     }
 
     // === Private Functions ===
