@@ -741,6 +741,30 @@ module deepbook::pool {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
     }
 
+    /// Get the Order struct
+    public fun get_order<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+    ): Order {
+        self.load_inner().book.get_order(order_id)
+    }
+
+    /// Get multiple orders given a vector of order_ids.
+    public fun get_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_ids: vector<u128>,
+    ): vector<Order> {
+        let mut orders = vector[];
+        let mut i = 0;
+        while (i < order_ids.length()) {
+            let order_id = order_ids[i];
+            orders.push_back(self.get_order(order_id));
+            i = i + 1;
+        };
+
+        orders
+    }
+
     // === Public-Package Functions ===
     public(package) fun create_pool<BaseAsset, QuoteAsset>(
         registry: &mut Registry,

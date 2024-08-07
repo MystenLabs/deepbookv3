@@ -218,6 +218,24 @@ module deepbook::order {
         });
     }
 
+    /// Copy the order struct.
+    public(package) fun copy_order(
+        order: &Order,
+    ): Order {
+        Order {
+            order_id: order.order_id,
+            balance_manager_id: order.balance_manager_id,
+            client_order_id: order.client_order_id,
+            quantity: order.quantity,
+            filled_quantity: order.filled_quantity,
+            fee_is_deep: order.fee_is_deep,
+            order_deep_price: order.order_deep_price,
+            epoch: order.epoch,
+            status: order.status,
+            expire_timestamp: order.expire_timestamp,
+        }
+    }
+
     /// Update the order status to canceled.
     public(package) fun set_canceled(self: &mut Order) {
         self.status = constants::canceled();
@@ -269,5 +287,9 @@ module deepbook::order {
 
     public(package) fun expire_timestamp(self: &Order): u64 {
         self.expire_timestamp
+    }
+
+    public(package) fun fee_is_deep(self: &Order): bool {
+        self.fee_is_deep
     }
 }
