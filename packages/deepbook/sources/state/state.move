@@ -83,8 +83,8 @@ module deepbook::state {
         let maker_fee = self.governance.trade_params().maker_fee();
 
         if (order_info.order_inserted()) {
-            account.add_order(order_info.order_id());
             assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
+            account.add_order(order_info.order_id());
         };
         account.add_taker_volume(order_info.executed_quantity());
 
@@ -293,7 +293,6 @@ module deepbook::state {
 
             let base_volume = fill.base_quantity();
             let quote_volume = fill.quote_quantity();
-            self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
             let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
             let order_maker_fee = if (whitelisted) {
@@ -301,7 +300,13 @@ module deepbook::state {
             } else {
                 math::mul(fee_volume, historic_maker_fee)
             };
-            self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+
+            if (!fill.expired()) {
+                self.history.add_volume(base_volume, account.active_stake());
+                self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+            } else {
+                account.add_settled_balances(balances::new(0, 0, order_maker_fee));
+            };
 
             i = i + 1;
         };

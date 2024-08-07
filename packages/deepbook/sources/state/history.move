@@ -155,7 +155,6 @@ module deepbook::history {
     /// Increments the total volume and total staked volume.
     public(package) fun add_volume(self: &mut History, maker_volume: u64, account_stake: u64) {
         if (maker_volume == 0) return;
-
         let maker_volume = maker_volume as u128;
         self.volumes.total_volume = self.volumes.total_volume + maker_volume;
         if (account_stake >= self.volumes.trade_params.stake_required()) {
@@ -194,7 +193,6 @@ module deepbook::history {
     ) {
         let total_volume = total_volume as u128;
         let total_staked_volume = total_staked_volume as u128;
-
         let volumes = &mut history.volumes;
         volumes.total_volume = total_volume;
         volumes.total_staked_volume = total_staked_volume;
