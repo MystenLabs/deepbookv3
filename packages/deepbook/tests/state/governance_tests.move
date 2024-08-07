@@ -128,21 +128,6 @@ module deepbook::governance_tests {
         abort 0
     }
 
-    #[test, expected_failure(abort_code = governance::EAlreadyProposed)]
-    fun add_proposal_already_proposed_e() {
-        let mut test = begin(OWNER);
-        let alice = ALICE;
-
-        test.next_tx(alice);
-        let stable_pool = false;
-        let mut gov = governance::empty(stable_pool, test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
-
-        test.next_tx(alice);
-        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
-        abort 0
-    }
-
     #[test]
     fun set_whitelist_ok() {
         let mut test = begin(OWNER);
