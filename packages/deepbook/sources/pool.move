@@ -20,7 +20,7 @@ module deepbook::pool {
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, FlashLoan},
-        deep_price::{Self, DeepPrice},
+        deep_price::{Self, DeepPrice, emit_deep_price_added},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
@@ -45,7 +45,7 @@ module deepbook::pool {
     const EInvalidStake: u64 = 15;
     const EPoolNotRegistered: u64 = 16;
     const EPoolCannotBeBothWhitelistedAndStable: u64 = 17;
-    
+
     // === Structs ===
     public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
         id: UID,
@@ -527,13 +527,14 @@ module deepbook::pool {
 
         // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
         // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
-        if (reference_other_is_target_base) {
-            target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, true);
-        } else {
-            target_pool
-                .deep_price
-                .add_price_point(deep_per_reference_other_price, timestamp, false);
-        }
+        target_pool.deep_price.add_price_point(deep_per_reference_other_price, timestamp, reference_other_is_target_base);
+        emit_deep_price_added(
+            deep_per_reference_other_price,
+            timestamp,
+            reference_other_is_target_base,
+            reference_pool.load_inner().pool_id,
+            target_pool.pool_id,
+        );
     }
 
     /// Burns DEEP tokens from the pool. Amount to burn is within history
@@ -611,6 +612,7 @@ module deepbook::pool {
         self.load_inner().state.governance().whitelisted()
     }
 
+    // Accessor to check if pool is registered
     public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.load_inner().registered_pool
     }
@@ -673,7 +675,7 @@ module deepbook::pool {
         balance_manager: &BalanceManager,
     ): VecSet<u128> {
         let self = self.load_inner();
-        
+
         if (!self.state.account_exists(balance_manager.id())) {
             return vec_set::empty()
         };
@@ -739,6 +741,30 @@ module deepbook::pool {
     /// Get the ID of the pool given the asset types.
     public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(registry: &Registry): ID {
         registry.get_pool_id<BaseAsset, QuoteAsset>()
+    }
+
+    /// Get the Order struct
+    public fun get_order<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_id: u128,
+    ): Order {
+        self.load_inner().book.get_order(order_id)
+    }
+
+    /// Get multiple orders given a vector of order_ids.
+    public fun get_orders<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        order_ids: vector<u128>,
+    ): vector<Order> {
+        let mut orders = vector[];
+        let mut i = 0;
+        while (i < order_ids.length()) {
+            let order_id = order_ids[i];
+            orders.push_back(self.get_order(order_id));
+            i = i + 1;
+        };
+
+        orders
     }
 
     // === Public-Package Functions ===

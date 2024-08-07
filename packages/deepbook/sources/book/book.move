@@ -116,7 +116,7 @@ module deepbook::book {
         while (!ref.is_null() && quantity_in_left > 0) {
             let order = slice_borrow(book_side.borrow_slice(ref), offset);
             let cur_price = order.price();
-            let cur_quantity = order.quantity();
+            let cur_quantity = order.quantity() - order.filled_quantity();
 
             if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
@@ -161,7 +161,7 @@ module deepbook::book {
 
     /// Cancels an order given order_id
     public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
-        self.book_side(order_id).remove(order_id)
+        self.book_side_mut(order_id).remove(order_id)
     }
 
     /// Modifies an order given order_id and new_quantity.
@@ -176,7 +176,7 @@ module deepbook::book {
         assert!(new_quantity >= self.min_size, EOrderBelowMinimumSize);
         assert!(new_quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
-        let order = self.book_side(order_id).borrow_mut(order_id);
+        let order = self.book_side_mut(order_id).borrow_mut(order_id);
         assert!(new_quantity < order.quantity(), ENewQuantityMustBeLessThanOriginal);
         let cancel_quantity = order.quantity() - new_quantity;
         order.modify(new_quantity, timestamp);
@@ -260,7 +260,7 @@ module deepbook::book {
                     ticks_left = ticks_left - 1;
                 };
                 if (cur_price != 0) {
-                    cur_quantity = cur_quantity + order.quantity();
+                    cur_quantity = cur_quantity + order.quantity() - order.filled_quantity();
                 };
             };
 
@@ -275,14 +275,29 @@ module deepbook::book {
         (price_vec, quantity_vec)
     }
 
+    public(package) fun get_order(self: &Book, order_id: u128): Order {
+        let order = self.book_side(order_id).borrow(order_id);
+
+        order.copy_order()
+    }
+
     // === Private Functions ===
     // Access side of book where order_id belongs
-    fun book_side(self: &mut Book, order_id: u128): &mut BigVector<Order> {
+    fun book_side_mut(self: &mut Book, order_id: u128): &mut BigVector<Order> {
         let (is_bid, _, _) = utils::decode_order_id(order_id);
         if (is_bid) {
             &mut self.bids
         } else {
             &mut self.asks
+        }
+    }
+
+    fun book_side(self: &Book, order_id: u128): &BigVector<Order> {
+        let (is_bid, _, _) = utils::decode_order_id(order_id);
+        if (is_bid) {
+            &self.bids
+        } else {
+            &self.asks
         }
     }
 
