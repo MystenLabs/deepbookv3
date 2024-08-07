@@ -20,7 +20,7 @@ module deepbook::pool {
         book::{Self, Book},
         state::{Self, State},
         vault::{Self, Vault, FlashLoan},
-        deep_price::{Self, DeepPrice, emit_deep_price_added},
+        deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
         registry::{DeepbookAdminCap, Registry},
         big_vector::BigVector,
         order::Order,
@@ -876,6 +876,14 @@ module deepbook::pool {
         assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
         inner
+    }
+
+    public fun get_order_deep_price<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): OrderDeepPrice {
+        let whitelist = self.whitelisted();
+        let self = self.load_inner();
+        self.deep_price.get_order_deep_price(whitelist)
     }
 
     // === Private Functions ===
