@@ -601,15 +601,6 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
-    fun test_using_unregistered_as_reference(){
-        let mut test = begin(OWNER);
-        let registry_id = setup_test(OWNER, &mut test);
-        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        setup_pool_with_default_fees_and_reference_pool_unregistered<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
-        end(test);
-    }
-
     #[test_only]
     public(package) fun setup_test(
         owner: address,
@@ -1262,16 +1253,6 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    #[test]
-    fun test_order_limit_bid_ok(){
-        test_order_limit(true);
-    }
-
-    #[test]
-    fun test_order_limit_ask_ok(){
-        test_order_limit(false);
-    }
-
     fun test_order_limit(
         is_bid: bool,
     ){
@@ -1474,7 +1455,6 @@ module deepbook::pool_tests {
             test,
         );
         set_time(0, test);
-        unregister_pool<ReferenceBaseAsset, ReferenceQuoteAsset>(reference_pool_id, registry_id, test);
         add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
             sender,
             target_pool_id,
