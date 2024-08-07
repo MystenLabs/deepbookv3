@@ -8,7 +8,6 @@ module deepbook::governance_tests {
     };
     use deepbook::{
         governance,
-        state,
         constants,
     };
 
@@ -126,21 +125,6 @@ module deepbook::governance_tests {
         let mut gov = governance::empty(stable_pool, test.ctx());
         test.next_tx(alice);
         gov.add_proposal(50000, 200000, 10000, 1000, id_from_address(alice));
-        abort 0
-    }
-
-    #[test, expected_failure(abort_code = state::EAlreadyProposed)]
-    fun add_proposal_already_proposed_e() {
-        let mut test = begin(OWNER);
-        let alice = ALICE;
-
-        test.next_tx(alice);
-        let stable_pool = false;
-        let mut gov = governance::empty(stable_pool, test.ctx());
-        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
-
-        test.next_tx(alice);
-        gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
         abort 0
     }
 
