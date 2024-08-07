@@ -890,7 +890,6 @@ module deepbook::pool {
                     ctx,
             );
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
-        order_info.emit_orders_filled(clock.timestamp_ms());
 
         order_info
     }

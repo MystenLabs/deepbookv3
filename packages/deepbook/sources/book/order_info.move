@@ -458,7 +458,9 @@ module deepbook::order_info {
         let mut i = 0;
         while (i < self.fills.length()) {
             let fill = &self.fills[i];
-            event::emit(self.order_filled_from_fill(fill, timestamp));
+            if (!fill.expired()) {
+                event::emit(self.order_filled_from_fill(fill, timestamp));
+            };
             i = i + 1;
         };
     }
