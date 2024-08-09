@@ -1434,7 +1434,7 @@ module deepbook::pool_tests {
         }
     }
 
-    fun setup_pool_with_default_fees_and_reference_pool<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
+    public(package) fun setup_pool_with_default_fees_and_reference_pool<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
         sender: address,
         registry_id: ID,
         balance_manager_id: ID,
