@@ -774,24 +774,25 @@ module deepbook::pool {
         self.deep_price.get_order_deep_price(whitelist)
     }
 
-    /// Get the deep required for placing a maker order of base_quantity at price
-    public fun maker_order_deep_required<BaseAsset, QuoteAsset>(
+    /// Returns the deep required for an order if it's taker or maker given quantity and price
+    /// Does not account for discounted taker fees
+    /// (deep_required_taker, deep_required_maker)
+    public fun get_order_deep_required<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_quantity: u64,
         price: u64,
-    ): u64 {
+    ): (u64, u64) {
         let order_deep_price = self.get_order_deep_price();
         let self = self.load_inner();
         let maker_fee = self.state.governance().trade_params().maker_fee();
+        let taker_fee = self.state.governance().trade_params().taker_fee();
+        let deep_quantity = order_deep_price
+            .deep_quantity(
+                base_quantity,
+                math::mul(base_quantity, price),
+            );
 
-        math::mul(
-            maker_fee,
-            order_deep_price
-                .deep_quantity(
-                    base_quantity,
-                    math::mul(base_quantity, price),
-                ),
-        )
+        (math::mul(taker_fee,deep_quantity), math::mul(maker_fee,deep_quantity))
     }
 
     // === Public-Package Functions ===
