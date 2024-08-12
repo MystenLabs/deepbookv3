@@ -169,15 +169,15 @@ module deepbook::governance {
             };
         };
 
-        if (to_proposal_id.is_some()) {
-            assert!(self.proposals.contains(to_proposal_id.borrow()), EProposalDoesNotExist);
+        to_proposal_id.do_ref!(|proposal_id| {
+            assert!(self.proposals.contains(proposal_id), EProposalDoesNotExist);
 
-            let proposal = &mut self.proposals[to_proposal_id.borrow()];
+            let proposal = &mut self.proposals[proposal_id];
             proposal.votes = proposal.votes + votes;
             if (proposal.votes > self.quorum) {
                 self.next_trade_params = proposal.to_trade_params();
             };
-        };
+        });
     }
 
     /// Adjust the total voting power by adding and removing stake. For example, if an account's
@@ -200,7 +200,7 @@ module deepbook::governance {
     // === Private Functions ===
     /// Convert stake to voting power.
     fun stake_to_voting_power(stake: u64): u64 {
-        let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
+        let mut voting_power = stake.min(VOTING_POWER_THRESHOLD);
         if (stake > VOTING_POWER_THRESHOLD) {
             voting_power = voting_power + math::sqrt(stake, constants::deep_unit()) -
             math::sqrt(VOTING_POWER_THRESHOLD, constants::deep_unit());
@@ -216,19 +216,17 @@ module deepbook::governance {
     /// Remove the proposal with the lowest votes if it has less votes than the voting power.
     /// If there are multiple proposals with the same lowest votes, the latest one is removed.
     fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
-        let mut removal_id = option::none<ID>();
+        let mut removal_id = option::none();
         let mut cur_lowest_votes = constants::max_u64();
         let (keys, values) = self.proposals.into_keys_values();
-        let mut i = 0;
 
-        while (i < self.proposals.size()) {
+        self.proposals.size().do!(|i| {
             let proposal_votes = values[i].votes;
             if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
                 removal_id = option::some(keys[i]);
                 cur_lowest_votes = proposal_votes;
             };
-            i = i + 1;
-        };
+        });
 
         assert!(removal_id.is_some(), EMaxProposalsReachedNotEnoughVotes);
         self.proposals.remove(removal_id.borrow());

@@ -787,7 +787,7 @@ module deepbook::master_tests {
         let historic_median = 2 * constants::float_scaling();
         let other_maker_liquidity = 500_000_000;
         let maker_rebate_percentage = if (historic_median > 0) {
-            constants::float_scaling() - math::min(constants::float_scaling(), math::div(other_maker_liquidity, historic_median))
+            constants::float_scaling() - constants::float_scaling().min(math::div(other_maker_liquidity, historic_median))
         } else {
             0
         }; // 75%

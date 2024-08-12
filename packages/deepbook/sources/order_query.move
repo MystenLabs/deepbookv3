@@ -28,29 +28,17 @@ public fun iter_orders<BaseAsset, QuoteAsset>(
     let key_high = ((constants::max_price() as u128) << 64) + (
         ((1u128 << 64) - 1) as u128,
     );
-    let start = if (start_order_id.is_some()) {
-        *start_order_id.borrow()
-    } else {
-        if (bids) {
-            key_high
-        } else {
-            key_low
-        }
-    };
-    let end = if (end_order_id.is_some()) {
-        *end_order_id.borrow()
-    } else {
-        if (bids) {
-            key_low
-        } else {
-            key_high
-        }
-    };
-    let min_expire = if (min_expire_timestamp.is_some()) {
-        *min_expire_timestamp.borrow()
-    } else {
-        0
-    };
+    let start = start_order_id.get_with_default({
+        if (bids) key_high
+        else key_low
+    });
+
+    let end = end_order_id.get_with_default({
+        if (bids) key_low
+        else key_high
+    });
+
+    let min_expire = min_expire_timestamp.get_with_default(0);
     let side = if (bids) self.bids() else self.asks();
     let mut orders = vector[];
     let (mut ref, mut offset) = if (bids) {
