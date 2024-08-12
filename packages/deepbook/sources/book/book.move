@@ -314,15 +314,11 @@ module deepbook::book {
         };
 
         order_info.emit_orders_filled(timestamp);
-        let fills = order_info.fills();
-        let mut i = 0;
-        while (i < fills.length()) {
-            let fill = fills[i];
+        order_info.fills().do_ref!(|fill| {
             if (fill.expired() || fill.completed()) {
                 book_side.remove(fill.maker_order_id());
             };
-            i = i + 1;
-        };
+        });
 
         if (order_info.fills().length() == constants::max_fills()) {
             order_info.set_fill_limit_reached();

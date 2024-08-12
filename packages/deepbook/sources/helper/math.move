@@ -82,7 +82,7 @@ module deepbook::math {
         (sqrt_scaled_x / multiplier) as u64
     }
 
-    fun quick_sort(mut data: vector<u128>): vector<u128> {
+    fun quick_sort(data: vector<u128>): vector<u128> {
         if (data.length() <= 1) {
             return data
         };
@@ -92,8 +92,7 @@ module deepbook::math {
         let mut equal = vector<u128>[];
         let mut greater = vector<u128>[];
 
-        while (data.length() > 0) {
-            let value = data.remove(0);
+        data.do!(|value| {
             if (value < pivot) {
                 less.push_back(value);
             } else if (value == pivot) {
@@ -101,7 +100,7 @@ module deepbook::math {
             } else {
                 greater.push_back(value);
             };
-        };
+        });
 
         let mut sortedData = vector<u128>[];
         sortedData.append(quick_sort(less));
