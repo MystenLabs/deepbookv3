@@ -776,7 +776,7 @@ module deepbook::pool {
 
     /// Returns the deep required for an order if it's taker or maker given quantity and price
     /// Does not account for discounted taker fees
-    /// (deep_required_taker, deep_required_maker)
+    /// Returns (deep_required_taker, deep_required_maker)
     public fun get_order_deep_required<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         base_quantity: u64,
