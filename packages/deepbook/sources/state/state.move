@@ -293,7 +293,6 @@ module deepbook::state {
 
             let base_volume = fill.base_quantity();
             let quote_volume = fill.quote_quantity();
-            self.history.add_volume(base_volume, account.active_stake());
             let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
             let fee_volume = fill.maker_deep_price().deep_quantity(base_volume, quote_volume);
             let order_maker_fee = if (whitelisted) {
@@ -303,6 +302,7 @@ module deepbook::state {
             };
 
             if (!fill.expired()) {
+                self.history.add_volume(base_volume, account.active_stake());
                 self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
             } else {
                 account.add_settled_balances(balances::new(0, 0, order_maker_fee));
