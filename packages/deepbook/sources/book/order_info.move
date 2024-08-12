@@ -64,8 +64,10 @@ module deepbook::order_info {
         fills: vector<Fill>,
         // Whether the fee is in DEEP terms
         fee_is_deep: bool,
-        // Fees paid so far in base/quote/DEEP terms
+        // Fees paid so far in base/quote/DEEP terms for taker orders
         paid_fees: u64,
+        // Fees transferred to pool vault but not yet paid for maker order
+        maker_fees: u64,
         // Epoch this order was placed
         epoch: u64,
         // Status of the order
@@ -92,11 +94,6 @@ module deepbook::order_info {
         maker_balance_manager_id: ID,
         taker_balance_manager_id: ID,
         timestamp: u64,
-    }
-
-    /// Fills are emitted in batches of 100.
-    public struct OrdersFilled has copy, store, drop {
-        fills: vector<OrderFilled>,
     }
 
     /// Emitted when a maker order is canceled.
@@ -251,6 +248,7 @@ module deepbook::order_info {
             fee_is_deep,
             epoch,
             paid_fees: 0,
+            maker_fees: 0,
             status: constants::live(),
             market_order,
             fill_limit_reached: false,
@@ -317,6 +315,7 @@ module deepbook::order_info {
                         math::mul(remaining_quantity, self.price()),
                     ),
             );
+            self.maker_fees = maker_deep_in;
             owed_balances.add_deep(maker_deep_in);
             if (self.is_bid) {
                 owed_balances.add_quote(math::mul(remaining_quantity, self.price()));
@@ -460,23 +459,14 @@ module deepbook::order_info {
         self: &OrderInfo,
         timestamp: u64,
     ) {
-        if (self.fills.is_empty()) return;
-
-        let mut orders_filled = vector[];
         let mut i = 0;
-        let mut j = 0;
-        while (i < self.fills.length() && j < 100) {
+        while (i < self.fills.length()) {
             let fill = &self.fills[i];
-            orders_filled.push_back(self.order_filled_from_fill(fill, timestamp));
-            if (i % 100 == 0) {
-                event::emit(OrdersFilled { fills: orders_filled });
-                orders_filled = vector[];
-                j = j + 1;
+            if (!fill.expired()) {
+                event::emit(self.order_filled_from_fill(fill, timestamp));
             };
             i = i + 1;
         };
-
-        event::emit(OrdersFilled { fills: orders_filled })
     }
 
     public(package) fun emit_order_placed(self: &OrderInfo) {

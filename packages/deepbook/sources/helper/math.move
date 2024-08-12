@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::math {
-    use sui::math as sui_math;
-
     /// scaling setting for float
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -56,30 +54,6 @@ module deepbook::math {
         result + is_round_down
     }
 
-    public(package) fun min(x: u64, y: u64): u64 {
-        if (x <= y) {
-            x
-        } else {
-            y
-        }
-    }
-
-    public(package) fun min_u128(x: u128, y: u128): u128 {
-        if (x <= y) {
-            x
-        } else {
-            y
-        }
-    }
-
-    public(package) fun max(x: u64, y: u64): u64 {
-        if (x > y) {
-            x
-        } else {
-            y
-        }
-    }
-
     /// given a vector of u64, return the median
     public(package) fun median(v: vector<u128>): u128 {
         let n = v.length();
@@ -101,12 +75,12 @@ module deepbook::math {
         assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
         let multiplier = (FLOAT_SCALING / precision) as u128;
         let scaled_x: u128 = (x as u128) * multiplier * FLOAT_SCALING_U128;
-        let sqrt_scaled_x: u128 = sui_math::sqrt_u128(scaled_x);
+        let sqrt_scaled_x: u128 = std::u128::sqrt(scaled_x);
 
         (sqrt_scaled_x / multiplier) as u64
     }
 
-    fun quick_sort(mut data: vector<u128>): vector<u128> {
+    fun quick_sort(data: vector<u128>): vector<u128> {
         if (data.length() <= 1) {
             return data
         };
@@ -116,8 +90,7 @@ module deepbook::math {
         let mut equal = vector<u128>[];
         let mut greater = vector<u128>[];
 
-        while (data.length() > 0) {
-            let value = data.remove(0);
+        data.do!(|value| {
             if (value < pivot) {
                 less.push_back(value);
             } else if (value == pivot) {
@@ -125,7 +98,7 @@ module deepbook::math {
             } else {
                 greater.push_back(value);
             };
-        };
+        });
 
         let mut sortedData = vector<u128>[];
         sortedData.append(quick_sort(less));

@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 #[test_only]
 module deepbook::order_query_tests;
 use deepbook::balance_manager_tests::{
@@ -81,7 +84,6 @@ fun test_place_orders_ok() {
         assert!(order.quantity() == quantity);
         assert!(order.is_bid() == is_bid);
         assert!(order.expire_timestamp() == expire_timestamp);
-
         i = i + 1;
     };
     return_shared(pool);
