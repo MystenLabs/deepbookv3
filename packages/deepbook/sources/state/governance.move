@@ -200,7 +200,7 @@ module deepbook::governance {
     // === Private Functions ===
     /// Convert stake to voting power.
     fun stake_to_voting_power(stake: u64): u64 {
-        let mut voting_power = math::min(stake, VOTING_POWER_THRESHOLD);
+        let mut voting_power = stake.min(VOTING_POWER_THRESHOLD);
         if (stake > VOTING_POWER_THRESHOLD) {
             voting_power = voting_power + math::sqrt(stake, constants::deep_unit()) -
             math::sqrt(VOTING_POWER_THRESHOLD, constants::deep_unit());

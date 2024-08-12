@@ -56,30 +56,6 @@ module deepbook::math {
         result + is_round_down
     }
 
-    public(package) fun min(x: u64, y: u64): u64 {
-        if (x <= y) {
-            x
-        } else {
-            y
-        }
-    }
-
-    public(package) fun min_u128(x: u128, y: u128): u128 {
-        if (x <= y) {
-            x
-        } else {
-            y
-        }
-    }
-
-    public(package) fun max(x: u64, y: u64): u64 {
-        if (x > y) {
-            x
-        } else {
-            y
-        }
-    }
-
     /// given a vector of u64, return the median
     public(package) fun median(v: vector<u128>): u128 {
         let n = v.length();

@@ -121,17 +121,14 @@ module deepbook::book {
             if (current_timestamp <= order.expire_timestamp()) {
                 let mut matched_base_quantity;
                 if (is_bid) {
-                    matched_base_quantity = math::min(
-                        math::div(quantity_in_left, cur_price),
-                        cur_quantity,
-                    );
+                    matched_base_quantity = math::div(quantity_in_left, cur_price).min(cur_quantity);
                     matched_base_quantity = matched_base_quantity -
                     matched_base_quantity % lot_size;
                     quantity_out = quantity_out + matched_base_quantity;
                     quantity_in_left = quantity_in_left -
                     math::mul(matched_base_quantity, cur_price);
                 } else {
-                    matched_base_quantity = math::min(quantity_in_left, cur_quantity);
+                    matched_base_quantity = quantity_in_left.min(cur_quantity);
                     matched_base_quantity = matched_base_quantity -
                     matched_base_quantity % lot_size;
                     quantity_out = quantity_out + math::mul(matched_base_quantity, cur_price);
