@@ -29,12 +29,23 @@ public fun new(ctx: &mut TxContext): WrappedBalanceManager {
     }
 }
 
-/// Deposit any coin
+/// Deposit any coin. If it's DEEP, reduce from sponsored amount.
 public fun deposit<T>(
     self: &mut WrappedBalanceManager,
     to_deposit: Coin<T>,
     ctx: &mut TxContext,
 ) {
+    let type_name = type_name::get<T>();
+    let deep_name = type_name::get<DEEP>();
+    if (type_name == deep_name) {
+        let quantity = to_deposit.value();
+        if (self.sponsored_deep >= quantity) {
+            self.sponsored_deep = self.sponsored_deep - quantity;
+        } else {
+            self.sponsored_deep = 0;
+        }
+    };
+
     self.balance_manager.deposit(to_deposit, ctx);
 }
 
