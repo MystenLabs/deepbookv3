@@ -771,6 +771,7 @@ module deepbook::pool {
     ): OrderDeepPrice {
         let whitelist = self.whitelisted();
         let self = self.load_inner();
+
         self.deep_price.get_order_deep_price(whitelist)
     }
 
@@ -792,7 +793,7 @@ module deepbook::pool {
                 math::mul(base_quantity, price),
             );
 
-        (math::mul(taker_fee,deep_quantity), math::mul(maker_fee,deep_quantity))
+        (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
     }
 
     // === Public-Package Functions ===
