@@ -39,7 +39,7 @@ module deepbook::balance_manager_tests {
             let balance = balance_manager.balance<SUI>();
             assert!(balance == 200, 0);
 
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         end(test);
@@ -56,7 +56,7 @@ module deepbook::balance_manager_tests {
         {
             let balance_manager = balance_manager::new(test.ctx());
             account_id = object::id(&balance_manager);
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         test.next_tx(bob);
@@ -86,7 +86,7 @@ module deepbook::balance_manager_tests {
             let trade_cap = balance_manager.mint_trade_cap(test.ctx());
             trade_cap_id = object::id(&trade_cap);
             transfer::public_transfer(trade_cap, bob);
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         test.next_tx(bob);
@@ -123,7 +123,7 @@ module deepbook::balance_manager_tests {
             assert!(balance == 100, 0);
 
             balance_manager.revoke_trade_cap(&trade_cap_id, test.ctx());
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         test.next_tx(bob);
@@ -162,7 +162,7 @@ module deepbook::balance_manager_tests {
             assert!(balance == 50, 0);
             coin.burn_for_testing();
 
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         end(test);
@@ -189,7 +189,7 @@ module deepbook::balance_manager_tests {
             assert!(balance == 0, 0);
             assert!(coin.burn_for_testing() == 100, 0);
 
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
         };
 
         end(test);
@@ -245,7 +245,7 @@ module deepbook::balance_manager_tests {
             let trade_cap = balance_manager.mint_trade_cap(test.ctx());
             transfer::public_transfer(trade_cap, sender);
             let id = object::id(&balance_manager);
-            balance_manager.share();
+            transfer::public_share_object(balance_manager);
 
             id
         }

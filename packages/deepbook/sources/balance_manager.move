@@ -28,7 +28,7 @@ module deepbook::balance_manager {
 
     // === Structs ===
     /// A shared object that is passed into pools for placing orders.
-    public struct BalanceManager has key {
+    public struct BalanceManager has key, store {
         id: UID,
         owner: address,
         balances: Bag,
@@ -59,11 +59,6 @@ module deepbook::balance_manager {
             balances: bag::new(ctx),
             allow_listed: vec_set::empty(),
         }
-    }
-
-    #[allow(lint(share_owned))]
-    public fun share(balance_manager: BalanceManager) {
-        transfer::share_object(balance_manager);
     }
 
     /// Returns the balance of a Coin in a balance_manager.
