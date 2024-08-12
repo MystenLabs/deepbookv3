@@ -145,7 +145,7 @@ module deepbook::order_tests {
         assert!(fill.expired(), 0);
         assert!(!fill.completed(), 0);
         assert!(fill.base_quantity() == 10 * constants::sui_unit(), 0);
-        assert!(fill.quote_quantity() == 0, 0);
+        assert!(fill.quote_quantity() == 100 * constants::usdc_unit(), 0);
         assert_eq(fill.get_settled_maker_quantities(), balances::new(10 * constants::sui_unit(), 0, 0));
 
         assert!(order.status() == constants::expired(), 0);
@@ -186,7 +186,7 @@ module deepbook::order_tests {
         assert!(fill.expired(), 0);
         assert!(!fill.completed(), 0);
         assert!(fill.base_quantity() == 10 * constants::sui_unit(), 0);
-        assert!(fill.quote_quantity() == 0, 0);
+        assert!(fill.quote_quantity() == 100 * constants::usdc_unit(), 0);
         assert_eq(fill.get_settled_maker_quantities(), balances::new(0, 100 * constants::usdc_unit(), 0));
 
         assert!(order.status() == constants::expired(), 0);
