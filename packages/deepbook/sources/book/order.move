@@ -152,11 +152,8 @@ module deepbook::order {
         maker_fee: u64,
         cancel_quantity: Option<u64>,
     ): Balances {
-        let cancel_quantity = if (cancel_quantity.is_some()) {
-            *cancel_quantity.borrow()
-        } else {
-            self.quantity - self.filled_quantity
-        };
+        let cancel_quantity = cancel_quantity
+            .get_with_default(self.quantity - self.filled_quantity);
         let deep_out = math::mul(
             maker_fee,
             self
