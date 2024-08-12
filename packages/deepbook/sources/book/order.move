@@ -97,7 +97,7 @@ module deepbook::order {
         expire_maker: bool,
     ): Fill {
         let remaining_quantity = self.quantity - self.filled_quantity;
-        let mut base_quantity = math::min(remaining_quantity, quantity);
+        let mut base_quantity = remaining_quantity.min(quantity);
         let mut quote_quantity = math::mul(base_quantity, self.price());
 
         let order_id = self.order_id;
@@ -152,11 +152,8 @@ module deepbook::order {
         maker_fee: u64,
         cancel_quantity: Option<u64>,
     ): Balances {
-        let cancel_quantity = if (cancel_quantity.is_some()) {
-            *cancel_quantity.borrow()
-        } else {
-            self.quantity - self.filled_quantity
-        };
+        let cancel_quantity = cancel_quantity
+            .get_with_default(self.quantity - self.filled_quantity);
         let deep_out = math::mul(
             maker_fee,
             self

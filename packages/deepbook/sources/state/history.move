@@ -105,8 +105,7 @@ module deepbook::history {
         let other_maker_liquidity = volumes.total_volume - maker_volume;
         let maker_rebate_percentage = if (volumes.historic_median > 0) {
             constants::float_scaling_u128() -
-            math::min_u128(
-                constants::float_scaling_u128(),
+            constants::float_scaling_u128().min(
                 math::div_u128(other_maker_liquidity, volumes.historic_median),
             )
         } else {
