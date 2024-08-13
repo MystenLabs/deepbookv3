@@ -242,6 +242,32 @@ module deepbook::pool_tests {
         );
     }
 
+    #[test]
+    fun test_fill_partial_maker_bid() {
+        partial_fill_maker_order(
+            true,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling() / 2,
+            3 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()) / 2,
+            constants::partially_filled()
+        );
+    }
+
+    #[test]
+    fun test_fill_partial_maker_ask() {
+        partial_fill_maker_order(
+            false,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+            3 * constants::float_scaling() / 2,
+            3 * constants::float_scaling(),
+            3 * math::mul(constants::taker_fee(), constants::deep_multiplier()) / 2,
+            constants::partially_filled()
+        );
+    }
+
     #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderBelowMinimumSize)]
     fun test_invalid_order_quantity_e() {
         place_with_price_quantity(
@@ -409,32 +435,42 @@ module deepbook::pool_tests {
 
     #[test]
     fun test_swap_exact_not_fully_filled_bid_ok(){
-        test_swap_exact_not_fully_filled(true, false, false);
+        test_swap_exact_not_fully_filled(true, false, false, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_ask_ok(){
-        test_swap_exact_not_fully_filled(false, false, false);
+        test_swap_exact_not_fully_filled(false, false, false, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_bid_low_qty_ok(){
-        test_swap_exact_not_fully_filled(true, true, false);
+        test_swap_exact_not_fully_filled(true, true, false, false);
     }
 
     #[test]
     fun test_swap_exact_not_fully_filled_ask_low_qty_ok(){
-        test_swap_exact_not_fully_filled(false, true, false);
+        test_swap_exact_not_fully_filled(false, true, false, false);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
     fun test_swap_exact_not_fully_filled_bid_min_e(){
-        test_swap_exact_not_fully_filled(true, false, true);
+        test_swap_exact_not_fully_filled(true, false, true, false);
     }
 
     #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
     fun test_swap_exact_not_fully_filled_ask_min_e(){
-        test_swap_exact_not_fully_filled(false, false, true);
+        test_swap_exact_not_fully_filled(false, false, true, false);
+    }
+
+    #[test]
+    fun test_swap_exact_not_fully_filled_maker_partial_bid_ok(){
+        test_swap_exact_not_fully_filled(true, false, false, true);
+    }
+
+    #[test]
+    fun test_swap_exact_not_fully_filled_maker_partial_ask_ok(){
+        test_swap_exact_not_fully_filled(false, false, false, true);
     }
 
     #[test]
@@ -1653,6 +1689,7 @@ module deepbook::pool_tests {
         is_bid: bool,
         low_quantity: bool,
         minimum_enforced: bool,
+        partially_filled_maker: bool,
     ) {
         let mut test = begin(OWNER);
         let registry_id = setup_test(OWNER, &mut test);
@@ -1687,6 +1724,23 @@ module deepbook::pool_tests {
             &mut test,
         );
 
+        if (partially_filled_maker) {
+            place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity / 2,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+            );
+        };
+
         place_limit_order<SUI, USDC>(
             ALICE,
             pool_id,
@@ -1719,7 +1773,7 @@ module deepbook::pool_tests {
             if (low_quantity) {
                 100
             } else {
-                8 * constants::float_scaling() + 3 * residual
+                8 * constants::float_scaling() + residual
             }
         };
         let deep_in = 2 * math::mul(constants::deep_multiplier(), constants::taker_fee()) + residual;
@@ -1775,16 +1829,29 @@ module deepbook::pool_tests {
             assert!(base_out.value() == base_in);
             assert!(quote_out.value() == quote_in);
             assert!(deep_out.value() == deep_in);
-        } else {
+        } else if (!partially_filled_maker) {
             if (is_bid) {
                 assert!(base_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
                 assert!(quote_out.value() == 6 * constants::float_scaling(), constants::e_order_info_mismatch());
             } else {
                 assert!(base_out.value() == 2 * constants::float_scaling(), constants::e_order_info_mismatch());
-                assert!(quote_out.value() == 2 * constants::float_scaling() + 3 * residual, constants::e_order_info_mismatch());
+                assert!(quote_out.value() == 2 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
             };
 
             assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+            assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
+            assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
+            assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
+        } else {
+            if (is_bid) {
+                assert!(base_out.value() == 3 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+                assert!(quote_out.value() == 3 * constants::float_scaling(), constants::e_order_info_mismatch());
+            } else {
+                assert!(base_out.value() == 1 * constants::float_scaling(), constants::e_order_info_mismatch());
+                assert!(quote_out.value() == 5 * constants::float_scaling() + residual, constants::e_order_info_mismatch());
+            };
+
+            assert!(deep_out.value() == constants::float_scaling() / 10 + residual, constants::e_order_info_mismatch());
             assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
             assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
             assert!(deep_required == deep_required_2 && deep_required == deep_in - deep_out.value(), constants::e_order_info_mismatch());
@@ -2809,6 +2876,100 @@ module deepbook::pool_tests {
             alice_price,
             alice_quantity,
             is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let bob_client_order_id = 2;
+        let bob_price = 2 * constants::float_scaling();
+        let bob_quantity = 2 * alice_quantity;
+
+        let bob_order_info = place_limit_order<SUI, USDC>(
+            BOB,
+            pool_id,
+            balance_manager_id_bob,
+            bob_client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            bob_price,
+            bob_quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let fee_is_deep = true;
+
+        verify_order_info(
+            &bob_order_info,
+            bob_client_order_id,
+            bob_price,
+            bob_quantity,
+            expected_executed_quantity,
+            expected_cumulative_quote_quantity,
+            expected_paid_fees,
+            fee_is_deep,
+            expected_status,
+            expire_timestamp,
+        );
+
+        borrow_order_ok<SUI, USDC>(
+            pool_id,
+            bob_order_info.order_id(),
+            &mut test,
+        );
+
+        end(test);
+    }
+
+    fun partial_fill_maker_order(
+        is_bid: bool,
+        order_type: u8,
+        alice_quantity: u64,
+        expected_executed_quantity: u64,
+        expected_cumulative_quote_quantity: u64,
+        expected_paid_fees: u64,
+        expected_status: u8,
+    ) {
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
+
+        let alice_client_order_id = 1;
+        let alice_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        // Half of Alice's maker order is filled
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity / 2,
+            !is_bid,
             pay_with_deep,
             expire_timestamp,
             &mut test,
