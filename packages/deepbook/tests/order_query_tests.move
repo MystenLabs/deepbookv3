@@ -88,6 +88,40 @@ fun test_place_orders_ok() {
     };
     return_shared(pool);
 
+    let ask_price = 3 * constants::float_scaling();
+    let ask_is_bid = false;
+    while (client_order_id <= 20) {
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            ask_price,
+            quantity,
+            ask_is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        client_order_id = client_order_id + 1;
+    };
+
+    test.next_tx(ALICE);
+    let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+    let orders = iter_orders(
+        &pool,
+        option::none(),
+        option::none(),
+        option::none(),
+        100,
+        false,
+    );
+    assert!(orders.orders().length() == 10);
+    assert!(orders.has_next_page() == false);
+    return_shared(pool);
+
     expire_timestamp = 100000000;
     place_limit_order<SUI, USDC>(
         ALICE,

@@ -15,6 +15,9 @@ public struct OrderPage has drop {
 }
 
 // === Public Functions ===
+/// Bid minimum order id has 0 for its first bit, 0 for next 63 bits for price, and 1 for next 64 bits for order id.
+/// Ask minimum order id has 1 for its first bit, 0 for next 63 bits for price, and 0 for next 64 bits for order id.
+/// Bids are iterated from high to low order id, and asks are iterated from low to high order id.
 public fun iter_orders<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     start_order_id: Option<u128>,
@@ -24,18 +27,21 @@ public fun iter_orders<BaseAsset, QuoteAsset>(
     bids: bool,
 ): OrderPage {
     let self = self.load_inner();
-    let key_low = 0;
-    let key_high = ((constants::max_price() as u128) << 64) + (
-        ((1u128 << 64) - 1) as u128,
+    let bid_min_order_id = 0;
+    let bid_max_order_id = ((constants::max_price() as u128) << 63) + (
+        constants::max_u64() as u128,
     );
+    let ask_min_order_id = ((1u128 << 127));
+    let ask_max_order_id = constants::max_u128();
+
     let start = start_order_id.get_with_default({
-        if (bids) key_high
-        else key_low
+        if (bids) bid_max_order_id
+        else ask_min_order_id
     });
 
     let end = end_order_id.get_with_default({
-        if (bids) key_low
-        else key_high
+        if (bids) bid_min_order_id
+        else ask_max_order_id
     });
 
     let min_expire = min_expire_timestamp.get_with_default(0);
