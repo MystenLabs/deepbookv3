@@ -209,9 +209,9 @@ module deepbook::master_tests {
 
         if (error_code == EAddPricePointUnregisteredPool) {
             pool_tests::unregister_pool<SUI, DEEP>(
-            pool1_reference_id,
-            registry_id,
-            &mut test,
+                pool1_reference_id,
+                registry_id,
+                &mut test,
             );
         };
 
