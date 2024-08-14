@@ -59,6 +59,7 @@ module deepbook::master_tests {
     const EIncorrectLevel2Price: u64 = 17;
     const EIncorrectLevel2Quantity: u64 = 18;
     const EInvalidStake: u64 = 19;
+    const EAddPricePointUnregisteredPool: u64 = 20;
 
     #[test]
     fun test_master_ok() {
@@ -103,6 +104,11 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
     fun test_no_amount_to_burn_2_e() {
         test_master(ENoAmountToBurn2)
+    }
+
+    #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
+    fun test_add_deep_price_unregistered_pool_e() {
+        test_master(EAddPricePointUnregisteredPool)
     }
 
     #[test]
@@ -200,6 +206,14 @@ module deepbook::master_tests {
             pool_tests::setup_pool_with_default_fees<USDC, SUI>(OWNER, registry_id, false, false, &mut test);
         };
         let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, false, &mut test);
+
+        if (error_code == EAddPricePointUnregisteredPool) {
+            pool_tests::unregister_pool<SUI, DEEP>(
+            pool1_reference_id,
+            registry_id,
+            &mut test,
+            );
+        };
 
         // Default price point of 100 deep per base will be added
         pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(

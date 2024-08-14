@@ -1570,7 +1570,7 @@ module deepbook::pool_tests {
         end(test);
     }
 
-    fun unregister_pool<BaseAsset, QuoteAsset>(
+    public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
         pool_id: ID,
         registry_id: ID,
         test: &mut Scenario,
