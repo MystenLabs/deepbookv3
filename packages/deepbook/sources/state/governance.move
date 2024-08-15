@@ -14,7 +14,7 @@ module deepbook::governance {
     const EInvalidTakerFee: u64 = 2;
     const EProposalDoesNotExist: u64 = 3;
     const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
-    const EWhitelistedPoolCannotChange: u64 = 6;
+    const EWhitelistedPoolCannotChange: u64 = 5;
 
     // === Constants ===
     const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
