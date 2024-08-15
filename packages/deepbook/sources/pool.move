@@ -612,7 +612,6 @@ module deepbook::pool {
         self.load_inner().state.governance().whitelisted()
     }
 
-    // Accessor to check if pool is registered
     public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
         self.load_inner().registered_pool
     }
@@ -946,7 +945,7 @@ module deepbook::pool {
                     ctx,
             );
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
-        order_info.emit_orders_filled(clock.timestamp_ms());
+        order_info.emit_order_info();
 
         order_info
     }

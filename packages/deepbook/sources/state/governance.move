@@ -14,6 +14,7 @@ module deepbook::governance {
     const EInvalidTakerFee: u64 = 2;
     const EProposalDoesNotExist: u64 = 3;
     const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
+    const EAlreadyProposed: u64 = 5;
     const EWhitelistedPoolCannotChange: u64 = 6;
 
     // === Constants ===
@@ -117,6 +118,7 @@ module deepbook::governance {
         stake_amount: u64,
         account_id: ID,
     ) {
+        assert!(!self.proposals.contains(&account_id), EAlreadyProposed);
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
         if (self.stable) {

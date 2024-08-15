@@ -22,7 +22,6 @@ module deepbook::state {
     // === Errors ===
     const ENoStake: u64 = 1;
     const EMaxOpenOrders: u64 = 2;
-    const EAlreadyProposed: u64 = 3;
 
     // === Structs ===
     public struct State has store {
@@ -205,13 +204,9 @@ module deepbook::state {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
         self.update_account(account_id, ctx);
-        let account = &mut self.accounts[account_id];
-        let stake = account.active_stake();
-        let proposal_created = account.created_proposal();
 
+        let stake = self.accounts[account_id].active_stake();
         assert!(stake > 0, ENoStake);
-        assert!(!proposal_created, EAlreadyProposed);
-        account.set_created_proposal(true);
 
         self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
         self.process_vote(account_id, account_id, ctx);
