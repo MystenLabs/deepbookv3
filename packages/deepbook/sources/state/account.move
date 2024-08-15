@@ -17,6 +17,7 @@ module deepbook::account {
         maker_volume: u128,
         active_stake: u64,
         inactive_stake: u64,
+        created_proposal: bool,
         voted_proposal: Option<ID>,
         unclaimed_rebates: Balances,
         settled_balances: Balances,
@@ -32,6 +33,7 @@ module deepbook::account {
             maker_volume: 0,
             active_stake: 0,
             inactive_stake: 0,
+            created_proposal: false,
             voted_proposal: option::none(),
             unclaimed_rebates: balances::empty(),
             settled_balances: balances::empty(),
@@ -49,6 +51,10 @@ module deepbook::account {
 
     public(package) fun total_volume(self: &Account): u128 {
         self.taker_volume + self.maker_volume
+    }
+
+    public(package) fun created_proposal(self: &Account): bool {
+        self.created_proposal
     }
 
     public(package) fun voted_proposal(self: &Account): Option<ID> {
@@ -101,6 +107,10 @@ module deepbook::account {
         self.voted_proposal = proposal;
 
         prev_proposal
+    }
+
+    public(package) fun set_created_proposal(self: &mut Account, created: bool) {
+        self.created_proposal = created;
     }
 
     public(package) fun add_settled_balances(self: &mut Account, balances: Balances) {
