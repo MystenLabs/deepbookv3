@@ -555,6 +555,44 @@ module deepbook::state_tests {
         abort(0)
     }
 
+     #[test, expected_failure(abort_code = state::EAlreadyProposed)]
+    fun process_proposal_already_proposed_e() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+
+        abort(0)
+    }
+
+    #[test]
+    fun process_proposal_already_proposed_next_epoch_ok() {
+        let mut test = begin(OWNER);
+
+        test.next_tx(ALICE);
+        let stable_pool = false;
+        let mut state = state::empty(stable_pool, test.ctx());
+        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+
+        test.next_epoch(OWNER);
+        test.next_tx(ALICE);
+        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+
+        destroy(state);
+        test.end();
+    }
+
     #[test]
     fun process_proposal_vote_ok() {
         let mut test = begin(OWNER);
