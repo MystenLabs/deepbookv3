@@ -509,18 +509,18 @@ module deepbook::order_info {
         });
     }
 
+    public(package) fun emit_order_info(
+        self: &OrderInfo,
+    ) {
+        event::emit(self.copy_order_info());
+    }
+
     public(package) fun set_fill_limit_reached(self: &mut OrderInfo) {
         self.fill_limit_reached = true;
     }
 
     public(package) fun set_order_inserted(self: &mut OrderInfo) {
         self.order_inserted = true;
-    }
-
-    public(package) fun emit(
-        self: &OrderInfo,
-    ) {
-        event::emit(self.copy_order_info());
     }
 
     // === Private Functions ===
