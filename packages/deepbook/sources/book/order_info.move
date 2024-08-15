@@ -122,28 +122,6 @@ module deepbook::order_info {
         timestamp: u64,
     }
 
-    /// Emitted when a maker order is canceled.
-    public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
-        pool_id: ID,
-        order_id: u128,
-        client_order_id: u64,
-        price: u64,
-        is_bid: bool,
-        base_asset_quantity_canceled: u64,
-        timestamp: u64,
-    }
-
-    /// Emitted when a maker order is modified.
-    public struct OrderModified<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
-        pool_id: ID,
-        order_id: u128,
-        client_order_id: u64,
-        price: u64,
-        is_bid: bool,
-        new_quantity: u64,
-        timestamp: u64,
-    }
-
     /// Emitted when a maker order is injected into the order book.
     public struct OrderPlaced has copy, store, drop {
         balance_manager_id: ID,
