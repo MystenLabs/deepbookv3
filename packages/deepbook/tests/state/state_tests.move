@@ -555,7 +555,7 @@ module deepbook::state_tests {
         abort(0)
     }
 
-    #[test, expected_failure(abort_code = state::EAlreadyProposed)]
+     #[test, expected_failure(abort_code = state::EAlreadyProposed)]
     fun process_proposal_already_proposed_e() {
         let mut test = begin(OWNER);
 
