@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module deepbook::math {
-    use sui::math as sui_math;
-
     /// scaling setting for float
     const FLOAT_SCALING: u64 = 1_000_000_000;
     const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -77,7 +75,7 @@ module deepbook::math {
         assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
         let multiplier = (FLOAT_SCALING / precision) as u128;
         let scaled_x: u128 = (x as u128) * multiplier * FLOAT_SCALING_U128;
-        let sqrt_scaled_x: u128 = sui_math::sqrt_u128(scaled_x);
+        let sqrt_scaled_x: u128 = std::u128::sqrt(scaled_x);
 
         (sqrt_scaled_x / multiplier) as u64
     }
