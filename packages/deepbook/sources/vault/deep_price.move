@@ -49,6 +49,15 @@ module deepbook::deep_price {
         deep_per_asset: u64,
     }
 
+    // === Public-View Functions ===
+    public fun asset_is_base(self: &OrderDeepPrice): bool {
+        self.asset_is_base
+    }
+
+    public fun deep_per_asset(self: &OrderDeepPrice): u64 {
+        self.deep_per_asset
+    }
+
     // === Public-Package Functions ===
     public(package) fun empty(): DeepPrice {
         DeepPrice {
@@ -70,14 +79,6 @@ module deepbook::deep_price {
         let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(whitelisted);
 
         new_order_deep_price(asset_is_base, deep_per_asset)
-    }
-
-    public(package) fun deep_per_asset(self: &OrderDeepPrice): u64 {
-        self.deep_per_asset
-    }
-
-    public(package) fun asset_is_base(self: &OrderDeepPrice): bool {
-        self.asset_is_base
     }
 
     public(package) fun deep_quantity(
