@@ -30,7 +30,9 @@ public fun iter_orders<BaseAsset, QuoteAsset>(
     let bid_min_order_id = 0;
     let bid_max_order_id = ((constants::max_price() as u128) << 63) + (
         constants::max_u64() as u128,
-    );
+    ) +
+    1;
+
     let ask_min_order_id = ((1u128 << 127));
     let ask_max_order_id = constants::max_u128();
 
