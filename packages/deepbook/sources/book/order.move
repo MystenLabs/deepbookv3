@@ -60,6 +60,53 @@ module deepbook::order {
         timestamp: u64,
     }
 
+    // === Public-View Functions ===
+    public fun balance_manager_id(self: &Order): ID {
+        self.balance_manager_id
+    }
+
+    public fun order_id(self: &Order): u128 {
+        self.order_id
+    }
+
+    public fun client_order_id(self: &Order): u64 {
+        self.client_order_id
+    }
+
+    public fun quantity(self: &Order): u64 {
+        self.quantity
+    }
+
+    public fun filled_quantity(self: &Order): u64 {
+        self.filled_quantity
+    }
+
+    public fun fee_is_deep(self: &Order): bool {
+        self.fee_is_deep
+    }
+
+    public fun order_deep_price(self: &Order): &OrderDeepPrice {
+        &self.order_deep_price
+    }
+
+    public fun epoch(self: &Order): u64 {
+        self.epoch
+    }
+
+    public fun status(self: &Order): u8 {
+        self.status
+    }
+
+    public fun expire_timestamp(self: &Order): u64 {
+        self.expire_timestamp
+    }
+
+    public fun price(self: &Order): u64 {
+        let (_, price, _) = utils::decode_order_id(self.order_id);
+
+        price
+    }
+
     // === Public-Package Functions ===
     /// initialize the order struct.
     public(package) fun new(
@@ -240,55 +287,9 @@ module deepbook::order {
         self.status = constants::canceled();
     }
 
-    public(package) fun order_id(self: &Order): u128 {
-        self.order_id
-    }
-
-    public(package) fun client_order_id(self: &Order): u64 {
-        self.client_order_id
-    }
-
-    public(package) fun balance_manager_id(self: &Order): ID {
-        self.balance_manager_id
-    }
-
-    public(package) fun price(self: &Order): u64 {
-        let (_, price, _) = utils::decode_order_id(self.order_id);
-
-        price
-    }
-
     public(package) fun is_bid(self: &Order): bool {
         let (is_bid, _, _) = utils::decode_order_id(self.order_id);
 
         is_bid
-    }
-
-    public(package) fun quantity(self: &Order): u64 {
-        self.quantity
-    }
-
-    public(package) fun filled_quantity(self: &Order): u64 {
-        self.filled_quantity
-    }
-
-    public(package) fun order_deep_price(self: &Order): OrderDeepPrice {
-        self.order_deep_price
-    }
-
-    public(package) fun epoch(self: &Order): u64 {
-        self.epoch
-    }
-
-    public(package) fun status(self: &Order): u8 {
-        self.status
-    }
-
-    public(package) fun expire_timestamp(self: &Order): u64 {
-        self.expire_timestamp
-    }
-
-    public(package) fun fee_is_deep(self: &Order): bool {
-        self.fee_is_deep
     }
 }
