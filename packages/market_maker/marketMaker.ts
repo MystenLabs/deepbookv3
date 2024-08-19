@@ -10,132 +10,6 @@ import { Transaction } from "@mysten/sui/transactions";
 import dotenv from 'dotenv';
 dotenv.config();
 
-// import { DeepBookClient } from "@mysten/deepbook-v3"; // Adjust path according to new structure
-// import type { BalanceManager } from "../src/types/index.js";
-
-// export class DeepBookMarketMaker extends DeepBookClient {
-//   keypair: Keypair;
-//   suiClient: SuiClient;
-
-//   constructor(
-//     keypair: string | Keypair,
-//     env: "testnet" | "mainnet",
-//     balanceManagers?: { [key: string]: BalanceManager },
-//     adminCap?: string,
-//   ) {
-//     let resolvedKeypair: Keypair;
-
-//     if (typeof keypair === "string") {
-//       resolvedKeypair = DeepBookMarketMaker.#getSignerFromPK(keypair);
-//     } else {
-//       resolvedKeypair = keypair;
-//     }
-
-//     const address = resolvedKeypair.toSuiAddress();
-
-//     super({
-//       address: address,
-//       env: env,
-//       client: new SuiClient({
-//         url: getFullnodeUrl(env),
-//       }),
-//       balanceManagers: balanceManagers,
-//       adminCap: adminCap,
-//     });
-
-//     this.keypair = resolvedKeypair;
-//     this.suiClient = new SuiClient({
-//       url: getFullnodeUrl(env),
-//     });
-//   }
-
-//   static #getSignerFromPK = (privateKey: string) => {
-//     const { schema, secretKey } = decodeSuiPrivateKey(privateKey);
-//     if (schema === "ED25519") return Ed25519Keypair.fromSecretKey(secretKey);
-
-//     throw new Error(`Unsupported schema: ${schema}`);
-//   };
-
-//   signAndExecute = async (tx: Transaction) => {
-//     return this.suiClient.signAndExecuteTransaction({
-//       transaction: tx,
-//       signer: this.keypair,
-//       options: {
-//         showEffects: true,
-//         showObjectChanges: true,
-//       },
-//     });
-//   };
-
-//   getActiveAddress() {
-//     return this.keypair.getPublicKey().toSuiAddress();
-//   }
-
-//   // Example of a flash loan transaction
-//   // Borrow 1 DEEP from DEEP_SUI pool
-//   // Swap 0.5 DBUSDC for SUI in SUI_DBUSDC pool, pay with deep borrowed
-//   // Swap SUI back to DEEP
-//   // Return 1 DEEP to DEEP_SUI pool
-//   flashLoanExample = async (tx: Transaction) => {
-//     const borrowAmount = 1;
-//     const [deepCoin, flashLoan] = tx.add(
-//       this.flashLoans.borrowBaseAsset("DEEP_SUI", borrowAmount),
-//     );
-
-//     // Execute trade using borrowed DEEP
-//     const [baseOut, quoteOut, deepOut] = tx.add(
-//       this.deepBook.swapExactQuoteForBase({
-//         poolKey: "SUI_DBUSDC",
-//         amount: 0.5,
-//         deepAmount: 1,
-//         minOut: 0,
-//         deepCoin: deepCoin,
-//       }),
-//     );
-
-//     tx.transferObjects([baseOut, quoteOut, deepOut], this.getActiveAddress());
-
-//     // Execute second trade to get back DEEP for repayment
-//     const [baseOut2, quoteOut2, deepOut2] = tx.add(
-//       this.deepBook.swapExactQuoteForBase({
-//         poolKey: "DEEP_SUI",
-//         amount: 10,
-//         deepAmount: 0,
-//         minOut: 0,
-//       }),
-//     );
-
-//     tx.transferObjects([quoteOut2, deepOut2], this.getActiveAddress());
-
-//     // Return borrowed DEEP
-//     const loanRemain = tx.add(
-//       this.flashLoans.returnBaseAsset(
-//         "DEEP_SUI",
-//         borrowAmount,
-//         baseOut2,
-//         flashLoan,
-//       ),
-//     );
-//     tx.transferObjects([loanRemain], this.getActiveAddress());
-//   };
-
-//   placeLimitOrderExample = (tx: Transaction) => {
-//     tx.add(
-//       this.deepBook.placeLimitOrder({
-//         poolKey: "SUI_DBUSDC",
-//         balanceManagerKey: "MANAGER_1",
-//         clientOrderId: "123456789",
-//         price: 1,
-//         quantity: 10,
-//         isBid: true,
-//         // orderType default: no restriction
-//         // selfMatchingOption default: allow self matching
-//         // payWithDeep default: true
-//       }),
-//     );
-//   };
-// }
-
 export class MarketMaker {
     client: DeepBookClient;
     keypair: Keypair;
@@ -185,8 +59,7 @@ export class MarketMaker {
         return mid;
     }
 
-    placeOrdersAroundMid = async (tx: Transaction, poolKey: string, ticks: number, quantity: number) => {
-        let midPrice = await this.client.midPrice(poolKey);
+    placeOrdersAroundMid = async (tx: Transaction, poolKey: string, ticks: number, quantity: number, midPrice: number) => {
         console.log(`Canceling all orders on pool ${poolKey}`);
         tx.add(
             this.client.deepBook.cancelAllOrders(poolKey, "MANAGER_1"),
@@ -195,8 +68,8 @@ export class MarketMaker {
         console.log(`Placing orders for pool ${poolKey} around mid price ${midPrice}`);
 
         for (let i = 1; i <= ticks; i++) {
-            const buyPrice = (Math.round(midPrice * 1000000) - (i * 15000))/1000000;
-            const sellPrice = (Math.round(midPrice * 1000000) + (i * 15000))/1000000;
+            const buyPrice = (Math.round(midPrice * 1000000) - (i * 20000))/1000000;
+            const sellPrice = (Math.round(midPrice * 1000000) + (i * 20000))/1000000;
             console.log(buyPrice);
             console.log(sellPrice);
             tx.add(
@@ -222,13 +95,17 @@ export class MarketMaker {
         }
     }
 
-
-    cancelAndReplaceDEEPSUI = async () => {
-        const tx = new Transaction();
+    placeOrder = async (tx: Transaction, poolKey: string, price: number, quantity: number, isBid: boolean) => {
         tx.add(
-            this.client.deepBook.cancelAllOrders("DEEP_SUI", "MANAGER_1"),
+            this.client.deepBook.placeLimitOrder({
+                poolKey: poolKey,
+                balanceManagerKey: "MANAGER_1",
+                clientOrderId: "1",
+                price: price,
+                quantity: quantity,
+                isBid: isBid,
+            }),
         );
-        return this.signAndExecute(tx);
     }
 
     checkBalances = async () => {
@@ -261,6 +138,24 @@ export class MarketMaker {
         );
         tx.add(
             this.client.balanceManager.depositIntoManager("MANAGER_1", "DBUSDT", dbusdt),
+        );
+
+        return this.signAndExecute(tx);
+    }
+
+    withdrawCoins = async () => {
+        const tx = new Transaction();
+        tx.add(
+            this.client.balanceManager.withdrawAllFromManager("MANAGER_1", "DEEP", this.keypair.toSuiAddress()),
+        );
+        tx.add(
+            this.client.balanceManager.withdrawAllFromManager("MANAGER_1", "SUI", this.keypair.toSuiAddress()),
+        );
+        tx.add(
+            this.client.balanceManager.withdrawAllFromManager("MANAGER_1", "DBUSDC", this.keypair.toSuiAddress()),
+        );
+        tx.add(
+            this.client.balanceManager.withdrawAllFromManager("MANAGER_1", "DBUSDT", this.keypair.toSuiAddress()),
         );
 
         return this.signAndExecute(tx);
