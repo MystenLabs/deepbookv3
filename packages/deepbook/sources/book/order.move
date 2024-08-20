@@ -35,7 +35,7 @@ module deepbook::order {
     }
 
     /// Emitted when a maker order is canceled.
-    public struct OrderCanceled<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+    public struct OrderCanceled has copy, store, drop {
         balance_manager_id: ID,
         pool_id: ID,
         order_id: u128,
@@ -48,7 +48,7 @@ module deepbook::order {
     }
 
     /// Emitted when a maker order is modified.
-    public struct OrderModified<phantom BaseAsset, phantom QuoteAsset> has copy, store, drop {
+    public struct OrderModified has copy, store, drop {
         balance_manager_id: ID,
         pool_id: ID,
         order_id: u128,
@@ -222,7 +222,7 @@ module deepbook::order {
         balances::new(base_out, quote_out, deep_out)
     }
 
-    public(package) fun emit_order_canceled<BaseAsset, QuoteAsset>(
+    public(package) fun emit_order_canceled(
         self: &Order,
         pool_id: ID,
         trader: address,
@@ -230,7 +230,7 @@ module deepbook::order {
     ) {
         let is_bid = self.is_bid();
         let price = self.price();
-        event::emit(OrderCanceled<BaseAsset, QuoteAsset> {
+        event::emit(OrderCanceled {
             pool_id,
             order_id: self.order_id,
             balance_manager_id: self.balance_manager_id,
@@ -243,7 +243,7 @@ module deepbook::order {
         });
     }
 
-    public(package) fun emit_order_modified<BaseAsset, QuoteAsset>(
+    public(package) fun emit_order_modified(
         self: &Order,
         pool_id: ID,
         trader: address,
@@ -251,7 +251,7 @@ module deepbook::order {
     ) {
         let is_bid = self.is_bid();
         let price = self.price();
-        event::emit(OrderModified<BaseAsset, QuoteAsset> {
+        event::emit(OrderModified {
             order_id: self.order_id,
             pool_id,
             client_order_id: self.client_order_id,
