@@ -766,6 +766,16 @@ module deepbook::pool {
         orders
     }
 
+    public fun get_account_order_details<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &BalanceManager,
+    ): vector<Order> {
+        let acct_open_orders = self.account_open_orders(balance_manager);
+        let acct_open_orders_vec = acct_open_orders.into_keys();
+
+        self.get_orders(acct_open_orders_vec)
+    }
+
     public fun get_order_deep_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): OrderDeepPrice {
