@@ -770,10 +770,9 @@ module deepbook::pool {
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: &BalanceManager,
     ): vector<Order> {
-        let acct_open_orders = self.account_open_orders(balance_manager);
-        let acct_open_orders_vec = acct_open_orders.into_keys();
+        let acct_open_orders = self.account_open_orders(balance_manager).into_keys();
 
-        self.get_orders(acct_open_orders_vec)
+        self.get_orders(acct_open_orders)
     }
 
     public fun get_order_deep_price<BaseAsset, QuoteAsset>(
