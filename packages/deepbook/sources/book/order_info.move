@@ -110,12 +110,16 @@ module deepbook::order_info {
     }
 
     // === Public-View Functions ===
-    public fun balance_manager_id(self: &OrderInfo): ID {
-        self.balance_manager_id
+    public fun pool_id(self: &OrderInfo): ID {
+        self.pool_id
     }
 
     public fun order_id(self: &OrderInfo): u128 {
         self.order_id
+    }
+
+    public fun balance_manager_id(self: &OrderInfo): ID {
+        self.balance_manager_id
     }
 
     public fun client_order_id(self: &OrderInfo): u64 {
