@@ -63,47 +63,47 @@ module deepbook::fill {
         }
     }
 
-    public(package) fun maker_order_id(self: &Fill): u128 {
+    public fun maker_order_id(self: &Fill): u128 {
         self.maker_order_id
     }
 
-    public(package) fun maker_client_order_id(self: &Fill): u64 {
+    public fun maker_client_order_id(self: &Fill): u64 {
         self.maker_client_order_id
     }
 
-    public(package) fun execution_price(self: &Fill): u64 {
+    public fun execution_price(self: &Fill): u64 {
         self.execution_price
     }
 
-    public(package) fun balance_manager_id(self: &Fill): ID {
+    public fun balance_manager_id(self: &Fill): ID {
         self.balance_manager_id
     }
 
-    public(package) fun expired(self: &Fill): bool {
+    public fun expired(self: &Fill): bool {
         self.expired
     }
 
-    public(package) fun completed(self: &Fill): bool {
+    public fun completed(self: &Fill): bool {
         self.completed
     }
 
-    public(package) fun base_quantity(self: &Fill): u64 {
+    public fun base_quantity(self: &Fill): u64 {
         self.base_quantity
     }
 
-    public(package) fun taker_is_bid(self: &Fill): bool {
+    public fun taker_is_bid(self: &Fill): bool {
         self.taker_is_bid
     }
 
-    public(package) fun quote_quantity(self: &Fill): u64 {
+    public fun quote_quantity(self: &Fill): u64 {
         self.quote_quantity
     }
 
-    public(package) fun maker_epoch(self: &Fill): u64 {
+    public fun maker_epoch(self: &Fill): u64 {
         self.maker_epoch
     }
 
-    public(package) fun maker_deep_price(self: &Fill): OrderDeepPrice {
+    public fun maker_deep_price(self: &Fill): OrderDeepPrice {
         self.maker_deep_price
     }
 
