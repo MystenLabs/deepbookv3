@@ -268,7 +268,7 @@ module deepbook::pool {
             .process_modify(balance_manager.id(), cancel_quantity, order, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 
-        order.emit_order_modified(
+        order.emit_order_modified<BaseAsset, QuoteAsset>(
             self.pool_id,
             ctx.sender(),
             clock.timestamp_ms(),
@@ -293,7 +293,7 @@ module deepbook::pool {
         let (settled, owed) = self.state.process_cancel(&mut order, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 
-        order.emit_order_canceled(
+        order.emit_order_canceled<BaseAsset, QuoteAsset>(
             self.pool_id,
             ctx.sender(),
             clock.timestamp_ms(),

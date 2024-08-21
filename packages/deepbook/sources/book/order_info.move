@@ -31,7 +31,7 @@ module deepbook::order_info {
     /// This objects gets created at the beginning of the order lifecycle and
     /// gets updated until it is completed or placed in the book.
     /// It is returned at the end of the order lifecycle.
-    public struct OrderInfo has store, drop, copy {
+    public struct OrderInfo has store, drop {
         // ID of the pool
         pool_id: ID,
         // ID of the order within the pool
@@ -77,6 +77,32 @@ module deepbook::order_info {
         // Executed in one transaction
         fill_limit_reached: bool,
         // Whether order is inserted
+        order_inserted: bool,
+    }
+
+    public struct OrderInfoEvent has copy, store, drop {
+        pool_id: ID,
+        order_id: u128,
+        balance_manager_id: ID,
+        client_order_id: u64,
+        trader: address,
+        order_type: u8,
+        self_matching_option: u8,
+        price: u64,
+        is_bid: bool,
+        original_quantity: u64,
+        order_deep_price: OrderDeepPrice,
+        expire_timestamp: u64,
+        executed_quantity: u64,
+        cumulative_quote_quantity: u64,
+        fills: vector<Fill>,
+        fee_is_deep: bool,
+        paid_fees: u64,
+        maker_fees: u64,
+        epoch: u64,
+        status: u8,
+        market_order: bool,
+        fill_limit_reached: bool,
         order_inserted: bool,
     }
 
@@ -472,7 +498,7 @@ module deepbook::order_info {
     public(package) fun emit_order_info(
         self: &OrderInfo,
     ) {
-        event::emit(*self);
+        event::emit(self.copy_order_info());
     }
 
     public(package) fun set_fill_limit_reached(self: &mut OrderInfo) {
@@ -502,6 +528,36 @@ module deepbook::order_info {
             maker_balance_manager_id: fill.balance_manager_id(),
             taker_balance_manager_id: self.balance_manager_id,
             timestamp,
+        }
+    }
+
+    fun copy_order_info(
+        self: &OrderInfo,
+    ): OrderInfoEvent {
+        OrderInfoEvent {
+            pool_id: self.pool_id,
+            order_id: self.order_id,
+            balance_manager_id: self.balance_manager_id,
+            client_order_id: self.client_order_id,
+            trader: self.trader,
+            order_type: self.order_type,
+            self_matching_option: self.self_matching_option,
+            price: self.price,
+            is_bid: self.is_bid,
+            original_quantity: self.original_quantity,
+            order_deep_price: self.order_deep_price,
+            expire_timestamp: self.expire_timestamp,
+            executed_quantity: self.executed_quantity,
+            cumulative_quote_quantity: self.cumulative_quote_quantity,
+            fills: self.fills,
+            fee_is_deep: self.fee_is_deep,
+            paid_fees: self.paid_fees,
+            maker_fees: self.maker_fees,
+            epoch: self.epoch,
+            status: self.status,
+            market_order: self.market_order,
+            fill_limit_reached: self.fill_limit_reached,
+            order_inserted: self.order_inserted,
         }
     }
 }
