@@ -34,6 +34,7 @@ module deepbook::fill {
         maker_deep_price: OrderDeepPrice,
     }
 
+    // === Public-View Functions ===
     public fun maker_order_id(self: &Fill): u128 {
         self.maker_order_id
     }
