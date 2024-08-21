@@ -34,35 +34,6 @@ module deepbook::fill {
         maker_deep_price: OrderDeepPrice,
     }
 
-    // === Public-Package Functions ===
-    public(package) fun new(
-        maker_order_id: u128,
-        maker_client_order_id: u64,
-        execution_price: u64,
-        balance_manager_id: ID,
-        expired: bool,
-        completed: bool,
-        base_quantity: u64,
-        quote_quantity: u64,
-        taker_is_bid: bool,
-        maker_epoch: u64,
-        maker_deep_price: OrderDeepPrice,
-    ): Fill {
-        Fill {
-            maker_order_id,
-            maker_client_order_id,
-            execution_price,
-            balance_manager_id,
-            expired,
-            completed,
-            base_quantity,
-            quote_quantity,
-            taker_is_bid,
-            maker_epoch,
-            maker_deep_price,
-        }
-    }
-
     public fun maker_order_id(self: &Fill): u128 {
         self.maker_order_id
     }
@@ -105,6 +76,35 @@ module deepbook::fill {
 
     public fun maker_deep_price(self: &Fill): OrderDeepPrice {
         self.maker_deep_price
+    }
+
+    // === Public-Package Functions ===
+    public(package) fun new(
+        maker_order_id: u128,
+        maker_client_order_id: u64,
+        execution_price: u64,
+        balance_manager_id: ID,
+        expired: bool,
+        completed: bool,
+        base_quantity: u64,
+        quote_quantity: u64,
+        taker_is_bid: bool,
+        maker_epoch: u64,
+        maker_deep_price: OrderDeepPrice,
+    ): Fill {
+        Fill {
+            maker_order_id,
+            maker_client_order_id,
+            execution_price,
+            balance_manager_id,
+            expired,
+            completed,
+            base_quantity,
+            quote_quantity,
+            taker_is_bid,
+            maker_epoch,
+            maker_deep_price,
+        }
     }
 
     /// Calculate the quantities to settle for the maker.
