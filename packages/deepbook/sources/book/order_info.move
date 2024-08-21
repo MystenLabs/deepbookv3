@@ -110,10 +110,6 @@ module deepbook::order_info {
     }
 
     // === Public-View Functions ===
-    public fun balance_manager_id(self: &OrderInfo): ID {
-        self.balance_manager_id
-    }
-
     public fun pool_id(self: &OrderInfo): ID {
         self.pool_id
     }
@@ -122,8 +118,16 @@ module deepbook::order_info {
         self.order_id
     }
 
+    public fun balance_manager_id(self: &OrderInfo): ID {
+        self.balance_manager_id
+    }
+
     public fun client_order_id(self: &OrderInfo): u64 {
         self.client_order_id
+    }
+
+    public fun trader(self: &OrderInfo): address {
+        self.trader
     }
 
     public fun order_type(self: &OrderInfo): u8 {
@@ -150,6 +154,10 @@ module deepbook::order_info {
         self.order_deep_price
     }
 
+    public fun expire_timestamp(self: &OrderInfo): u64 {
+        self.expire_timestamp
+    }
+
     public fun executed_quantity(self: &OrderInfo): u64 {
         self.executed_quantity
     }
@@ -158,28 +166,28 @@ module deepbook::order_info {
         self.cumulative_quote_quantity
     }
 
-    public fun paid_fees(self: &OrderInfo): u64 {
-        self.paid_fees
-    }
-
-    public fun epoch(self: &OrderInfo): u64 {
-        self.epoch
+    public fun fills(self: &OrderInfo): vector<Fill> {
+        self.fills
     }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
         self.fee_is_deep
     }
 
+    public fun paid_fees(self: &OrderInfo): u64 {
+        self.paid_fees
+    }
+
+    public fun maker_fees(self: &OrderInfo): u64 {
+        self.maker_fees
+    }
+
+    public fun epoch(self: &OrderInfo): u64 {
+        self.epoch
+    }
+
     public fun status(self: &OrderInfo): u8 {
         self.status
-    }
-
-    public fun expire_timestamp(self: &OrderInfo): u64 {
-        self.expire_timestamp
-    }
-
-    public fun fills(self: &OrderInfo): vector<Fill> {
-        self.fills
     }
 
     public fun fill_limit_reached(self: &OrderInfo): bool {
