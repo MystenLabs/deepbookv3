@@ -9,6 +9,16 @@ import { MarketMaker } from "./marketMaker";
     // await mm.depositCoins(800, 25000, 25000, 25000);
     // await mm.withdrawCoins();
 
+    // stake
+    // await mm.checkBalances();
+    // const tx = new Transaction();
+    // mm.stake(tx, "DEEP_SUI", 1000);
+    // mm.stake(tx, "SUI_DBUSDC", 1000);
+    // mm.stake(tx, "DEEP_DBUSDC", 1000);
+    // mm.stake(tx, "DBUSDT_DBUSDC", 1000);
+    // await mm.signAndExecute(tx);
+    // await mm.checkBalances();
+
     await mm.checkBalances();
     let response = await fetch("https://api.dexscreener.com/latest/dex/pairs/sui/0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78");
     let json = await response.json();
@@ -25,15 +35,14 @@ import { MarketMaker } from "./marketMaker";
     // await mm.printBook("DBUSDT_DBUSDC");
 
     const tx = new Transaction();
-    await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 3, 25, deepsuiPrice);
-    await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 3, 25, suiPrice);
-    await mm.placeOrdersAroundMid(tx, "DEEP_DBUSDC", 3, 25, 1);
-    await mm.placeOrdersAroundMid(tx, "DBUSDT_DBUSDC", 3, 25, 1);
-    // await mm.placeOrder(tx, "DBUSDT_DBUSDC", 1.5, 1, false);
+    await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 10, 25, deepsuiPrice);
+    await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 10, 25, suiPrice);
+    await mm.placeOrdersAroundMid(tx, "DEEP_DBUSDC", 10, 25, 1);
+    await mm.placeOrdersAroundMid(tx, "DBUSDT_DBUSDC", 10, 25, 1);
     await mm.signAndExecute(tx);
 
-    await mm.printBook("DEEP_SUI");
-    await mm.printBook("SUI_DBUSDC");
-    await mm.printBook("DEEP_DBUSDC");
-    await mm.printBook("DBUSDT_DBUSDC");
+    // await mm.printBook("DEEP_SUI");
+    // await mm.printBook("SUI_DBUSDC");
+    // await mm.printBook("DEEP_DBUSDC");
+    // await mm.printBook("DBUSDT_DBUSDC");
 })();

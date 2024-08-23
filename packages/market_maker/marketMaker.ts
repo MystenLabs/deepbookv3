@@ -68,8 +68,16 @@ export class MarketMaker {
         console.log(`Placing orders for pool ${poolKey} around mid price ${midPrice}`);
 
         for (let i = 1; i <= ticks; i++) {
-            const buyPrice = (Math.round(midPrice * 1000000) - (i * 20000))/1000000;
-            const sellPrice = (Math.round(midPrice * 1000000) + (i * 20000))/1000000;
+            let buyPrice;
+            let sellPrice;
+            // first orders tight around mid
+            if (i == 1) {
+                buyPrice = (Math.round(midPrice * 1000000) - (i * 1000))/1000000;
+                sellPrice = (Math.round(midPrice * 1000000) + (i * 1000))/1000000;
+            } else {
+                buyPrice = (Math.round(midPrice * 1000000) - (i * 20000))/1000000;
+                sellPrice = (Math.round(midPrice * 1000000) + (i * 20000))/1000000;
+            }
             console.log(buyPrice);
             console.log(sellPrice);
             tx.add(
@@ -93,6 +101,20 @@ export class MarketMaker {
                 }),
             );
         }
+    }
+
+    stake = (tx: Transaction, poolKey: string, amount: number) => {
+        console.log(`Staking ${amount} into pool ${poolKey}`);
+        tx.add(
+            this.client.governance.stake(poolKey, "MANAGER_1", amount),
+        );
+    }
+
+    unstake = (tx: Transaction, poolKey: string) => {
+        console.log(`Unstaking from pool ${poolKey}`);
+        tx.add(
+            this.client.governance.unstake(poolKey, "MANAGER_1"),
+        );
     }
 
     placeOrder = async (tx: Transaction, poolKey: string, price: number, quantity: number, isBid: boolean) => {
