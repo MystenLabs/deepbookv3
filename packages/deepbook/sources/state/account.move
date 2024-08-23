@@ -24,6 +24,39 @@ module deepbook::account {
         owed_balances: Balances,
     }
 
+    // === Public-View Functions ===
+    public fun open_orders(self: &Account): VecSet<u128> {
+        self.open_orders
+    }
+
+    public fun taker_volume(self: &Account): u128 {
+        self.taker_volume
+    }
+
+    public fun maker_volume(self: &Account): u128 {
+        self.maker_volume
+    }
+
+    public fun total_volume(self: &Account): u128 {
+        self.taker_volume + self.maker_volume
+    }
+
+    public fun active_stake(self: &Account): u64 {
+        self.active_stake
+    }
+
+    public fun inactive_stake(self: &Account): u64 {
+        self.inactive_stake
+    }
+
+    public fun created_proposal(self: &Account): bool {
+        self.created_proposal
+    }
+
+    public fun voted_proposal(self: &Account): Option<ID> {
+        self.voted_proposal
+    }
+
     // === Public-Package Functions ===
     public(package) fun empty(ctx: &TxContext): Account {
         Account {
@@ -39,30 +72,6 @@ module deepbook::account {
             settled_balances: balances::empty(),
             owed_balances: balances::empty(),
         }
-    }
-
-    public(package) fun active_stake(self: &Account): u64 {
-        self.active_stake
-    }
-
-    public(package) fun inactive_stake(self: &Account): u64 {
-        self.inactive_stake
-    }
-
-    public(package) fun total_volume(self: &Account): u128 {
-        self.taker_volume + self.maker_volume
-    }
-
-    public(package) fun created_proposal(self: &Account): bool {
-        self.created_proposal
-    }
-
-    public(package) fun voted_proposal(self: &Account): Option<ID> {
-        self.voted_proposal
-    }
-
-    public(package) fun open_orders(self: &Account): VecSet<u128> {
-        self.open_orders
     }
 
     /// Update the account data for the new epoch.
