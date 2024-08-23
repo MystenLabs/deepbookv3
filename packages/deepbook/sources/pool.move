@@ -15,6 +15,7 @@ module deepbook::pool {
     use deepbook::{
         math,
         constants,
+        account::Account,
         balance_manager::{Self, BalanceManager, TradeProof},
         order_info::{Self, OrderInfo},
         book::{Self, Book},
@@ -766,6 +767,7 @@ module deepbook::pool {
         orders
     }
 
+    /// Return a copy of all orders that are in the book for this account.
     public fun get_account_order_details<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: &BalanceManager,
@@ -775,6 +777,7 @@ module deepbook::pool {
         self.get_orders(acct_open_orders)
     }
 
+    /// Return the DEEP price for the pool.
     public fun get_order_deep_price<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): OrderDeepPrice {
@@ -803,6 +806,27 @@ module deepbook::pool {
             );
 
         (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
+    }
+
+    /// Returns the trade params for the pool
+    public fun pool_trade_params<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        let self = self.load_inner();
+        let taker_fee = self.state.governance().trade_params().taker_fee();
+        let maker_fee = self.state.governance().trade_params().maker_fee();
+        let stake_required = self.state.governance().trade_params().stake_required();
+
+        (taker_fee, maker_fee, stake_required)
+    }
+
+    public fun account<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+        balance_manager: &BalanceManager,
+    ): Account {
+        let self = self.load_inner();
+
+        *self.state.account(balance_manager.id())
     }
 
     // === Public-Package Functions ===
