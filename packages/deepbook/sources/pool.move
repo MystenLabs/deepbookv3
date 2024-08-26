@@ -808,7 +808,7 @@ module deepbook::pool {
         (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
     }
 
-    /// Returns the trade params for the pool
+    /// Returns the trade params for the pool.
     public fun pool_trade_params<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
     ): (u64, u64, u64) {
@@ -818,6 +818,18 @@ module deepbook::pool {
         let stake_required = self.state.governance().trade_params().stake_required();
 
         (taker_fee, maker_fee, stake_required)
+    }
+
+    /// Returns the tick size, lot size, and min size for the pool.
+    public fun pool_book_params<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        let self = self.load_inner();
+        let tick_size = self.book.tick_size();
+        let lot_size = self.book.lot_size();
+        let min_size = self.book.min_size();
+
+        (tick_size, lot_size, min_size)
     }
 
     public fun account<BaseAsset, QuoteAsset>(
