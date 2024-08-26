@@ -23,5 +23,5 @@ DEEP tokens can be staked in individual pools, granting the staker access to gov
 ## More about DeepBook
 Use the following links ot learn more about DeepBook:
 * [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
-* Detailed Documentation.
-* DeepBook V3 SDK.
+* [Detailed Documentation](https://docs.sui.io/standards/deepbookv3)
+* [DeepBook V3 SDK](https://docs.sui.io/standards/deepbookv3-sdk)
