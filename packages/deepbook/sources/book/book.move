@@ -48,6 +48,10 @@ module deepbook::book {
         &self.asks
     }
 
+    public(package) fun tick_size(self: &Book): u64 {
+        self.tick_size
+    }
+
     public(package) fun lot_size(self: &Book): u64 {
         self.lot_size
     }
