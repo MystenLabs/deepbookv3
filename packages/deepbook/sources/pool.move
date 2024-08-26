@@ -820,6 +820,18 @@ module deepbook::pool {
         (taker_fee, maker_fee, stake_required)
     }
 
+    /// Returns the tick size, lot size, and min size for the pool.
+    public fun pool_book_params<BaseAsset, QuoteAsset>(
+        self: &Pool<BaseAsset, QuoteAsset>,
+    ): (u64, u64, u64) {
+        let self = self.load_inner();
+        let tick_size = self.book.tick_size();
+        let lot_size = self.book.lot_size();
+        let min_size = self.book.min_size();
+
+        (tick_size, lot_size, min_size)
+    }
+
     public fun account<BaseAsset, QuoteAsset>(
         self: &Pool<BaseAsset, QuoteAsset>,
         balance_manager: &BalanceManager,
