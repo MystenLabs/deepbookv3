@@ -6,7 +6,10 @@
 /// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance {
     // === Imports ===
-    use sui::vec_map::{Self, VecMap};
+    use sui::{
+        event,
+        vec_map::{Self, VecMap}
+    };
     use deepbook::{trade_params::{Self, TradeParams}, constants, math};
 
     // === Errors ===
@@ -146,6 +149,7 @@ module deepbook::governance {
 
         let new_proposal = new_proposal(taker_fee, maker_fee, stake_required);
         self.proposals.insert(account_id, new_proposal);
+        event::emit(new_proposal);
     }
 
     /// Vote on a proposal. Validation of the account and stake is done in `State`.

@@ -6,7 +6,10 @@
 /// the transactions and updates the state accordingly.
 module deepbook::state {
     // === Imports ===
-    use sui::{table::{Self, Table}};
+    use sui::{
+        event,
+        table::{Self, Table}
+    };
     use deepbook::{
         math,
         history::{Self, History},
@@ -29,6 +32,19 @@ module deepbook::state {
         accounts: Table<ID, Account>,
         history: History,
         governance: Governance,
+    }
+
+    public struct StakeEvent has copy, drop {
+        balance_manager_id: ID,
+        amount: u64,
+        stake: bool,
+    }
+
+    public struct VoteEvent has copy, drop {
+        balance_manager_id: ID,
+        from_proposal_id: Option<ID>,
+        to_proposal_id: ID,
+        stake: u64,
     }
 
     public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
@@ -168,6 +184,11 @@ module deepbook::state {
 
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
         self.governance.adjust_voting_power(stake_before, stake_after);
+        event::emit(StakeEvent {
+            balance_manager_id: account_id,
+            amount: new_stake,
+            stake: true,
+        });
 
         self.accounts[account_id].settle()
     }
@@ -189,7 +210,12 @@ module deepbook::state {
         account.remove_stake();
         self.governance.adjust_voting_power(active_stake + inactive_stake, 0);
         self.governance.adjust_vote(voted_proposal, option::none(), active_stake);
-
+        event::emit(StakeEvent {
+            balance_manager_id: account_id,
+            amount: active_stake + inactive_stake,
+            stake: false,
+        });
+        
         account.settle()
     }
 
@@ -239,6 +265,13 @@ module deepbook::state {
                 option::some(proposal_id),
                 account.active_stake(),
             );
+
+        event::emit(VoteEvent {
+            balance_manager_id: account_id,
+            from_proposal_id: prev_proposal,
+            to_proposal_id: proposal_id,
+            stake: account.active_stake(),
+        });
     }
 
     /// Process claim rebates transaction. Update account rebates and settle balances.
