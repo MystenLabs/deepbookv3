@@ -8,7 +8,9 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager {
     // === Imports ===
+    use std::type_name::{Self, TypeName};
     use sui::{
+        event,
         bag::{Self, Bag},
         balance::{Self, Balance},
         coin::Coin,
@@ -33,6 +35,13 @@ module deepbook::balance_manager {
         owner: address,
         balances: Bag,
         allow_listed: VecSet<ID>,
+    }
+
+    public struct BalanceEvent has copy, drop {
+        balance_manager_id: ID,
+        asset: TypeName,
+        amount: u64,
+        deposit: bool,
     }
 
     /// Balance identifier.
@@ -122,8 +131,14 @@ module deepbook::balance_manager {
         coin: Coin<T>,
         ctx: &mut TxContext,
     ) {
-        let proof = generate_proof_as_owner(balance_manager, ctx);
+        event::emit(BalanceEvent {
+            balance_manager_id: object::id(balance_manager),
+            asset: type_name::get<T>(),
+            amount: coin.value(),
+            deposit: true,
+        });
 
+        let proof = generate_proof_as_owner(balance_manager, ctx);
         balance_manager.deposit_with_proof(&proof, coin.into_balance());
     }
 
@@ -136,8 +151,15 @@ module deepbook::balance_manager {
         ctx: &mut TxContext,
     ): Coin<T> {
         let proof = generate_proof_as_owner(balance_manager, ctx);
+        let coin = balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx);
+        event::emit(BalanceEvent {
+            balance_manager_id: object::id(balance_manager),
+            asset: type_name::get<T>(),
+            amount: coin.value(),
+            deposit: false,
+        });
 
-        balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx)
+        coin
     }
 
     public fun withdraw_all<T>(
@@ -145,8 +167,15 @@ module deepbook::balance_manager {
         ctx: &mut TxContext,
     ): Coin<T> {
         let proof = generate_proof_as_owner(balance_manager, ctx);
+        let coin = balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
+        event::emit(BalanceEvent {
+            balance_manager_id: object::id(balance_manager),
+            asset: type_name::get<T>(),
+            amount: coin.value(),
+            deposit: false,
+        });
 
-        balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx)
+        coin
     }
 
     public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
