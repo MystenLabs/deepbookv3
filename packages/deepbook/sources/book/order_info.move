@@ -299,7 +299,7 @@ module deepbook::order_info {
                         ),
                 );
                 if (fill_taker_fee > 0) {
-                    self.fills_ref()[i].set_fill_taker_fee(fill_taker_fee);
+                    self.fills[i].set_fill_taker_fee(fill_taker_fee);
                 };
             };
 
@@ -509,10 +509,6 @@ module deepbook::order_info {
 
     public(package) fun set_order_inserted(self: &mut OrderInfo) {
         self.order_inserted = true;
-    }
-
-    public(package) fun set_fills(self: &mut OrderInfo, fills: vector<Fill>) {
-        self.fills = fills;
     }
 
     // === Private Functions ===
