@@ -168,9 +168,9 @@ module deepbook::order_info {
         self.cumulative_quote_quantity
     }
 
-    // public fun fills(self: &OrderInfo): vector<Fill> {
-    //     self.fills
-    // }
+    public fun fills(self: &OrderInfo): vector<Fill> {
+        self.fills
+    }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
         self.fee_is_deep
