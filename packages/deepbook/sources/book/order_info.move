@@ -89,6 +89,8 @@ module deepbook::order_info {
         taker_client_order_id: u64,
         price: u64,
         taker_is_bid: bool,
+        taker_fee: u64,
+        maker_fee: u64,
         base_quantity: u64,
         quote_quantity: u64,
         maker_balance_manager_id: ID,
@@ -277,6 +279,8 @@ module deepbook::order_info {
                 ),
         );
         self.paid_fees = taker_deep_in;
+        let fills = &mut self.fills();
+
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);
@@ -497,6 +501,8 @@ module deepbook::order_info {
             taker_client_order_id: self.client_order_id,
             price: fill.execution_price(),
             taker_is_bid: self.is_bid,
+            taker_fee: fill.taker_fee(),
+            maker_fee: fill.maker_fee(),
             base_quantity: fill.base_quantity(),
             quote_quantity: fill.quote_quantity(),
             maker_balance_manager_id: fill.balance_manager_id(),
