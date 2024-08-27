@@ -32,9 +32,9 @@ module deepbook::fill {
         maker_epoch: u64,
         // Maker deep price
         maker_deep_price: OrderDeepPrice,
-        // Taker fee paid
+        // Taker fee paid for fill
         taker_fee: u64,
-        // Maker fee paid
+        // Maker fee paid for fill
         maker_fee: u64,
     }
 
