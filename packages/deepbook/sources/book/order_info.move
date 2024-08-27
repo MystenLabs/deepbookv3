@@ -294,7 +294,9 @@ module deepbook::order_info {
                             fill.quote_quantity(),
                         ),
                 );
-                fill.set_fill_taker_fee(fill_taker_fee);
+                if (fill_taker_fee > 0) {
+                    fill.set_fill_taker_fee(fill_taker_fee);
+                };
             };
 
             i = i + 1;
