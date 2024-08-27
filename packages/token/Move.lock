@@ -2,11 +2,10 @@
 
 [move]
 version = 2
-manifest_digest = "77450CAF5CB6CF95D38E61C7F44F5C35EF483F5B232C93A8039C28ECA9AC8BA1"
-deps_digest = "3C4103934B1E040BB6B23F1D610B4EF9F2F1166A50A104EADCF77467C004C600"
+manifest_digest = "C351F05F8962626C24E35C63387601B6C7F9E07DB9430D47685CE22245F2DB99"
+deps_digest = "F8BBB0CCB2491CA29A3DF03D6F92277A4F3574266507ACD77214D37ECA3F3082"
 dependencies = [
   { name = "Sui" },
-  { name = "token" },
 ]
 
 [[move.package]]
@@ -21,23 +20,7 @@ dependencies = [
   { name = "MoveStdlib" },
 ]
 
-[[move.package]]
-name = "token"
-source = { local = "../token" }
-
-dependencies = [
-  { name = "Sui" },
-]
-
 [move.toolchain-version]
 compiler-version = "1.32.0"
 edition = "2024.beta"
 flavor = "sui"
-
-[env]
-
-[env.testnet]
-chain-id = "4c78adac"
-original-published-id = "0x2c152dba0110d3afb76b659ed3436edd848b37e177c3abfc0296f8aefc2e6cf4"
-latest-published-id = "0x4251db4eb0622b82c8729f5d1b4a2db010a82d5493c706c14174a69ab9e6b4f1"
-published-version = "4"
