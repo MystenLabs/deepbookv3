@@ -306,11 +306,10 @@ module deepbook::state {
                 math::mul(fee_volume, historic_maker_fee)
             };
 
-            if (order_maker_fee > 0) {
-                fill.set_fill_maker_fee(order_maker_fee);
-            };
-
             if (!fill.expired()) {
+                if (order_maker_fee > 0) {
+                    fill.set_fill_maker_fee(order_maker_fee);
+                };
                 self.history.add_volume(base_volume, account.active_stake());
                 self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
             } else {

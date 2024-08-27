@@ -284,16 +284,18 @@ module deepbook::order_info {
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &mut fills[i];
-            let fill_taker_fee = math::mul(
-                taker_fee,
-                self
-                    .order_deep_price
-                    .deep_quantity(
-                        fill.base_quantity(),
-                        fill.quote_quantity(),
-                    ),
-            );
-            fill.set_fill_taker_fee(fill_taker_fee);
+            if (!fill.expired()) {
+                let fill_taker_fee = math::mul(
+                    taker_fee,
+                    self
+                        .order_deep_price
+                        .deep_quantity(
+                            fill.base_quantity(),
+                            fill.quote_quantity(),
+                        ),
+                );
+                fill.set_fill_taker_fee(fill_taker_fee);
+            };
 
             i = i + 1;
         };
