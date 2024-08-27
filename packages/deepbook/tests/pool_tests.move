@@ -3176,7 +3176,7 @@ module deepbook::pool_tests {
         };
         let bob_quantity = alice_quantity * 2;
 
-        let bob_order_info = place_limit_order<SUI, USDC>(
+        let mut bob_order_info = place_limit_order<SUI, USDC>(
             BOB,
             pool_id,
             balance_manager_id_bob,
@@ -3191,7 +3191,7 @@ module deepbook::pool_tests {
             &mut test,
         );
 
-        let fills = bob_order_info.fills();
+        let fills = bob_order_info.fills_ref();
         let fill_0 = &fills[0];
         verify_fill(
             fill_0,

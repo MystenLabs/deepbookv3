@@ -168,9 +168,9 @@ module deepbook::order_info {
         self.cumulative_quote_quantity
     }
 
-    public fun fills(self: &OrderInfo): vector<Fill> {
-        self.fills
-    }
+    // public fun fills(self: &OrderInfo): vector<Fill> {
+    //     self.fills
+    // }
 
     public fun fee_is_deep(self: &OrderInfo): bool {
         self.fee_is_deep
@@ -283,23 +283,25 @@ module deepbook::order_info {
                 ),
         );
         self.paid_fees = taker_deep_in;
-        let fills = &mut self.fills();
+        let fills = &mut self.fills;
 
         let mut i = 0;
         while (i < fills.length()) {
             let fill = &mut fills[i];
             if (!fill.expired()) {
+                let base_quantity = fill.base_quantity();
+                let quote_quantity = fill.quote_quantity();
                 let fill_taker_fee = math::mul(
                     taker_fee,
                     self
                         .order_deep_price
-                        .deep_quantity(
-                            fill.base_quantity(),
-                            fill.quote_quantity(),
-                        ),
+                            .deep_quantity(
+                                base_quantity,
+                                quote_quantity,
+                            ),
                 );
                 if (fill_taker_fee > 0) {
-                    self.fills[i].set_fill_taker_fee(fill_taker_fee);
+                    fills[i].set_fill_taker_fee(fill_taker_fee);
                 };
             };
 
