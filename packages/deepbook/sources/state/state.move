@@ -55,7 +55,7 @@ module deepbook::state {
     ): (Balances, Balances) {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
-        let fills = &mut order_info.fills();
+        let fills = order_info.fills_ref();
         self.process_fills(fills, ctx);
 
         self.update_account(order_info.balance_manager_id(), ctx);

@@ -260,6 +260,10 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
+    public(package) fun fills_ref(self: &mut OrderInfo): &mut vector<Fill> {
+        &mut self.fills
+    }
+
     /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
     /// placing the order, calculate all of the balances that need to be settled and
     /// the balances that are owed. The executed quantity is multiplied by the taker_fee
@@ -295,7 +299,7 @@ module deepbook::order_info {
                         ),
                 );
                 if (fill_taker_fee > 0) {
-                    fill.set_fill_taker_fee(fill_taker_fee);
+                    self.fills_ref()[i].set_fill_taker_fee(fill_taker_fee);
                 };
             };
 
@@ -505,6 +509,10 @@ module deepbook::order_info {
 
     public(package) fun set_order_inserted(self: &mut OrderInfo) {
         self.order_inserted = true;
+    }
+
+    public(package) fun set_fills(self: &mut OrderInfo, fills: vector<Fill>) {
+        self.fills = fills;
     }
 
     // === Private Functions ===
