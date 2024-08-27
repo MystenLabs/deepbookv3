@@ -281,6 +281,22 @@ module deepbook::order_info {
         self.paid_fees = taker_deep_in;
         let fills = &mut self.fills();
 
+        let mut i = 0;
+        while (i < fills.length()) {
+            let fill = &mut fills[i];
+            let fill_taker_fee = math::mul(
+                taker_fee,
+                self
+                    .order_deep_price
+                    .deep_quantity(
+                        fill.base_quantity(),
+                        fill.quote_quantity(),
+                    ),
+            );
+            fill.set_fill_taker_fee(fill_taker_fee);
+
+            i = i + 1;
+        };
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);

@@ -317,7 +317,6 @@ module deepbook::book {
             else book_side.prev_slice(ref, offset);
         };
 
-        order_info.emit_orders_filled(timestamp);
         order_info.fills().do_ref!(|fill| {
             if (fill.expired() || fill.completed()) {
                 book_side.remove(fill.maker_order_id());
