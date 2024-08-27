@@ -301,7 +301,7 @@ module deepbook::order_info {
                             ),
                 );
                 if (fill_taker_fee > 0) {
-                    fills[i].set_fill_taker_fee(fill_taker_fee);
+                    fill.set_fill_taker_fee(fill_taker_fee);
                 };
             };
 
