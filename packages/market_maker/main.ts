@@ -33,13 +33,17 @@ import { MarketMaker } from "./marketMaker";
     // await mm.printBook("SUI_DBUSDC");
     // await mm.printBook("DEEP_DBUSDC");
     // await mm.printBook("DBUSDT_DBUSDC");
+    // const tx = new Transaction();
+    // tx.add(mm.client.deepBook.claimRebates("SUI_DBUSDC", "MANAGER_1"));
+    // const res = await mm.signAndExecute(tx);
+    // console.log(res);
 
-    const tx = new Transaction();
-    await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 10, 25, deepsuiPrice);
-    await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 10, 25, suiPrice);
-    await mm.placeOrdersAroundMid(tx, "DEEP_DBUSDC", 10, 25, 1);
-    await mm.placeOrdersAroundMid(tx, "DBUSDT_DBUSDC", 10, 25, 1);
-    await mm.signAndExecute(tx);
+    // const tx = new Transaction();
+    // await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 10, 25, deepsuiPrice);
+    // await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 10, 25, suiPrice);
+    // await mm.placeOrdersAroundMid(tx, "DEEP_DBUSDC", 10, 25, 1);
+    // await mm.placeOrdersAroundMid(tx, "DBUSDT_DBUSDC", 10, 25, 1);
+    // await mm.signAndExecute(tx);
 
     // await mm.printBook("DEEP_SUI");
     // await mm.printBook("SUI_DBUSDC");
