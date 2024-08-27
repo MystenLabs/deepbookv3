@@ -110,7 +110,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, price, maker_quantity, false, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 5 * constants::sui_unit(), 0);
         assert!(order_info.cumulative_quote_quantity() == 25 * constants::usdc_unit(), 0);
         assert!(order_info.status() == constants::partially_filled(), 0);
@@ -133,7 +133,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, 3_890_000, maker_quantity, false, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 38_130_000_000, 0);
         // 38.13 * 3.89 = 148.3257 = 148325700
         assert!(order_info.cumulative_quote_quantity() == 148_325_700, 0);
@@ -187,7 +187,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, price, maker_quantity, false, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 10 * constants::sui_unit(), 0);
         assert!(order_info.cumulative_quote_quantity() == 50 * constants::usdc_unit(), 0);
         assert!(order_info.status() == constants::filled(), 0);
@@ -209,7 +209,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, maker_price, 100 * constants::sui_unit(), false, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 100 * constants::sui_unit(), 0);
         // 100 * 1813.05 = 181305 = 181305000000
         assert!(order_info.cumulative_quote_quantity() == 181_305_000_000, 0);
@@ -245,7 +245,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, maker_price, 1_000_000, true, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 1_000_000, 0);
         // 0.001 * 70,000 = 70 = 70000000
         assert!(order_info.cumulative_quote_quantity() == 70_000_000, 0);
@@ -279,7 +279,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, maker_price, 999_990_000_000, false, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 999_990_000_000, 0);
         // 999.99 * 111.11 = 111108.8889 = 111108888900
         assert!(order_info.cumulative_quote_quantity() == 111_108_888_900, 0);
@@ -302,7 +302,7 @@ module deepbook::order_info_tests {
         let mut maker_order = create_order_info_base(BOB, maker_price, 100_000, true, test.ctx().epoch()).to_order();
         let has_next = order_info.match_maker(&mut maker_order, 0);
         assert!(has_next, 0);
-        assert!(order_info.fills().length() == 1, 0);
+        assert!(order_info.fills_ref().length() == 1, 0);
         assert!(order_info.executed_quantity() == 100_000, 0);
         // 0.0001 * 1,000,000 = 100 = 100000000
         assert!(order_info.cumulative_quote_quantity() == 100_000_000, 0);

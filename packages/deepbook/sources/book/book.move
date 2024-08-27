@@ -310,21 +310,20 @@ module deepbook::book {
         let book_side = if (is_bid) &mut self.asks else &mut self.bids;
         let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
 
-        while (!ref.is_null() && order_info.fills().length() < constants::max_fills()) {
+        while (!ref.is_null() && order_info.fills_ref().length() < constants::max_fills()) {
             let maker_order = slice_borrow_mut(book_side.borrow_slice_mut(ref), offset);
             if (!order_info.match_maker(maker_order, timestamp)) break;
             (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
             else book_side.prev_slice(ref, offset);
         };
 
-        order_info.emit_orders_filled(timestamp);
-        order_info.fills().do_ref!(|fill| {
+        order_info.fills_ref().do_ref!(|fill| {
             if (fill.expired() || fill.completed()) {
                 book_side.remove(fill.maker_order_id());
             };
         });
 
-        if (order_info.fills().length() == constants::max_fills()) {
+        if (order_info.fills_ref().length() == constants::max_fills()) {
             order_info.set_fill_limit_reached();
         }
     }

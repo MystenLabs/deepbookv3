@@ -55,8 +55,8 @@ module deepbook::state {
     ): (Balances, Balances) {
         self.governance.update(ctx);
         self.history.update(self.governance.trade_params(), ctx);
-        let fills = order_info.fills();
-        self.process_fills(&fills, ctx);
+        let fills = order_info.fills_ref();
+        self.process_fills(fills, ctx);
 
         self.update_account(order_info.balance_manager_id(), ctx);
         let account = &mut self.accounts[order_info.balance_manager_id()];
@@ -283,14 +283,14 @@ module deepbook::state {
     /// Process fills for all makers. Update maker accounts and history.
     fun process_fills(
         self: &mut State,
-        fills: &vector<Fill>,
+        fills: &mut vector<Fill>,
         ctx: &TxContext,
     ) {
         let whitelisted = self.governance.whitelisted();
 
         let mut i = 0;
         while (i < fills.length()) {
-            let fill = &fills[i];
+            let fill = &mut fills[i];
             let maker = fill.balance_manager_id();
             self.update_account(maker, ctx);
             let account = &mut self.accounts[maker];
@@ -307,6 +307,9 @@ module deepbook::state {
             };
 
             if (!fill.expired()) {
+                if (order_maker_fee > 0) {
+                    fill.set_fill_maker_fee(order_maker_fee);
+                };
                 self.history.add_volume(base_volume, account.active_stake());
                 self.history.add_total_fees_collected(balances::new(0, 0, order_maker_fee));
             } else {

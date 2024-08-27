@@ -89,6 +89,8 @@ module deepbook::order_info {
         taker_client_order_id: u64,
         price: u64,
         taker_is_bid: bool,
+        taker_fee: u64,
+        maker_fee: u64,
         base_quantity: u64,
         quote_quantity: u64,
         maker_balance_manager_id: ID,
@@ -258,6 +260,10 @@ module deepbook::order_info {
         self.fills.push_back(fill);
     }
 
+    public(package) fun fills_ref(self: &mut OrderInfo): &mut vector<Fill> {
+        &mut self.fills
+    }
+
     /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
     /// placing the order, calculate all of the balances that need to be settled and
     /// the balances that are owed. The executed quantity is multiplied by the taker_fee
@@ -277,6 +283,30 @@ module deepbook::order_info {
                 ),
         );
         self.paid_fees = taker_deep_in;
+        let fills = &mut self.fills;
+
+        let mut i = 0;
+        while (i < fills.length()) {
+            let fill = &mut fills[i];
+            if (!fill.expired()) {
+                let base_quantity = fill.base_quantity();
+                let quote_quantity = fill.quote_quantity();
+                let fill_taker_fee = math::mul(
+                    taker_fee,
+                    self
+                        .order_deep_price
+                            .deep_quantity(
+                                base_quantity,
+                                quote_quantity,
+                            ),
+                );
+                if (fill_taker_fee > 0) {
+                    fill.set_fill_taker_fee(fill_taker_fee);
+                };
+            };
+
+            i = i + 1;
+        };
 
         let mut settled_balances = balances::new(0, 0, 0);
         let mut owed_balances = balances::new(0, 0, 0);
@@ -497,6 +527,8 @@ module deepbook::order_info {
             taker_client_order_id: self.client_order_id,
             price: fill.execution_price(),
             taker_is_bid: self.is_bid,
+            taker_fee: fill.taker_fee(),
+            maker_fee: fill.maker_fee(),
             base_quantity: fill.base_quantity(),
             quote_quantity: fill.quote_quantity(),
             maker_balance_manager_id: fill.balance_manager_id(),
