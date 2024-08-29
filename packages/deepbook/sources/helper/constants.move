@@ -87,6 +87,8 @@ module deepbook::constants {
     const EIncorrectMidPrice: u64 = 2;
     #[test_only]
     const EIncorrectPoolId: u64 = 3;
+    #[test_only]
+    const EFillMismatch: u64 = 4;
 
     public fun current_version(): u64 {
         CURRENT_VERSION
@@ -256,6 +258,11 @@ module deepbook::constants {
     #[test_only]
     public fun e_order_info_mismatch(): u64 {
         EOrderInfoMismatch
+    }
+
+    #[test_only]
+    public fun e_fill_mismatch(): u64 {
+        EFillMismatch
     }
 
     #[test_only]

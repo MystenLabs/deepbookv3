@@ -22,6 +22,7 @@ module deepbook::pool_tests {
         balance_manager::{BalanceManager, TradeCap},
         order::{Order},
         order_info::OrderInfo,
+        fill::Fill,
         big_vector::BigVector,
         math,
         registry::{Self, Registry},
@@ -165,6 +166,24 @@ module deepbook::pool_tests {
             6 * constants::float_scaling(),
             3 * math::mul(constants::stable_taker_fee(), constants::deep_multiplier()),
             constants::filled()
+        );
+    }
+
+    #[test]
+    fun test_fills_bid_ok() {
+        place_then_fill_correct(
+            true,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
+        );
+    }
+
+    #[test]
+    fun test_fills_ask_ok() {
+        place_then_fill_correct(
+            false,
+            constants::no_restriction(),
+            3 * constants::float_scaling(),
         );
     }
 
@@ -1667,7 +1686,7 @@ module deepbook::pool_tests {
             sender,
             registry_id,
             balance_manager_id,
-            100 * constants::float_scaling(),
+            constants::deep_multiplier(),
             test,
         );
         set_time(0, test);
@@ -3101,6 +3120,98 @@ module deepbook::pool_tests {
         end(test);
     }
 
+    /// Place normal ask order, then try to fill full order.
+    /// Alice places first order, Bob places second order.
+    fun place_then_fill_correct(
+        is_bid: bool,
+        order_type: u8,
+        alice_quantity: u64,
+    ) {
+        let mut test = begin(OWNER);
+        let registry_id = setup_test(OWNER, &mut test);
+        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
+        let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(ALICE, registry_id, balance_manager_id_alice, &mut test);
+        let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
+
+        let alice_client_order_id = 1;
+        let alice_price = 2 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let pay_with_deep = true;
+
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity / 2,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            alice_client_order_id,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            alice_price,
+            alice_quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let bob_client_order_id = 2;
+        let bob_price = if (is_bid) {
+            1 * constants::float_scaling()
+        } else {
+            3 * constants::float_scaling()
+        };
+        let bob_quantity = alice_quantity * 2;
+
+        let mut bob_order_info = place_limit_order<SUI, USDC>(
+            BOB,
+            pool_id,
+            balance_manager_id_bob,
+            bob_client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            bob_price,
+            bob_quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let fills = bob_order_info.fills_ref();
+        let fill_0 = &fills[0];
+        verify_fill(
+            fill_0,
+            alice_quantity / 2,
+            math::mul(alice_quantity / 2, alice_price),
+            math::mul(constants::deep_multiplier(), math::mul(alice_quantity, constants::taker_fee())) / 2,
+            math::mul(constants::deep_multiplier(), math::mul(alice_quantity, constants::maker_fee())) / 2,
+        );
+        let fill_1 = &fills[1];
+        verify_fill(
+            fill_1,
+            alice_quantity,
+            math::mul(alice_quantity, alice_price),
+            math::mul(constants::deep_multiplier(), math::mul(alice_quantity, constants::taker_fee())),
+            math::mul(constants::deep_multiplier(), math::mul(alice_quantity, constants::maker_fee())),
+        );
+
+        end(test);
+    }
+
     /// Place normal ask order, then try to place without filling.
     /// Alice places first order, Bob places second order.
     fun place_then_no_fill(
@@ -3453,6 +3564,19 @@ module deepbook::pool_tests {
         assert!(order_info.fee_is_deep() == fee_is_deep, constants::e_order_info_mismatch());
         assert!(order_info.status() == status, constants::e_order_info_mismatch());
         assert!(order_info.expire_timestamp() == expire_timestamp, constants::e_order_info_mismatch());
+    }
+
+    fun verify_fill(
+        fill: &Fill,
+        base_quantity: u64,
+        quote_quantity: u64,
+        taker_fee: u64,
+        maker_fee: u64,
+    ) {
+        assert!(fill.base_quantity() == base_quantity, constants::e_fill_mismatch());
+        assert!(fill.quote_quantity() == quote_quantity, constants::e_fill_mismatch());
+        assert!(fill.taker_fee() == taker_fee, constants::e_fill_mismatch());
+        assert!(fill.maker_fee() == maker_fee, constants::e_fill_mismatch());
     }
 
     /// Helper, borrow orderbook and verify an order.

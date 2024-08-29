@@ -32,6 +32,10 @@ module deepbook::fill {
         maker_epoch: u64,
         // Maker deep price
         maker_deep_price: OrderDeepPrice,
+        // Taker fee paid for fill
+        taker_fee: u64,
+        // Maker fee paid for fill
+        maker_fee: u64,
     }
 
     // === Public-View Functions ===
@@ -79,6 +83,14 @@ module deepbook::fill {
         self.maker_deep_price
     }
 
+    public fun taker_fee(self: &Fill): u64 {
+        self.taker_fee
+    }
+
+    public fun maker_fee(self: &Fill): u64 {
+        self.maker_fee
+    }
+
     // === Public-Package Functions ===
     public(package) fun new(
         maker_order_id: u128,
@@ -105,6 +117,8 @@ module deepbook::fill {
             taker_is_bid,
             maker_epoch,
             maker_deep_price,
+            taker_fee: 0,
+            maker_fee: 0,
         }
     }
 
@@ -125,5 +139,13 @@ module deepbook::fill {
         };
 
         balances::new(base, quote, 0)
+    }
+
+    public(package) fun set_fill_maker_fee(self: &mut Fill, fee: u64) {
+        self.maker_fee = fee;
+    }
+
+    public(package) fun set_fill_taker_fee(self: &mut Fill, fee: u64) {
+        self.taker_fee = fee;
     }
 }
