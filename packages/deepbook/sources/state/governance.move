@@ -6,7 +6,10 @@
 /// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance {
     // === Imports ===
-    use sui::vec_map::{Self, VecMap};
+    use sui::{
+        event,
+        vec_map::{Self, VecMap}
+    };
     use deepbook::{trade_params::{Self, TradeParams}, constants, math};
 
     // === Errors ===
@@ -58,6 +61,13 @@ module deepbook::governance {
         quorum: u64,
     }
 
+    /// Event emitted when trade parameters are updated.
+    public struct TradeParamsUpdateEvent has copy, drop {
+        taker_fee: u64,
+        maker_fee: u64,
+        stake_required: u64,
+    }
+
     // === Public-Package Functions ===
     public(package) fun empty(stable_pool: bool, ctx: &TxContext): Governance {
         let default_taker = if (stable_pool) { MAX_TAKER_STABLE } else { MAX_TAKER_VOLATILE };
@@ -102,6 +112,12 @@ module deepbook::governance {
         self.quorum = math::mul(self.voting_power, constants::half());
         self.proposals = vec_map::empty();
         self.trade_params = self.next_trade_params;
+
+        event::emit(TradeParamsUpdateEvent {
+            taker_fee: self.trade_params.taker_fee(),
+            maker_fee: self.trade_params.maker_fee(),
+            stake_required: self.trade_params.stake_required(),
+        });
     }
 
     /// Add a new proposal to governance.
