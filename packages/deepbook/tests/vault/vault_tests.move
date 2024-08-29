@@ -2,227 +2,371 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module deepbook::vault_tests {
-    use sui::{
-        test_scenario::{next_tx, begin, end},
-        test_utils::destroy,
-        object::id_from_address,
-    };
-    use deepbook::{
-        vault::Self,
-        balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds},
-        balance_manager::Self,
-        constants,
-        balances::Self,
-        balance_manager::BalanceManager,
-    };
+module deepbook::vault_tests;
 
-    const OWNER: address = @0xF;
-    const ALICE: address = @0xA;
-    const BOB: address = @0xB;
+use deepbook::balance_manager::{Self, BalanceManager};
+use deepbook::balance_manager_tests::{
+    USDC,
+    SPAM,
+    create_acct_and_share_with_funds
+};
+use deepbook::balances;
+use deepbook::constants;
+use deepbook::vault;
+use sui::object::id_from_address;
+use sui::test_scenario::{next_tx, begin, end};
+use sui::test_utils::destroy;
 
-    #[test]
-    fun borrow_flashloan_ok() {
-        let mut test = begin(OWNER);
+const OWNER: address = @0xF;
+const ALICE: address = @0xA;
+const BOB: address = @0xB;
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test]
+fun borrow_flashloan_ok() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (base, base_loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
-        let (quote, quote_loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
-        vault.return_flashloan_base(id_from_address(@0x1), base, base_loan);
-        vault.return_flashloan_quote(id_from_address(@0x1), quote, quote_loan);
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        destroy(vault);
-        destroy(balance_manager);
-        test.end();
-    }
+    // borrow flashloan
+    let (base, base_loan) = vault.borrow_flashloan_base(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    let (quote, quote_loan) = vault.borrow_flashloan_quote(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    vault.return_flashloan_base(id_from_address(@0x1), base, base_loan);
+    vault.return_flashloan_quote(id_from_address(@0x1), quote, quote_loan);
 
-    #[test]
-    fun borrow_flashloan_single_ok() {
-        let mut test = begin(OWNER);
+    destroy(vault);
+    destroy(balance_manager);
+    test.end();
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test]
+fun borrow_flashloan_single_ok() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (quote, loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
-        vault.return_flashloan_quote(id_from_address(@0x1), quote, loan);
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        destroy(vault);
-        destroy(balance_manager);
-        test.end();
-    }
+    // borrow flashloan
+    let (quote, loan) = vault.borrow_flashloan_quote(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    vault.return_flashloan_quote(id_from_address(@0x1), quote, loan);
 
-    #[test, expected_failure(abort_code = vault::ENotEnoughBaseForLoan)]
-    fun borrow_flashloan_not_enough_base_e() {
-        let mut test = begin(OWNER);
+    destroy(vault);
+    destroy(balance_manager);
+    test.end();
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = vault::ENotEnoughBaseForLoan)]
+fun borrow_flashloan_not_enough_base_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (_base, _loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1001, test.ctx());
-        let (_quote, _loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        abort(0)
-    }
+    // borrow flashloan
+    let (_base, _loan) = vault.borrow_flashloan_base(
+        id_from_address(@0x1),
+        1001,
+        test.ctx(),
+    );
+    let (_quote, _loan) = vault.borrow_flashloan_quote(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
 
-    #[test, expected_failure(abort_code = vault::ENotEnoughQuoteForLoan)]
-    fun borrow_flashloan_not_enough_quote_e() {
-        let mut test = begin(OWNER);
+    abort (0)
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = vault::ENotEnoughQuoteForLoan)]
+fun borrow_flashloan_not_enough_quote_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (_base, _loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
-        let (_quote, _loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1001, test.ctx());
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        abort 0
-    }
+    // borrow flashloan
+    let (_base, _loan) = vault.borrow_flashloan_base(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    let (_quote, _loan) = vault.borrow_flashloan_quote(
+        id_from_address(@0x1),
+        1001,
+        test.ctx(),
+    );
 
-    #[test, expected_failure(abort_code = vault::EIncorrectLoanPool)]
-    fun borrow_flashloan_incorrect_pool_id_e() {
-        let mut test = begin(OWNER);
+    abort 0
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = vault::EIncorrectLoanPool)]
+fun borrow_flashloan_incorrect_pool_id_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (base, base_loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
-        vault.return_flashloan_base(id_from_address(@0x2), base, base_loan);
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        abort(0)
-    }
+    // borrow flashloan
+    let (base, base_loan) = vault.borrow_flashloan_base(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    vault.return_flashloan_base(id_from_address(@0x2), base, base_loan);
 
-    #[test, expected_failure(abort_code = vault::EIncorrectQuantityReturned)]
-    fun borrow_flashloan_incorrect_return_base_e() {
-        let mut test = begin(OWNER);
+    abort (0)
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = vault::EIncorrectQuantityReturned)]
+fun borrow_flashloan_incorrect_return_base_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (mut base, loan) = vault.borrow_flashloan_base(id_from_address(@0x1), 1000, test.ctx());
-        let return_base = base.split(999, test.ctx());
-        vault.return_flashloan_base(id_from_address(@0x1), return_base, loan);
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        abort(0)
-    }
+    // borrow flashloan
+    let (mut base, loan) = vault.borrow_flashloan_base(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    let return_base = base.split(999, test.ctx());
+    vault.return_flashloan_base(id_from_address(@0x1), return_base, loan);
 
-    #[test, expected_failure(abort_code = vault::EIncorrectQuantityReturned)]
-    fun borrow_flashloan_incorrect_return_quote_e() {
-        let mut test = begin(OWNER);
+    abort (0)
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(0, 0, 0);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = vault::EIncorrectQuantityReturned)]
+fun borrow_flashloan_incorrect_return_quote_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(0, 0, 0);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        // borrow flashloan
-        let (mut quote, loan) = vault.borrow_flashloan_quote(id_from_address(@0x1), 1000, test.ctx());
-        let return_quote = quote.split(999, test.ctx());
-        vault.return_flashloan_quote(id_from_address(@0x1), return_quote, loan);
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-        abort(0)
-    }
+    // borrow flashloan
+    let (mut quote, loan) = vault.borrow_flashloan_quote(
+        id_from_address(@0x1),
+        1000,
+        test.ctx(),
+    );
+    let return_quote = quote.split(999, test.ctx());
+    vault.return_flashloan_quote(id_from_address(@0x1), return_quote, loan);
 
-    #[test]
-    fun owed_equals_settled_ok() {
-        let mut test = begin(OWNER);
+    abort (0)
+}
 
-        let balance_manager_id = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(1000, 1000, 1000);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
-        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+#[test]
+fun owed_equals_settled_ok() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager, &trade_proof);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(1000, 1000, 1000);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id,
+    );
+    let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
 
-        destroy(vault);
-        destroy(balance_manager);
-        test.end();
-    }
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager,
+        &trade_proof,
+    );
 
-    #[test, expected_failure(abort_code = balance_manager::EInvalidProof)]
-    fun owed_equals_settled_e() {
-        let mut test = begin(OWNER);
+    destroy(vault);
+    destroy(balance_manager);
+    test.end();
+}
 
-        let balance_manager_id_alice = create_acct_and_share_with_funds(ALICE, 1000000 * constants::float_scaling(), &mut test);
-        let balance_manager_id_bob = create_acct_and_share_with_funds(BOB, 1000000 * constants::float_scaling(), &mut test);
-        test.next_tx(ALICE);
-        let mut vault = vault::empty<SPAM, USDC>();
-        let settled_balances = balances::new(1000, 1000, 1000);
-        let owed_balances = balances::new(1000, 1000, 1000);
-        let mut balance_manager_alice = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
-        let mut balance_manager_bob = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
-        let trade_proof = balance_manager_alice.generate_proof_as_owner(test.ctx());
+#[test, expected_failure(abort_code = balance_manager::EInvalidProof)]
+fun owed_equals_settled_e() {
+    let mut test = begin(OWNER);
 
-        // move funds into the vault
-        vault.settle_balance_manager(settled_balances, owed_balances, &mut balance_manager_bob, &trade_proof);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(ALICE);
+    let mut vault = vault::empty<SPAM, USDC>();
+    let settled_balances = balances::new(1000, 1000, 1000);
+    let owed_balances = balances::new(1000, 1000, 1000);
+    let mut balance_manager_alice = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id_alice,
+    );
+    let mut balance_manager_bob = test.take_shared_by_id<BalanceManager>(
+        balance_manager_id_bob,
+    );
+    let trade_proof = balance_manager_alice.generate_proof_as_owner(test.ctx());
 
-        destroy(vault);
-        destroy(balance_manager_bob);
-        destroy(balance_manager_alice);
-        test.end();
-    }
+    // move funds into the vault
+    vault.settle_balance_manager(
+        settled_balances,
+        owed_balances,
+        &mut balance_manager_bob,
+        &trade_proof,
+    );
+
+    destroy(vault);
+    destroy(balance_manager_bob);
+    destroy(balance_manager_alice);
+    test.end();
 }
