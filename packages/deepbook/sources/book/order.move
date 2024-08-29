@@ -43,6 +43,7 @@ module deepbook::order {
         trader: address,
         price: u64,
         is_bid: bool,
+        original_quantity: u64,
         base_asset_quantity_canceled: u64,
         timestamp: u64,
     }
@@ -230,6 +231,7 @@ module deepbook::order {
     ) {
         let is_bid = self.is_bid();
         let price = self.price();
+        let remaining_quantity = self.quantity - self.filled_quantity;
         event::emit(OrderCanceled {
             pool_id,
             order_id: self.order_id,
@@ -237,7 +239,8 @@ module deepbook::order {
             client_order_id: self.client_order_id,
             is_bid,
             trader,
-            base_asset_quantity_canceled: self.quantity,
+            original_quantity: self.quantity,
+            base_asset_quantity_canceled: remaining_quantity,
             timestamp,
             price,
         });
