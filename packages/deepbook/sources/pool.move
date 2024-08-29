@@ -366,7 +366,7 @@ module deepbook::pool {
     ) {
         assert!(amount > 0, EInvalidStake);
         let self = self.load_inner_mut();
-        let (settled, owed) = self.state.process_stake(balance_manager.id(), amount, ctx);
+        let (settled, owed) = self.state.process_stake(self.pool_id, balance_manager.id(), amount, ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     }
 
@@ -380,7 +380,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let self = self.load_inner_mut();
-        let (settled, owed) = self.state.process_unstake(balance_manager.id(), ctx);
+        let (settled, owed) = self.state.process_unstake(self.pool_id, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     }
 
@@ -402,7 +402,7 @@ module deepbook::pool {
         balance_manager.validate_proof(trade_proof);
         self
             .state
-            .process_proposal(balance_manager.id(), taker_fee, maker_fee, stake_required, ctx);
+            .process_proposal(self.pool_id, balance_manager.id(), taker_fee, maker_fee, stake_required, ctx);
     }
 
     /// Vote on a proposal. The balance_manager must have enough staked DEEP tokens to participate.
@@ -417,7 +417,7 @@ module deepbook::pool {
     ) {
         let self = self.load_inner_mut();
         balance_manager.validate_proof(trade_proof);
-        self.state.process_vote(balance_manager.id(), proposal_id, ctx);
+        self.state.process_vote(self.pool_id, balance_manager.id(), proposal_id, ctx);
     }
 
     /// Claim the rewards for the balance_manager. The balance_manager must have rewards to claim.
@@ -429,7 +429,7 @@ module deepbook::pool {
         ctx: &TxContext,
     ) {
         let self = self.load_inner_mut();
-        let (settled, owed) = self.state.process_claim_rebates(balance_manager.id(), ctx);
+        let (settled, owed) = self.state.process_claim_rebates(self.pool_id, balance_manager.id(), ctx);
         self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     }
 
