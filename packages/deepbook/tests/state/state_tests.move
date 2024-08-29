@@ -16,6 +16,7 @@ module deepbook::state_tests {
     const ALICE: address = @0xA;
     const BOB: address = @0xB;
     const CHARLIE: address = @0xC;
+    const POOL_ID: address = @0x1;
 
     #[test]
     fun process_create_ok() {
@@ -214,12 +215,12 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
         // change fee structure
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
 
         // place maker with old fee structure
         test.next_tx(ALICE);
@@ -252,8 +253,8 @@ module deepbook::state_tests {
         // default stake required is 100
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 120 * constants::sui_unit(), test.ctx());
-        state.process_stake(id_from_address(BOB), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 120 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(BOB), 100 * constants::sui_unit(), test.ctx());
 
         // to make stakes active
         test.next_epoch(OWNER);
@@ -288,7 +289,7 @@ module deepbook::state_tests {
 
         // alice makes a proposal to raise the stake required to 200 and votes for it
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 1000000, 500000, 200 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 1000000, 500000, 200 * constants::sui_unit(), test.ctx());
 
         // new proposal is active, bob can no longer get reduced fees after trading 200 volume
         test.next_epoch(OWNER);
@@ -326,8 +327,8 @@ module deepbook::state_tests {
         // default stake required is 100
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 60 * constants::deep_unit(), test.ctx());
-        state.process_stake(id_from_address(BOB), 50 * constants::deep_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 60 * constants::deep_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(BOB), 50 * constants::deep_unit(), test.ctx());
 
         // to make stakes active
         test.next_epoch(OWNER);
@@ -372,7 +373,7 @@ module deepbook::state_tests {
 
         // alice makes a proposal to lower the stake required to 50 and votes for it
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 1000000, 500000, 50 * constants::deep_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 1000000, 500000, 50 * constants::deep_unit(), test.ctx());
 
         // new proposal is active, bob can no longer get reduced fees after trading 200 volume
         test.next_epoch(OWNER);
@@ -466,7 +467,7 @@ module deepbook::state_tests {
         // stake 100 DEEP
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         // place maker order
         let price = 10 * constants::usdc_unit();
@@ -477,7 +478,7 @@ module deepbook::state_tests {
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
         // propose to reduce fees
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
@@ -508,18 +509,18 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        let (settled, owed) = state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
+        let (settled, owed) = state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
         assert_eq(settled, balances::new(0, 0, 0));
         assert_eq(owed, balances::new(0, 0, 1 * constants::sui_unit()));
         assert!(state.governance().voting_power() == 1_000_000_000, 0);
-        state.process_stake(id_from_address(BOB), 1 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(BOB), 1 * constants::sui_unit(), test.ctx());
         assert!(state.governance().voting_power() == 2_000_000_000, 0);
 
-        let (settled, owed) = state.process_unstake(id_from_address(ALICE), test.ctx());
+        let (settled, owed) = state.process_unstake(id_from_address(POOL_ID), id_from_address(ALICE), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));
         assert_eq(owed, balances::new(0, 0, 0));
         assert!(state.governance().voting_power() == 1_000_000_000, 0);
-        let (settled, owed) = state.process_unstake(id_from_address(BOB), test.ctx());
+        let (settled, owed) = state.process_unstake(id_from_address(POOL_ID), id_from_address(BOB), test.ctx());
         assert_eq(settled, balances::new(0, 0, 1 * constants::sui_unit()));
         assert_eq(owed, balances::new(0, 0, 0));
         assert!(state.governance().voting_power() == 0, 0);
@@ -536,7 +537,7 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 1, 1, 1, test.ctx());
 
         abort(0)
     }
@@ -549,8 +550,8 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
-        state.process_proposal(id_from_address(ALICE), 1, 1, 1, test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 1 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 1, 1, 1, test.ctx());
 
         abort(0)
     }
@@ -562,12 +563,12 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
 
         abort(0)
     }
@@ -579,15 +580,15 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::sui_unit(), test.ctx());
 
         destroy(state);
         test.end();
@@ -600,12 +601,12 @@ module deepbook::state_tests {
         test.next_tx(ALICE);
         let stable_pool = false;
         let mut state = state::empty(stable_pool, test.ctx());
-        state.process_stake(id_from_address(ALICE), 100 * constants::deep_unit(), test.ctx());
-        state.process_stake(id_from_address(BOB), 250 * constants::deep_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(ALICE), 100 * constants::deep_unit(), test.ctx());
+        state.process_stake(id_from_address(POOL_ID), id_from_address(BOB), 250 * constants::deep_unit(), test.ctx());
 
         test.next_epoch(OWNER);
         test.next_tx(ALICE);
-        state.process_proposal(id_from_address(ALICE), 500000, 200000, 100 * constants::deep_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(ALICE), 500000, 200000, 100 * constants::deep_unit(), test.ctx());
         // total voting power = 50 + (sqrt(100) - sqrt(50)) = 50 + 10 - 7.071067811 = 52.928932189 rounded down
         // total voting power = 50 + (sqrt(250) - sqrt(50)) = 50 + 15.811388300 - 7.071067811 = 58.740320489 rounded down
         // total = 52.928932189 + 58.740320489 = 111.669252678
@@ -615,17 +616,17 @@ module deepbook::state_tests {
         assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 100 * constants::deep_unit(), 0);
 
         // bob votes on alice's proposal
-        state.process_vote(id_from_address(BOB), id_from_address(ALICE), test.ctx());
+        state.process_vote(id_from_address(POOL_ID), id_from_address(BOB), id_from_address(ALICE), test.ctx());
         assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 350 * constants::deep_unit(), 0);
 
         // alice unstakes, removing her vote
-        state.process_unstake(id_from_address(ALICE), test.ctx());
+        state.process_unstake(id_from_address(POOL_ID), id_from_address(ALICE), test.ctx());
         assert!(state.governance().voting_power() == 250 * constants::deep_unit(), 0);
         assert!(state.governance().proposals().get(&id_from_address(ALICE)).votes() == 250 * constants::deep_unit(), 0);
 
         // proposal still goes through since 250 >= 175
         test.next_epoch(OWNER);
-        state.process_proposal(id_from_address(BOB), 600000, 300000, 200 * constants::deep_unit(), test.ctx());
+        state.process_proposal(id_from_address(POOL_ID), id_from_address(BOB), 600000, 300000, 200 * constants::deep_unit(), test.ctx());
         assert!(state.governance().trade_params().maker_fee() == 200000, 0);
         assert!(state.governance().trade_params().taker_fee() == 500000, 0);
         assert!(state.governance().trade_params().stake_required() == 100 * constants::deep_unit(), 0);

@@ -35,16 +35,32 @@ module deepbook::state {
     }
 
     public struct StakeEvent has copy, drop {
-        balance_manager_id: ID,
+        pool_id: ID,
+        account_id: ID,
         amount: u64,
         stake: bool,
     }
 
+    public struct ProposalEvent has copy, drop {
+        pool_id: ID,
+        account_id: ID,
+        taker_fee: u64,
+        maker_fee: u64,
+        stake_required: u64,
+    }
+
     public struct VoteEvent has copy, drop {
-        balance_manager_id: ID,
+        pool_id: ID,
+        account_id: ID,
         from_proposal_id: Option<ID>,
         to_proposal_id: ID,
         stake: u64,
+    }
+
+    public struct RebateEvent has copy, drop {
+        pool_id: ID,
+        account_id: ID,
+        claim_amount: u64,
     }
 
     public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
@@ -174,6 +190,7 @@ module deepbook::state {
     /// Process stake transaction. Add stake to account and update governance.
     public(package) fun process_stake(
         self: &mut State,
+        pool_id: ID,
         account_id: ID,
         new_stake: u64,
         ctx: &TxContext,
@@ -185,7 +202,8 @@ module deepbook::state {
         let (stake_before, stake_after) = self.accounts[account_id].add_stake(new_stake);
         self.governance.adjust_voting_power(stake_before, stake_after);
         event::emit(StakeEvent {
-            balance_manager_id: account_id,
+            pool_id,
+            account_id,
             amount: new_stake,
             stake: true,
         });
@@ -196,6 +214,7 @@ module deepbook::state {
     /// Process unstake transaction. Remove stake from account and update governance.
     public(package) fun process_unstake(
         self: &mut State,
+        pool_id: ID,
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
@@ -211,7 +230,8 @@ module deepbook::state {
         self.governance.adjust_voting_power(active_stake + inactive_stake, 0);
         self.governance.adjust_vote(voted_proposal, option::none(), active_stake);
         event::emit(StakeEvent {
-            balance_manager_id: account_id,
+            pool_id,
+            account_id,
             amount: active_stake + inactive_stake,
             stake: false,
         });
@@ -222,6 +242,7 @@ module deepbook::state {
     /// Process proposal transaction. Add proposal to governance and update account.
     public(package) fun process_proposal(
         self: &mut State,
+        pool_id: ID,
         account_id: ID,
         taker_fee: u64,
         maker_fee: u64,
@@ -240,12 +261,21 @@ module deepbook::state {
         account.set_created_proposal(true);
 
         self.governance.add_proposal(taker_fee, maker_fee, stake_required, stake, account_id);
-        self.process_vote(account_id, account_id, ctx);
+        self.process_vote(pool_id, account_id, account_id, ctx);
+
+        event::emit(ProposalEvent {
+            pool_id,
+            account_id,
+            taker_fee,
+            maker_fee,
+            stake_required,
+        });
     }
 
     /// Process vote transaction. Update account voted proposal and governance.
     public(package) fun process_vote(
         self: &mut State,
+        pool_id: ID,
         account_id: ID,
         proposal_id: ID,
         ctx: &TxContext,
@@ -267,7 +297,8 @@ module deepbook::state {
             );
 
         event::emit(VoteEvent {
-            balance_manager_id: account_id,
+            pool_id,
+            account_id,
             from_proposal_id: prev_proposal,
             to_proposal_id: proposal_id,
             stake: account.active_stake(),
@@ -277,6 +308,7 @@ module deepbook::state {
     /// Process claim rebates transaction. Update account rebates and settle balances.
     public(package) fun process_claim_rebates(
         self: &mut State,
+        pool_id: ID,
         account_id: ID,
         ctx: &TxContext,
     ): (Balances, Balances) {
@@ -285,7 +317,12 @@ module deepbook::state {
         self.update_account(account_id, ctx);
 
         let account = &mut self.accounts[account_id];
-        account.claim_rebates();
+        let claim_amount = account.claim_rebates();
+        event::emit(RebateEvent {
+            pool_id,
+            account_id,
+            claim_amount,
+        });
 
         account.settle()
     }

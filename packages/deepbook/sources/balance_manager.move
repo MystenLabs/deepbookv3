@@ -37,6 +37,7 @@ module deepbook::balance_manager {
         allow_listed: VecSet<ID>,
     }
 
+    /// Event emitted when a deposit or withdrawal occurs.
     public struct BalanceEvent has copy, drop {
         balance_manager_id: ID,
         asset: TypeName,

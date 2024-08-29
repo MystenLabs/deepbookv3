@@ -4,10 +4,7 @@
 /// Account module manages the account data for each user.
 module deepbook::account {
     // === Imports ===
-    use sui::{
-        event,
-        vec_set::{Self, VecSet}
-    };
+    use sui::{vec_set::{Self, VecSet}};
     use deepbook::{fill::Fill, balances::{Self, Balances}};
 
     // === Structs ===
@@ -25,11 +22,6 @@ module deepbook::account {
         unclaimed_rebates: Balances,
         settled_balances: Balances,
         owed_balances: Balances,
-    }
-
-    /// Rebate event data.
-    public struct RebateEvent has copy, drop {
-        claim_amount: u64,
     }
 
     // === Public-View Functions ===
@@ -153,13 +145,12 @@ module deepbook::account {
         self.unclaimed_rebates.add_balances(rebates);
     }
 
-    public(package) fun claim_rebates(self: &mut Account) {
+    public(package) fun claim_rebates(self: &mut Account): u64 {
         let rebate_amount = self.unclaimed_rebates.deep();
         self.settled_balances.add_balances(self.unclaimed_rebates);
         self.unclaimed_rebates.reset();
-        event::emit(RebateEvent {
-            claim_amount: rebate_amount,
-        });
+        
+        rebate_amount
     }
 
     public(package) fun add_order(self: &mut Account, order_id: u128) {
