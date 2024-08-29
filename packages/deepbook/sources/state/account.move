@@ -4,7 +4,7 @@
 /// Account module manages the account data for each user.
 module deepbook::account {
     // === Imports ===
-    use sui::{vec_set::{Self, VecSet}};
+    use sui::vec_set::{Self, VecSet};
     use deepbook::{fill::Fill, balances::{Self, Balances}};
 
     // === Structs ===

@@ -6,7 +6,7 @@
 /// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance {
     // === Imports ===
-    use sui::{vec_map::{Self, VecMap}};
+    use sui::vec_map::{Self, VecMap};
     use deepbook::{trade_params::{Self, TradeParams}, constants, math};
 
     // === Errors ===

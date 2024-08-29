@@ -37,6 +37,7 @@ module deepbook::state {
     public struct StakeEvent has copy, drop {
         pool_id: ID,
         account_id: ID,
+        epoch: u64,
         amount: u64,
         stake: bool,
     }
@@ -44,6 +45,7 @@ module deepbook::state {
     public struct ProposalEvent has copy, drop {
         pool_id: ID,
         account_id: ID,
+        epoch: u64,
         taker_fee: u64,
         maker_fee: u64,
         stake_required: u64,
@@ -52,6 +54,7 @@ module deepbook::state {
     public struct VoteEvent has copy, drop {
         pool_id: ID,
         account_id: ID,
+        epoch: u64,
         from_proposal_id: Option<ID>,
         to_proposal_id: ID,
         stake: u64,
@@ -60,6 +63,7 @@ module deepbook::state {
     public struct RebateEvent has copy, drop {
         pool_id: ID,
         account_id: ID,
+        epoch: u64,
         claim_amount: u64,
     }
 
@@ -204,6 +208,7 @@ module deepbook::state {
         event::emit(StakeEvent {
             pool_id,
             account_id,
+            epoch: ctx.epoch(),
             amount: new_stake,
             stake: true,
         });
@@ -232,6 +237,7 @@ module deepbook::state {
         event::emit(StakeEvent {
             pool_id,
             account_id,
+            epoch: ctx.epoch(),
             amount: active_stake + inactive_stake,
             stake: false,
         });
@@ -266,6 +272,7 @@ module deepbook::state {
         event::emit(ProposalEvent {
             pool_id,
             account_id,
+            epoch: ctx.epoch(),
             taker_fee,
             maker_fee,
             stake_required,
@@ -299,6 +306,7 @@ module deepbook::state {
         event::emit(VoteEvent {
             pool_id,
             account_id,
+            epoch: ctx.epoch(),
             from_proposal_id: prev_proposal,
             to_proposal_id: proposal_id,
             stake: account.active_stake(),
@@ -321,6 +329,7 @@ module deepbook::state {
         event::emit(RebateEvent {
             pool_id,
             account_id,
+            epoch: ctx.epoch(),
             claim_amount,
         });
 
