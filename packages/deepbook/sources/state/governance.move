@@ -131,7 +131,7 @@ module deepbook::governance {
         maker_fee: u64,
         stake_required: u64,
         stake_amount: u64,
-        account_id: ID,
+        balance_manager_id: ID,
     ) {
         assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
 
@@ -161,7 +161,7 @@ module deepbook::governance {
         };
 
         let new_proposal = new_proposal(taker_fee, maker_fee, stake_required);
-        self.proposals.insert(account_id, new_proposal);
+        self.proposals.insert(balance_manager_id, new_proposal);
     }
 
     /// Vote on a proposal. Validation of the account and stake is done in `State`.
