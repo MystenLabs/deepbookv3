@@ -20,7 +20,7 @@ const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
 const EWhitelistedPoolCannotChange: u64 = 5;
 
 // === Constants ===
-const FEE_INCREMENT: u64 = 1000; // 0.01 basis points
+const FEE_MULTIPLE: u64 = 1000; // 0.01 basis points
 const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
 const MAX_TAKER_STABLE: u64 = 100000;
 const MIN_MAKER_STABLE: u64 = 20000;
@@ -143,8 +143,8 @@ public(package) fun add_proposal(
     balance_manager_id: ID,
 ) {
     assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
-    let taker_fee = taker_fee / FEE_INCREMENT * FEE_INCREMENT;
-    let maker_fee = maker_fee / FEE_INCREMENT * FEE_INCREMENT;
+    assert!(taker_fee % FEE_MULTIPLE == 0, EInvalidTakerFee);
+    assert!(maker_fee % FEE_MULTIPLE == 0, EInvalidMakerFee);
 
     if (self.stable) {
         assert!(
