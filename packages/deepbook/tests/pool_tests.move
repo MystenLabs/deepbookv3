@@ -26,11 +26,34 @@ use sui::test_scenario::{Scenario, begin, end, return_shared};
 use sui::test_utils;
 use token::deep::DEEP;
 
-
-
 const OWNER: address = @0x1;
 const ALICE: address = @0xAAAA;
 const BOB: address = @0xBBBB;
+
+#[test_only]
+public fun setup_everything<
+    BaseAsset,
+    QuoteAsset,
+    ReferenceBaseAsset,
+    ReferenceQuoteAsset,
+>(
+    test: &mut Scenario,
+): ID {
+    let registry_id = setup_test(OWNER, test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<
+        BaseAsset,
+        QuoteAsset,
+        ReferenceBaseAsset,
+        ReferenceQuoteAsset,
+    >(ALICE, registry_id, balance_manager_id_alice, test);
+
+    pool_id
+}
 
 #[test]
 fun test_place_order_bid() {
