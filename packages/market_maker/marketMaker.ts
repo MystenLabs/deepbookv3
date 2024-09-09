@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { DeepBookClient } from "@mysten/deepbook-v3";
 import { BalanceManager } from "@mysten/deepbook-v3";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { getFullnodeUrl } from "@mysten/sui/client";
+import { SuiClient } from "@mysten/sui/client";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
-import type { Keypair } from "@mysten/sui/cryptography";
-import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { Keypair } from "@mysten/sui/cryptography";
 import { Transaction } from "@mysten/sui/transactions";
+import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -101,6 +102,19 @@ export class MarketMaker {
                 }),
             );
         }
+    }
+
+    borrowAndReturnFlashloan = async (tx: Transaction, poolKey: string, borrowAmount: number) => {
+        console.log(`Borrowing ${borrowAmount} from pool ${poolKey}`);
+        const [deepCoin, flashloan] = tx.add(
+            this.client.flashLoans.borrowBaseAsset(poolKey, borrowAmount),
+        );
+
+        console.log(`Returning ${borrowAmount} to pool ${poolKey}`);
+        const loanRemain = tx.add(
+            this.client.flashLoans.returnBaseAsset("DEEP_SUI", borrowAmount, deepCoin, flashloan),
+        );
+        tx.transferObjects([loanRemain], "0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192")
     }
 
     stake = (tx: Transaction, poolKey: string, amount: number) => {
