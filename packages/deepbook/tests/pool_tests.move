@@ -8,7 +8,8 @@ use deepbook::balance_manager::{BalanceManager, TradeCap};
 use deepbook::balance_manager_tests::{
     USDC,
     SPAM,
-    create_acct_and_share_with_funds as create_acct_and_share_with_funds
+    create_acct_and_share_with_funds as create_acct_and_share_with_funds,
+    create_acct_and_share_with_funds_typed
 };
 use deepbook::big_vector::BigVector;
 use deepbook::constants;
@@ -41,7 +42,12 @@ public fun setup_everything<
     test: &mut Scenario,
 ): ID {
     let registry_id = setup_test(OWNER, test);
-    let balance_manager_id_alice = create_acct_and_share_with_funds(
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<
+        BaseAsset,
+        QuoteAsset,
+        ReferenceBaseAsset,
+        ReferenceQuoteAsset,
+    >(
         ALICE,
         1000000 * constants::float_scaling(),
         test,
