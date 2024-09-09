@@ -30,6 +30,7 @@ const OWNER: address = @0x1;
 const ALICE: address = @0xAAAA;
 const BOB: address = @0xBBBB;
 
+/// Create a pool with 1000 limit sell at $2 and 1000 limit buy at $1.
 #[test_only]
 public fun setup_everything<
     BaseAsset,
@@ -51,6 +52,42 @@ public fun setup_everything<
         ReferenceBaseAsset,
         ReferenceQuoteAsset,
     >(ALICE, registry_id, balance_manager_id_alice, test);
+
+    let client_order_id = 1;
+    let order_type = constants::no_restriction();
+    let price = 2 * constants::float_scaling();
+    let quantity = 1000 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        expire_timestamp,
+        test,
+    );
+
+    let price = 1 * constants::float_scaling();
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        true,
+        true,
+        expire_timestamp,
+        test,
+    );
 
     pool_id
 }
