@@ -58,7 +58,7 @@ public fun setup_everything<
     let price = 2 * constants::float_scaling();
     let quantity = 1000 * constants::float_scaling();
     let expire_timestamp = constants::max_u64();
-    place_limit_order<SUI, USDC>(
+    place_limit_order<BaseAsset, QuoteAsset>(
         ALICE,
         pool_id,
         balance_manager_id_alice,
@@ -74,7 +74,7 @@ public fun setup_everything<
     );
 
     let price = 1 * constants::float_scaling();
-    place_limit_order<SUI, USDC>(
+    place_limit_order<BaseAsset, QuoteAsset>(
         ALICE,
         pool_id,
         balance_manager_id_alice,
