@@ -37,6 +37,18 @@ fun add_proposal_volatile_ok() {
 }
 
 #[test, expected_failure(abort_code = governance::EInvalidTakerFee)]
+fun add_proposal_volatile_taker_not_multiple_e() {
+    let mut test = begin(OWNER);
+    let alice = ALICE;
+
+    test.next_tx(alice);
+    let stable_pool = false;
+    let mut gov = governance::empty(stable_pool, test.ctx());
+    gov.add_proposal(500100, 200000, 10000, 1000, id_from_address(alice));
+    abort 0
+}
+
+#[test, expected_failure(abort_code = governance::EInvalidTakerFee)]
 fun add_proposal_volatile_low_taker_e() {
     let mut test = begin(OWNER);
     let alice = ALICE;
