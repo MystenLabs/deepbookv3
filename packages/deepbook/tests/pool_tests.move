@@ -1902,7 +1902,7 @@ public(package) fun setup_pool_with_default_fees_and_reference_pool<
         sender,
         registry_id,
         balance_manager_id,
-        100 * constants::float_scaling(),
+        constants::deep_multiplier(),
         test,
     );
     set_time(0, test);
@@ -1946,7 +1946,7 @@ fun setup_pool_with_default_fees_and_reference_pool_unregistered<
         sender,
         registry_id,
         balance_manager_id,
-        100 * constants::float_scaling(),
+        constants::deep_multiplier(),
         test,
     );
     set_time(0, test);
