@@ -159,6 +159,11 @@ module deepbook::master_tests {
         test_trader_permission_and_modify_returned(NoError)
     }
 
+    #[test]
+    fun test_trader_permission_and_modify_returned_deep_as_base_ok(){
+        test_trader_permission_and_modify_returned(NoErrorDeepAsBase)
+    }
+
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
     fun test_trader_permission_and_modify_returned_invalid_owner_e(){
         test_trader_permission_and_modify_returned(EInvalidOwner)
