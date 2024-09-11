@@ -178,7 +178,7 @@ public(package) fun emit_deep_price_added(
 
 // === Private Functions ===
 /// Returns the conversion rate of DEEP per asset token.
-/// Base will be used by default, if there are no base data then quote will be used
+/// Quote will be used by default, if there are no quote data then base will be used
 fun calculate_order_deep_price(
     self: &DeepPrice,
     whitelisted: bool,
