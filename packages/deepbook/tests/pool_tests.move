@@ -971,7 +971,7 @@ public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
     sender: address,
     registry_id: ID,
     balance_manager_id: ID,
-    mid_price: u64,
+    deep_multiplier: u64,
     test: &mut Scenario,
 ): ID {
     let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
@@ -989,7 +989,7 @@ public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        mid_price - 80 * constants::float_scaling(),
+        deep_multiplier - 80 * constants::float_scaling(),
         1 * constants::float_scaling(),
         true,
         true,
@@ -1004,7 +1004,57 @@ public(package) fun setup_reference_pool<BaseAsset, QuoteAsset>(
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        mid_price + 80 * constants::float_scaling(),
+        deep_multiplier + 80 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        false,
+        true,
+        constants::max_u64(),
+        test,
+    );
+
+    reference_pool_id
+}
+
+#[test_only]
+/// Set up a reference pool where Deep per base is 100
+public(package) fun setup_reference_pool_deep_as_base<BaseAsset, QuoteAsset>(
+    sender: address,
+    registry_id: ID,
+    balance_manager_id: ID,
+    deep_multiplier: u64,
+    test: &mut Scenario,
+): ID {
+    let reference_pool_id = setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
+        sender,
+        registry_id,
+        true,
+        false,
+        test,
+    );
+
+    place_limit_order<BaseAsset, QuoteAsset>(
+        sender,
+        reference_pool_id,
+        balance_manager_id,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        math::div(constants::float_scaling(), deep_multiplier) - 10_000,
+        1 * constants::float_scaling(),
+        true,
+        true,
+        constants::max_u64(),
+        test,
+    );
+
+    place_limit_order<BaseAsset, QuoteAsset>(
+        sender,
+        reference_pool_id,
+        balance_manager_id,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        math::div(constants::float_scaling(), deep_multiplier) + 10_000,
         1 * constants::float_scaling(),
         false,
         true,

@@ -38,19 +38,20 @@ module deepbook::master_tests {
     const BOB: address = @0xBBBB;
 
     const NoError: u64 = 0;
-    const EDuplicatePool: u64 = 1;
-    const ENotEnoughFunds: u64 = 2;
-    const EIncorrectStakeOwner: u64 = 3;
-    const ECannotPropose: u64 = 4;
-    const EIncorrectRebateClaimer: u64 = 5;
-    const EDataRecentlyAdded: u64 = 6;
-    const ENoAmountToBurn: u64 = 7;
-    const ENoAmountToBurn2: u64 = 8;
-    const ENotEnoughBaseForLoan: u64 = 9;
-    const ENotEnoughQuoteForLoan: u64 = 10;
-    const EIncorrectLoanPool: u64 = 11;
-    const EIncorrectTypeReturned: u64 = 12;
-    const EInvalidOwner: u64 = 13;
+    const NoErrorDeepAsBase: u64 = 1;
+    const EDuplicatePool: u64 = 2;
+    const ENotEnoughFunds: u64 = 3;
+    const EIncorrectStakeOwner: u64 = 4;
+    const ECannotPropose: u64 = 5;
+    const EIncorrectRebateClaimer: u64 = 6;
+    const EDataRecentlyAdded: u64 = 7;
+    const ENoAmountToBurn: u64 = 8;
+    const ENoAmountToBurn2: u64 = 9;
+    const ENotEnoughBaseForLoan: u64 = 10;
+    const ENotEnoughQuoteForLoan: u64 = 11;
+    const EIncorrectLoanPool: u64 = 12;
+    const EIncorrectTypeReturned: u64 = 13;
+    const EInvalidOwner: u64 = 14;
     const ETradeCapNotInList: u64 = 15;
     const EInvalidTrader: u64 = 16;
     const EIncorrectLevel2Price: u64 = 17;
@@ -120,7 +121,12 @@ module deepbook::master_tests {
 
     #[test]
     fun test_master_both_conversion_available_ok() {
-        test_master_both_conversion_available()
+        test_master_both_conversion_available(false);
+    }
+
+    #[test]
+    fun test_master_both_conversion_available_deep_is_base_ok() {
+        test_master_both_conversion_available(true);
     }
 
     #[test]
@@ -1445,7 +1451,9 @@ module deepbook::master_tests {
     }
 
     // Test when there are 2 reference pools, and price points are added to both, the quote conversion is used
-    fun test_master_both_conversion_available(){
+    fun test_master_both_conversion_available(
+        deep_is_base: bool,
+    ){
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
         pool_tests::set_time(0, &mut test);
@@ -1459,19 +1467,32 @@ module deepbook::master_tests {
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
         // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
-        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let pool1_reference_id = if (deep_is_base) {
+            pool_tests::setup_reference_pool_deep_as_base<DEEP, SUI>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        } else {
+            pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        };
         let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 95 * constants::float_scaling(), &mut test);
 
         // Create two pools, one with SUI as base asset and one with SPAM as base asset
         let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, SPAM>(OWNER, registry_id, false, false, &mut test);
 
         // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
-        pool_tests::add_deep_price_point<SUI, SPAM, SUI, DEEP>(
-            OWNER,
-            pool1_id,
-            pool1_reference_id,
-            &mut test,
-        );
+        if (deep_is_base){
+            pool_tests::add_deep_price_point<SUI, SPAM, DEEP, SUI>(
+                OWNER,
+                pool1_id,
+                pool1_reference_id,
+                &mut test,
+            );
+        } else {
+            pool_tests::add_deep_price_point<SUI, SPAM, SUI, DEEP>(
+                OWNER,
+                pool1_id,
+                pool1_reference_id,
+                &mut test,
+            );
+        };
         pool_tests::add_deep_price_point<SUI, SPAM, SPAM, DEEP>(
             OWNER,
             pool1_id,
@@ -1585,15 +1606,29 @@ module deepbook::master_tests {
 
         // Create pool and reference pool
         let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
-        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let pool1_reference_id = if (error_code == NoErrorDeepAsBase) {
+            pool_tests::setup_reference_pool_deep_as_base<DEEP, SUI>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        } else {
+            pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+
+        };
 
         // Default price point of 100 deep per base will be added
-        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
-            OWNER,
-            pool1_id,
-            pool1_reference_id,
-            &mut test,
-        );
+        if (error_code == NoErrorDeepAsBase) {
+            pool_tests::add_deep_price_point<SUI, USDC, DEEP, SUI>(
+                OWNER,
+                pool1_id,
+                pool1_reference_id,
+                &mut test,
+            );
+        } else {
+            pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+                OWNER,
+                pool1_id,
+                pool1_reference_id,
+                &mut test,
+            );
+        };
 
         // Bob tries to authorize himself on Alice's balance manager, will error
         if (error_code == EInvalidOwner) {
