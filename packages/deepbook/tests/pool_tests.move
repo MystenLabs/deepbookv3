@@ -20,7 +20,7 @@ use deepbook::pool::{Self, Pool};
 use deepbook::registry::{Self, Registry};
 use deepbook::utils;
 use sui::clock::{Self, Clock};
-use sui::coin::{Self, Coin, mint_for_testing};
+use sui::coin::{Coin, mint_for_testing};
 use sui::sui::SUI;
 use sui::test_scenario::{Scenario, begin, end, return_shared};
 use sui::test_utils;
@@ -1023,10 +1023,6 @@ public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
     stable_pool: bool,
     test: &mut Scenario,
 ): ID {
-    let creation_fee = coin::mint_for_testing<DEEP>(
-        constants::pool_creation_fee(),
-        test.ctx(),
-    );
     setup_pool<BaseAsset, QuoteAsset>(
         sender,
         constants::tick_size(), // tick size
@@ -1035,7 +1031,6 @@ public(package) fun setup_pool_with_default_fees<BaseAsset, QuoteAsset>(
         registry_id,
         whitelisted_pool,
         stable_pool,
-        creation_fee,
         test,
     )
 }
@@ -1047,10 +1042,6 @@ public(package) fun setup_pool_with_stable_fees<BaseAsset, QuoteAsset>(
     whitelisted_pool: bool,
     test: &mut Scenario,
 ): ID {
-    let creation_fee = coin::mint_for_testing<DEEP>(
-        constants::pool_creation_fee(),
-        test.ctx(),
-    );
     let stable_pool = true;
     setup_pool<BaseAsset, QuoteAsset>(
         sender,
@@ -1060,7 +1051,6 @@ public(package) fun setup_pool_with_stable_fees<BaseAsset, QuoteAsset>(
         registry_id,
         whitelisted_pool,
         stable_pool,
-        creation_fee,
         test,
     )
 }
@@ -1074,12 +1064,7 @@ public(package) fun setup_pool_with_default_fees_return_fee<
     registry_id: ID,
     whitelisted_pool: bool,
     test: &mut Scenario,
-): (ID, ID) {
-    let creation_fee = coin::mint_for_testing<DEEP>(
-        constants::pool_creation_fee(),
-        test.ctx(),
-    );
-    let fee_id = object::id(&creation_fee);
+): ID {
     let stable_pool = false;
     let pool_id = setup_pool<BaseAsset, QuoteAsset>(
         sender,
@@ -1089,11 +1074,10 @@ public(package) fun setup_pool_with_default_fees_return_fee<
         registry_id,
         whitelisted_pool,
         stable_pool,
-        creation_fee,
         test,
     );
 
-    (pool_id, fee_id)
+    pool_id
 }
 
 #[test_only]
@@ -4475,7 +4459,6 @@ fun setup_pool<BaseAsset, QuoteAsset>(
     registry_id: ID,
     whitelisted_pool: bool,
     stable_pool: bool,
-    creation_fee: Coin<DEEP>,
     test: &mut Scenario,
 ): ID {
     test.next_tx(sender);
@@ -4489,7 +4472,6 @@ fun setup_pool<BaseAsset, QuoteAsset>(
                 tick_size,
                 lot_size,
                 min_size,
-                creation_fee,
                 whitelisted_pool,
                 stable_pool,
                 &admin_cap,

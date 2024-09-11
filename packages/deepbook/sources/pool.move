@@ -624,12 +624,12 @@ public fun create_pool_admin<BaseAsset, QuoteAsset>(
     tick_size: u64,
     lot_size: u64,
     min_size: u64,
-    creation_fee: Coin<DEEP>,
     whitelisted_pool: bool,
     stable_pool: bool,
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ): ID {
+    let creation_fee = coin::zero(ctx);
     create_pool<BaseAsset, QuoteAsset>(
         registry,
         tick_size,
