@@ -34,16 +34,46 @@ config();
 
 	const tx = new Transaction();
 
-	// Read only call
-	// console.log(await mmClient.checkManagerBalance('MANAGER_1', 'SUI'));
-	// console.log(await mmClient.getLevel2Range('SUI_DBUSDC', 0.1, 100, true));
+	// Creating Pools
+	mmClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'DEEP',
+		quoteCoinKey: 'SUI',
+		tickSize: 0.001,
+		lotSize: 1,
+		minSize: 10,
+		whitelisted: true,
+		stablePool: false,
+	})(tx);
 
-	// // Balance manager contract call
-	mmClient.balanceManager.depositIntoManager('MANAGER_1', 'SUI', 1)(tx);
+	mmClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'SUI',
+		quoteCoinKey: 'DBUSDC',
+		tickSize: 0.001,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: false,
+		stablePool: false,
+	})(tx);
 
-	// // Example PTB call
-	// mmClient.placeLimitOrderExample(tx);
-	// mmClient.flashLoanExample(tx);
+	mmClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'DEEP',
+		quoteCoinKey: 'DBUSDC',
+		tickSize: 0.001,
+		lotSize: 1,
+		minSize: 10,
+		whitelisted: true,
+		stablePool: false,
+	})(tx);
+
+	mmClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'DBUSDT',
+		quoteCoinKey: 'DBUSDC',
+		tickSize: 0.001,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: false,
+		stablePool: true,
+	})(tx);
 
 	let res = await prepareMultisigTx(tx, 'testnet', adminCapOwner.mainnet[env]);
 
