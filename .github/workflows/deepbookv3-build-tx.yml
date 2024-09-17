@@ -1,5 +1,5 @@
 ---
-    name: Build SuiNS TX
+    name: Build Deepbook TX
 
     on:
       workflow_dispatch:
