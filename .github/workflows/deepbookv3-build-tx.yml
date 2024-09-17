@@ -25,8 +25,8 @@
             default: '0x5cc6e842a17918ad7ce5e4e333309b387f1d5151bc3c89682abda460a700c2f5'
 
     jobs:
-      suins:
-        name: suins create tx
+      deepbook:
+        name: deepbook create tx
         runs-on: ubuntu-latest
 
         steps:
