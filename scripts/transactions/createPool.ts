@@ -21,7 +21,7 @@ config();
 	// Initialize with balance managers if created
 	const balanceManagers = {
 		MANAGER_1: {
-			address: '0xc873b1639903ab279b3d20bdb4497c67739e1cb9c4acd6df9be4e6330c9ca8a6',
+			address: '',
 			tradeCap: '',
 		},
 	};
