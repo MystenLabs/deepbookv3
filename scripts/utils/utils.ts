@@ -9,6 +9,7 @@ import { decodeSuiPrivateKey } from '@mysten/sui.js/cryptography';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
+import { Transaction } from '@mysten/sui/transactions';
 import { TransactionBlock, UpgradePolicy } from '@mysten/sui.js/transactions';
 import { fromB64, toB64 } from '@mysten/sui.js/utils';
 
@@ -20,7 +21,7 @@ export const getActiveAddress = () => {
 	return execSync(`${SUI} client active-address`, { encoding: 'utf8' }).trim();
 };
 
-export const publishPackage = (txb: TransactionBlock, path: string, configPath?: string) => {
+export const publishPackage = (txb: Transaction, path: string, configPath?: string) => {
 	const command = [
 		'move',
 		...(configPath ? ['--client.config', configPath] : []),
@@ -50,7 +51,7 @@ export const publishPackage = (txb: TransactionBlock, path: string, configPath?:
 };
 
 export const upgradePackage = (
-	txb: TransactionBlock,
+	txb: Transaction,
 	path: string,
 	packageId: string,
 	upgradeCapId: string,
@@ -121,25 +122,10 @@ export const getClient = (network: Network) => {
 	return new SuiClient({ url });
 };
 
-/// A helper to sign & execute a transaction.
-export const signAndExecute = async (txb: TransactionBlock, network: Network) => {
-	const client = getClient(network);
-	const signer = getSigner();
-
-	return client.signAndExecuteTransactionBlock({
-		transactionBlock: txb,
-		signer,
-		options: {
-			showEffects: true,
-			showObjectChanges: true,
-		},
-	});
-};
-
 /// Builds a transaction (unsigned) and saves it on `setup/tx/tx-data.txt` (on production)
 /// or `setup/src/tx-data.local.txt` on mainnet.
 export const prepareMultisigTx = async (
-	tx: TransactionBlock,
+	tx: Transaction,
 	network: Network,
 	address?: string,
 ) => {

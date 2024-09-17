@@ -1,6 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from '@mysten/sui/transactions';
+import { prepareMultisigTx } from '../utils/utils';
+import { adminCapOwner } from '../config/constants';
+
 import { config } from 'dotenv';
 
 import { DeepBookMarketMaker } from './deepbookMarketMaker.js';
@@ -9,6 +12,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker.js';
 config();
 
 (async () => {
+	const env = 'testnet';
 	const privateKey = process.env.PRIVATE_KEY;
 	if (!privateKey) {
 		throw new Error('Private key not found');
@@ -23,7 +27,7 @@ config();
 	};
 	const mmClient = new DeepBookMarketMaker(
 		privateKey,
-		'testnet',
+		env,
 		balanceManagers,
 		process.env.ADMIN_CAP,
 	);
@@ -41,7 +45,7 @@ config();
 	// mmClient.placeLimitOrderExample(tx);
 	// mmClient.flashLoanExample(tx);
 
-	let res = await mmClient.signAndExecute(tx);
+	let res = await prepareMultisigTx(tx, 'testnet', adminCapOwner.mainnet[env]);
 
 	console.dir(res, { depth: null });
 })();
