@@ -88,7 +88,9 @@ public struct OrderFilled has copy, store, drop {
     price: u64,
     taker_is_bid: bool,
     taker_fee: u64,
+    taker_fee_is_deep: bool,
     maker_fee: u64,
+    maker_fee_is_deep: bool,
     base_quantity: u64,
     quote_quantity: u64,
     maker_balance_manager_id: ID,
@@ -466,6 +468,7 @@ public(package) fun match_maker(
         self.remaining_quantity(),
         self.is_bid,
         expire_maker,
+        self.fee_is_deep,
     );
     self.fills.push_back(fill);
     if (fill.expired()) return true;
@@ -534,7 +537,9 @@ fun order_filled_from_fill(
         price: fill.execution_price(),
         taker_is_bid: self.is_bid,
         taker_fee: fill.taker_fee(),
+        taker_fee_is_deep: true,
         maker_fee: fill.maker_fee(),
+        maker_fee_is_deep: true,
         base_quantity: fill.base_quantity(),
         quote_quantity: fill.quote_quantity(),
         maker_balance_manager_id: fill.balance_manager_id(),

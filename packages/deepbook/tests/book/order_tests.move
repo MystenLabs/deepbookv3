@@ -27,7 +27,7 @@ fun generate_fill_partial_fill_ok() {
     let is_bid = false;
     let mut order = create_order_base(price, quantity, is_bid);
 
-    let fill = order.generate_fill(0, 5 * constants::sui_unit(), true, false);
+    let fill = order.generate_fill(0, 5 * constants::sui_unit(), true, false, true);
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
@@ -57,7 +57,7 @@ fun generate_fill_multiple_partial_fill_ok() {
     let is_bid = false;
     let mut order = create_order_base(price, quantity, is_bid);
 
-    let fill = order.generate_fill(0, 5 * constants::sui_unit(), true, false);
+    let fill = order.generate_fill(0, 5 * constants::sui_unit(), true, false, true);
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
@@ -74,7 +74,7 @@ fun generate_fill_multiple_partial_fill_ok() {
     assert!(order.status() == constants::partially_filled(), 0);
     assert!(order.filled_quantity() == 5 * constants::sui_unit(), 0);
 
-    let fill = order.generate_fill(0, 15 * constants::sui_unit(), true, false);
+    let fill = order.generate_fill(0, 15 * constants::sui_unit(), true, false, true);
     assert!(!fill.expired(), 0);
     assert!(fill.completed(), 0);
     assert!(fill.base_quantity() == 7 * constants::sui_unit(), 0);
@@ -110,6 +110,7 @@ fun generate_fill_full_fill_ok() {
         1 * constants::sui_unit() / 10,
         true,
         false,
+        true
     );
     assert!(!fill.expired(), 0);
     assert!(fill.completed(), 0);
@@ -143,6 +144,7 @@ fun generate_fill_partial_fill_ok_bid() {
         1 * constants::sui_unit() / 100,
         false,
         false,
+        true
     );
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -172,7 +174,7 @@ fun generate_fill_self_match_expire_ok() {
     let is_bid = false;
     let mut order = create_order_base(price, quantity, is_bid);
 
-    let fill = order.generate_fill(0, 10 * constants::sui_unit(), true, true);
+    let fill = order.generate_fill(0, 10 * constants::sui_unit(), true, true, true);
     assert!(fill.expired(), 0);
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 10 * constants::sui_unit(), 0);
@@ -221,6 +223,7 @@ fun generate_fill_expired_ok() {
         10 * constants::sui_unit(),
         false,
         false,
+        true
     );
     assert!(fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -269,6 +272,7 @@ fun generate_fill_expired_partial_ok() {
         5 * constants::sui_unit(),
         false,
         false,
+        true
     );
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -290,6 +294,7 @@ fun generate_fill_expired_partial_ok() {
         5 * constants::sui_unit(),
         false,
         false,
+        true
     );
     assert!(fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -324,7 +329,7 @@ fun modify_ok() {
     assert!(order.filled_quantity() == 0, 0);
     assert!(order.status() == constants::live(), 0);
 
-    order.generate_fill(0, 1 * constants::sui_unit(), true, false);
+    order.generate_fill(0, 1 * constants::sui_unit(), true, false, true);
     assert!(order.quantity() == 5 * constants::sui_unit(), 0);
     assert!(order.filled_quantity() == 1 * constants::sui_unit(), 0);
     assert!(order.status() == constants::partially_filled(), 0);
@@ -335,7 +340,7 @@ fun modify_ok() {
     assert!(order.filled_quantity() == 1 * constants::sui_unit(), 0);
     assert!(order.status() == constants::partially_filled(), 0);
 
-    order.generate_fill(0, 1 * constants::sui_unit(), true, false);
+    order.generate_fill(0, 1 * constants::sui_unit(), true, false, true);
     assert!(order.quantity() == 2 * constants::sui_unit(), 0);
     assert!(order.filled_quantity() == 2 * constants::sui_unit(), 0);
     assert!(order.status() == constants::filled(), 0);

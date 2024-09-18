@@ -141,6 +141,7 @@ public(package) fun generate_fill(
     quantity: u64,
     is_bid: bool,
     expire_maker: bool,
+    taker_fee_is_deep: bool,
 ): Fill {
     let remaining_quantity = self.quantity - self.filled_quantity;
     let mut base_quantity = remaining_quantity.min(quantity);
@@ -173,6 +174,8 @@ public(package) fun generate_fill(
         is_bid,
         self.epoch,
         self.order_deep_price,
+        taker_fee_is_deep,
+        self.fee_is_deep,
     )
 }
 
