@@ -92,8 +92,16 @@ public fun taker_fee(self: &Fill): u64 {
     self.taker_fee
 }
 
+public fun taker_fee_is_deep(self: &Fill): bool {
+    self.taker_fee_is_deep
+}
+
 public fun maker_fee(self: &Fill): u64 {
     self.maker_fee
+}
+
+public fun maker_fee_is_deep(self: &Fill): bool {
+    self.maker_fee_is_deep
 }
 
 // === Public-Package Functions ===
