@@ -7,23 +7,23 @@ import { MarketMaker } from "./marketMaker";
     const mm = new MarketMaker();
     // await mm.createAndShareBM();
     await mm.checkBalances();
-    const tx = new Transaction();
-    await mm.borrowAndReturnFlashloan(tx, "DEEP_SUI", 1);
-    await mm.signAndExecute(tx);
-    // await mm.depositCoins(1000, 1000, 1000, 1000);
+    // const tx = new Transaction();
+    // await mm.borrowAndReturnFlashloan(tx, "DEEP_SUI", 1);
+    // await mm.signAndExecute(tx);
+    // await mm.depositCoins(1, 1, 1, 1);
     // await mm.checkBalances();
     // await mm.withdrawCoins();
 
     // stake
     // await mm.checkBalances();
-    // const tx = new Transaction();
-    // mm.stake(tx, "DEEP_SUI", 500);
+    const tx = new Transaction();
+    // mm.stake(tx, "DEEP_SUI", 15);
     // await mm.unstake(tx, "DEEP_SUI");
-    // mm.stake(tx, "SUI_DBUSDC", 1000);
+    mm.stake(tx, "SUI_DBUSDC", 5);
     // mm.stake(tx, "DEEP_DBUSDC", 1000);
     // mm.stake(tx, "DBUSDT_DBUSDC", 1000);
 
-    // await mm.signAndExecute(tx);
+    await mm.signAndExecute(tx);
     // await mm.checkBalances();
 
     // await mm.checkBalances();
@@ -46,8 +46,8 @@ import { MarketMaker } from "./marketMaker";
     // console.log(res);
 
     // const tx = new Transaction();
-    // await mm.placeOrder(tx, "DEEP_SUI", 0.98, 10, true);
-    // await mm.placeOrder(tx, "DEEP_SUI", 1.02, 10, false);
+    // await mm.placeOrder(tx, "DEEP_SUI", 0.98, 1, true);
+    // await mm.placeOrder(tx, "DEEP_SUI", 1.02, 1, true);
     // await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 10, 25, deepsuiPrice);
     // await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 10, 25, suiPrice);
     // await mm.placeOrdersAroundMid(tx, "DEEP_DBUSDC", 10, 25, 1);
