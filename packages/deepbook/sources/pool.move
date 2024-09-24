@@ -36,17 +36,16 @@ const EInvalidTickSize: u64 = 3;
 const EInvalidLotSize: u64 = 4;
 const EInvalidMinSize: u64 = 5;
 const EInvalidQuantityIn: u64 = 6;
-const EIneligibleWhitelist: u64 = 7;
-const EIneligibleReferencePool: u64 = 8;
-const EFeeTypeNotSupported: u64 = 9;
-const EInvalidOrderBalanceManager: u64 = 10;
-const EIneligibleTargetPool: u64 = 11;
-const ENoAmountToBurn: u64 = 12;
-const EPackageVersionDisabled: u64 = 13;
-const EMinimumQuantityOutNotMet: u64 = 14;
-const EInvalidStake: u64 = 15;
-const EPoolNotRegistered: u64 = 16;
-const EPoolCannotBeBothWhitelistedAndStable: u64 = 17;
+const EIneligibleReferencePool: u64 = 7;
+const EFeeTypeNotSupported: u64 = 8;
+const EInvalidOrderBalanceManager: u64 = 9;
+const EIneligibleTargetPool: u64 = 10;
+const ENoAmountToBurn: u64 = 11;
+const EPackageVersionDisabled: u64 = 12;
+const EMinimumQuantityOutNotMet: u64 = 13;
+const EInvalidStake: u64 = 14;
+const EPoolNotRegistered: u64 = 15;
+const EPoolCannotBeBothWhitelistedAndStable: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -1034,11 +1033,6 @@ fun set_whitelist<BaseAsset, QuoteAsset>(
     self: &mut PoolInner<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
-    let base = type_name::get<BaseAsset>();
-    let quote = type_name::get<QuoteAsset>();
-    let deep_type = type_name::get<DEEP>();
-    assert!(base == deep_type || quote == deep_type, EIneligibleWhitelist);
-
     self.state.governance_mut(ctx).set_whitelist(true);
 }
 
