@@ -23,6 +23,8 @@ public struct Fill has store, drop, copy {
     expired: bool,
     // Whether the maker order is fully filled
     completed: bool,
+    // Original maker quantity
+    original_maker_quantity: u64,
     // Quantity filled
     base_quantity: u64,
     // Quantity of quote currency filled
@@ -66,6 +68,10 @@ public fun expired(self: &Fill): bool {
 
 public fun completed(self: &Fill): bool {
     self.completed
+}
+
+public fun original_maker_quantity(self: &Fill): u64 {
+    self.original_maker_quantity
 }
 
 public fun base_quantity(self: &Fill): u64 {
@@ -112,6 +118,7 @@ public(package) fun new(
     balance_manager_id: ID,
     expired: bool,
     completed: bool,
+    original_maker_quantity: u64,
     base_quantity: u64,
     quote_quantity: u64,
     taker_is_bid: bool,
@@ -127,6 +134,7 @@ public(package) fun new(
         balance_manager_id,
         expired,
         completed,
+        original_maker_quantity,
         base_quantity,
         quote_quantity,
         taker_is_bid,

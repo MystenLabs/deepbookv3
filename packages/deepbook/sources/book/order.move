@@ -169,6 +169,7 @@ public(package) fun generate_fill(
         balance_manager_id,
         expired,
         self.quantity == self.filled_quantity,
+        self.quantity,
         base_quantity,
         quote_quantity,
         is_bid,
@@ -270,6 +271,32 @@ public(package) fun emit_order_modified(
         price,
         is_bid,
         new_quantity: self.quantity,
+        timestamp,
+    });
+}
+
+public(package) fun emit_cancel_maker(
+    balance_manager_id: ID,
+    pool_id: ID,
+    order_id: u128,
+    client_order_id: u64,
+    trader: address,
+    price: u64,
+    is_bid: bool,
+    original_quantity: u64,
+    base_asset_quantity_canceled: u64,
+    timestamp: u64,
+) {
+    event::emit(OrderCanceled {
+        balance_manager_id,
+        pool_id,
+        order_id,
+        client_order_id,
+        trader,
+        price,
+        is_bid,
+        original_quantity,
+        base_asset_quantity_canceled,
         timestamp,
     });
 }
