@@ -35,8 +35,12 @@ public struct Fill has store, drop, copy {
     maker_deep_price: OrderDeepPrice,
     // Taker fee paid for fill
     taker_fee: u64,
+    // Whether taker_fee is DEEP
+    taker_fee_is_deep: bool,
     // Maker fee paid for fill
     maker_fee: u64,
+    // Whether maker_fee is DEEP
+    maker_fee_is_deep: bool,
 }
 
 // === Public-View Functions ===
@@ -88,8 +92,16 @@ public fun taker_fee(self: &Fill): u64 {
     self.taker_fee
 }
 
+public fun taker_fee_is_deep(self: &Fill): bool {
+    self.taker_fee_is_deep
+}
+
 public fun maker_fee(self: &Fill): u64 {
     self.maker_fee
+}
+
+public fun maker_fee_is_deep(self: &Fill): bool {
+    self.maker_fee_is_deep
 }
 
 // === Public-Package Functions ===
@@ -105,6 +117,8 @@ public(package) fun new(
     taker_is_bid: bool,
     maker_epoch: u64,
     maker_deep_price: OrderDeepPrice,
+    taker_fee_is_deep: bool,
+    maker_fee_is_deep: bool,
 ): Fill {
     Fill {
         maker_order_id,
@@ -119,7 +133,9 @@ public(package) fun new(
         maker_epoch,
         maker_deep_price,
         taker_fee: 0,
+        taker_fee_is_deep,
         maker_fee: 0,
+        maker_fee_is_deep,
     }
 }
 
