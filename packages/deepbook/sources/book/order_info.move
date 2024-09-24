@@ -111,6 +111,20 @@ public struct OrderPlaced has copy, store, drop {
     expire_timestamp: u64,
 }
 
+/// Emitted when a maker order is expired.
+public struct OrderExpired has copy, store, drop {
+    balance_manager_id: ID,
+    pool_id: ID,
+    order_id: u128,
+    client_order_id: u64,
+    trader: address,
+    price: u64,
+    is_bid: bool,
+    original_quantity: u64,
+    base_asset_quantity_canceled: u64,
+    timestamp: u64,
+}
+
 // === Public-View Functions ===
 public fun pool_id(self: &OrderInfo): ID {
     self.pool_id
@@ -491,6 +505,13 @@ public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
         let fill = &self.fills[i];
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));
+        } else {
+            let cancel_maker = self.balance_manager_id() == fill.balance_manager_id();
+            if (cancel_maker) {
+                self.emit_order_canceled_maker_from_fill(fill, timestamp);
+            } else {
+                event::emit(self.order_expired_from_fill(fill, timestamp));
+            };
         };
         i = i + 1;
     };
@@ -546,4 +567,42 @@ fun order_filled_from_fill(
         taker_balance_manager_id: self.balance_manager_id,
         timestamp,
     }
+}
+
+fun order_expired_from_fill(
+    self: &OrderInfo,
+    fill: &Fill,
+    timestamp: u64,
+): OrderExpired {
+    OrderExpired {
+        balance_manager_id: fill.balance_manager_id(),
+        pool_id: self.pool_id,
+        order_id: fill.maker_order_id(),
+        client_order_id: fill.maker_client_order_id(),
+        trader: self.trader(),
+        price: fill.execution_price(),
+        is_bid: !self.is_bid(),
+        original_quantity: fill.original_maker_quantity(),
+        base_asset_quantity_canceled: fill.base_quantity(),
+        timestamp
+    }
+}
+
+fun emit_order_canceled_maker_from_fill(
+    self: &OrderInfo,
+    fill: &Fill,
+    timestamp: u64,
+) {
+    order::emit_cancel_maker(
+        fill.balance_manager_id(),
+        self.pool_id,
+        fill.maker_order_id(),
+        fill.maker_client_order_id(),
+        self.trader(),
+        fill.execution_price(),
+        !self.is_bid(),
+        fill.original_maker_quantity(),
+        fill.base_quantity(),
+        timestamp
+    )
 }
