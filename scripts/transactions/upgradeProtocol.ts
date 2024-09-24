@@ -30,7 +30,7 @@ config();
 
 	const tx = new Transaction();
 
-	// WIP
+	// WIP, to finalize after security design
 
 	let res = await mmClient.signAndExecute(tx);
 
