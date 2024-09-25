@@ -117,7 +117,7 @@ public struct OrderExpired has copy, store, drop {
     pool_id: ID,
     order_id: u128,
     client_order_id: u64,
-    trader: address,
+    trader: address, // trader that expired the order
     price: u64,
     is_bid: bool,
     original_quantity: u64,

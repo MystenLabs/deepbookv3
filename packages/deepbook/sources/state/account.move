@@ -58,6 +58,10 @@ public fun voted_proposal(self: &Account): Option<ID> {
     self.voted_proposal
 }
 
+public fun settled_balances(self: &Account): Balances {
+    self.settled_balances
+}
+
 // === Public-Package Functions ===
 public(package) fun empty(ctx: &TxContext): Account {
     Account {
@@ -188,11 +192,6 @@ public(package) fun remove_stake(self: &mut Account) {
 }
 
 // === Test Functions ===
-#[test_only]
-public fun settled_balances(self: &Account): Balances {
-    self.settled_balances
-}
-
 #[test_only]
 public fun owed_balances(self: &Account): Balances {
     self.owed_balances

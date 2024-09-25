@@ -231,6 +231,34 @@ public(package) fun calculate_cancel_refund(
     balances::new(base_out, quote_out, deep_out)
 }
 
+public(package) fun locked_balance(
+    self: &Order,
+    maker_fee: u64,
+): (u64, u64, u64) {
+    let (is_bid, order_price, _) = utils::decode_order_id(self.order_id());
+    let mut base_quantity = 0;
+    let mut quote_quantity = 0;
+    let remaining_base_quantity = self.quantity() - self.filled_quantity();
+    let remaining_quote_quantity = math::mul(remaining_base_quantity, order_price);
+
+    if (is_bid) {
+        quote_quantity = quote_quantity + remaining_quote_quantity;
+    } else {
+        base_quantity = base_quantity + remaining_base_quantity;
+    };
+    let deep_quantity = math::mul(
+        maker_fee,
+        self
+            .order_deep_price()
+            .deep_quantity(
+                remaining_base_quantity,
+                remaining_quote_quantity,
+            ),
+    );
+
+    (base_quantity, quote_quantity, deep_quantity)
+}
+
 public(package) fun emit_order_canceled(
     self: &Order,
     pool_id: ID,
