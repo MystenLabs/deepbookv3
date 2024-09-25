@@ -882,6 +882,8 @@ public fun get_order_deep_required<BaseAsset, QuoteAsset>(
     (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
 }
 
+/// Returns the locked balance for the balance_manager in the pool
+/// Returns (base_quantity, quote_quantity, deep_quantity)
 public fun locked_balance<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     balance_manager: &BalanceManager,
