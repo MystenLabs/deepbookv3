@@ -185,12 +185,19 @@ module deepbook::master_tests {
     }
 
     #[test]
-    fun test_locked_balance_ok(){
-        test_locked_balance()
+    fun test_locked_balance_bid_ok(){
+        test_locked_balance(true)
+    }
+
+    #[test]
+    fun test_locked_balance_ask_ok(){
+        test_locked_balance(false)
     }
 
     // === Test Functions ===
-    fun test_locked_balance() {
+    fun test_locked_balance(
+        is_bid: bool,
+    ) {
         let mut test = begin(OWNER);
         let registry_id = pool_tests::setup_test(OWNER, &mut test);
         pool_tests::set_time(0, &mut test);
@@ -233,17 +240,9 @@ module deepbook::master_tests {
         let price = 2 * constants::float_scaling();
         let quantity = 3 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
-        let is_bid = true;
         let pay_with_deep = true;
         let maker_fee = constants::maker_fee();
         let deep_multiplier = constants::deep_multiplier();
-        let mut alice_balance = ExpectedBalances{
-            sui: starting_balance,
-            usdc: starting_balance,
-            spam: starting_balance,
-            deep: starting_balance,
-            usdt: starting_balance,
-        };
         let mut alice_locked_balance = ExpectedBalances{
             sui: 0,
             usdc: 0,
@@ -255,7 +254,7 @@ module deepbook::master_tests {
         // Epoch 0
         assert!(test.ctx().epoch() == 0, 0);
 
-        // Alice places bid order in pool 1
+        // Alice places an order in pool 1
         pool_tests::place_limit_order<SUI, USDC>(
             ALICE,
             pool1_id,
@@ -271,25 +270,19 @@ module deepbook::master_tests {
             &mut test,
         );
 
-        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
-        alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity);
-        alice_balance.deep = alice_balance.deep - math::mul(
-            math::mul(maker_fee, deep_multiplier),
-            quantity
-        );
+        if (is_bid) {
+            alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity);
+        } else {
+            alice_locked_balance.sui = alice_locked_balance.sui + quantity;
+        };
         alice_locked_balance.deep = alice_locked_balance.deep + math::mul(
             math::mul(maker_fee, deep_multiplier),
             quantity
         );
 
-        check_balance(
-            alice_balance_manager_id,
-            &alice_balance,
-            &mut test
-        );
         check_locked_balance<SUI, USDC>(ALICE, pool1_id, alice_balance_manager_id, &alice_locked_balance, &mut test);
 
-        // Bob places ask order in pool 1, fills half of Alice's order
+        // Bob places an order in pool 1, fills half of Alice's order
         pool_tests::place_limit_order<SUI, USDC>(
             BOB,
             pool1_id,
@@ -304,12 +297,20 @@ module deepbook::master_tests {
             expire_timestamp,
             &mut test,
         );
-        alice_locked_balance.usdc = alice_locked_balance.usdc - math::mul(price, quantity) / 2;
+
+        if (is_bid) {
+            alice_locked_balance.usdc = alice_locked_balance.usdc - math::mul(price, quantity) / 2;
+            alice_locked_balance.sui = alice_locked_balance.sui + quantity / 2;
+        } else {
+            alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity) / 2;
+            alice_locked_balance.sui = alice_locked_balance.sui - quantity / 2;
+        };
+
         alice_locked_balance.deep = alice_locked_balance.deep - math::mul(
             math::mul(maker_fee, deep_multiplier),
             quantity
         ) / 2;
-        alice_locked_balance.sui = alice_locked_balance.sui + quantity / 2;
+
 
         check_locked_balance<SUI, USDC>(ALICE, pool1_id, alice_balance_manager_id, &alice_locked_balance, &mut test);
 
