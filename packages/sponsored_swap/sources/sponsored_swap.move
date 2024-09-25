@@ -128,6 +128,11 @@ public fun swap_exact_quote_for_base_sponsored<BaseAsset, QuoteAsset>(
     (base_out, quote_out)
 }
 
+/// Get the balance of DEEP tokens in the SponsoredTokens shared object.
+public fun sponsored_token_balance(self: &SponsoredTokens): u64 {
+    self.balance.value()
+}
+
 /// Get the quantity of quote tokens out for a given quantity of base tokens in.
 public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -144,4 +149,21 @@ public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
     clock: &Clock,
 ): (u64, u64, u64) {
     pool.get_base_quantity_out(quote_in, clock)
+}
+
+#[test_only]
+public fun test_sponsored_tokens(ctx: &mut TxContext): ID {
+    let sponsored_tokens = SponsoredTokens {
+        id: object::new(ctx),
+        balance: balance::zero(),
+    };
+    let id = object::id(&sponsored_tokens);
+    transfer::share_object(sponsored_tokens);
+
+    id
+}
+
+#[test_only]
+public fun admin_cap_for_testing(ctx: &mut TxContext): SponsoredSwapAdminCap {
+    SponsoredSwapAdminCap { id: object::new(ctx) }
 }
