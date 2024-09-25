@@ -882,6 +882,32 @@ public fun get_order_deep_required<BaseAsset, QuoteAsset>(
     (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
 }
 
+public fun locked_balance<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+): (u64, u64, u64) {
+    let account_orders = self.get_account_order_details(balance_manager);
+    let self = self.load_inner();
+    let mut base_quantity = 0;
+    let mut quote_quantity = 0;
+    let mut deep_quantity = 0;
+
+    account_orders.do_ref!(|order| {
+        let maker_fee = self.state.history().historic_maker_fee(order.epoch());
+        let (base, quote, deep) = order.locked_balance(maker_fee);
+        base_quantity = base_quantity + base;
+        quote_quantity = quote_quantity + quote;
+        deep_quantity = deep_quantity + deep;
+    });
+
+    let settled_balances = self.state.account(balance_manager.id()).settled_balances();
+    base_quantity = base_quantity + settled_balances.base();
+    quote_quantity = quote_quantity + settled_balances.quote();
+    deep_quantity = deep_quantity + settled_balances.deep();
+
+    (base_quantity, quote_quantity, deep_quantity)
+}
+
 /// Returns the trade params for the pool.
 public fun pool_trade_params<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,

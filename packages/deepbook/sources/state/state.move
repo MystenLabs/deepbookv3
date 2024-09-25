@@ -378,6 +378,10 @@ public(package) fun history_mut(self: &mut State): &mut History {
     &mut self.history
 }
 
+public(package) fun history(self: &State): &History {
+    &self.history
+}
+
 // === Private Functions ===
 /// Process fills for all makers. Update maker accounts and history.
 fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
