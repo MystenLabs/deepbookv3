@@ -311,6 +311,35 @@ module deepbook::master_tests {
             quantity
         ) / 2;
 
+        check_locked_balance<SUI, USDC>(ALICE, pool1_id, alice_balance_manager_id, &alice_locked_balance, &mut test);
+
+        // Alice places one more order in pool 1
+        pool_tests::place_limit_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        if (is_bid) {
+            alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity);
+            alice_locked_balance.sui = alice_locked_balance.sui - quantity / 2; // Alice withdraws the settled sui during placement
+        } else {
+            alice_locked_balance.sui = alice_locked_balance.sui + quantity;
+            alice_locked_balance.usdc = alice_locked_balance.usdc - math::mul(price, quantity) / 2; // Alice withdraws the settled usdc during placement
+        };
+        alice_locked_balance.deep = alice_locked_balance.deep + math::mul(
+            math::mul(maker_fee, deep_multiplier),
+            quantity
+        );
 
         check_locked_balance<SUI, USDC>(ALICE, pool1_id, alice_balance_manager_id, &alice_locked_balance, &mut test);
 
