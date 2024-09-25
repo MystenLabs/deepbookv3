@@ -262,3 +262,29 @@ public(package) fun create_acct_and_share_with_funds(
         id
     }
 }
+
+public(package) fun create_acct_and_share_with_funds_typed<
+    BaseAsset,
+    QuoteAsset,
+    ReferenceBaseAsset,
+    ReferenceQuoteAsset,
+>(
+    sender: address,
+    amount: u64,
+    test: &mut Scenario,
+): ID {
+    test.next_tx(sender);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        deposit_into_account<BaseAsset>(&mut balance_manager, amount, test);
+        deposit_into_account<QuoteAsset>(&mut balance_manager, amount, test);
+        deposit_into_account<ReferenceBaseAsset>(&mut balance_manager, amount, test);
+        deposit_into_account<ReferenceQuoteAsset>(&mut balance_manager, amount, test);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        transfer::public_transfer(trade_cap, sender);
+        let id = object::id(&balance_manager);
+        transfer::public_share_object(balance_manager);
+
+        id
+    }
+}

@@ -8,7 +8,8 @@ use deepbook::balance_manager::{BalanceManager, TradeCap};
 use deepbook::balance_manager_tests::{
     USDC,
     SPAM,
-    create_acct_and_share_with_funds as create_acct_and_share_with_funds
+    create_acct_and_share_with_funds,
+    create_acct_and_share_with_funds_typed
 };
 use deepbook::big_vector::BigVector;
 use deepbook::constants;
@@ -26,11 +27,76 @@ use sui::test_scenario::{Scenario, begin, end, return_shared};
 use sui::test_utils;
 use token::deep::DEEP;
 
-
-
 const OWNER: address = @0x1;
 const ALICE: address = @0xAAAA;
 const BOB: address = @0xBBBB;
+
+/// Create a pool with 1000 limit sell at $2 and 1000 limit buy at $1.
+#[test_only]
+public fun setup_everything<
+    BaseAsset,
+    QuoteAsset,
+    ReferenceBaseAsset,
+    ReferenceQuoteAsset,
+>(
+    test: &mut Scenario,
+): ID {
+    let registry_id = setup_test(OWNER, test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<
+        BaseAsset,
+        QuoteAsset,
+        ReferenceBaseAsset,
+        ReferenceQuoteAsset,
+    >(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<
+        BaseAsset,
+        QuoteAsset,
+        ReferenceBaseAsset,
+        ReferenceQuoteAsset,
+    >(ALICE, registry_id, balance_manager_id_alice, test);
+
+    let client_order_id = 1;
+    let order_type = constants::no_restriction();
+    let price = 2 * constants::float_scaling();
+    let quantity = 1000 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    place_limit_order<BaseAsset, QuoteAsset>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false,
+        true,
+        expire_timestamp,
+        test,
+    );
+
+    let price = 1 * constants::float_scaling();
+    place_limit_order<BaseAsset, QuoteAsset>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        true,
+        true,
+        expire_timestamp,
+        test,
+    );
+
+    pool_id
+}
 
 #[test]
 fun test_place_order_bid() {
