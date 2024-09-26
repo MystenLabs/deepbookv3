@@ -882,6 +882,8 @@ public fun get_order_deep_required<BaseAsset, QuoteAsset>(
     (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
 }
 
+/// Returns the locked balance for the balance_manager in the pool
+/// Returns (base_quantity, quote_quantity, deep_quantity)
 public fun locked_balance<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     balance_manager: &BalanceManager,
@@ -1097,6 +1099,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         expire_timestamp,
         self.deep_price.get_order_deep_price(whitelist),
         market_order,
+        clock.timestamp_ms(),
     );
     self.book.create_order(&mut order_info, clock.timestamp_ms());
     let (settled, owed) = self

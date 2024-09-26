@@ -798,6 +798,7 @@ public fun create_order_info(
         expire_timestamp,
         order_deep_price,
         market_order,
+        0,
     );
 
     order_info.set_order_id(utils::encode_order_id(is_bid, price, 1));

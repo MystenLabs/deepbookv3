@@ -76,6 +76,8 @@ public struct OrderInfo has store, drop, copy {
     fill_limit_reached: bool,
     // Whether order is inserted
     order_inserted: bool,
+    // Order Timestamp
+    timestamp: u64,
 }
 
 /// Emitted when a maker order is filled.
@@ -109,6 +111,7 @@ public struct OrderPlaced has copy, store, drop {
     is_bid: bool,
     placed_quantity: u64,
     expire_timestamp: u64,
+    timestamp: u64,
 }
 
 /// Emitted when a maker order is expired.
@@ -230,6 +233,7 @@ public(package) fun new(
     expire_timestamp: u64,
     order_deep_price: OrderDeepPrice,
     market_order: bool,
+    timestamp: u64,
 ): OrderInfo {
     OrderInfo {
         pool_id,
@@ -255,6 +259,7 @@ public(package) fun new(
         market_order,
         fill_limit_reached: false,
         order_inserted: false,
+        timestamp,
     }
 }
 
@@ -528,6 +533,7 @@ public(package) fun emit_order_placed(self: &OrderInfo) {
         placed_quantity: self.remaining_quantity(),
         price: self.price,
         expire_timestamp: self.expire_timestamp,
+        timestamp: self.timestamp,
     });
 }
 
