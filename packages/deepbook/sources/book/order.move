@@ -55,6 +55,8 @@ public struct OrderModified has copy, store, drop {
     trader: address,
     price: u64,
     is_bid: bool,
+    previous_quantity: u64,
+    filled_quantity: u64,
     new_quantity: u64,
     timestamp: u64,
 }
@@ -285,6 +287,7 @@ public(package) fun emit_order_canceled(
 public(package) fun emit_order_modified(
     self: &Order,
     pool_id: ID,
+    previous_quantity: u64,
     trader: address,
     timestamp: u64,
 ) {
@@ -298,6 +301,8 @@ public(package) fun emit_order_modified(
         trader,
         price,
         is_bid,
+        previous_quantity,
+        filled_quantity: self.filled_quantity,
         new_quantity: self.quantity,
         timestamp,
     });
