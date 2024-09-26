@@ -261,6 +261,8 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
+    let previous_quantity = self.get_order(order_id).quantity();
+
     let self = self.load_inner_mut();
     let (cancel_quantity, order) = self
         .book
@@ -278,6 +280,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
 
     order.emit_order_modified(
         self.pool_id,
+        previous_quantity,
         ctx.sender(),
         clock.timestamp_ms(),
     );
@@ -1099,6 +1102,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         expire_timestamp,
         self.deep_price.get_order_deep_price(whitelist),
         market_order,
+        clock.timestamp_ms(),
     );
     self.book.create_order(&mut order_info, clock.timestamp_ms());
     let (settled, owed) = self
