@@ -483,6 +483,7 @@ public fun create_order(
         balance_manager_id,
         1,
         quantity,
+        0,
         constants::fee_is_deep(),
         deep_price::new_order_deep_price(conversion_is_base, deep_per_asset),
         epoch,
