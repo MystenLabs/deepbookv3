@@ -301,7 +301,7 @@ fun test_expired_order_removed_ask_bid_e() {
 }
 
 #[test]
-fun test_partial_fill_order_bid() {
+fun test_partial_fill_order_bid_ok() {
     partial_fill_order(
         true,
         constants::no_restriction(),
@@ -314,7 +314,7 @@ fun test_partial_fill_order_bid() {
 }
 
 #[test]
-fun test_partial_fill_order_ask() {
+fun test_partial_fill_order_ask_ok() {
     partial_fill_order(
         false,
         constants::no_restriction(),
@@ -327,7 +327,7 @@ fun test_partial_fill_order_ask() {
 }
 
 #[test]
-fun test_fill_partial_maker_bid() {
+fun test_fill_partial_maker_bid_ok() {
     partial_fill_maker_order(
         true,
         constants::no_restriction(),
@@ -340,7 +340,7 @@ fun test_fill_partial_maker_bid() {
 }
 
 #[test]
-fun test_fill_partial_maker_ask() {
+fun test_fill_partial_maker_ask_ok() {
     partial_fill_maker_order(
         false,
         constants::no_restriction(),
@@ -350,6 +350,16 @@ fun test_fill_partial_maker_ask() {
         3 * math::mul(constants::taker_fee(), constants::deep_multiplier()) / 2,
         constants::partially_filled(),
     );
+}
+
+#[test]
+fun test_partially_filled_maker_bid_ok() {
+    partially_filled_order_taken(true);
+}
+
+#[test]
+fun test_partially_filled_maker_ask_ok() {
+    partially_filled_order_taken(false);
 }
 
 #[
@@ -3472,6 +3482,121 @@ fun place_with_price_quantity(price: u64, quantity: u64) {
         expire_timestamp,
         &mut test,
     );
+    end(test);
+}
+
+fun partially_filled_order_taken(
+    is_bid: bool,
+) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<
+        SUI,
+        USDC,
+        SUI,
+        DEEP,
+    >(ALICE, registry_id, balance_manager_id_alice, &mut test);
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let alice_client_order_id = 1;
+    let alice_price_1 = 3 * constants::float_scaling();
+    let alice_price_2 = if (is_bid) {
+        2 * constants::float_scaling()
+    } else {
+        4 * constants::float_scaling()
+    };
+    let alice_quantity_1 = 2 * constants::float_scaling();
+    let alice_quantity_2 = 10 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+
+    // Alice places an initial order with quantity 2
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price_1,
+        alice_quantity_1,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Alice places a crossing order of quantity 10, 2 is filled and 8 is placed on book
+    let alice_order_info_2 = place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price_2,
+        alice_quantity_2,
+        !is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    verify_order_info(
+        &alice_order_info_2,
+        alice_client_order_id,
+        alice_price_2,
+        alice_quantity_2,
+        alice_quantity_1,
+        math::mul(alice_quantity_1, alice_price_1),
+        math::mul(alice_quantity_1, math::mul(constants::taker_fee(), constants::deep_multiplier())),
+        pay_with_deep,
+        constants::partially_filled(),
+        expire_timestamp,
+    );
+
+    let bob_client_order_id = 2;
+    let bob_price = 3 * constants::float_scaling();
+    let bob_quantity = 10 * constants::float_scaling();
+
+    // Bob places another crossing order of quantity 10, 8 is filled and 2 is placed on book
+    let bob_order_info = place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        bob_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bob_price,
+        bob_quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    verify_order_info(
+        &bob_order_info,
+        bob_client_order_id,
+        bob_price,
+        bob_quantity,
+        8 * constants::float_scaling(),
+        8 * alice_price_2,
+        math::mul(8 * constants::float_scaling(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+        pay_with_deep,
+        constants::partially_filled(),
+        expire_timestamp,
+    );
+
     end(test);
 }
 
