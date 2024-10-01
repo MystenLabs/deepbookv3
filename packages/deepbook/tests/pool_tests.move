@@ -3584,6 +3584,7 @@ fun partially_filled_order_taken(
         &mut test,
     );
 
+    // Bob should have quantity 8 executed by crossing Alice's order
     verify_order_info(
         &bob_order_info,
         bob_client_order_id,
