@@ -17,3 +17,4 @@ pnpm-lock.yaml
 # misc
 .env
 **/benchmark_data/
+tx-data.txt

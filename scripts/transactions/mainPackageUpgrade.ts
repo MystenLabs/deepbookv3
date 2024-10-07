@@ -8,8 +8,8 @@ import { upgradeCapID } from '../config/constants';
 
 dotenv.config();
 
-const gasObject = "";
-const network = (process.env.NETWORK) || 'mainnet';
+const gasObject = "0x015c81bb048561bedbf687920c1a623ecdf3df4e91236d086dde8b564c3a3f61";
+const network = 'testnet';
 
 // Active env of sui has to be the same with the env we're publishing to.
 // if upgradeCap & gasObject is on mainnet, it has to be on mainnet.
