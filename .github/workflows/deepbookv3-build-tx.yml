@@ -4,12 +4,6 @@
     on:
       workflow_dispatch:
         inputs:
-          env:
-            description: 'select env'
-            type: choice
-            options:
-              - mainnet
-              - testnet
           transaction_type:
             description: 'select transaction type to create'
             type: choice
@@ -22,7 +16,7 @@
           rpc:
             description: 'RPC url'
             required: true
-            default: 'https://suins-rpc.testnet.sui.io:443'
+            default: 'https://suins-rpc.mainnet.sui.io:443'
             type: string
           gas_object_id:
             description: 'object id to get gas from for multisig transaction'
@@ -71,7 +65,7 @@
             env:
               NODE_ENV: production
               GAS_OBJECT: ${{ inputs.gas_object_id }}
-              NETWORK: ${{ inputs.env }}
+              NETWORK: mainnet
               ORIGIN: gh_action
             run: |
               cd scripts && pnpm tsx transactions/mainPackageUpgrade.ts
@@ -81,7 +75,7 @@
             env:
               NODE_ENV: production
               GAS_OBJECT: ${{ inputs.gas_object_id }}
-              NETWORK: ${{ inputs.env }}
+              NETWORK: mainnet
               ORIGIN: gh_action
               RPC_URL: ${{ inputs.rpc }}
             run: |
