@@ -55,13 +55,13 @@
             run: |
               npm install -g pnpm
 
+          - name: Install tsx
+            run: |
+              npm install -g tsx
+
           - name: Set up working directory
             run: |
               pnpm install
-
-          - name: Install tsx
-            run: |
-              pnpm install -g tsx
 
           - name: Install deepbook sdk
             run: |
