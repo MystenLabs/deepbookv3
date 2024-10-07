@@ -59,6 +59,14 @@
             run: |
               pnpm install
 
+          - name: Install tsx
+            run: |
+              pnpm install tsx
+
+          - name: Install deepbook sdk
+            run: |
+              pnpm install @mysten/deepbook-v3
+
           - name: Upgrade Protocol
             if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
             env:
