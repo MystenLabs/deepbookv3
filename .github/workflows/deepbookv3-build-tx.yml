@@ -4,6 +4,12 @@
     on:
       workflow_dispatch:
         inputs:
+          env:
+            description: 'select env'
+            type: choice
+            options:
+              - mainnet
+              - testnet
           transaction_type:
             description: 'select transaction type to create'
             type: choice
