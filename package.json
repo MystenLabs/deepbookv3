@@ -1,5 +1,5 @@
 {
-	"name": "deepbookv3-monorepo",
+	"name": "deepbookv3",
 	"version": "1.0.0",
 	"private": true,
 	"description": "This repository holds the Deepbook V3 contracts",
