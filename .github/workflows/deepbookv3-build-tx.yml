@@ -61,7 +61,7 @@
 
           - name: Install tsx
             run: |
-              pnpm install tsx
+              pnpm install -g tsx
 
           - name: Install deepbook sdk
             run: |
