@@ -34,5 +34,9 @@
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix"
 	},
 	"author": "",
-	"license": "Apache-2.0"
+	"license": "Apache-2.0",
+	"dependencies": {
+		"@mysten/deepbook-v3": "^0.8.2",
+		"tsx": "^4.19.1"
+	}
 }
