@@ -132,7 +132,7 @@ config();
 			stablePool: true,
 		})(tx);
 
-		let res = await prepareMultisigTx(tx, env, adminCapOwner.testnet[env]);
+		let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
 		console.dir(res, { depth: null });
 	}
