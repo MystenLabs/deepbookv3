@@ -55,17 +55,10 @@
             run: |
               npm install -g pnpm
 
-          - name: Install tsx
-            run: |
-              npm install -g tsx
-
-          - name: Set up working directory
+          - name: Set up working directory and install dependencies
             run: |
               pnpm install
-
-          - name: Install deepbook sdk
-            run: |
-              pnpm install @mysten/deepbook-v3
+              pnpm install tsx --save-dev
 
           - name: Upgrade Protocol
             if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
