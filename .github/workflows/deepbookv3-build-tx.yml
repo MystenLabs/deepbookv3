@@ -58,7 +58,6 @@
           - name: Set up working directory and install dependencies
             run: |
               pnpm install
-              pnpm install tsx --save-dev
 
           - name: Upgrade Protocol
             if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
