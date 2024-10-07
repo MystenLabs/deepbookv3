@@ -61,6 +61,7 @@
 
           - name: Install tsx globally
             run: |
+              pnpm setup
               pnpm add -g tsx
 
           - name: Upgrade Protocol
