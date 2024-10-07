@@ -61,7 +61,7 @@
 
           - name: Install tsx globally
             run: |
-              cd scripts && pnpm add tsx
+              pnpm add tsx
 
           - name: Upgrade Protocol
             if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
@@ -71,7 +71,7 @@
               NETWORK: mainnet
               ORIGIN: gh_action
             run: |
-              pnpm tsx transactions/mainPackageUpgrade.ts
+              cd scripts && pnpm tsx transactions/mainPackageUpgrade.ts
 
           - name: Create Pool
             if: ${{ inputs.transaction_type == 'Create Pool' }}
@@ -82,7 +82,7 @@
               ORIGIN: gh_action
               RPC_URL: ${{ inputs.rpc }}
             run: |
-              pnpm tsx transactions/createPool.ts
+              cd scripts && pnpm tsx transactions/createPool.ts
 
           - name: Show Transaction Data (To sign)
             run: |
