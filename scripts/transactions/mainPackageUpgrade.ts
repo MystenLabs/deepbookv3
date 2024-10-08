@@ -17,8 +17,7 @@ const mainPackageUpgrade = async () => {
 	// enabling the gas Object check only on mainnet, to allow testnet multisig tests.
 	if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-    const suiFolder = process.env.ORIGIN === 'gh_action' ? '../sui' : 'sui';
-	const upgradeCall = `${suiFolder} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+	const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
     execSync(`cd $PWD/../packages/deepbook && ${upgradeCall} > $PWD/../../scripts/tx/tx-data.txt`);
 };
