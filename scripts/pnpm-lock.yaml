@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@mysten/deepbook-v3':
-        specifier: ^0.8.2
-        version: 0.8.2(typescript@5.6.2)
+        specifier: ^0.8.4
+        version: 0.8.4(typescript@5.6.2)
       esbuild:
         specifier: ^0.20.2
         version: 0.20.2
@@ -361,12 +361,12 @@ packages:
   '@mysten/bcs@1.1.0':
     resolution: {integrity: sha512-yy9/1Y4d0FlRywS1+9ze/T7refCbrvwFwJIOKs9M3QBK1njbcHZp+LkVeLqBvIJA5eZ3ZCzmhQ1Xq4Sed5mEBA==}
 
-  '@mysten/deepbook-v3@0.8.2':
-    resolution: {integrity: sha512-DAAf1+D/VOXWF9/2OnE+llwt5x1ayzbnw4pg0/m2VAawxasRgQzIoJnTOmlHFbFLzPXW8wx3rGSUa1c70/E/bg==}
+  '@mysten/deepbook-v3@0.8.4':
+    resolution: {integrity: sha512-OBVkNEYnYVcsTpHovdrN02GhFI4f3LNQWp7dvIw7j+5ZdcrinwNvV0V9RUgkEJ/u3BEihZ76kHykMPHcGqM3IA==}
     engines: {node: '>=18'}
 
-  '@mysten/sui@1.11.0':
-    resolution: {integrity: sha512-+5kSXmoPFrecxUb+fweqqy4eXRpgvv6H51IwRzJbxlolE0AmnM+5IJbLpTlM5RNZEmmocE7p5bUn1OijbuDVkw==}
+  '@mysten/sui@1.12.0':
+    resolution: {integrity: sha512-DrSyja04xyGrTGlIQKMwZ6MywxNPkjyIcDLm915Zisoy1/uIgPoHc4cx53JyiG92z/HgowTVGGCCIzH53DIYXA==}
     engines: {node: '>=18'}
 
   '@noble/curves@1.6.0':
@@ -693,15 +693,15 @@ snapshots:
     dependencies:
       bs58: 6.0.0
 
-  '@mysten/deepbook-v3@0.8.2(typescript@5.6.2)':
+  '@mysten/deepbook-v3@0.8.4(typescript@5.6.2)':
     dependencies:
-      '@mysten/sui': 1.11.0(typescript@5.6.2)
+      '@mysten/sui': 1.12.0(typescript@5.6.2)
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
       - typescript
 
-  '@mysten/sui@1.11.0(typescript@5.6.2)':
+  '@mysten/sui@1.12.0(typescript@5.6.2)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.9.0)
       '@mysten/bcs': 1.1.0

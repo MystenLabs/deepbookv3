@@ -13,11 +13,8 @@ config();
 
 (async () => {
 	// Update constant for env
-	const env = 'testnet';
-	const privateKey = process.env.PRIVATE_KEY;
-	if (!privateKey) {
-		throw new Error('Private key not found');
-	}
+	const env = 'mainnet';
+	const privateKey = process.env.PRIVATE_KEY || '';
 
 	// Initialize with balance managers if created
 	const balanceManagers = {

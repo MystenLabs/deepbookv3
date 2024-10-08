@@ -69,7 +69,6 @@
             GAS_OBJECT: ${{ inputs.gas_object_id }}
             NETWORK: mainnet
             ORIGIN: gh_action
-            RPC_URL: ${{ inputs.rpc }}
           run: |
             cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
 
@@ -80,9 +79,8 @@
             GAS_OBJECT: ${{ inputs.gas_object_id }}
             NETWORK: mainnet
             ORIGIN: gh_action
-            RPC_URL: ${{ inputs.rpc }}
           run: |
-            cd scripts && pnpm install && pnpm tsx transactions/createPool.ts
+            cd scripts && pnpm install && pnpm ts-node transactions/createPool.ts
 
         - name: Show Transaction Data (To sign)
           run: |
