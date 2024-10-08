@@ -23,7 +23,6 @@ const mainPackageUpgrade = async () => {
     const packagesDir = path.resolve(__dirname, '../../packages/deepbook');
     const txFilePath = path.resolve(__dirname, '../../scripts/tx/tx-data.txt');
 
-    // Construct the command
     const upgradeCall = `${suiPath} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
     try {

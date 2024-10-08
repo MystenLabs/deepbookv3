@@ -46,6 +46,11 @@
         - name: Install Sui using Homebrew
           run: brew install sui
 
+        - name: Set up Sui client config
+          run: |
+            mkdir -p ~/.sui/sui_config/
+            echo "${{ secrets.SUI_CLIENT_YAML }}" > ~/.sui/sui_config/client.yaml
+
         - name: Test
           run: which sui
 
@@ -69,6 +74,7 @@
             GAS_OBJECT: ${{ inputs.gas_object_id }}
             NETWORK: mainnet
             ORIGIN: gh_action
+            RPC_URL: ${{ inputs.rpc }}
           run: |
             cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
 
