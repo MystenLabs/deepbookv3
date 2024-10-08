@@ -13,9 +13,10 @@ const gasObject = '0xb76abcaefff13813adfa61768fac06a13a9bdbe7c86fb75118885364452
 // Github actions are always on mainnet.
 const mainPackageUpgrade = async () => {
 	// on GH Action, the sui binary is located on root. Referencing that as `/` doesn't work.
-	const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObject} --skip-dependency-verification --serialize-unsigned-transaction`;
+    const suiFolder = process.env.ORIGIN === 'gh_action' ? '../../sui' : 'sui';
+	const upgradeCall = `${suiFolder} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObject} --skip-dependency-verification --serialize-unsigned-transaction`;
 
-	execSync(`cd packages/deepbook && ${upgradeCall} > ../../scripts/tx/tx-data.txt`);
+    execSync(`cd $PWD/../packages/deepbook && ${upgradeCall} > $PWD/../../scripts/tx/tx-data.txt`);
 };
 
 mainPackageUpgrade();

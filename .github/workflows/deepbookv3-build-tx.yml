@@ -59,11 +59,6 @@
           run: |
             pnpm install
 
-        - name: Check Sui Installation
-          run: |
-            echo "PATH: $PATH"
-            which sui || echo "sui not found in PATH"
-
         - name: Upgrade Protocol
           if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
           env:
@@ -72,7 +67,7 @@
             NETWORK: mainnet
             ORIGIN: gh_action
           run: |
-            npx tsx ./scripts/transactions/mainPackageUpgrade.ts
+            cd scripts && npx tsx transactions/mainPackageUpgrade.ts
 
         - name: Create Pool
           if: ${{ inputs.transaction_type == 'Create Pool' }}
