@@ -12,6 +12,6 @@ export const upgradeCapOwner = {
 };
 
 export const upgradeCapID = {
-    "mainnet": "",
+    "mainnet": "0xc3670c420ee0e3cccfae819be4b6780007d56727467d5e5c60c0d3b6e264f5d9", // change after publish
     "testnet": "0x56632f4f1b707b5b0c1b99defe65a056af3f846d95700b4a1cbd3adc94bf7c96",
 };
