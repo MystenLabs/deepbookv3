@@ -4,12 +4,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { prepareMultisigTx } from '../utils/utils';
 import { adminCapOwner } from '../config/constants';
 
-import { config } from 'dotenv';
-
 import { DeepBookMarketMaker } from './deepbookMarketMaker';
-
-// Load private key from .env file
-config();
 
 (async () => {
 	// Update constant for env
