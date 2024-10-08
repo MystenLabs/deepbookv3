@@ -123,8 +123,8 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 		tickSize: 0.001,
 		lotSize: 0.1,
 		minSize: 1,
-		whitelisted: false, // Optionally whitelist this pool
-		stablePool: true,
+		whitelisted: true,
+		stablePool: false,
 	})(tx);
 
 	let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
