@@ -59,6 +59,11 @@
           run: |
             pnpm install
 
+        - name: Check Sui Installation
+          run: |
+            echo "PATH: $PATH"
+            which sui || echo "sui not found in PATH"
+
         - name: Upgrade Protocol
           if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
           env:
