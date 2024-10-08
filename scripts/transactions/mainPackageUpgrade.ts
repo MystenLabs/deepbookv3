@@ -4,6 +4,7 @@
 import { execSync } from 'child_process';
 import { upgradeCapID } from '../config/constants';
 import path from 'path';
+import fs from 'fs';
 
 const network = 'mainnet';
 
@@ -23,8 +24,11 @@ const mainPackageUpgrade = async () => {
     const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
     try {
-        // Execute the command with the absolute path
-        execSync(`cd ${packagesDir} && ${upgradeCall} > ${txFilePath}`);
+        // Execute the command with the specified working directory and capture the output
+        const output = execSync(upgradeCall, { cwd: packagesDir });
+
+        // Write the output to the tx-data.txt file
+        fs.writeFileSync(txFilePath, output.toString());
         console.log('Upgrade transaction successfully created and saved to tx-data.txt');
     } catch (error: any) {
         console.error('Error during protocol upgrade:', error.message);
