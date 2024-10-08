@@ -21,7 +21,7 @@ const mainPackageUpgrade = async () => {
         ? '/home/linuxbrew/.linuxbrew/bin/sui'
         : 'sui';
 
-    const packagesDir = path.resolve(__dirname, '../packages/deepbook');
+    const packagesDir = path.resolve(__dirname, '../../packages/deepbook');
     const txFilePath = path.resolve(__dirname, '../../scripts/tx/tx-data.txt');
 
     // Construct the command
