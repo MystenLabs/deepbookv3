@@ -6,7 +6,7 @@ import { adminCapOwner } from '../config/constants';
 
 import { config } from 'dotenv';
 
-import { DeepBookMarketMaker } from './deepbookMarketMaker.js';
+import { DeepBookMarketMaker } from './deepbookMarketMaker';
 
 // Load private key from .env file
 config();

@@ -4,14 +4,13 @@ import { execFileSync, execSync } from 'child_process';
 import fs, { readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui.js/client';
-import { decodeSuiPrivateKey } from '@mysten/sui.js/cryptography';
-import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
-import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
-import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
+import { Secp256r1Keypair } from '@mysten/sui/keypairs/secp256r1';
 import { Transaction } from '@mysten/sui/transactions';
-import { UpgradePolicy } from '@mysten/sui.js/transactions';
-import { fromB64, toB64 } from '@mysten/sui.js/utils';
+import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet';
 
@@ -50,38 +49,6 @@ export const publishPackage = (txb: Transaction, path: string, configPath?: stri
 	txb.transferObjects([cap], sender);
 };
 
-export const upgradePackage = (
-	txb: Transaction,
-	path: string,
-	packageId: string,
-	upgradeCapId: string,
-) => {
-	const { modules, dependencies, digest } = JSON.parse(
-		execFileSync(SUI, ['move', 'build', '--dump-bytecode-as-base64', '--path', path], {
-			encoding: 'utf-8',
-		}),
-	);
-
-	const cap = txb.object(upgradeCapId);
-
-	const ticket = txb.moveCall({
-		target: '0x2::package::authorize_upgrade',
-		arguments: [cap, txb.pure.u8(UpgradePolicy.COMPATIBLE), txb.pure(digest)],
-	});
-
-	const receipt = txb.upgrade({
-		modules,
-		dependencies,
-		packageId,
-		ticket,
-	});
-
-	txb.moveCall({
-		target: '0x2::package::commit_upgrade',
-		arguments: [cap, receipt],
-	});
-};
-
 /// Returns a signer based on the active address of system's sui.
 export const getSigner = () => {
 	if (process.env.PRIVATE_KEY) {
@@ -102,7 +69,7 @@ export const getSigner = () => {
 	);
 
 	for (const priv of keystore) {
-		const raw = fromB64(priv);
+		const raw = fromBase64(priv);
 		if (raw[0] !== 0) {
 			continue;
 		}
@@ -153,7 +120,7 @@ export const prepareMultisigTx = async (
 	tx.build({
 		client: client,
 	}).then((bytes) => {
-		let serializedBase64 = toB64(bytes);
+		let serializedBase64 = toBase64(bytes);
 
 		const output_location =
 			process.env.NODE_ENV === 'development' ? './tx/tx-data-local.txt' : './tx/tx-data.txt';
