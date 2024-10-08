@@ -15,10 +15,7 @@ const mainPackageUpgrade = async () => {
 	const suiFolder = process.env.ORIGIN === 'gh_action' ? '../../sui' : 'sui';
 	const upgradeCall = `${suiFolder} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --skip-dependency-verification --serialize-unsigned-transaction`;
 
-	// we execute this on `setup/package.json` so we go one level back, access packages folder -> deepbook -> upgrade.
-	// we go from scripts/(base)/packages/deepbook, we run the upgrade and then we save the transaction data
-	// to deepbook/..(packages)/..(base)/scripts/tx/tx-data.txt
-	execSync(`cd packages/deepbook && ${upgradeCall} > ../scripts/tx/tx-data.txt`);
+	execSync(`cd packages/deepbook && ${upgradeCall} > ../../scripts/tx/tx-data.txt`);
 };
 
 mainPackageUpgrade();
