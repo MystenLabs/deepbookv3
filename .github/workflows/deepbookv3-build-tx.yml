@@ -1,95 +1,91 @@
 ---
-    name: Build Deepbook TX
+  name: Build Deepbook TX
 
-    on:
-      workflow_dispatch:
-        inputs:
-          transaction_type:
-            description: 'select transaction type to create'
-            type: choice
-            options:
-              - Create Pool
-              - Upgrade Protocol
-          sui_tools_image:
-            description: 'image reference of sui_tools'
-            default: 'mysten/sui-tools:mainnet'
-          rpc:
-            description: 'RPC url'
-            required: true
-            default: 'https://suins-rpc.mainnet.sui.io:443'
-            type: string
-          gas_object_id:
-            description: 'object id to get gas from for multisig transaction'
-            required: true
-            type: string
-            default: '0x5cc6e842a17918ad7ce5e4e333309b387f1d5151bc3c89682abda460a700c2f5'
+  on:
+    workflow_dispatch:
+      inputs:
+        transaction_type:
+          description: 'select transaction type to create'
+          type: choice
+          options:
+            - Create Pool
+            - Upgrade Protocol
+        sui_tools_image:
+          description: 'image reference of sui_tools'
+          default: 'mysten/sui-tools:mainnet'
+        rpc:
+          description: 'RPC url'
+          required: true
+          default: 'https://suins-rpc.mainnet.sui.io:443'
+          type: string
+        gas_object_id:
+          description: 'object id to get gas from for multisig transaction'
+          required: true
+          type: string
+          default: '0x5cc6e842a17918ad7ce5e4e333309b387f1d5151bc3c89682abda460a700c2f5'
 
-    jobs:
-      deepbook:
-        name: deepbook create tx
-        runs-on: ubuntu-latest
+  jobs:
+    deepbook:
+      name: deepbook create tx
+      runs-on: ubuntu-latest
 
-        steps:
-          - name: Selected transaction type
-            run: |
-              echo ${{ inputs.transaction_type }}
+      steps:
+        - name: Selected transaction type
+          run: |
+            echo ${{ inputs.transaction_type }}
 
-          - uses: actions/checkout@v4
-            with:
-              fetch-depth: 1
+        - uses: actions/checkout@v4
+          with:
+            fetch-depth: 1
 
-          - name: Install Homebrew
-            run: |
-              /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-              echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+        - name: Install Homebrew
+          run: |
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
 
-          - name: Install Sui using Homebrew
-            run: brew install sui
+        - name: Install Sui using Homebrew
+          run: brew install sui
 
-          - name: NPM BUILD TX Environment
-            uses: actions/setup-node@v4
-            with:
-              node-version: 18
+        - name: NPM BUILD TX Environment
+          uses: actions/setup-node@v4
+          with:
+            node-version: 18
 
-          - name: Do a global PNPM install
-            run: |
-              npm install -g pnpm
+        - name: Do a global PNPM install
+          run: |
+            npm install -g pnpm
 
-          - name: Set up working directory and install dependencies
-            run: |
-              pnpm install
+        - name: Set up working directory and install dependencies
+          run: |
+            pnpm install
 
-          - name: Install tsx
-            run: |
-              pnpm add tsx --save-prod
+        - name: Upgrade Protocol
+          if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
+          env:
+            NODE_ENV: production
+            GAS_OBJECT: ${{ inputs.gas_object_id }}
+            NETWORK: mainnet
+            ORIGIN: gh_action
+          run: |
+            npx tsx transactions/mainPackageUpgrade.ts
 
-          - name: Upgrade Protocol
-            if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
-            env:
-              NODE_ENV: production
-              GAS_OBJECT: ${{ inputs.gas_object_id }}
-              NETWORK: mainnet
-              ORIGIN: gh_action
-            run: |
-              cd scripts && pnpm tsx transactions/mainPackageUpgrade.ts
+        - name: Create Pool
+          if: ${{ inputs.transaction_type == 'Create Pool' }}
+          env:
+            NODE_ENV: production
+            GAS_OBJECT: ${{ inputs.gas_object_id }}
+            NETWORK: mainnet
+            ORIGIN: gh_action
+            RPC_URL: ${{ inputs.rpc }}
+          run: |
+            npx tsx transactions/createPool.ts
 
-          - name: Create Pool
-            if: ${{ inputs.transaction_type == 'Create Pool' }}
-            env:
-              NODE_ENV: production
-              GAS_OBJECT: ${{ inputs.gas_object_id }}
-              NETWORK: mainnet
-              ORIGIN: gh_action
-              RPC_URL: ${{ inputs.rpc }}
-            run: |
-              cd scripts && pnpm tsx transactions/createPool.ts
+        - name: Show Transaction Data (To sign)
+          run: |
+            cat scripts/tx/tx-data.txt
 
-          - name: Show Transaction Data (To sign)
-            run: |
-              cat scripts/tx/tx-data.txt
-
-          - name: Upload Transaction Artifact
-            uses: actions/upload-artifact@v3
-            with:
-              name: transaction-data
-              path: scripts/tx
+        - name: Upload Transaction Artifact
+          uses: actions/upload-artifact@v3
+          with:
+            name: transaction-data
+            path: scripts/tx
