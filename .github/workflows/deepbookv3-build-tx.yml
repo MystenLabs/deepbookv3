@@ -66,6 +66,7 @@
             GAS_OBJECT: ${{ inputs.gas_object_id }}
             NETWORK: mainnet
             ORIGIN: gh_action
+            RPC_URL: ${{ inputs.rpc }}
           run: |
             cd scripts && npx tsx transactions/mainPackageUpgrade.ts
 
