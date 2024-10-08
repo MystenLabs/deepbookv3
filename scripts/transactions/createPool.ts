@@ -3,13 +3,13 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { prepareMultisigTx } from '../utils/utils';
 import { adminCapOwner } from '../config/constants';
-
-import { DeepBookMarketMaker } from './deepbookMarketMaker';
+import { DeepBookClient } from '@mysten/deepbook-v3';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 (async () => {
 	// Update constant for env
 	const env = 'mainnet';
-	const privateKey = process.env.PRIVATE_KEY || '';
+	const adminCap = '0xd542cd47d94009452de200032ac80ff1ceb31bb5f9ed6df5d97c9ae54a1976dd';
 
 	// Initialize with balance managers if created
 	const balanceManagers = {
@@ -18,12 +18,16 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 			tradeCap: '',
 		},
 	};
-	const mmClient = new DeepBookMarketMaker(
-		privateKey,
-		env,
-		balanceManagers,
-		process.env.ADMIN_CAP,
-	);
+
+	const dbClient = new DeepBookClient({
+		address: '0x0',
+		env: env,
+		client: new SuiClient({
+			url: getFullnodeUrl(env),
+		}),
+		balanceManagers: balanceManagers,
+		adminCap: adminCap,
+	});
 
 	const tx = new Transaction();
 
@@ -73,7 +77,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 	// console.dir(res, { depth: null });
 
 	// mainnet
-	mmClient.deepBookAdmin.createPoolAdmin({
+	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'DEEP',
 		quoteCoinKey: 'SUI',
 		tickSize: 0.001,
@@ -83,7 +87,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 		stablePool: false,
 	})(tx);
 
-	mmClient.deepBookAdmin.createPoolAdmin({
+	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'SUI',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.001,
@@ -93,7 +97,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 		stablePool: false,
 	})(tx);
 
-	mmClient.deepBookAdmin.createPoolAdmin({
+	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'DEEP',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.001,
@@ -103,7 +107,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 		stablePool: false,
 	})(tx);
 
-	mmClient.deepBookAdmin.createPoolAdmin({
+	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'WUSDT',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.001,
@@ -113,7 +117,7 @@ import { DeepBookMarketMaker } from './deepbookMarketMaker';
 		stablePool: true,
 	})(tx);
 
-	mmClient.deepBookAdmin.createPoolAdmin({
+	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'WUSDC',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.001,
