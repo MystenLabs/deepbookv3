@@ -17,14 +17,13 @@ const mainPackageUpgrade = async () => {
     // Enabling the gas Object check only on mainnet, to allow testnet multisig tests.
     if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-    const packagesDir = path.resolve(__dirname, '../../packages/deepbook');
     const txFilePath = path.resolve(__dirname, '../../scripts/tx/tx-data.txt');
 
-    const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+    const upgradeCall = `cd $PWD/../packages/deepbook && sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
     try {
         // Execute the command with the specified working directory and capture the output
-        const output = execSync(upgradeCall, { cwd: packagesDir });
+        const output = execSync(upgradeCall);
 
         // Write the output to the tx-data.txt file
         fs.writeFileSync(txFilePath, output.toString());
