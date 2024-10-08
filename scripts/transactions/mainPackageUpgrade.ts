@@ -16,16 +16,11 @@ const mainPackageUpgrade = async () => {
     // Enabling the gas Object check only on mainnet, to allow testnet multisig tests.
     if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-    // Set up the `sui` binary path and directories using absolute paths
-    const suiPath = process.env.ORIGIN === 'gh_action'
-        ? '/home/linuxbrew/.linuxbrew/bin/sui'
-        : 'sui';
-
     const packagesDir = path.resolve(__dirname, '../../packages/deepbook');
     const txFilePath = path.resolve(__dirname, '../../scripts/tx/tx-data.txt');
 
     // Construct the command
-    const upgradeCall = `${suiPath} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+    const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
     try {
         // Execute the command with the absolute path
