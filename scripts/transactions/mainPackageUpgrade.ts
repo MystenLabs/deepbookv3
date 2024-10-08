@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execSync } from 'child_process';
-
 import { upgradeCapID } from '../config/constants';
+import path from 'path';
 
 const network = 'mainnet';
 
@@ -11,15 +11,33 @@ const network = 'mainnet';
 // if upgradeCap & gasObject is on mainnet, it has to be on mainnet.
 // Github actions are always on mainnet.
 const mainPackageUpgrade = async () => {
-	// on GH Action, the sui binary is located on root. Referencing that as `/` doesn't work.
     const gasObjectId = process.env.GAS_OBJECT;
 
-	// enabling the gas Object check only on mainnet, to allow testnet multisig tests.
-	if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
+    // Enabling the gas Object check only on mainnet, to allow testnet multisig tests.
+    if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-	const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+    // Set up the `sui` binary path and directories using absolute paths
+    const suiPath = process.env.ORIGIN === 'gh_action'
+        ? '/home/linuxbrew/.linuxbrew/bin/sui'
+        : 'sui';
 
-    execSync(`cd $PWD/../packages/deepbook && ${upgradeCall} > $PWD/../../scripts/tx/tx-data.txt`);
+    const packagesDir = path.resolve(__dirname, '../packages/deepbook');
+    const txFilePath = path.resolve(__dirname, '../../scripts/tx/tx-data.txt');
+
+    // Construct the command
+    const upgradeCall = `${suiPath} client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+
+    try {
+        // Execute the command with the absolute path
+        execSync(`cd ${packagesDir} && ${upgradeCall} > ${txFilePath}`);
+        console.log('Upgrade transaction successfully created and saved to tx-data.txt');
+    } catch (error: any) {
+        console.error('Error during protocol upgrade:', error.message);
+        console.error('stderr:', error.stderr?.toString());
+        console.error('stdout:', error.stdout?.toString());
+        console.error('Command:', error.cmd);
+        process.exit(1); // Exit with an error code
+    }
 };
 
 mainPackageUpgrade();
