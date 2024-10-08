@@ -67,7 +67,7 @@
             NETWORK: mainnet
             ORIGIN: gh_action
           run: |
-            npx tsx transactions/mainPackageUpgrade.ts
+            npx tsx ./scripts/transactions/mainPackageUpgrade.ts
 
         - name: Create Pool
           if: ${{ inputs.transaction_type == 'Create Pool' }}
@@ -78,7 +78,7 @@
             ORIGIN: gh_action
             RPC_URL: ${{ inputs.rpc }}
           run: |
-            npx tsx transactions/createPool.ts
+            npx tsx ./scripts/transactions/createPool.ts
 
         - name: Show Transaction Data (To sign)
           run: |
