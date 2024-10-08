@@ -140,7 +140,7 @@ export const prepareMultisigTx = async (
 	tx.setGasPrice(1_000);
 
 	// set the sender to be the admin address from config.
-	tx.setSenderIfNotSet(adminAddress as string);
+	tx.setSender(adminAddress as string);
 
 	// setting up gas object for the multi-sig transaction
 	if (gasObjectId) await setupGasPayment(tx, gasObjectId, client);
