@@ -18,7 +18,7 @@ const mainPackageUpgrade = async () => {
 	// we execute this on `setup/package.json` so we go one level back, access packages folder -> deepbook -> upgrade.
 	// we go from scripts/(base)/packages/deepbook, we run the upgrade and then we save the transaction data
 	// to deepbook/..(packages)/..(base)/scripts/tx/tx-data.txt
-	execSync(`cd $PWD/../packages/deepbook && ${upgradeCall} > $PWD/../../scripts/tx/tx-data.txt`);
+	execSync(`cd packages/deepbook && ${upgradeCall} > ../scripts/tx/tx-data.txt`);
 };
 
 mainPackageUpgrade();
