@@ -12,8 +12,9 @@
   "license": "ISC",
   "dependencies": {
     "@mysten/deepbook-v3": "^0.8.5",
-    "tsx": "^4.19.1",
+    "@mysten/sui": "^1.12.0",
     "esbuild": "^0.20.2",
-		"ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "tsx": "^4.19.1"
   }
 }

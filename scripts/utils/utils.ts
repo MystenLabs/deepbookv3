@@ -10,7 +10,7 @@ import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui.js/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui.js/keypairs/secp256r1';
 import { Transaction } from '@mysten/sui/transactions';
-import { TransactionBlock, UpgradePolicy } from '@mysten/sui.js/transactions';
+import { UpgradePolicy } from '@mysten/sui.js/transactions';
 import { fromB64, toB64 } from '@mysten/sui.js/utils';
 
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet';
@@ -163,7 +163,7 @@ export const prepareMultisigTx = async (
 };
 
 /// Fetch the gas Object and setup the payment for the tx.
-async function setupGasPayment(tx: TransactionBlock, gasObjectId: string, client: SuiClient) {
+async function setupGasPayment(tx: Transaction, gasObjectId: string, client: SuiClient) {
 	const gasObject = await client.getObject({
 		id: gasObjectId,
 	});
@@ -181,7 +181,7 @@ async function setupGasPayment(tx: TransactionBlock, gasObjectId: string, client
 }
 
 /// A helper to dev inspect a transaction.
-async function inspectTransaction(tx: TransactionBlock, client: SuiClient) {
+async function inspectTransaction(tx: Transaction, client: SuiClient) {
 	const result = await client.dryRunTransactionBlock({
 		transactionBlock: await tx.build({ client: client }),
 	});
