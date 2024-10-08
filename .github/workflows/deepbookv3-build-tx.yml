@@ -79,7 +79,7 @@
             ORIGIN: gh_action
             RPC_URL: ${{ inputs.rpc }}
           run: |
-            npx tsx ./scripts/transactions/createPool.ts
+            cd scripts && npx tsx transactions/createPool.ts
 
         - name: Show Transaction Data (To sign)
           run: |
