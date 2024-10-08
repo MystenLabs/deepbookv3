@@ -11,7 +11,6 @@ importers:
       '@mysten/deepbook-v3':
         specifier: ^0.8.2
         version: 0.8.2(typescript@5.6.2)
-    devDependencies:
       esbuild:
         specifier: ^0.20.2
         version: 0.20.2
