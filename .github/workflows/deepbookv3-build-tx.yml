@@ -56,9 +56,8 @@
 
         - name: try to upgrade
           run: |
-            sui client --yes --client.config client.yaml
-            sui client new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
-            cd packages/deepbook && sui client --client.config client.yaml upgrade --upgrade-capability 0xc3670c420ee0e3cccfae819be4b6780007d56727467d5e5c60c0d3b6e264f5d9 --gas-budget 3000000000 --gas 0xb76abcaefff13813adfa61768fac06a13a9bdbe7c86fb75118885364452286cb --skip-dependency-verification --serialize-unsigned-transaction
+            sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
+            cd packages/deepbook && sui client upgrade --upgrade-capability 0xc3670c420ee0e3cccfae819be4b6780007d56727467d5e5c60c0d3b6e264f5d9 --gas-budget 3000000000 --gas 0xb76abcaefff13813adfa61768fac06a13a9bdbe7c86fb75118885364452286cb --skip-dependency-verification --serialize-unsigned-transaction
 
         - name: NPM BUILD TX Environment
           uses: actions/setup-node@v4
