@@ -31,51 +31,6 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	const tx = new Transaction();
 
-	// Testnet
-	// mmClient.deepBookAdmin.createPoolAdmin({
-	// 	baseCoinKey: 'DEEP',
-	// 	quoteCoinKey: 'SUI',
-	// 	tickSize: 0.001,
-	// 	lotSize: 1,
-	// 	minSize: 10,
-	// 	whitelisted: true,
-	// 	stablePool: false,
-	// })(tx);
-
-	// mmClient.deepBookAdmin.createPoolAdmin({
-	// 	baseCoinKey: 'SUI',
-	// 	quoteCoinKey: 'DBUSDC',
-	// 	tickSize: 0.001,
-	// 	lotSize: 0.1,
-	// 	minSize: 1,
-	// 	whitelisted: false,
-	// 	stablePool: false,
-	// })(tx);
-
-	// mmClient.deepBookAdmin.createPoolAdmin({
-	// 	baseCoinKey: 'DEEP',
-	// 	quoteCoinKey: 'DBUSDC',
-	// 	tickSize: 0.001,
-	// 	lotSize: 1,
-	// 	minSize: 10,
-	// 	whitelisted: true,
-	// 	stablePool: false,
-	// })(tx);
-
-	// mmClient.deepBookAdmin.createPoolAdmin({
-	// 	baseCoinKey: 'DBUSDT',
-	// 	quoteCoinKey: 'DBUSDC',
-	// 	tickSize: 0.001,
-	// 	lotSize: 0.1,
-	// 	minSize: 1,
-	// 	whitelisted: false,
-	// 	stablePool: true,
-	// })(tx);
-
-	// let res = await mmClient.signAndExecute(tx);
-
-	// console.dir(res, { depth: null });
-
 	// mainnet
 	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'DEEP',

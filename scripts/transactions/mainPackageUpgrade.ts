@@ -3,8 +3,6 @@
 
 import { execSync } from 'child_process';
 import { upgradeCapID } from '../config/constants';
-import path from 'path';
-import fs from 'fs';
 
 const network = 'mainnet';
 
