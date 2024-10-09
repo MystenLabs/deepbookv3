@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const adminCapOwner = {
-    "mainnet": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e", // change back to right owner
+    "mainnet": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
     "testnet": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
 };
 
@@ -17,6 +17,6 @@ export const upgradeCapID = {
 };
 
 export const adminCapID = {
-    "mainnet": "0xd542cd47d94009452de200032ac80ff1ceb31bb5f9ed6df5d97c9ae54a1976dd",
+    "mainnet": "0xd542cd47d94009452de200032ac80ff1ceb31bb5f9ed6df5d97c9ae54a1976dd", // change after publish
     "testnet": "0x014e6a65f60936177820141ad64430290b6ad5e16421691dc9f3fa9907154b2e"
 };
