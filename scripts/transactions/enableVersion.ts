@@ -31,7 +31,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	const tx = new Transaction();
 
-    dbClient.deepBookAdmin.enableVersion(versionToEnable)(tx);
+	dbClient.deepBookAdmin.enableVersion(versionToEnable)(tx);
 
 	let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
