@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from '@mysten/sui/transactions';
 import { prepareMultisigTx } from '../utils/utils';
-import { adminCapOwner } from '../config/constants';
+import { adminCapOwner, adminCapID } from '../config/constants';
 import { DeepBookClient } from '@mysten/deepbook-v3';
 import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 (async () => {
 	// Update constant for env
 	const env = 'mainnet';
-	const adminCap = '0xd542cd47d94009452de200032ac80ff1ceb31bb5f9ed6df5d97c9ae54a1976dd';
 
 	// Initialize with balance managers if created
 	const balanceManagers = {
@@ -26,7 +25,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 			url: getFullnodeUrl(env),
 		}),
 		balanceManagers: balanceManagers,
-		adminCap: adminCap,
+		adminCap: adminCapID[env],
 	});
 
 	const tx = new Transaction();
