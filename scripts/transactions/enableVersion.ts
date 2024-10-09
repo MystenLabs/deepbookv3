@@ -9,7 +9,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 (async () => {
 	// Update constant for env
 	const env = 'mainnet';
-    const versionToEnable = 2;
+	const versionToEnable = 2;
 
 	// Initialize with balance managers if needed
 	const balanceManagers = {
