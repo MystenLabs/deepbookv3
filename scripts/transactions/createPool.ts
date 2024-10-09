@@ -10,7 +10,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 	// Update constant for env
 	const env = 'mainnet';
 
-	// Initialize with balance managers if created
+	// Initialize with balance managers if needed
 	const balanceManagers = {
 		MANAGER_1: {
 			address: '',
@@ -30,7 +30,6 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	const tx = new Transaction();
 
-	// mainnet
 	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'DEEP',
 		quoteCoinKey: 'SUI',
