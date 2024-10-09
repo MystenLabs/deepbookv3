@@ -2,22 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from '@mysten/sui/transactions';
 import { prepareMultisigTx } from '../utils/utils';
-import { adminCapOwner } from '../config/constants';
-
-import { config } from 'dotenv';
-
-import { DeepBookMarketMaker } from './deepbookMarketMaker.js';
-
-// Load private key from .env file
-config();
+import { adminCapOwner, adminCapID } from '../config/constants';
+import { DeepBookClient } from '@mysten/deepbook-v3';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 (async () => {
 	// Update constant for env
-	const env = 'testnet';
-	const privateKey = process.env.PRIVATE_KEY;
-	if (!privateKey) {
-		throw new Error('Private key not found');
-	}
+	const env = 'mainnet';
 
 	// Initialize with balance managers if created
 	const balanceManagers = {
@@ -26,114 +17,71 @@ config();
 			tradeCap: '',
 		},
 	};
-	const mmClient = new DeepBookMarketMaker(
-		privateKey,
-		env,
-		balanceManagers,
-		process.env.ADMIN_CAP,
-	);
+
+	const dbClient = new DeepBookClient({
+		address: '0x0',
+		env: env,
+		client: new SuiClient({
+			url: getFullnodeUrl(env),
+		}),
+		balanceManagers: balanceManagers,
+		adminCap: adminCapID[env],
+	});
 
 	const tx = new Transaction();
 
-	if (env == "testnet") {
-		// Creating Pools
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'DEEP',
-			quoteCoinKey: 'SUI',
-			tickSize: 0.001,
-			lotSize: 1,
-			minSize: 10,
-			whitelisted: true,
-			stablePool: false,
-		})(tx);
+	// mainnet
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'DEEP',
+		quoteCoinKey: 'SUI',
+		tickSize: 0.001,
+		lotSize: 1,
+		minSize: 10,
+		whitelisted: true,
+		stablePool: false,
+	})(tx);
 
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'SUI',
-			quoteCoinKey: 'DBUSDC',
-			tickSize: 0.001,
-			lotSize: 0.1,
-			minSize: 1,
-			whitelisted: false,
-			stablePool: false,
-		})(tx);
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'SUI',
+		quoteCoinKey: 'USDC',
+		tickSize: 0.001,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: false,
+		stablePool: false,
+	})(tx);
 
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'DEEP',
-			quoteCoinKey: 'DBUSDC',
-			tickSize: 0.001,
-			lotSize: 1,
-			minSize: 10,
-			whitelisted: true,
-			stablePool: false,
-		})(tx);
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'DEEP',
+		quoteCoinKey: 'USDC',
+		tickSize: 0.001,
+		lotSize: 1,
+		minSize: 10,
+		whitelisted: true,
+		stablePool: false,
+	})(tx);
 
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'DBUSDT',
-			quoteCoinKey: 'DBUSDC',
-			tickSize: 0.001,
-			lotSize: 0.1,
-			minSize: 1,
-			whitelisted: false,
-			stablePool: true,
-		})(tx);
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'WUSDT',
+		quoteCoinKey: 'USDC',
+		tickSize: 0.001,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: false,
+		stablePool: true,
+	})(tx);
 
-		let res = await mmClient.signAndExecute(tx);
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'WUSDC',
+		quoteCoinKey: 'USDC',
+		tickSize: 0.001,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: true,
+		stablePool: false,
+	})(tx);
 
-		console.dir(res, { depth: null });
-	} else if (env == "mainnet") {
-		// Creating Pools
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'DEEP',
-			quoteCoinKey: 'SUI',
-			tickSize: 0.001,
-			lotSize: 1,
-			minSize: 10,
-			whitelisted: true,
-			stablePool: false,
-		})(tx);
+	let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'SUI',
-			quoteCoinKey: 'USDC',
-			tickSize: 0.001,
-			lotSize: 0.1,
-			minSize: 1,
-			whitelisted: false,
-			stablePool: false,
-		})(tx);
-
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'DEEP',
-			quoteCoinKey: 'USDC',
-			tickSize: 0.001,
-			lotSize: 1,
-			minSize: 10,
-			whitelisted: true,
-			stablePool: false,
-		})(tx);
-
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'USDT',
-			quoteCoinKey: 'USDC',
-			tickSize: 0.001,
-			lotSize: 0.1,
-			minSize: 1,
-			whitelisted: false,
-			stablePool: true,
-		})(tx);
-
-		mmClient.deepBookAdmin.createPoolAdmin({
-			baseCoinKey: 'WUSDC',
-			quoteCoinKey: 'USDC',
-			tickSize: 0.001,
-			lotSize: 0.1,
-			minSize: 1,
-			whitelisted: false, // Optionally whitelist this pool
-			stablePool: true,
-		})(tx);
-
-		let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
-
-		console.dir(res, { depth: null });
-	}
+	console.dir(res, { depth: null });
 })();

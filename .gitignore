@@ -12,8 +12,8 @@ build
 # Node.js
 node_modules
 package-lock.json
-pnpm-lock.yaml
 
 # misc
 .env
 **/benchmark_data/
+tx-data.txt
