@@ -22,7 +22,7 @@
           description: 'object id to get gas from for multisig transaction'
           required: true
           type: string
-          default: '0xb76abcaefff13813adfa61768fac06a13a9bdbe7c86fb75118885364452286cb'
+          default: '0x963fd41bec98d100d3575c551445f5ea7f924b507d9fb6857dd3a0867dfaa80e'
 
   jobs:
     deepbook:
