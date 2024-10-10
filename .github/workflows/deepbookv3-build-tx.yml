@@ -10,6 +10,8 @@
           options:
             - Create Pool
             - Upgrade Protocol
+            - Enable Version
+            - Disable Version
         sui_tools_image:
           description: 'image reference of sui_tools'
           default: 'mysten/sui-tools:mainnet'
@@ -84,6 +86,26 @@
             ORIGIN: gh_action
           run: |
             cd scripts && pnpm install && pnpm ts-node transactions/createPool.ts
+
+        - name: Enable Version
+          if: ${{ inputs.transaction_type == 'Enable Version' }}
+          env:
+            NODE_ENV: production
+            GAS_OBJECT: ${{ inputs.gas_object_id }}
+            NETWORK: mainnet
+            ORIGIN: gh_action
+          run: |
+            cd scripts && pnpm install && pnpm ts-node transactions/enableVersion.ts
+
+        - name: Disable Version
+          if: ${{ inputs.transaction_type == 'Disable Version' }}
+          env:
+            NODE_ENV: production
+            GAS_OBJECT: ${{ inputs.gas_object_id }}
+            NETWORK: mainnet
+            ORIGIN: gh_action
+          run: |
+            cd scripts && pnpm install && pnpm ts-node transactions/disableVersion.ts
 
         - name: Show Transaction Data (To sign)
           run: |

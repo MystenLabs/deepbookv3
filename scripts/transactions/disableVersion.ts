@@ -9,6 +9,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 (async () => {
 	// Update constant for env
 	const env = 'mainnet';
+	const versionToDisable = 1;
 
 	// Initialize with balance managers if needed
 	const balanceManagers = {
@@ -30,45 +31,7 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	const tx = new Transaction();
 
-	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'SUI',
-		quoteCoinKey: 'USDC',
-		tickSize: 0.001,
-		lotSize: 0.1,
-		minSize: 1,
-		whitelisted: false,
-		stablePool: false,
-	})(tx);
-
-	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'WUSDT',
-		quoteCoinKey: 'USDC',
-		tickSize: 0.001,
-		lotSize: 0.1,
-		minSize: 1,
-		whitelisted: false,
-		stablePool: true,
-	})(tx);
-
-	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'BETH',
-		quoteCoinKey: 'USDC',
-		tickSize: 0.001,
-		lotSize: 0.0001,
-		minSize: 0.001,
-		whitelisted: false,
-		stablePool: false,
-	})(tx);
-
-	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'WUSDC',
-		quoteCoinKey: 'USDC',
-		tickSize: 0.001,
-		lotSize: 0.1,
-		minSize: 1,
-		whitelisted: true,
-		stablePool: false,
-	})(tx);
+	dbClient.deepBookAdmin.disableVersion(versionToDisable)(tx);
 
 	let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
