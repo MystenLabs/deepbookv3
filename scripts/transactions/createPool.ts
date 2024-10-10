@@ -32,32 +32,12 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	// mainnet
 	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'DEEP',
-		quoteCoinKey: 'SUI',
-		tickSize: 0.001,
-		lotSize: 1,
-		minSize: 10,
-		whitelisted: true,
-		stablePool: false,
-	})(tx);
-
-	dbClient.deepBookAdmin.createPoolAdmin({
 		baseCoinKey: 'SUI',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.001,
 		lotSize: 0.1,
 		minSize: 1,
 		whitelisted: false,
-		stablePool: false,
-	})(tx);
-
-	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'DEEP',
-		quoteCoinKey: 'USDC',
-		tickSize: 0.001,
-		lotSize: 1,
-		minSize: 10,
-		whitelisted: true,
 		stablePool: false,
 	})(tx);
 
@@ -69,6 +49,16 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 		minSize: 1,
 		whitelisted: false,
 		stablePool: true,
+	})(tx);
+
+	dbClient.deepBookAdmin.createPoolAdmin({
+		baseCoinKey: 'BETH',
+		quoteCoinKey: 'USDC',
+		tickSize: 0.001,
+		lotSize: 0.0001,
+		minSize: 0.001,
+		whitelisted: false,
+		stablePool: false,
 	})(tx);
 
 	dbClient.deepBookAdmin.createPoolAdmin({
