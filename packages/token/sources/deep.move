@@ -66,14 +66,14 @@ module token::deep {
 
     #[allow(lint(share_owned))]
     fun init(arg0: DEEP, arg1: &mut TxContext) {
-        let (v0, v1) = create_coin(arg0, 10000000000000000, arg1);
+        let (v0, v1) = create_coin(arg0, 10_000_000_000 * 100_000, arg1);
         sui::transfer::share_object<ProtectedTreasury>(v0);
         sui::transfer::public_transfer<sui::coin::Coin<DEEP>>(v1, sui::tx_context::sender(arg1));
     }
 
     #[test_only]
-    public fun share_treasury_for_testing(ctx: &mut sui::tx_context::TxContext) {
-        let (v0, v1) = create_coin(DEEP {}, 10000000000000000, ctx);
+    public fun share_treasury_for_testing(ctx: &mut TxContext) {
+        let (v0, v1) = create_coin(DEEP {}, 10_000_000_000 * 100_000, ctx);
         sui::transfer::share_object<ProtectedTreasury>(v0);
         v1.burn_for_testing();
     }
