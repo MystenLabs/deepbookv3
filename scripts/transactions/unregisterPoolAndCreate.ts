@@ -37,8 +37,8 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 		baseCoinKey: 'DEEP',
 		quoteCoinKey: 'SUI',
 		tickSize: 0.00001,
-		lotSize: 100,
-		minSize: 1000,
+		lotSize: 10,
+		minSize: 100,
 		whitelisted: true,
 		stablePool: false,
 	})(tx);
@@ -47,8 +47,8 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 		baseCoinKey: 'DEEP',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.00001,
-		lotSize: 100,
-		minSize: 1000,
+		lotSize: 10,
+		minSize: 100,
 		whitelisted: true,
 		stablePool: false,
 	})(tx);
