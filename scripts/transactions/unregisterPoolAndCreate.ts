@@ -30,27 +30,27 @@ import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
 
 	const tx = new Transaction();
 	// Unregister pools with old tick size
-	dbClient.deepBookAdmin.unregisterPoolAdmin('DEEP_SUI')(tx);
-	dbClient.deepBookAdmin.unregisterPoolAdmin('DEEP_USDC')(tx);
+	dbClient.deepBookAdmin.unregisterPoolAdmin('WUSDC_USDC')(tx);
+	dbClient.deepBookAdmin.unregisterPoolAdmin('WUSDT_USDC')(tx);
 
 	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'DEEP',
-		quoteCoinKey: 'SUI',
+		baseCoinKey: 'WUSDC',
+		quoteCoinKey: 'USDC',
 		tickSize: 0.00001,
-		lotSize: 10,
-		minSize: 100,
+		lotSize: 0.1,
+		minSize: 1,
 		whitelisted: true,
 		stablePool: false,
 	})(tx);
 
 	dbClient.deepBookAdmin.createPoolAdmin({
-		baseCoinKey: 'DEEP',
+		baseCoinKey: 'WUSDT',
 		quoteCoinKey: 'USDC',
 		tickSize: 0.00001,
-		lotSize: 10,
-		minSize: 100,
-		whitelisted: true,
-		stablePool: false,
+		lotSize: 0.1,
+		minSize: 1,
+		whitelisted: false,
+		stablePool: true,
 	})(tx);
 
 	let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);

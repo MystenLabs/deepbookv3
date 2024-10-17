@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@mysten/deepbook-v3':
-        specifier: ^0.9.0
-        version: 0.9.0(typescript@5.6.2)
+        specifier: ^0.11.0
+        version: 0.11.0(typescript@5.6.2)
       '@mysten/sui':
         specifier: ^1.12.0
         version: 1.12.0(typescript@5.6.2)
@@ -367,8 +367,8 @@ packages:
   '@mysten/bcs@1.1.0':
     resolution: {integrity: sha512-yy9/1Y4d0FlRywS1+9ze/T7refCbrvwFwJIOKs9M3QBK1njbcHZp+LkVeLqBvIJA5eZ3ZCzmhQ1Xq4Sed5mEBA==}
 
-  '@mysten/deepbook-v3@0.9.0':
-    resolution: {integrity: sha512-BgkiRTMVskyEpnyY27XnOx73ArPZ4M3wFxqWCg0n2Zj23JZNruCF9WxxLsCEhwFUdp/57DuS0RXv+aGknWB1Tg==}
+  '@mysten/deepbook-v3@0.11.0':
+    resolution: {integrity: sha512-AoLv3/OsyTWMQFaw2rEGBDqLjAHpXGRsBd2jeBcFyDCit9s2fS8P5kmZnXhwtCVIIf5j2qxmtoSxm2kXtkgVIQ==}
     engines: {node: '>=18'}
 
   '@mysten/sui@1.12.0':
@@ -414,8 +414,8 @@ packages:
     resolution: {integrity: sha512-ueEepnujpqee2o5aIYnvHU6C0A42MNdsIDeqy5BydrkuC5R1ZuUFnm27EeFJGoEHJQgn3uleRvmTXaJgfXbt4g==}
     engines: {node: '>=0.4.0'}
 
-  acorn@8.12.1:
-    resolution: {integrity: sha512-tcpGyI9zbizT9JbV6oYE477V6mTlXvvi0T0G3SNIYE2apm/G5huBa1+K89VGeovbg+jycCrfhl3ADxErOuO6Jg==}
+  acorn@8.13.0:
+    resolution: {integrity: sha512-8zSiw54Oxrdym50NlZ9sUusyO1Z1ZchgRLWRaK6c86XJFClyCgFKetdowBg5bKxyp/u+CDBJG4Mpp0m3HLZl9w==}
     engines: {node: '>=0.4.0'}
     hasBin: true
 
@@ -703,7 +703,7 @@ snapshots:
     dependencies:
       bs58: 6.0.0
 
-  '@mysten/deepbook-v3@0.9.0(typescript@5.6.2)':
+  '@mysten/deepbook-v3@0.11.0(typescript@5.6.2)':
     dependencies:
       '@mysten/sui': 1.12.0(typescript@5.6.2)
     transitivePeerDependencies:
@@ -765,9 +765,9 @@ snapshots:
 
   acorn-walk@8.3.4:
     dependencies:
-      acorn: 8.12.1
+      acorn: 8.13.0
 
-  acorn@8.12.1: {}
+  acorn@8.13.0: {}
 
   arg@4.1.3: {}
 
@@ -871,7 +871,7 @@ snapshots:
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
       '@types/node': 22.7.4
-      acorn: 8.12.1
+      acorn: 8.13.0
       acorn-walk: 8.3.4
       arg: 4.1.3
       create-require: 1.1.1
