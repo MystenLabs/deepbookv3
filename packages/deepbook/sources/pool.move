@@ -671,6 +671,34 @@ public fun update_allowed_versions<BaseAsset, QuoteAsset>(
     inner.allowed_versions = allowed_versions;
 }
 
+/// Adjust the tick size of the pool. Only admin can adjust the tick size.
+public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    new_tick_size: u64,
+    _cap: &DeepbookAdminCap,
+) {
+    let self = self.load_inner_mut();
+    assert!(new_tick_size > 0, EInvalidTickSize);
+    self.book.set_tick_size(new_tick_size);
+}
+
+/// Adjust and lot size and min size of the pool. New lot size must be smaller than current lot size. Only admin can adjust the min size and lot size.
+public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    new_lot_size: u64,
+    new_min_size: u64,
+    _cap: &DeepbookAdminCap,
+) {
+    let self = self.load_inner_mut();
+    let lot_size = self.book.lot_size();
+    assert!(lot_size % new_lot_size == 0, EInvalidLotSize);
+    assert!(new_lot_size > 0, EInvalidLotSize);
+    assert!(new_min_size > 0, EInvalidMinSize);
+    assert!(new_min_size % new_lot_size == 0, EInvalidMinSize);
+    self.book.set_lot_size(new_lot_size);
+    self.book.set_min_size(new_min_size);
+}
+
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
 public fun whitelisted<BaseAsset, QuoteAsset>(
