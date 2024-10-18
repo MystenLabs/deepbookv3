@@ -104,6 +104,16 @@ fun test_place_order_bid() {
 }
 
 #[test]
+fun test_update_pool_book_params_ok() {
+    test_update_pool_book_params(true);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidLotSize)]
+fun test_update_pool_book_params_e() {
+    test_update_pool_book_params(false);
+}
+
+#[test]
 fun test_place_order_ask() {
     place_order_ok(false);
 }
@@ -4895,4 +4905,128 @@ fun test_cancel_orders(is_bid: bool) {
     );
 
     end(test);
+}
+
+fun test_update_pool_book_params(
+    is_ok: bool,
+){
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    let alice_client_order_id = 1;
+    let alice_quantity_1 = 10000;
+    let alice_quantity_2 = 10500;
+    let alice_price = 2 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price,
+        alice_quantity_1,
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    if (is_ok) {
+        adjust_min_lot_size_admin<SUI, USDC>(
+            OWNER,
+            pool_id,
+            100,
+            500,
+            &mut test,
+        );
+    };
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price,
+        alice_quantity_2,
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    adjust_tick_size_admin<SUI, USDC>(
+        OWNER,
+        pool_id,
+        100,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price + 100,
+        alice_quantity_2,
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    end(test);
+}
+
+fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
+    sender: address,
+    pool_id: ID,
+    new_lot_size: u64,
+    new_min_size: u64,
+    test: &mut Scenario,
+) {
+    test.next_tx(sender);
+    let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    pool::adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
+        &mut pool,
+        new_lot_size,
+        new_min_size,
+        &admin_cap,
+    );
+    test_utils::destroy(admin_cap);
+    return_shared(pool);
+}
+
+fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
+    sender: address,
+    pool_id: ID,
+    new_tick_size: u64,
+    test: &mut Scenario,
+) {
+    test.next_tx(sender);
+    let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    pool::adjust_tick_size_admin<BaseAsset, QuoteAsset>(
+        &mut pool,
+        new_tick_size,
+        &admin_cap,
+    );
+    test_utils::destroy(admin_cap);
+    return_shared(pool);
 }
