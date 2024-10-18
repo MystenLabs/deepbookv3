@@ -105,12 +105,17 @@ fun test_place_order_bid() {
 
 #[test]
 fun test_update_pool_book_params_ok() {
-    test_update_pool_book_params(true);
+    test_update_pool_book_params(0);
 }
 
 #[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidLotSize)]
-fun test_update_pool_book_params_e() {
-    test_update_pool_book_params(false);
+fun test_update_pool_book_params_trade_e() {
+    test_update_pool_book_params(1);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidLotSize)]
+fun test_update_pool_book_params_update_e() {
+    test_update_pool_book_params(2);
 }
 
 #[test]
@@ -4908,7 +4913,7 @@ fun test_cancel_orders(is_bid: bool) {
 }
 
 fun test_update_pool_book_params(
-    is_ok: bool,
+    error: u8,
 ){
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -4946,12 +4951,23 @@ fun test_update_pool_book_params(
         expire_timestamp,
         &mut test,
     );
-    if (is_ok) {
+
+    if (error == 0) {
         adjust_min_lot_size_admin<SUI, USDC>(
             OWNER,
             pool_id,
             100,
             500,
+            &mut test,
+        );
+    };
+
+    if (error == 2){
+        adjust_min_lot_size_admin<SUI, USDC>(
+            OWNER,
+            pool_id,
+            600,
+            6000,
             &mut test,
         );
     };
