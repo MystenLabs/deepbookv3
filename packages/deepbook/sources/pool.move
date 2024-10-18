@@ -77,6 +77,16 @@ public struct PoolCreated<
     treasury_address: address,
 }
 
+public struct BookParamsUpdated<
+    phantom BaseAsset,
+    phantom QuoteAsset,
+> has copy, store, drop {
+    pool_id: ID,
+    tick_size: u64,
+    lot_size: u64,
+    min_size: u64,
+}
+
 // === Public-Mutative Functions * EXCHANGE * ===
 /// Place a limit order. Quantity is in base asset terms.
 /// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
@@ -680,6 +690,13 @@ public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     let self = self.load_inner_mut();
     assert!(new_tick_size > 0, EInvalidTickSize);
     self.book.set_tick_size(new_tick_size);
+
+    event::emit(BookParamsUpdated<BaseAsset, QuoteAsset> {
+        pool_id: self.pool_id,
+        tick_size: self.book.tick_size(),
+        lot_size: self.book.lot_size(),
+        min_size: self.book.min_size(),
+    });
 }
 
 /// Adjust and lot size and min size of the pool. New lot size must be smaller than current lot size. Only admin can adjust the min size and lot size.
@@ -697,6 +714,13 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     assert!(new_min_size % new_lot_size == 0, EInvalidMinSize);
     self.book.set_lot_size(new_lot_size);
     self.book.set_min_size(new_min_size);
+
+    event::emit(BookParamsUpdated<BaseAsset, QuoteAsset> {
+        pool_id: self.pool_id,
+        tick_size: self.book.tick_size(),
+        lot_size: self.book.lot_size(),
+        min_size: self.book.min_size(),
+    });
 }
 
 // === Public-View Functions ===
