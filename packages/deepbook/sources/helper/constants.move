@@ -1,3 +1,6 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::constants;
 
 const CURRENT_VERSION: u64 = 1; // Update version during upgrades
