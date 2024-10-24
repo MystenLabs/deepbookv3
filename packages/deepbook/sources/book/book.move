@@ -343,6 +343,18 @@ public(package) fun get_order(self: &Book, order_id: u128): Order {
     order.copy_order()
 }
 
+public(package) fun set_tick_size(self: &mut Book, new_tick_size: u64) {
+    self.tick_size = new_tick_size;
+}
+
+public(package) fun set_lot_size(self: &mut Book, new_lot_size: u64) {
+    self.lot_size = new_lot_size;
+}
+
+public(package) fun set_min_size(self: &mut Book, new_min_size: u64) {
+    self.min_size = new_min_size;
+}
+
 // === Private Functions ===
 // Access side of book where order_id belongs
 fun book_side_mut(self: &mut Book, order_id: u128): &mut BigVector<Order> {
