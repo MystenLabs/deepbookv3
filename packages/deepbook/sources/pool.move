@@ -85,11 +85,13 @@ public struct BookParamsUpdated<
     tick_size: u64,
     lot_size: u64,
     min_size: u64,
+    timestamp: u64,
 }
 
 // === Public-Mutative Functions * EXCHANGE * ===
 /// Place a limit order. Quantity is in base asset terms.
-/// For current version pay_with_deep must be true, so the fee will be paid with DEEP tokens.
+/// For current version pay_with_deep must be true, so the fee will be paid with
+/// DEEP tokens.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
@@ -122,8 +124,10 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Place a market order. Quantity is in base asset terms. Calls place_limit_order with
-/// a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not filled is cancelled.
+/// Place a market order. Quantity is in base asset terms. Calls
+/// place_limit_order with
+/// a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not
+/// filled is cancelled.
 public fun place_market_order<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
@@ -298,7 +302,8 @@ public fun modify_order<BaseAsset, QuoteAsset>(
 
 /// Cancel an order. The order must be owned by the balance_manager.
 /// The order is removed from the book and the balance_manager's open orders.
-/// The balance_manager's balance is updated with the order's remaining quantity.
+/// The balance_manager's balance is updated with the order's remaining
+/// quantity.
 /// Order canceled event is emitted.
 public fun cancel_order<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -328,7 +333,8 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     );
 }
 
-/// Cancel multiple orders within a vector. The orders must be owned by the balance_manager.
+/// Cancel multiple orders within a vector. The orders must be owned by the
+/// balance_manager.
 /// The orders are removed from the book and the balance_manager's open orders.
 /// Order canceled events are emitted.
 /// If any order fails to cancel, no orders will be cancelled.
@@ -387,7 +393,8 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
 }
 
 // === Public-Mutative Functions * GOVERNANCE * ===
-/// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP tokens.
+/// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP
+/// tokens.
 /// The balance_manager's data is updated with the staked amount.
 public fun stake<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -406,7 +413,8 @@ public fun stake<BaseAsset, QuoteAsset>(
         .settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
-/// Unstake DEEP tokens from the pool. The balance_manager must have enough staked DEEP tokens.
+/// Unstake DEEP tokens from the pool. The balance_manager must have enough
+/// staked DEEP tokens.
 /// The balance_manager's data is updated with the unstaked amount.
 /// Balance is transferred to the balance_manager immediately.
 public fun unstake<BaseAsset, QuoteAsset>(
@@ -427,8 +435,10 @@ public fun unstake<BaseAsset, QuoteAsset>(
 /// Submit a proposal to change the taker fee, maker fee, and stake required.
 /// The balance_manager must have enough staked DEEP tokens to participate.
 /// Each balance_manager can only submit one proposal per epoch.
-/// If the maximum proposal is reached, the proposal with the lowest vote is removed.
-/// If the balance_manager has less voting power than the lowest voted proposal, the proposal is not added.
+/// If the maximum proposal is reached, the proposal with the lowest vote is
+/// removed.
+/// If the balance_manager has less voting power than the lowest voted proposal,
+/// the proposal is not added.
 public fun submit_proposal<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
@@ -452,7 +462,8 @@ public fun submit_proposal<BaseAsset, QuoteAsset>(
         );
 }
 
-/// Vote on a proposal. The balance_manager must have enough staked DEEP tokens to participate.
+/// Vote on a proposal. The balance_manager must have enough staked DEEP tokens
+/// to participate.
 /// Full voting power of the balance_manager is used.
 /// Voting for a new proposal will remove the vote from the previous proposal.
 public fun vote<BaseAsset, QuoteAsset>(
@@ -469,7 +480,8 @@ public fun vote<BaseAsset, QuoteAsset>(
         .process_vote(self.pool_id, balance_manager.id(), proposal_id, ctx);
 }
 
-/// Claim the rewards for the balance_manager. The balance_manager must have rewards to claim.
+/// Claim the rewards for the balance_manager. The balance_manager must have
+/// rewards to claim.
 /// The balance_manager's data is updated with the claimed rewards.
 public fun claim_rebates<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -581,16 +593,20 @@ public fun add_deep_price_point<
         EIneligibleTargetPool,
     );
 
-    // For DEEP/USDC pool, reference_deep_is_base is true, DEEP per USDC is reference_pool_price
-    // For USDC/DEEP pool, reference_deep_is_base is false, USDC per DEEP is reference_pool_price
+    // For DEEP/USDC pool, reference_deep_is_base is true, DEEP per USDC is
+    // reference_pool_price
+    // For USDC/DEEP pool, reference_deep_is_base is false, USDC per DEEP is
+    // reference_pool_price
     let deep_per_reference_other_price = if (reference_deep_is_base) {
         math::div(1_000_000_000, reference_pool_price)
     } else {
         reference_pool_price
     };
 
-    // For USDC/SUI pool, reference_other_is_target_base is true, add price point to deep per base
-    // For SUI/USDC pool, reference_other_is_target_base is false, add price point to deep per quote
+    // For USDC/SUI pool, reference_other_is_target_base is true, add price
+    // point to deep per base
+    // For SUI/USDC pool, reference_other_is_target_base is false, add price
+    // point to deep per quote
     target_pool
         .deep_price
         .add_price_point(
@@ -628,7 +644,8 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 
 // === Public-Mutative Functions * ADMIN * ===
 /// Create a new pool. The pool is registered in the registry.
-/// Checks are performed to ensure the tick size, lot size, and min size are valid.
+/// Checks are performed to ensure the tick size, lot size, and min size are
+/// valid.
 /// The creation fee is transferred to the treasury address.
 /// Returns the id of the pool created
 public fun create_pool_admin<BaseAsset, QuoteAsset>(
@@ -686,6 +703,7 @@ public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     new_tick_size: u64,
     _cap: &DeepbookAdminCap,
+    clock: &Clock,
 ) {
     let self = self.load_inner_mut();
     assert!(new_tick_size > 0, EInvalidTickSize);
@@ -696,15 +714,18 @@ public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
         tick_size: self.book.tick_size(),
         lot_size: self.book.lot_size(),
         min_size: self.book.min_size(),
+        timestamp: clock.timestamp_ms(),
     });
 }
 
-/// Adjust and lot size and min size of the pool. New lot size must be smaller than current lot size. Only admin can adjust the min size and lot size.
+/// Adjust and lot size and min size of the pool. New lot size must be smaller
+/// than current lot size. Only admin can adjust the min size and lot size.
 public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     new_lot_size: u64,
     new_min_size: u64,
     _cap: &DeepbookAdminCap,
+    clock: &Clock,
 ) {
     let self = self.load_inner_mut();
     let lot_size = self.book.lot_size();
@@ -720,6 +741,7 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
         tick_size: self.book.tick_size(),
         lot_size: self.book.lot_size(),
         min_size: self.book.min_size(),
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -804,7 +826,8 @@ public fun account_open_orders<BaseAsset, QuoteAsset>(
 }
 
 /// Returns the (price_vec, quantity_vec) for the level2 order book.
-/// The price_low and price_high are inclusive, all orders within the range are returned.
+/// The price_low and price_high are inclusive, all orders within the range are
+/// returned.
 /// is_bid is true for bids and false for asks.
 public fun get_level2_range<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
@@ -826,9 +849,12 @@ public fun get_level2_range<BaseAsset, QuoteAsset>(
 }
 
 /// Returns the (price_vec, quantity_vec) for the level2 order book.
-/// Ticks are the maximum number of ticks to return starting from best bid and best ask.
-/// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4 vectors.
-/// The price vectors are sorted in descending order for bids and ascending order for asks.
+/// Ticks are the maximum number of ticks to return starting from best bid and
+/// best ask.
+/// (bid_price, bid_quantity, ask_price, ask_quantity) are returned as 4
+/// vectors.
+/// The price vectors are sorted in descending order for bids and ascending
+/// order for asks.
 public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     ticks: u64,
@@ -917,7 +943,8 @@ public fun get_order_deep_price<BaseAsset, QuoteAsset>(
     self.deep_price.get_order_deep_price(whitelist)
 }
 
-/// Returns the deep required for an order if it's taker or maker given quantity and price
+/// Returns the deep required for an order if it's taker or maker given quantity
+/// and price
 /// Does not account for discounted taker fees
 /// Returns (deep_required_taker, deep_required_maker)
 public fun get_order_deep_required<BaseAsset, QuoteAsset>(
@@ -957,7 +984,10 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
         deep_quantity = deep_quantity + deep;
     });
 
-    let settled_balances = self.state.account(balance_manager.id()).settled_balances();
+    let settled_balances = self
+        .state
+        .account(balance_manager.id())
+        .settled_balances();
     base_quantity = base_quantity + settled_balances.base();
     quote_quantity = quote_quantity + settled_balances.quote();
     deep_quantity = deep_quantity + settled_balances.deep();
@@ -1111,7 +1141,8 @@ public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
 }
 
 // === Private Functions ===
-/// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero fees.
+/// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero
+/// fees.
 fun set_whitelist<BaseAsset, QuoteAsset>(
     self: &mut PoolInner<BaseAsset, QuoteAsset>,
     ctx: &TxContext,

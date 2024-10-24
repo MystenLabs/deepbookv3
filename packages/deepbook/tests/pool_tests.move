@@ -108,7 +108,12 @@ fun test_update_pool_book_params_ok() {
     test_update_pool_book_params(0);
 }
 
-#[test, expected_failure(abort_code = ::deepbook::order_info::EOrderInvalidLotSize)]
+#[
+    test,
+    expected_failure(
+        abort_code = ::deepbook::order_info::EOrderInvalidLotSize,
+    ),
+]
 fun test_update_pool_book_params_trade_e() {
     test_update_pool_book_params(1);
 }
@@ -2518,7 +2523,8 @@ fun test_mid_price() {
 }
 
 /// Places 3 orders at price 1, 2, 3 with quantity 1
-/// Market order of quantity 1.5 should fill one order completely, one partially, and one not at all
+/// Market order of quantity 1.5 should fill one order completely, one
+/// partially, and one not at all
 /// Order 3 is fully filled for bid orders then ask market order
 /// Order 1 is fully filled for ask orders then bid market order
 /// Order 2 is partially filled for both
@@ -2657,7 +2663,8 @@ fun test_market_order(is_bid: bool) {
 
 /// Test crossing num_orders orders with a single order
 /// Should be filled with the num_orders orders, with correct quantities
-/// Quantity of 1 for the first num_orders orders, quantity of num_orders for the last order
+/// Quantity of 1 for the first num_orders orders, quantity of num_orders for
+/// the last order
 fun test_crossing_multiple(is_bid: bool, num_orders: u64) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -2737,8 +2744,10 @@ fun test_crossing_multiple(is_bid: bool, num_orders: u64) {
     end(test);
 }
 
-/// Test fill or kill order that crosses with an order that's smaller in quantity
-/// Should error with EFOKOrderCannotBeFullyFilled if order cannot be fully filled
+/// Test fill or kill order that crosses with an order that's smaller in
+/// quantity
+/// Should error with EFOKOrderCannotBeFullyFilled if order cannot be fully
+/// filled
 /// Should fill correctly if order can be fully filled
 /// First order has quantity 1, second order has quantity 2 for incorrect fill
 /// First two orders have quantity 1, third order is quantity 2 for correct fill
@@ -3289,7 +3298,8 @@ fun test_swap_exact_amount(is_bid: bool) {
 }
 
 /// Alice places a bid/ask order
-/// Alice then places an ask/bid order that crosses with that order with cancel_taker option
+/// Alice then places an ask/bid order that crosses with that order with
+/// cancel_taker option
 /// Order should be rejected.
 fun test_self_matching_cancel_taker(is_bid: bool) {
     let mut test = begin(OWNER);
@@ -3367,7 +3377,8 @@ fun test_self_matching_cancel_taker(is_bid: bool) {
 }
 
 /// Alice places a bid/ask order
-/// Alice then places an ask/bid order that crosses with that order with cancel_maker option
+/// Alice then places an ask/bid order that crosses with that order with
+/// cancel_maker option
 /// Maker order should be removed, with the new order placed successfully.
 fun test_self_matching_cancel_maker(is_bid: bool) {
     let mut test = begin(OWNER);
@@ -3500,9 +3511,7 @@ fun place_with_price_quantity(price: u64, quantity: u64) {
     end(test);
 }
 
-fun partially_filled_order_taken(
-    is_bid: bool,
-) {
+fun partially_filled_order_taken(is_bid: bool) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
     let balance_manager_id_alice = create_acct_and_share_with_funds(
@@ -3550,7 +3559,8 @@ fun partially_filled_order_taken(
         &mut test,
     );
 
-    // Alice places a crossing order of quantity 10, 2 is filled and 8 is placed on book
+    // Alice places a crossing order of quantity 10, 2 is filled and 8 is placed
+    // on book
     let alice_order_info_2 = place_limit_order<SUI, USDC>(
         ALICE,
         pool_id,
@@ -3573,7 +3583,10 @@ fun partially_filled_order_taken(
         alice_quantity_2,
         alice_quantity_1,
         math::mul(alice_quantity_1, alice_price_1),
-        math::mul(alice_quantity_1, math::mul(constants::taker_fee(), constants::deep_multiplier())),
+        math::mul(
+            alice_quantity_1,
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+        ),
         pay_with_deep,
         constants::partially_filled(),
         expire_timestamp,
@@ -3583,7 +3596,8 @@ fun partially_filled_order_taken(
     let bob_price = 3 * constants::float_scaling();
     let bob_quantity = 10 * constants::float_scaling();
 
-    // Bob places another crossing order of quantity 10, 8 is filled and 2 is placed on book
+    // Bob places another crossing order of quantity 10, 8 is filled and 2 is
+    // placed on book
     let bob_order_info = place_limit_order<SUI, USDC>(
         BOB,
         pool_id,
@@ -3607,7 +3621,10 @@ fun partially_filled_order_taken(
         bob_quantity,
         8 * constants::float_scaling(),
         8 * alice_price_2,
-        math::mul(8 * constants::float_scaling(), math::mul(constants::taker_fee(), constants::deep_multiplier())),
+        math::mul(
+            8 * constants::float_scaling(),
+            math::mul(constants::taker_fee(), constants::deep_multiplier()),
+        ),
         pay_with_deep,
         constants::partially_filled(),
         expire_timestamp,
@@ -4912,9 +4929,7 @@ fun test_cancel_orders(is_bid: bool) {
     end(test);
 }
 
-fun test_update_pool_book_params(
-    error: u8,
-){
+fun test_update_pool_book_params(error: u8) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
     let balance_manager_id_alice = create_acct_and_share_with_funds(
@@ -4962,7 +4977,7 @@ fun test_update_pool_book_params(
         );
     };
 
-    if (error == 2){
+    if (error == 2) {
         adjust_min_lot_size_admin<SUI, USDC>(
             OWNER,
             pool_id,
@@ -5019,14 +5034,17 @@ fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     test.next_tx(sender);
     let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
     let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let clock = test.take_shared<Clock>();
     pool::adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
         &mut pool,
         new_lot_size,
         new_min_size,
         &admin_cap,
+        &clock,
     );
     test_utils::destroy(admin_cap);
     return_shared(pool);
+    return_shared(clock);
 }
 
 fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
@@ -5038,11 +5056,14 @@ fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     test.next_tx(sender);
     let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
     let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let clock = test.take_shared<Clock>();
     pool::adjust_tick_size_admin<BaseAsset, QuoteAsset>(
         &mut pool,
         new_tick_size,
         &admin_cap,
+        &clock,
     );
     test_utils::destroy(admin_cap);
     return_shared(pool);
+    return_shared(clock);
 }
