@@ -123,6 +123,11 @@ fun test_update_pool_book_params_update_e() {
     test_update_pool_book_params(2);
 }
 
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidTickSize)]
+fun test_update_pool_book_params_tick_e() {
+    test_update_pool_book_params(3);
+}
+
 #[test]
 fun test_place_order_ask() {
     place_order_ok(false);
@@ -4966,6 +4971,15 @@ fun test_update_pool_book_params(error: u8) {
         expire_timestamp,
         &mut test,
     );
+
+    if (error == 3) {
+        adjust_tick_size_admin<SUI, USDC>(
+            OWNER,
+            pool_id,
+            50,
+            &mut test,
+        );
+    };
 
     if (error == 0) {
         adjust_min_lot_size_admin<SUI, USDC>(

@@ -707,6 +707,7 @@ public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
 ) {
     let self = self.load_inner_mut();
     assert!(new_tick_size > 0, EInvalidTickSize);
+    assert!(math::is_power_of_ten(new_tick_size), EInvalidTickSize);
     self.book.set_tick_size(new_tick_size);
 
     event::emit(BookParamsUpdated<BaseAsset, QuoteAsset> {
@@ -1048,6 +1049,7 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
         EInvalidFee,
     );
     assert!(tick_size > 0, EInvalidTickSize);
+    assert!(math::is_power_of_ten(tick_size), EInvalidTickSize);
     assert!(lot_size > 0, EInvalidLotSize);
     assert!(min_size > 0, EInvalidMinSize);
     assert!(min_size % lot_size == 0, EInvalidMinSize);
