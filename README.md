@@ -1,6 +1,11 @@
 ![image info](./DeepBook_Logo_White.png)
 # DeepBook V3
 DeepBook V3 is a next generation decentralized central limit order book (CLOB) built on Sui. It leverages Sui's parallel execution and low transaction fees to bring a highly performant, low latency exchange on chain. DBv3 comes with brand new features including flashloans, governance, improved account abstraction, and enhancements to the existing matching engine. With the addition of the DEEP token, staked takers can trade with fees as low as 0.25 bps / 2.5 bps on stable and volatile pairs, while allowing staked makers to earn rebates. Checkout the full whitepaper on [deepbook.tech](https://deepbook.tech). Detailed documentation, SDK, and analytics coming soon.
+## DeepBook V3 Information
+* [Package and Pools](https://docs.google.com/document/d/1uK4MNqYa0LdhVqBD4KqOcWG1N1nNNe3JwbeUZc1kH1I)
+* [Contract Documentation](https://docs.sui.io/standards/deepbookv3)
+* [SDK Documentation](https://docs.sui.io/standards/deepbookv3-sdk)
+* [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
 ## DeepBook Architecture
 ![image info](./DBv3Architecture.png)
 ## Balance Manager
@@ -20,8 +25,3 @@ In the initial release, all pool creation will be permissioned and DEEP tokens w
 DEEP/SUI and DEEP/USDC pools will be launched and whitelisted. Whitelisted pools have 0% trading fees. This allows users to easily obtain DEEP tokens to pay for trading fees in non DEEP pools. 
 ### DEEP Staking & Governance
 DEEP tokens can be staked in individual pools, granting the staker access to governance. If the amount of DEEP tokens staked is greater than the pool's stake requried, then that user will be able to reap additional benefits from the pool. These benefits include halved trading fees after reaching a trade volume requirement, as well as maker rebates. During every epoch, staked users can submit proposals to change three parameters: taker fees, maker fees, and stake required. If the proposal passes quorum, 1/2 of all current stake, then its effects will be live from the next epoch and onwards.
-## More about DeepBook
-Use the following links ot learn more about DeepBook:
-* [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
-* [Detailed Documentation](https://docs.sui.io/standards/deepbookv3)
-* [DeepBook V3 SDK](https://docs.sui.io/standards/deepbookv3-sdk)
