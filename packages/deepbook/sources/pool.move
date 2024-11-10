@@ -985,13 +985,13 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
         deep_quantity = deep_quantity + deep;
     });
 
-    let settled_balances = self
-        .state
-        .account(balance_manager.id())
-        .settled_balances();
-    base_quantity = base_quantity + settled_balances.base();
-    quote_quantity = quote_quantity + settled_balances.quote();
-    deep_quantity = deep_quantity + settled_balances.deep();
+    if (self.state.account_exists(balance_manager.id())) {
+        let settled_balances = self.state.account(balance_manager.id()).settled_balances();
+        base_quantity = base_quantity + settled_balances.base();
+        quote_quantity = quote_quantity + settled_balances.quote();
+        deep_quantity = deep_quantity + settled_balances.deep();
+    };
+    
 
     (base_quantity, quote_quantity, deep_quantity)
 }
