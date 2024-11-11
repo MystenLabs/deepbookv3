@@ -973,6 +973,10 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
 ): (u64, u64, u64) {
     let account_orders = self.get_account_order_details(balance_manager);
     let self = self.load_inner();
+    if (!self.state.account_exists(balance_manager.id())) {
+        return (0, 0, 0)
+    };
+
     let mut base_quantity = 0;
     let mut quote_quantity = 0;
     let mut deep_quantity = 0;
@@ -985,13 +989,13 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
         deep_quantity = deep_quantity + deep;
     });
 
-    if (self.state.account_exists(balance_manager.id())) {
-        let settled_balances = self.state.account(balance_manager.id()).settled_balances();
-        base_quantity = base_quantity + settled_balances.base();
-        quote_quantity = quote_quantity + settled_balances.quote();
-        deep_quantity = deep_quantity + settled_balances.deep();
-    };
-    
+    let settled_balances = self
+        .state
+        .account(balance_manager.id())
+        .settled_balances();
+    base_quantity = base_quantity + settled_balances.base();
+    quote_quantity = quote_quantity + settled_balances.quote();
+    deep_quantity = deep_quantity + settled_balances.deep();
 
     (base_quantity, quote_quantity, deep_quantity)
 }
