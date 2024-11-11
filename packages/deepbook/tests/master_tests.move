@@ -254,6 +254,8 @@ module deepbook::master_tests {
         // Epoch 0
         assert!(test.ctx().epoch() == 0, 0);
 
+        check_locked_balance<SUI, USDC>(ALICE, pool1_id, alice_balance_manager_id, &alice_locked_balance, &mut test);
+
         // Alice places an order in pool 1
         pool_tests::place_limit_order<SUI, USDC>(
             ALICE,
