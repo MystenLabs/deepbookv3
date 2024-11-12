@@ -453,6 +453,13 @@ module deepbook::master_tests {
             );
         };
 
+        withdraw_settled_amounts<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+
         // Alice places bid order in pool 1
         let order_info_1 = pool_tests::place_limit_order<SUI, USDC>(
             ALICE,

@@ -145,9 +145,14 @@ public(package) fun withdraw_settled_amounts(
     self: &mut State,
     balance_manager_id: ID,
 ): (Balances, Balances) {
-    let account = &mut self.accounts[balance_manager_id];
+    if (self.accounts.contains(balance_manager_id)) {
+        let account = &mut self.accounts[balance_manager_id];
 
-    account.settle()
+        account.settle()    
+    } else {
+        (balances::empty(), balances::empty())
+    }
+    
 }
 
 /// Update account settled balances and volumes.
