@@ -40,16 +40,6 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     stablePool: false,
   })(tx);
 
-  dbClient.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "TYPUS",
-    quoteCoinKey: "USDC",
-    tickSize: 0.00001,
-    lotSize: 0.1,
-    minSize: 1,
-    whitelisted: false,
-    stablePool: false,
-  })(tx);
-
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
   console.dir(res, { depth: null });
