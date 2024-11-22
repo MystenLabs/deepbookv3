@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@mysten/deepbook-v3':
-        specifier: ^0.12.10
-        version: 0.12.10(typescript@5.6.2)
+        specifier: ^0.12.13
+        version: 0.12.13(typescript@5.6.2)
       '@mysten/sui':
-        specifier: ^1.14.4
-        version: 1.14.4(typescript@5.6.2)
+        specifier: ^1.15.0
+        version: 1.15.0(typescript@5.6.2)
       dotenv:
         specifier: ^16.4.5
         version: 16.4.5
@@ -367,12 +367,12 @@ packages:
   '@mysten/bcs@1.1.0':
     resolution: {integrity: sha512-yy9/1Y4d0FlRywS1+9ze/T7refCbrvwFwJIOKs9M3QBK1njbcHZp+LkVeLqBvIJA5eZ3ZCzmhQ1Xq4Sed5mEBA==}
 
-  '@mysten/deepbook-v3@0.12.10':
-    resolution: {integrity: sha512-ROeEnn9VO+yyZ0z4ITqT/vF/l5VuZZw0LP2Yy83IXJnEvBzUT86TZ62pseFpGn41pJEMnn8H94xl8mmdFYFInA==}
+  '@mysten/deepbook-v3@0.12.13':
+    resolution: {integrity: sha512-e64hDAF3DQVLb0tuEdyYov8prxN6DkRESGJrLuVplfNcCH6cZMn8p3sovZwSmWCcOoT1YEyZUucKTWOnEGEXJw==}
     engines: {node: '>=18'}
 
-  '@mysten/sui@1.14.4':
-    resolution: {integrity: sha512-9d79tu7PUfRXc8TNYIHqxfH+iJN29j0I8Fc913w6wywUSOaCnUDMtjKcPr1o/8yILjaB86vswsK3mqTXX0QFrA==}
+  '@mysten/sui@1.15.0':
+    resolution: {integrity: sha512-vuyKtb3dY3X6HYzSz/DjoNMQs0zqIWscR2W0lbcYyPOFQZ4lHpzLZszgQor+OGb6uMr7M4COIWKVaIJ82Bbt8w==}
     engines: {node: '>=18'}
 
   '@noble/curves@1.6.0':
@@ -703,15 +703,15 @@ snapshots:
     dependencies:
       bs58: 6.0.0
 
-  '@mysten/deepbook-v3@0.12.10(typescript@5.6.2)':
+  '@mysten/deepbook-v3@0.12.13(typescript@5.6.2)':
     dependencies:
-      '@mysten/sui': 1.14.4(typescript@5.6.2)
+      '@mysten/sui': 1.15.0(typescript@5.6.2)
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'
       - typescript
 
-  '@mysten/sui@1.14.4(typescript@5.6.2)':
+  '@mysten/sui@1.15.0(typescript@5.6.2)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.9.0)
       '@mysten/bcs': 1.1.0
