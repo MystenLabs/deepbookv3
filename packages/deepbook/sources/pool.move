@@ -1037,6 +1037,13 @@ public fun account<BaseAsset, QuoteAsset>(
     *self.state.account(balance_manager.id())
 }
 
+/// Returns the quorum needed to pass proposal in the current epoch
+public fun quorum<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): u64 {
+    self.load_inner().state.governance().quorum()
+}
+
 // === Public-Package Functions ===
 public(package) fun create_pool<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
