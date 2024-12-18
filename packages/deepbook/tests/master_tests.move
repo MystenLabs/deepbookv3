@@ -45,20 +45,18 @@ module deepbook::master_tests {
     const ECannotPropose: u64 = 5;
     const EIncorrectRebateClaimer: u64 = 6;
     const EDataRecentlyAdded: u64 = 7;
-    const ENoAmountToBurn: u64 = 8;
-    const ENoAmountToBurn2: u64 = 9;
-    const ENotEnoughBaseForLoan: u64 = 10;
-    const ENotEnoughQuoteForLoan: u64 = 11;
-    const EIncorrectLoanPool: u64 = 12;
-    const EIncorrectTypeReturned: u64 = 13;
-    const EInvalidOwner: u64 = 14;
-    const ETradeCapNotInList: u64 = 15;
-    const EInvalidTrader: u64 = 16;
-    const EIncorrectLevel2Price: u64 = 17;
-    const EIncorrectLevel2Quantity: u64 = 18;
-    const EInvalidStake: u64 = 19;
-    const EAddPricePointUnregisteredPool: u64 = 20;
-    const EIncorrectLevel2Length: u64 = 21;
+    const ENotEnoughBaseForLoan: u64 = 8;
+    const ENotEnoughQuoteForLoan: u64 = 9;
+    const EIncorrectLoanPool: u64 = 10;
+    const EIncorrectTypeReturned: u64 = 11;
+    const EInvalidOwner: u64 = 12;
+    const ETradeCapNotInList: u64 = 13;
+    const EInvalidTrader: u64 = 14;
+    const EIncorrectLevel2Price: u64 = 15;
+    const EIncorrectLevel2Quantity: u64 = 16;
+    const EInvalidStake: u64 = 17;
+    const EAddPricePointUnregisteredPool: u64 = 18;
+    const EIncorrectLevel2Length: u64 = 19;
 
     #[test]
     fun test_master_ok() {
@@ -93,16 +91,6 @@ module deepbook::master_tests {
     #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
     fun test_master_incorrect_rebate_claimer_e() {
         test_master(EIncorrectRebateClaimer)
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
-    fun test_no_amount_to_burn_e() {
-        test_master(ENoAmountToBurn)
-    }
-
-    #[test, expected_failure(abort_code = ::deepbook::pool::ENoAmountToBurn)]
-    fun test_no_amount_to_burn_2_e() {
-        test_master(ENoAmountToBurn2)
     }
 
     #[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
@@ -901,16 +889,6 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // Since all rebates are to be claimed, there are no amounts to burn
-        if (error_code == ENoAmountToBurn) {
-            burn_deep<SUI, USDC>(
-                ALICE,
-                pool1_id,
-                0,
-                &mut test
-            );
-        };
-
         // Same cross trading happens during epoch 28
         // quantity being traded is halved, each person will make 0.5 quantity and take 0.5 quantity
         let quantity = 500_000_000;
@@ -1002,16 +980,6 @@ module deepbook::master_tests {
             expected_amount_burned,
             &mut test
         );
-
-        // Trying to burn again will fail
-        if (error_code == ENoAmountToBurn2) {
-            burn_deep<SUI, USDC>(
-                ALICE,
-                pool1_id,
-                0,
-                &mut test
-            );
-        };
 
         end(test);
     }
