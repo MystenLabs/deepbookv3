@@ -40,12 +40,11 @@ const EIneligibleReferencePool: u64 = 7;
 const EFeeTypeNotSupported: u64 = 8;
 const EInvalidOrderBalanceManager: u64 = 9;
 const EIneligibleTargetPool: u64 = 10;
-const ENoAmountToBurn: u64 = 11;
-const EPackageVersionDisabled: u64 = 12;
-const EMinimumQuantityOutNotMet: u64 = 13;
-const EInvalidStake: u64 = 14;
-const EPoolNotRegistered: u64 = 15;
-const EPoolCannotBeBothWhitelistedAndStable: u64 = 16;
+const EPackageVersionDisabled: u64 = 11;
+const EMinimumQuantityOutNotMet: u64 = 12;
+const EInvalidStake: u64 = 13;
+const EPoolNotRegistered: u64 = 14;
+const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -631,7 +630,6 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 ): u64 {
     let self = self.load_inner_mut();
     let balance_to_burn = self.state.history_mut().reset_balance_to_burn();
-    assert!(balance_to_burn > 0, ENoAmountToBurn);
     let deep_to_burn = self
         .vault
         .withdraw_deep_to_burn(balance_to_burn)
