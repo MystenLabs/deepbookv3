@@ -87,6 +87,14 @@ public struct BookParamsUpdated<
     timestamp: u64,
 }
 
+public struct DeepBurned<
+    phantom BaseAsset,
+    phantom QuoteAsset,
+> has copy, store, drop {
+    pool_id: ID,
+    deep_burned: u64,
+}
+
 // === Public-Mutative Functions * EXCHANGE * ===
 /// Place a limit order. Quantity is in base asset terms.
 /// For current version pay_with_deep must be true, so the fee will be paid with
@@ -636,6 +644,11 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
         .into_coin(ctx);
     let amount_burned = deep_to_burn.value();
     token::deep::burn(treasury_cap, deep_to_burn);
+
+    event::emit(DeepBurned<BaseAsset, QuoteAsset> {
+        pool_id: self.pool_id,
+        deep_burned: amount_burned,
+    });
 
     amount_burned
 }
