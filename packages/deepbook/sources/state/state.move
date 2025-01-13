@@ -7,6 +7,7 @@
 module deepbook::state;
 
 use deepbook::account::{Self, Account};
+use deepbook::balance_manager::BalanceManager;
 use deepbook::balances::{Self, Balances};
 use deepbook::constants;
 use deepbook::fill::Fill;
@@ -15,8 +16,10 @@ use deepbook::history::{Self, History};
 use deepbook::math;
 use deepbook::order::Order;
 use deepbook::order_info::OrderInfo;
+use std::type_name;
 use sui::event;
 use sui::table::{Self, Table};
+use token::deep::DEEP;
 
 // === Errors ===
 const ENoStake: u64 = 1;
@@ -148,11 +151,10 @@ public(package) fun withdraw_settled_amounts(
     if (self.accounts.contains(balance_manager_id)) {
         let account = &mut self.accounts[balance_manager_id];
 
-        account.settle()    
+        account.settle()
     } else {
         (balances::empty(), balances::empty())
     }
-    
 }
 
 /// Update account settled balances and volumes.
@@ -339,9 +341,10 @@ public(package) fun process_vote(
 public(package) fun process_claim_rebates(
     self: &mut State,
     pool_id: ID,
-    balance_manager_id: ID,
+    balance_manager: &BalanceManager,
     ctx: &TxContext,
 ): (Balances, Balances) {
+    let balance_manager_id = balance_manager.id();
     self.governance.update(ctx);
     self.history.update(self.governance.trade_params(), ctx);
     self.update_account(balance_manager_id, ctx);
@@ -354,6 +357,11 @@ public(package) fun process_claim_rebates(
         epoch: ctx.epoch(),
         claim_amount,
     });
+    balance_manager.emit_balance_event(
+        type_name::get<DEEP>(),
+        claim_amount,
+        true,
+    );
 
     account.settle()
 }
