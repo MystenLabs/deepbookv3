@@ -150,12 +150,11 @@ public fun deposit<T>(
     coin: Coin<T>,
     ctx: &mut TxContext,
 ) {
-    event::emit(BalanceEvent {
-        balance_manager_id: object::id(balance_manager),
-        asset: type_name::get<T>(),
-        amount: coin.value(),
-        deposit: true,
-    });
+    balance_manager.emit_balance_event(
+        type_name::get<T>(),
+        coin.value(),
+        true,
+    );
 
     let proof = generate_proof_as_owner(balance_manager, ctx);
     balance_manager.deposit_with_proof(&proof, coin.into_balance());
@@ -173,12 +172,11 @@ public fun withdraw<T>(
     let coin = balance_manager
         .withdraw_with_proof(&proof, withdraw_amount, false)
         .into_coin(ctx);
-    event::emit(BalanceEvent {
-        balance_manager_id: object::id(balance_manager),
-        asset: type_name::get<T>(),
-        amount: coin.value(),
-        deposit: false,
-    });
+    balance_manager.emit_balance_event(
+        type_name::get<T>(),
+        coin.value(),
+        false,
+    );
 
     coin
 }
@@ -191,12 +189,11 @@ public fun withdraw_all<T>(
     let coin = balance_manager
         .withdraw_with_proof(&proof, 0, true)
         .into_coin(ctx);
-    event::emit(BalanceEvent {
-        balance_manager_id: object::id(balance_manager),
-        asset: type_name::get<T>(),
-        amount: coin.value(),
-        deposit: false,
-    });
+    balance_manager.emit_balance_event(
+        type_name::get<T>(),
+        coin.value(),
+        false,
+    );
 
     coin
 }
@@ -286,6 +283,20 @@ public(package) fun delete(balance_manager: BalanceManager) {
 
 public(package) fun trader(trade_proof: &TradeProof): address {
     trade_proof.trader
+}
+
+public(package) fun emit_balance_event(
+    balance_manager: &BalanceManager,
+    asset: TypeName,
+    amount: u64,
+    deposit: bool,
+) {
+    event::emit(BalanceEvent {
+        balance_manager_id: balance_manager.id(),
+        asset,
+        amount,
+        deposit,
+    });
 }
 
 // === Private Functions ===
