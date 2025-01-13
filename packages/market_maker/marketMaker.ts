@@ -16,7 +16,7 @@ export class MarketMaker {
     keypair: Keypair;
     constructor() {
         // Pull from env
-        const env = "testnet";
+        const env = "mainnet";
         const pk = process.env.PRIVATE_KEY!;
         const keypair = this.getSignerFromPK(pk);
 
@@ -41,7 +41,7 @@ export class MarketMaker {
     }
 
     printBook = async (poolKey: string) => {
-        let book = await this.client.getLevel2TicksFromMid(poolKey, 10);
+        const book = await this.client.getLevel2TicksFromMid(poolKey, 10);
 
         console.log(poolKey);
         for (let i = book.ask_prices.length - 1; i >= 0; i--) {
@@ -54,10 +54,17 @@ export class MarketMaker {
     }
 
     midPrice = async (poolKey: string): Promise<number> => {
-        let mid = await this.client.midPrice(poolKey);
+        const mid = await this.client.midPrice(poolKey);
         console.log(mid);
 
         return mid;
+    }
+
+    burnDeep = async (tx: Transaction, poolKey: string) => {
+        console.log(`Burning DEEP from pool ${poolKey}`);
+        tx.add(
+            this.client.deepBook.burnDeep(poolKey)
+        );
     }
 
     placeOrdersAroundMid = async (tx: Transaction, poolKey: string, ticks: number, quantity: number, midPrice: number) => {
@@ -213,7 +220,7 @@ export class MarketMaker {
     };
 
     signAndExecute = async (tx: Transaction) => {
-        tx.setGasBudget(5000000000);
+        tx.setGasBudget(500000000);
         return this.client.client.signAndExecuteTransaction({
             transaction: tx,
             signer: this.keypair,
