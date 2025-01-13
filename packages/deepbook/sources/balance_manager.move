@@ -35,6 +35,12 @@ public struct BalanceManager has key, store {
     allow_listed: VecSet<ID>,
 }
 
+/// Event emitted when a new balance_manager is created.
+public struct BalanceManagerEvent has copy, drop {
+    balance_manager_id: ID,
+    owner: address,
+}
+
 /// Event emitted when a deposit or withdrawal occurs.
 public struct BalanceEvent has copy, drop {
     balance_manager_id: ID,
@@ -61,8 +67,14 @@ public struct TradeProof has drop {
 
 // === Public-Mutative Functions ===
 public fun new(ctx: &mut TxContext): BalanceManager {
+    let id = object::new(ctx);
+    event::emit(BalanceManagerEvent {
+        balance_manager_id: id.to_inner(),
+        owner: ctx.sender(),
+    });
+
     BalanceManager {
-        id: object::new(ctx),
+        id,
         owner: ctx.sender(),
         balances: bag::new(ctx),
         allow_listed: vec_set::empty(),
