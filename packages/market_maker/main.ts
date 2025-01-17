@@ -18,8 +18,8 @@ import { MarketMaker } from "./marketMaker";
     const tx = new Transaction();
     // await mm.placeOrder(tx, "DEEP_SUI", 0.98, 10, true);
     await mm.burnDeep(tx, 'SUI_USDC')
-    // await mm.burnDeep(tx, 'NS_SUI')
-    // await mm.burnDeep(tx, 'NS_USDC')
+    await mm.burnDeep(tx, 'NS_SUI')
+    await mm.burnDeep(tx, 'NS_USDC')
     // await mm.placeOrder(tx, "DEEP_SUI", 1.02, 1, true);
     // await mm.placeOrdersAroundMid(tx, "DEEP_SUI", 10, 25, deepsuiPrice);
     // await mm.placeOrdersAroundMid(tx, "SUI_DBUSDC", 10, 25, suiPrice);
