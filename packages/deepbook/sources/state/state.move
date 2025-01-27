@@ -351,7 +351,7 @@ public(package) fun process_vote(
 
 /// Process claim rebates transaction. Update account rebates and settle
 /// balances.
-public(package) fun process_claim_rebates(
+public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
     self: &mut State,
     pool_id: ID,
     balance_manager: &BalanceManager,
@@ -373,6 +373,16 @@ public(package) fun process_claim_rebates(
     balance_manager.emit_balance_event(
         type_name::get<DEEP>(),
         claim_amount.deep(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<BaseAsset>(),
+        claim_amount.base(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<QuoteAsset>(),
+        claim_amount.quote(),
         true,
     );
 

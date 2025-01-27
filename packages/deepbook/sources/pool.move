@@ -499,7 +499,11 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     let self = self.load_inner_mut();
     let (settled, owed) = self
         .state
-        .process_claim_rebates(self.pool_id, balance_manager, ctx);
+        .process_claim_rebates<BaseAsset, QuoteAsset>(
+            self.pool_id,
+            balance_manager,
+            ctx,
+        );
     self
         .vault
         .settle_balance_manager(settled, owed, balance_manager, trade_proof);
