@@ -59,6 +59,14 @@ public struct VoteEvent has copy, drop {
     stake: u64,
 }
 
+public struct RebateEventV2 has copy, drop {
+    pool_id: ID,
+    balance_manager_id: ID,
+    epoch: u64,
+    claim_amount: Balances,
+}
+
+#[allow(unused_field)]
 public struct RebateEvent has copy, drop {
     pool_id: ID,
     balance_manager_id: ID,
@@ -77,12 +85,14 @@ public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
     State { history, governance, accounts: table::new(ctx) }
 }
 
-/// Up until this point, an OrderInfo object has been created and potentially filled.
-/// The OrderInfo object contains all of the necessary information to update the state
-/// of the pool. This includes the volumes for the taker and potentially multiple makers.
-/// First, fills are iterated and processed, updating the appropriate user's volumes.
-/// Funds are settled for those makers. Then, the taker's trading fee is calculated
-/// and the taker's volumes are updated. Finally, the taker's balances are settled.
+/// Up until this point, an OrderInfo object has been created and potentially
+/// filled. The OrderInfo object contains all of the necessary information to
+/// update the state of the pool. This includes the volumes for the taker and
+/// potentially multiple makers.
+/// First, fills are iterated and processed, updating the appropriate user's
+/// volumes. Funds are settled for those makers. Then, the taker's trading fee
+/// is calculated and the taker's volumes are updated. Finally, the taker's
+/// balances are settled.
 public(package) fun process_create(
     self: &mut State,
     order_info: &mut OrderInfo,
@@ -114,7 +124,8 @@ public(package) fun process_create(
             math::mul_u128(account_volume, avg_executed_price as u128),
         );
 
-    // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
+    // taker fee will almost be calculated as 0 for whitelisted pools by
+    // default, as account_volume_in_deep is 0
     let taker_fee = self
         .governance
         .trade_params()
@@ -232,7 +243,8 @@ public(package) fun process_stake(
     self.accounts[balance_manager_id].settle()
 }
 
-/// Process unstake transaction. Remove stake from account and update governance.
+/// Process unstake transaction.
+/// Remove stake from account and update governance.
 public(package) fun process_unstake(
     self: &mut State,
     pool_id: ID,
@@ -337,8 +349,9 @@ public(package) fun process_vote(
     });
 }
 
-/// Process claim rebates transaction. Update account rebates and settle balances.
-public(package) fun process_claim_rebates(
+/// Process claim rebates transaction.
+/// Update account rebates and settle balances.
+public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
     self: &mut State,
     pool_id: ID,
     balance_manager: &BalanceManager,
@@ -351,7 +364,7 @@ public(package) fun process_claim_rebates(
 
     let account = &mut self.accounts[balance_manager_id];
     let claim_amount = account.claim_rebates();
-    event::emit(RebateEvent {
+    event::emit(RebateEventV2 {
         pool_id,
         balance_manager_id,
         epoch: ctx.epoch(),
@@ -359,7 +372,17 @@ public(package) fun process_claim_rebates(
     });
     balance_manager.emit_balance_event(
         type_name::get<DEEP>(),
-        claim_amount,
+        claim_amount.deep(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<BaseAsset>(),
+        claim_amount.base(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<QuoteAsset>(),
+        claim_amount.quote(),
         true,
     );
 
