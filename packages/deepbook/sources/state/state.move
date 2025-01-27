@@ -349,8 +349,8 @@ public(package) fun process_vote(
     });
 }
 
-/// Process claim rebates transaction. Update account rebates and settle
-/// balances.
+/// Process claim rebates transaction.
+/// Update account rebates and settle balances.
 public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
     self: &mut State,
     pool_id: ID,
