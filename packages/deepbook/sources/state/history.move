@@ -10,6 +10,7 @@ use deepbook::balances::{Self, Balances};
 use deepbook::constants;
 use deepbook::math;
 use deepbook::trade_params::TradeParams;
+use sui::event;
 use sui::table::{Self, Table};
 
 // === Errors ===
@@ -89,6 +90,7 @@ public(package) fun reset_volumes(
     self: &mut History,
     trade_params: TradeParams,
 ) {
+    event::emit(self.volumes);
     self.volumes =
         Volumes {
             total_volume: 0,

@@ -146,9 +146,7 @@ public(package) fun process_create(
         maker_fee,
     );
     let (old_settled, old_owed) = account.settle();
-    self
-        .history
-        .add_total_fees_collected(balances::new(0, 0, order_info.paid_fees()));
+    self.history.add_total_fees_collected(order_info.paid_fees_balances());
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
@@ -436,25 +434,23 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
         let historic_maker_fee = self
             .history
             .historic_maker_fee(fill.maker_epoch());
-        let fee_volume = fill
+        let maker_is_bid = !fill.taker_is_bid();
+        let mut fee_quantity = fill
             .maker_deep_price()
-            .deep_quantity(base_volume, quote_volume);
-        let order_maker_fee = if (whitelisted) {
-            0
+            .fee_quantity(base_volume, quote_volume, maker_is_bid);
+
+        if (whitelisted) {
+            fee_quantity.mul(0)
         } else {
-            math::mul(fee_volume, historic_maker_fee)
+            fee_quantity.mul(historic_maker_fee)
         };
 
         if (!fill.expired()) {
-            if (order_maker_fee > 0) {
-                fill.set_fill_maker_fee(order_maker_fee);
-            };
+            fill.set_fill_maker_fee(&fee_quantity);
             self.history.add_volume(base_volume, account.active_stake());
-            self
-                .history
-                .add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+            self.history.add_total_fees_collected(fee_quantity);
         } else {
-            account.add_settled_balances(balances::new(0, 0, order_maker_fee));
+            account.add_settled_balances(fee_quantity);
         };
 
         i = i + 1;

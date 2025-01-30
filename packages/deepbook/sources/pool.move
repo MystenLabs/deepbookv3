@@ -37,7 +37,6 @@ const EInvalidLotSize: u64 = 4;
 const EInvalidMinSize: u64 = 5;
 const EInvalidQuantityIn: u64 = 6;
 const EIneligibleReferencePool: u64 = 7;
-const EFeeTypeNotSupported: u64 = 8;
 const EInvalidOrderBalanceManager: u64 = 9;
 const EIneligibleTargetPool: u64 = 10;
 const EPackageVersionDisabled: u64 = 11;
@@ -972,10 +971,13 @@ public fun get_order_deep_required<BaseAsset, QuoteAsset>(
     let self = self.load_inner();
     let maker_fee = self.state.governance().trade_params().maker_fee();
     let taker_fee = self.state.governance().trade_params().taker_fee();
-    let deep_quantity = order_deep_price.deep_quantity(
-        base_quantity,
-        math::mul(base_quantity, price),
-    );
+    let deep_quantity = order_deep_price
+        .fee_quantity(
+            base_quantity,
+            math::mul(base_quantity, price),
+            true,
+        )
+        .deep();
 
     (math::mul(taker_fee, deep_quantity), math::mul(maker_fee, deep_quantity))
 }
@@ -998,10 +1000,10 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
 
     account_orders.do_ref!(|order| {
         let maker_fee = self.state.history().historic_maker_fee(order.epoch());
-        let (base, quote, deep) = order.locked_balance(maker_fee);
-        base_quantity = base_quantity + base;
-        quote_quantity = quote_quantity + quote;
-        deep_quantity = deep_quantity + deep;
+        let locked_balance = order.locked_balance(maker_fee);
+        base_quantity = base_quantity + locked_balance.base();
+        quote_quantity = quote_quantity + locked_balance.quote();
+        deep_quantity = deep_quantity + locked_balance.deep();
     });
 
     let settled_balances = self
@@ -1195,9 +1197,14 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     let whitelist = self.whitelisted();
-    assert!(pay_with_deep || whitelist, EFeeTypeNotSupported);
-
     let self = self.load_inner_mut();
+
+    let order_deep_price = if (pay_with_deep) {
+        self.deep_price.get_order_deep_price(whitelist)
+    } else {
+        self.deep_price.empty_deep_price()
+    };
+
     let mut order_info = order_info::new(
         self.pool_id,
         balance_manager.id(),
@@ -1211,7 +1218,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         pay_with_deep,
         ctx.epoch(),
         expire_timestamp,
-        self.deep_price.get_order_deep_price(whitelist),
+        order_deep_price,
         market_order,
         clock.timestamp_ms(),
     );
