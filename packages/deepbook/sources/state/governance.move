@@ -114,6 +114,10 @@ public(package) fun whitelisted(self: &Governance): bool {
     self.whitelisted
 }
 
+public(package) fun stable(self: &Governance): bool {
+    self.stable
+}
+
 public(package) fun quorum(self: &Governance): u64 {
     self.quorum
 }
@@ -310,11 +314,6 @@ fun to_trade_params(proposal: &Proposal): TradeParams {
 #[test_only]
 public fun voting_power(self: &Governance): u64 {
     self.voting_power
-}
-
-#[test_only]
-public fun stable(self: &Governance): bool {
-    self.stable
 }
 
 #[test_only]

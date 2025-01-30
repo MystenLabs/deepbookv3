@@ -806,6 +806,13 @@ public fun whitelisted<BaseAsset, QuoteAsset>(
     self.load_inner().state.governance().whitelisted()
 }
 
+/// Accessor to check if the pool is a stablecoin pool.
+public fun stable_pool<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.load_inner().state.governance().stable()
+}
+
 public fun registered_pool<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ): bool {
