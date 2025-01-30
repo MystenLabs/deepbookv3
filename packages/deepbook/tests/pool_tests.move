@@ -1059,7 +1059,7 @@ fun test_permissionless_pools() {
         registry_id,
         &mut test,
     );
-    check_pool_attributes<DEEP, USDC>(pool_id_3, true, false, &mut test);
+    check_pool_attributes<DEEP, USDC>(pool_id_3, false, false, &mut test);
 
     end(test);
 }

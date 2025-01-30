@@ -115,10 +115,8 @@ public fun create_permissionless_pool<BaseAsset, QuoteAsset>(
     );
     let base_type = type_name::get<BaseAsset>();
     let quote_type = type_name::get<QuoteAsset>();
-    let deep_type = type_name::get<DEEP>();
-    let whitelisted_pool = base_type == deep_type || quote_type == deep_type;
+    let whitelisted_pool = false;
     let stable_pool =
-        !whitelisted_pool &&
         registry.is_stablecoin(base_type) && registry.is_stablecoin(quote_type);
 
     create_pool<BaseAsset, QuoteAsset>(
