@@ -283,6 +283,16 @@ public(package) fun fills_ref(self: &mut OrderInfo): &mut vector<Fill> {
     &mut self.fills
 }
 
+public(package) fun paid_fees_balances(self: &OrderInfo): Balances {
+    if (self.fee_is_deep) {
+        balances::new(0, 0, self.paid_fees)
+    } else if (self.is_bid) {
+        balances::new(0, self.paid_fees, 0)
+    } else {
+        balances::new(self.paid_fees, 0, 0)
+    }
+}
+
 /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
 /// placing the order, calculate all of the balances that need to be settled and
 /// the balances that are owed. The executed quantity is multiplied by the taker_fee
@@ -292,36 +302,32 @@ public(package) fun calculate_partial_fill_balances(
     taker_fee: u64,
     maker_fee: u64,
 ): (Balances, Balances) {
-    let taker_deep_in = math::mul(
-        taker_fee,
-        self
-            .order_deep_price
-            .deep_quantity(
-                self.executed_quantity,
-                self.cumulative_quote_quantity,
-            ),
-    );
-    self.paid_fees = taker_deep_in;
-    let fills = &mut self.fills;
+    let mut taker_fee_quantity = self
+        .order_deep_price
+        .fee_quantity(
+            self.executed_quantity,
+            self.cumulative_quote_quantity,
+            self.is_bid,
+        );
+    taker_fee_quantity.mul(taker_fee);
+    self.paid_fees = taker_fee_quantity.non_zero_value();
 
+    let fills = &mut self.fills;
     let mut i = 0;
     while (i < fills.length()) {
         let fill = &mut fills[i];
         if (!fill.expired()) {
             let base_quantity = fill.base_quantity();
             let quote_quantity = fill.quote_quantity();
-            let fill_taker_fee = math::mul(
-                taker_fee,
-                self
-                    .order_deep_price
-                    .deep_quantity(
-                        base_quantity,
-                        quote_quantity,
-                    ),
-            );
-            if (fill_taker_fee > 0) {
-                fill.set_fill_taker_fee(fill_taker_fee);
-            };
+            let mut fill_taker_fee_quantity = self
+                .order_deep_price
+                .fee_quantity(
+                    base_quantity,
+                    quote_quantity,
+                    self.is_bid,
+                );
+            fill_taker_fee_quantity.mul(taker_fee);
+            fill.set_fill_taker_fee(&fill_taker_fee_quantity);
         };
 
         i = i + 1;
@@ -329,7 +335,7 @@ public(package) fun calculate_partial_fill_balances(
 
     let mut settled_balances = balances::new(0, 0, 0);
     let mut owed_balances = balances::new(0, 0, 0);
-    owed_balances.add_deep(taker_deep_in);
+    owed_balances.add_balances(taker_fee_quantity);
 
     if (self.is_bid) {
         settled_balances.add_base(self.executed_quantity);
@@ -341,17 +347,16 @@ public(package) fun calculate_partial_fill_balances(
 
     let remaining_quantity = self.remaining_quantity();
     if (self.order_inserted()) {
-        let maker_deep_in = math::mul(
-            maker_fee,
-            self
-                .order_deep_price
-                .deep_quantity(
-                    remaining_quantity,
-                    math::mul(remaining_quantity, self.price()),
-                ),
-        );
-        self.maker_fees = maker_deep_in;
-        owed_balances.add_deep(maker_deep_in);
+        let mut maker_fee_quantity = self
+            .order_deep_price
+            .fee_quantity(
+                remaining_quantity,
+                math::mul(remaining_quantity, self.price()),
+                self.is_bid,
+            );
+        maker_fee_quantity.mul(maker_fee);
+        self.maker_fees = maker_fee_quantity.non_zero_value();
+        owed_balances.add_balances(maker_fee_quantity);
         if (self.is_bid) {
             owed_balances.add_quote(
                 math::mul(remaining_quantity, self.price()),
@@ -512,7 +517,8 @@ public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));
         } else {
-            let cancel_maker = self.balance_manager_id() == fill.balance_manager_id();
+            let cancel_maker =
+                self.balance_manager_id() == fill.balance_manager_id();
             if (cancel_maker) {
                 self.emit_order_canceled_maker_from_fill(fill, timestamp);
             } else {
@@ -591,7 +597,7 @@ fun order_expired_from_fill(
         is_bid: !self.is_bid(),
         original_quantity: fill.original_maker_quantity(),
         base_asset_quantity_canceled: fill.base_quantity(),
-        timestamp
+        timestamp,
     }
 }
 
@@ -610,6 +616,6 @@ fun emit_order_canceled_maker_from_fill(
         !self.is_bid(),
         fill.original_maker_quantity(),
         fill.base_quantity(),
-        timestamp
+        timestamp,
     )
 }

@@ -213,15 +213,14 @@ public(package) fun calculate_cancel_refund(
     let cancel_quantity = cancel_quantity.get_with_default(
         self.quantity - self.filled_quantity,
     );
-    let deep_out = math::mul(
-        maker_fee,
-        self
-            .order_deep_price()
-            .deep_quantity(
-                cancel_quantity,
-                math::mul(cancel_quantity, self.price()),
-            ),
-    );
+    let mut fee_quantity = self
+        .order_deep_price
+        .fee_quantity(
+            cancel_quantity,
+            math::mul(cancel_quantity, self.price()),
+            self.is_bid(),
+        );
+    fee_quantity.mul(maker_fee);
 
     let mut base_out = 0;
     let mut quote_out = 0;
@@ -231,35 +230,40 @@ public(package) fun calculate_cancel_refund(
         base_out = cancel_quantity;
     };
 
-    balances::new(base_out, quote_out, deep_out)
+    let mut refund = balances::new(base_out, quote_out, 0);
+    refund.add_balances(fee_quantity);
+
+    refund
 }
 
-public(package) fun locked_balance(
-    self: &Order,
-    maker_fee: u64,
-): (u64, u64, u64) {
+public(package) fun locked_balance(self: &Order, maker_fee: u64): Balances {
     let (is_bid, order_price, _) = utils::decode_order_id(self.order_id());
     let mut base_quantity = 0;
     let mut quote_quantity = 0;
     let remaining_base_quantity = self.quantity() - self.filled_quantity();
-    let remaining_quote_quantity = math::mul(remaining_base_quantity, order_price);
+    let remaining_quote_quantity = math::mul(
+        remaining_base_quantity,
+        order_price,
+    );
 
     if (is_bid) {
         quote_quantity = quote_quantity + remaining_quote_quantity;
     } else {
         base_quantity = base_quantity + remaining_base_quantity;
     };
-    let deep_quantity = math::mul(
-        maker_fee,
-        self
-            .order_deep_price()
-            .deep_quantity(
-                remaining_base_quantity,
-                remaining_quote_quantity,
-            ),
-    );
+    let mut fee_quantity = self
+        .order_deep_price()
+        .fee_quantity(
+            remaining_base_quantity,
+            remaining_quote_quantity,
+            is_bid,
+        );
+    fee_quantity.mul(maker_fee);
 
-    (base_quantity, quote_quantity, deep_quantity)
+    let mut locked_balance = balances::new(base_quantity, quote_quantity, 0);
+    locked_balance.add_balances(fee_quantity);
+
+    locked_balance
 }
 
 public(package) fun emit_order_canceled(
