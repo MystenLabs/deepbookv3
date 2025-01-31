@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// `Balances` represents the three assets make up a pool: base, quote, and deep.
+/// `Balances` represents the three assets make up a pool: base, quote, and
+/// deep.
 /// Whenever funds are moved, they are moved in the form of `Balances`.
 module deepbook::balances;
 
@@ -21,6 +22,10 @@ public(package) fun empty(): Balances {
 
 public(package) fun new(base: u64, quote: u64, deep: u64): Balances {
     Balances { base: base, quote: quote, deep: deep }
+}
+
+public(package) fun new_from(balances: &Balances): Balances {
+    *balances
 }
 
 public(package) fun reset(balances: &mut Balances): Balances {

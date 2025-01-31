@@ -136,22 +136,16 @@ public(package) fun calculate_rebate_amount(
     } else {
         0
     };
-    let mut rebates = balances::new(
-        volumes.total_fees_collected.base(),
-        volumes.total_fees_collected.quote(),
-        volumes.total_fees_collected.deep(),
-    );
-    rebates.mul(maker_volume_proportion);
+    let mut max_rebates = balances::new_from(&volumes.total_fees_collected);
+    max_rebates.mul(maker_volume_proportion); // Maximum rebates possible
+    let mut rebates = balances::new_from(&max_rebates);
+    rebates.mul(maker_rebate_percentage); // Actual rebates
 
-    let deep_maker_rebate = math::mul(
-        maker_rebate_percentage,
-        rebates.deep(),
-    );
-    let maker_burn = rebates.deep() - deep_maker_rebate;
+    let maker_burn = max_rebates.deep() - rebates.deep();
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-    balances::new(0, 0, deep_maker_rebate)
+    rebates
 }
 
 /// Updates the historic_median for past 28 epochs.
