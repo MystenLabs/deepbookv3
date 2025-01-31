@@ -94,6 +94,42 @@ public struct DeepBurned<
     deep_burned: u64,
 }
 
+// === Public-Mutative Functions * POOL CREATION * ===
+/// Create a new pool. The pool is registered in the registry.
+/// Checks are performed to ensure the tick size, lot size,
+/// and min size are valid.
+/// The creation fee is transferred to the treasury address.
+/// Returns the id of the pool created
+public fun create_permissionless_pool<BaseAsset, QuoteAsset>(
+    registry: &mut Registry,
+    tick_size: u64,
+    lot_size: u64,
+    min_size: u64,
+    creation_fee: Coin<DEEP>,
+    ctx: &mut TxContext,
+): ID {
+    assert!(
+        creation_fee.value() == constants::pool_creation_fee(),
+        EInvalidFee,
+    );
+    let base_type = type_name::get<BaseAsset>();
+    let quote_type = type_name::get<QuoteAsset>();
+    let whitelisted_pool = false;
+    let stable_pool =
+        registry.is_stablecoin(base_type) && registry.is_stablecoin(quote_type);
+
+    create_pool<BaseAsset, QuoteAsset>(
+        registry,
+        tick_size,
+        lot_size,
+        min_size,
+        creation_fee,
+        whitelisted_pool,
+        stable_pool,
+        ctx,
+    )
+}
+
 // === Public-Mutative Functions * EXCHANGE * ===
 /// Place a limit order. Quantity is in base asset terms.
 /// For current version pay_with_deep must be true, so the fee will be paid with
@@ -660,7 +696,6 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 /// Create a new pool. The pool is registered in the registry.
 /// Checks are performed to ensure the tick size, lot size, and min size are
 /// valid.
-/// The creation fee is transferred to the treasury address.
 /// Returns the id of the pool created
 public fun create_pool_admin<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
@@ -766,6 +801,13 @@ public fun whitelisted<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ): bool {
     self.load_inner().state.governance().whitelisted()
+}
+
+/// Accessor to check if the pool is a stablecoin pool.
+public fun stable_pool<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.load_inner().state.governance().stable()
 }
 
 public fun registered_pool<BaseAsset, QuoteAsset>(
@@ -1072,10 +1114,6 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
     stable_pool: bool,
     ctx: &mut TxContext,
 ): ID {
-    assert!(
-        creation_fee.value() == constants::pool_creation_fee(),
-        EInvalidFee,
-    );
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(math::is_power_of_ten(tick_size), EInvalidTickSize);
     assert!(lot_size > 0, EInvalidLotSize);

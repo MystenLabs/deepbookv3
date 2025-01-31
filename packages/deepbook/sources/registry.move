@@ -7,6 +7,7 @@ module deepbook::registry;
 use deepbook::constants;
 use std::type_name::{Self, TypeName};
 use sui::bag::{Self, Bag};
+use sui::dynamic_field;
 use sui::vec_set::{Self, VecSet};
 use sui::versioned::{Self, Versioned};
 
@@ -17,6 +18,8 @@ const EPackageVersionNotEnabled: u64 = 3;
 const EVersionNotEnabled: u64 = 4;
 const EVersionAlreadyEnabled: u64 = 5;
 const ECannotDisableCurrentVersion: u64 = 6;
+const ECoinAlreadyWhitelisted: u64 = 7;
+const ECoinNotWhitelisted: u64 = 8;
 
 public struct REGISTRY has drop {}
 
@@ -41,6 +44,8 @@ public struct PoolKey has copy, drop, store {
     base: TypeName,
     quote: TypeName,
 }
+
+public struct StableCoinKey has store, copy, drop {}
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
     let registry_inner = RegistryInner {
@@ -103,6 +108,78 @@ public fun disable_version(
     self.allowed_versions.remove(&version);
 }
 
+/// Adds a stablecoin to the whitelist
+/// Only Admin can add stablecoin
+public fun add_stablecoin<StableCoin>(
+    self: &mut Registry,
+    _cap: &DeepbookAdminCap,
+) {
+    let _: &mut RegistryInner = self.load_inner_mut();
+    let stable_type = type_name::get<StableCoin>();
+    if (
+        !dynamic_field::exists_(
+            &self.id,
+            StableCoinKey {},
+        )
+    ) {
+        dynamic_field::add(
+            &mut self.id,
+            StableCoinKey {},
+            vec_set::singleton(stable_type),
+        );
+    } else {
+        let stable_coins: &mut VecSet<TypeName> = dynamic_field::borrow_mut(
+            &mut self.id,
+            StableCoinKey {},
+        );
+        assert!(!stable_coins.contains(&stable_type), ECoinAlreadyWhitelisted);
+        stable_coins.insert(stable_type);
+    };
+}
+
+/// Removes a stablecoin from the whitelist
+/// Only Admin can remove stablecoin
+public fun remove_stablecoin<StableCoin>(
+    self: &mut Registry,
+    _cap: &DeepbookAdminCap,
+) {
+    let _: &mut RegistryInner = self.load_inner_mut();
+    let stable_type = type_name::get<StableCoin>();
+    assert!(
+        dynamic_field::exists_(
+            &self.id,
+            StableCoinKey {},
+        ),
+        ECoinNotWhitelisted,
+    );
+    let stable_coins: &mut VecSet<TypeName> = dynamic_field::borrow_mut(
+        &mut self.id,
+        StableCoinKey {},
+    );
+    assert!(stable_coins.contains(&stable_type), ECoinNotWhitelisted);
+    stable_coins.remove(&stable_type);
+}
+
+/// Returns whether the given coin is whitelisted
+public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
+    let _: &RegistryInner = self.load_inner();
+    if (
+        !dynamic_field::exists_(
+            &self.id,
+            StableCoinKey {},
+        )
+    ) {
+        false
+    } else {
+        let stable_coins: &VecSet<TypeName> = dynamic_field::borrow(
+            &self.id,
+            StableCoinKey {},
+        );
+
+        stable_coins.contains(&stable_type)
+    }
+}
+
 // === Public-Package Functions ===
 public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
     let inner: &mut RegistryInner = self.inner.load_value_mut();
@@ -116,7 +193,8 @@ public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
 }
 
 /// Register a new pool in the registry.
-/// Asserts if (Base, Quote) pool already exists or (Quote, Base) pool already exists.
+/// Asserts if (Base, Quote) pool already exists or
+/// (Quote, Base) pool already exists.
 public(package) fun register_pool<BaseAsset, QuoteAsset>(
     self: &mut Registry,
     pool_id: ID,

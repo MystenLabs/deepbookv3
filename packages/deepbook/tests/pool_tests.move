@@ -7,6 +7,7 @@ module deepbook::pool_tests;
 use deepbook::balance_manager::{BalanceManager, TradeCap};
 use deepbook::balance_manager_tests::{
     USDC,
+    USDT,
     SPAM,
     create_acct_and_share_with_funds,
     create_acct_and_share_with_funds_typed
@@ -1022,6 +1023,94 @@ fun test_create_pool(whitelisted_pool: bool, stable_pool: bool) {
     end(test);
 }
 
+#[test]
+fun test_permissionless_pools() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Only 1 coin is stable
+    add_stablecoin<USDC>(OWNER, registry_id, &mut test);
+    let pool_id_1 = setup_default_permissionless_pool<SUI, USDC>(
+        OWNER,
+        registry_id,
+        &mut test,
+    );
+    check_pool_attributes<SUI, USDC>(pool_id_1, false, false, &mut test);
+
+    let pool_id_2 = setup_default_permissionless_pool<USDT, USDC>(
+        OWNER,
+        registry_id,
+        &mut test,
+    );
+    check_pool_attributes<USDT, USDC>(pool_id_2, false, false, &mut test);
+
+    // Now both coins are stable
+    unregister_pool<USDT, USDC>(pool_id_2, registry_id, &mut test);
+    add_stablecoin<USDT>(OWNER, registry_id, &mut test);
+    let pool_id_2 = setup_default_permissionless_pool<USDT, USDC>(
+        OWNER,
+        registry_id,
+        &mut test,
+    );
+    check_pool_attributes<USDT, USDC>(pool_id_2, false, true, &mut test);
+
+    let pool_id_3 = setup_default_permissionless_pool<DEEP, USDC>(
+        OWNER,
+        registry_id,
+        &mut test,
+    );
+    check_pool_attributes<DEEP, USDC>(pool_id_3, false, false, &mut test);
+
+    end(test);
+}
+
+#[
+    test,
+    expected_failure(
+        abort_code = ::deepbook::registry::ECoinAlreadyWhitelisted,
+    ),
+]
+fun test_adding_duplicate_stablecoin_e() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    add_stablecoin<USDC>(OWNER, registry_id, &mut test);
+    add_stablecoin<USDC>(OWNER, registry_id, &mut test);
+
+    end(test);
+}
+
+#[
+    test,
+    expected_failure(
+        abort_code = ::deepbook::registry::ECoinNotWhitelisted,
+    ),
+]
+fun test_removing_not_whitelisted_stablecoin_e() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    add_stablecoin<USDC>(OWNER, registry_id, &mut test);
+    remove_stablecoin<USDT>(OWNER, registry_id, &mut test);
+
+    end(test);
+}
+
+fun check_pool_attributes<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    whitelisted: bool,
+    stable: bool,
+    test: &mut Scenario,
+) {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        assert!(pool.whitelisted() == whitelisted, 0);
+        assert!(pool.stable_pool() == stable, 0);
+        return_shared(pool);
+    }
+}
+
 #[test_only]
 public(package) fun setup_test(owner: address, test: &mut Scenario): ID {
     test.next_tx(owner);
@@ -1229,6 +1318,22 @@ public(package) fun setup_pool_with_default_fees_return_fee<
     );
 
     pool_id
+}
+
+#[test_only]
+public(package) fun setup_default_permissionless_pool<BaseAsset, QuoteAsset>(
+    sender: address,
+    registry_id: ID,
+    test: &mut Scenario,
+): ID {
+    setup_permissionsless_pool<BaseAsset, QuoteAsset>(
+        sender,
+        constants::tick_size(), // tick size
+        constants::lot_size(), // lot size
+        constants::min_size(), // min size
+        registry_id,
+        test,
+    )
 }
 
 #[test_only]
@@ -4763,6 +4868,38 @@ fun setup_pool<BaseAsset, QuoteAsset>(
     pool_id
 }
 
+fun setup_permissionsless_pool<BaseAsset, QuoteAsset>(
+    sender: address,
+    tick_size: u64,
+    lot_size: u64,
+    min_size: u64,
+    registry_id: ID,
+    test: &mut Scenario,
+): ID {
+    test.next_tx(sender);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let mut registry = test.take_shared_by_id<Registry>(registry_id);
+    let pool_id;
+    {
+        pool_id =
+            pool::create_permissionless_pool<BaseAsset, QuoteAsset>(
+                &mut registry,
+                tick_size,
+                lot_size,
+                min_size,
+                mint_for_testing<DEEP>(
+                    constants::pool_creation_fee(),
+                    test.ctx(),
+                ),
+                test.ctx(),
+            );
+    };
+    return_shared(registry);
+    test_utils::destroy(admin_cap);
+
+    pool_id
+}
+
 fun get_mid_price<BaseAsset, QuoteAsset>(
     pool_id: ID,
     test: &mut Scenario,
@@ -5080,4 +5217,36 @@ fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     test_utils::destroy(admin_cap);
     return_shared(pool);
     return_shared(clock);
+}
+
+fun add_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) {
+    test.next_tx(sender);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let mut registry = test.take_shared_by_id<Registry>(registry_id);
+    {
+        registry::add_stablecoin<T>(
+            &mut registry,
+            &admin_cap,
+        );
+    };
+    return_shared(registry);
+    test_utils::destroy(admin_cap);
+}
+
+fun remove_stablecoin<T>(
+    sender: address,
+    registry_id: ID,
+    test: &mut Scenario,
+) {
+    test.next_tx(sender);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let mut registry = test.take_shared_by_id<Registry>(registry_id);
+    {
+        registry::remove_stablecoin<T>(
+            &mut registry,
+            &admin_cap,
+        );
+    };
+    return_shared(registry);
+    test_utils::destroy(admin_cap);
 }
