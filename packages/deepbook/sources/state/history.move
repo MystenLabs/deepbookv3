@@ -136,44 +136,22 @@ public(package) fun calculate_rebate_amount(
     } else {
         0
     };
-    let maker_fee_proportion = maker_fee_proportion(
-        &volumes.total_fees_collected,
-        maker_volume_proportion,
+    let mut rebates = balances::new(
+        volumes.total_fees_collected.base(),
+        volumes.total_fees_collected.quote(),
+        volumes.total_fees_collected.deep(),
     );
+    rebates.mul(maker_volume_proportion);
+
     let deep_maker_rebate = math::mul(
         maker_rebate_percentage,
-        maker_fee_proportion.deep(),
+        rebates.deep(),
     );
-    let maker_burn = maker_fee_proportion.deep() - deep_maker_rebate;
+    let maker_burn = rebates.deep() - deep_maker_rebate;
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
     balances::new(0, 0, deep_maker_rebate)
-}
-
-/// Returns maker fee proportion as Balances: (base, quote, deep).
-fun maker_fee_proportion(
-    fees_collected: &Balances,
-    maker_volume_proportion: u64,
-): Balances {
-    let base_fee_proportion = math::mul(
-        maker_volume_proportion,
-        fees_collected.base(),
-    );
-    let quote_fee_proportion = math::mul(
-        maker_volume_proportion,
-        fees_collected.quote(),
-    );
-    let deep_fee_proportion = math::mul(
-        maker_volume_proportion,
-        fees_collected.deep(),
-    );
-
-    balances::new(
-        base_fee_proportion,
-        quote_fee_proportion,
-        deep_fee_proportion,
-    )
 }
 
 /// Updates the historic_median for past 28 epochs.
