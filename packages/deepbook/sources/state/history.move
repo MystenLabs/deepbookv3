@@ -136,9 +136,9 @@ public(package) fun calculate_rebate_amount(
     } else {
         0
     };
-    let mut max_rebates = balances::new_from(&volumes.total_fees_collected);
+    let mut max_rebates = volumes.total_fees_collected;
     max_rebates.mul(maker_volume_proportion); // Maximum rebates possible
-    let mut rebates = balances::new_from(&max_rebates);
+    let mut rebates = max_rebates;
     rebates.mul(maker_rebate_percentage); // Actual rebates
 
     let maker_burn = max_rebates.deep() - rebates.deep();
