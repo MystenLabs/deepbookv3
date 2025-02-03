@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// History module tracks the volume data for the current epoch and past epochs.
-/// It also tracks past trade params. Past maker fees are used to calculate fills for
-/// old orders. The historic median is used to calculate rebates and burns.
+/// It also tracks past trade params. Past maker fees are used to calculate
+/// fills for old orders. The historic median is used to calculate rebates and
+/// burns.
 module deepbook::history;
 
 use deepbook::balances::{Self, Balances};
@@ -20,7 +21,8 @@ const EHistoricVolumesNotFound: u64 = 0;
 /// `Volumes` represents volume data for a single epoch.
 /// Using flashloans on a whitelisted pool, assuming 1_000_000 * 1_000_000_000
 /// in volume per trade, at 1 trade per millisecond, the total volume can reach
-/// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one epoch.
+/// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one
+/// epoch.
 public struct Volumes has store, copy, drop {
     total_volume: u128,
     total_staked_volume: u128,
@@ -39,8 +41,8 @@ public struct History has store {
 }
 
 // === Public-Package Functions ===
-/// Create a new `History` instance. Called once upon pool creation. A single blank
-/// `Volumes` instance is created and added to the historic_volumes table.
+/// Create a new `History` instance. Called once upon pool creation. A single
+/// blank `Volumes` instance is created and added to the historic_volumes table.
 public(package) fun empty(
     trade_params: TradeParams,
     epoch_created: u64,
@@ -129,21 +131,20 @@ public(package) fun calculate_rebate_amount(
     };
     let maker_rebate_percentage = maker_rebate_percentage as u64;
     let maker_volume_proportion = if (volumes.total_staked_volume > 0) {
-        math::div_u128(maker_volume, volumes.total_staked_volume)
+        (math::div_u128(maker_volume, volumes.total_staked_volume)) as u64
     } else {
         0
     };
-    let maker_fee_proportion =
-        math::mul_u128(
-            maker_volume_proportion,
-            volumes.total_fees_collected.deep() as u128,
-        ) as u64;
-    let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
-    let maker_burn = maker_fee_proportion - maker_rebate;
+    let mut max_rebates = volumes.total_fees_collected;
+    max_rebates.mul(maker_volume_proportion); // Maximum rebates possible
+    let mut rebates = max_rebates;
+    rebates.mul(maker_rebate_percentage); // Actual rebates
+
+    let maker_burn = max_rebates.deep() - rebates.deep();
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-    balances::new(0, 0, maker_rebate)
+    rebates
 }
 
 /// Updates the historic_median for past 28 epochs.

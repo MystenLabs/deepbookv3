@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// `Balances` represents the three assets make up a pool: base, quote, and deep.
-/// Whenever funds are moved, they are moved in the form of `Balances`.
+/// `Balances` represents the three assets make up a pool: base, quote, and
+/// deep. Whenever funds are moved, they are moved in the form of `Balances`.
 module deepbook::balances;
 
 use deepbook::math;
