@@ -3,8 +3,8 @@
 
 /// History module tracks the volume data for the current epoch and past epochs.
 /// It also tracks past trade params. Past maker fees are used to calculate
-/// fills for
-/// old orders. The historic median is used to calculate rebates and burns.
+/// fills for old orders. The historic median is used to calculate rebates and
+/// burns.
 module deepbook::history;
 
 use deepbook::balances::{Self, Balances};
@@ -42,8 +42,7 @@ public struct History has store {
 
 // === Public-Package Functions ===
 /// Create a new `History` instance. Called once upon pool creation. A single
-/// blank
-/// `Volumes` instance is created and added to the historic_volumes table.
+/// blank `Volumes` instance is created and added to the historic_volumes table.
 public(package) fun empty(
     trade_params: TradeParams,
     epoch_created: u64,
