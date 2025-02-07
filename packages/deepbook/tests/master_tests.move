@@ -984,6 +984,660 @@ module deepbook::master_tests {
         end(test);
     }
 
+    #[test]
+    fun test_master_input_token_ok() {
+        test_master_input_tokens(NoError)
+    }
+
+    fun test_master_input_tokens(
+        error_code: u64,
+    ) {
+        let mut test = begin(OWNER);
+        let registry_id = pool_tests::setup_test(OWNER, &mut test);
+        pool_tests::set_time(0, &mut test);
+
+        let starting_balance = 10000 * constants::float_scaling();
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test
+        );
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test);
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base asset
+        let pool1_id = pool_tests::setup_pool_with_default_fees<SUI, USDC>(OWNER, registry_id, false, false, &mut test);
+        let pool2_id = pool_tests::setup_pool_with_default_fees<SPAM, USDC>(OWNER, registry_id, false, false, &mut test);
+
+        // Default price point of 100 deep per base will be added
+        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            pool1_reference_id,
+            &mut test,
+        );
+        pool_tests::add_deep_price_point<SPAM, USDC, SPAM, DEEP>(
+            OWNER,
+            pool2_id,
+            pool2_reference_id,
+            &mut test,
+        );
+
+        let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            ALICE,
+            starting_balance,
+            &mut test
+        );
+        let bob_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            BOB,
+            starting_balance,
+            &mut test
+        );
+
+        // variables to input into order
+        let client_order_id = 1;
+        let order_type = constants::no_restriction();
+        let price = 2 * constants::float_scaling();
+        let quantity = 3 * constants::float_scaling();
+        let big_quantity = 1_000_000 * constants::float_scaling();
+        let expire_timestamp = constants::max_u64();
+        let is_bid = true;
+        let pay_with_deep = false;
+        let mut maker_fee = constants::maker_fee();
+        let taker_fee;
+        let deep_multiplier = constants::deep_multiplier();
+        let mut alice_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+        let mut bob_balance = ExpectedBalances{
+            sui: starting_balance,
+            usdc: starting_balance,
+            spam: starting_balance,
+            deep: starting_balance,
+            usdt: starting_balance,
+        };
+
+        // Epoch 0
+        assert!(test.ctx().epoch() == 0, 0);
+
+        if (error_code == ENotEnoughFunds) {
+            pool_tests::place_limit_order<SUI, USDC>(
+                ALICE,
+                pool1_id,
+                alice_balance_manager_id,
+                client_order_id,
+                order_type,
+                constants::self_matching_allowed(),
+                price,
+                big_quantity,
+                is_bid,
+                pay_with_deep,
+                expire_timestamp,
+                &mut test,
+            );
+        };
+
+        withdraw_settled_amounts<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+
+        // Alice places bid order in pool 1, cancels, then places the same order
+        let order_info_1 = pool_tests::place_limit_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        pool_tests::cancel_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            order_info_1.order_id(),
+            &mut test
+        );
+
+        let order_info_1 = pool_tests::place_limit_order<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+
+        let usdc_asset = math::mul(price, quantity);
+        let usdc_base_fee = math::mul(maker_fee, usdc_asset);
+        let usdc_penalty_fee = math::mul(constants::fee_penalty_multiplier(), usdc_base_fee);
+        std::debug::print(&usdc_asset);
+        std::debug::print(&usdc_penalty_fee);
+        alice_balance.usdc = alice_balance.usdc - usdc_asset - usdc_penalty_fee;
+
+        // Alice places ask order in pool 2, cancels, then places the same order
+        let order_info_2 = pool_tests::place_limit_order<SPAM, USDC>(
+            ALICE,
+            pool2_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        pool_tests::cancel_order<SPAM, USDC>(
+            ALICE,
+            pool2_id,
+            alice_balance_manager_id,
+            order_info_2.order_id(),
+            &mut test
+        );
+        pool_tests::place_limit_order<SPAM, USDC>(
+            ALICE,
+            pool2_id,
+            alice_balance_manager_id,
+            client_order_id,
+            order_type,
+            constants::self_matching_allowed(),
+            price,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+        let spam_asset = quantity;
+        let spam_base_fee = math::mul(maker_fee, spam_asset);
+        let spam_penalty_fee = math::mul(constants::fee_penalty_multiplier(), spam_base_fee);
+        alice_balance.spam = alice_balance.spam - quantity - spam_penalty_fee;
+
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Alice stakes 100 DEEP into pool 1 during epoch 0 to be effective in epoch 1
+        stake<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            200 * constants::float_scaling(),
+            &mut test
+        );
+        alice_balance.deep = alice_balance.deep - 200 * constants::float_scaling();
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+
+        // Bob stakes 100 DEEP into pool 1 during epoch 1
+        stake<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+        bob_balance.deep = bob_balance.deep - 100 * constants::float_scaling();
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
+
+        // Epoch 1
+        // Alice now has a stake of 100 that's effective
+        // Alice proposes a change to the maker fee for epoch 2
+        // Governance changed maker fees to 0.02%, taker fees to 0.06%, same deep staking required
+        test.next_epoch(OWNER);
+        assert!(test.ctx().epoch() == 1, 0);
+
+        submit_proposal<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            600_000,
+            200_000,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+
+        // // Epoch 2 (Trades happen this epoch)
+        // // New trading fees are in effect for pool 1
+        // // Stakes are in effect for both Alice and Bob
+        // test.next_epoch(OWNER);
+        // assert!(test.ctx().epoch() == 2, 0);
+        // let old_maker_fee = maker_fee;
+        // maker_fee = 200_000;
+        // taker_fee = 600_000;
+
+        // // Alice should get refunded the previous fees for the order
+        // pool_tests::cancel_order<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     order_info_1.order_id(),
+        //     &mut test
+        // );
+        // alice_balance.usdc = alice_balance.usdc + math::mul(price, quantity);
+        // alice_balance.deep = alice_balance.deep + math::mul(
+        //     math::mul(old_maker_fee, deep_multiplier),
+        //     quantity
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // let client_order_id = 2;
+
+        // // Alice should pay new fees for the order, maker fee should be 0.02%
+        // pool_tests::place_limit_order<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     client_order_id,
+        //     order_type,
+        //     constants::self_matching_allowed(),
+        //     price,
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     expire_timestamp,
+        //     &mut test,
+        // );
+        // alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
+        // alice_balance.deep = alice_balance.deep - math::mul(
+        //     math::mul(maker_fee, deep_multiplier),
+        //     quantity
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // let executed_quantity = 3 * constants::float_scaling();
+        // let quantity = 100 * constants::float_scaling();
+
+        // // Bob places market ask order with large size in pool 1, only quantity 3 should be filled with Alice's bid order
+        // // Bob will not get discounted fees as even though he's staked, there's volume traded yet
+        // // Taker fee paid should be 0.06%
+        // pool_tests::place_market_order<SUI, USDC>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     client_order_id,
+        //     constants::self_matching_allowed(),
+        //     quantity,
+        //     !is_bid,
+        //     pay_with_deep,
+        //     &mut test,
+        // );
+        // bob_balance.sui = bob_balance.sui - executed_quantity;
+        // bob_balance.usdc = bob_balance.usdc + math::mul(price, executed_quantity);
+        // bob_balance.deep = bob_balance.deep - math::mul(
+        //     math::mul(taker_fee, deep_multiplier),
+        //     executed_quantity
+        // );
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+
+        // // Alice withdraws settled amounts twice, should only settle once
+        // withdraw_settled_amounts<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // alice_balance.sui = alice_balance.sui + executed_quantity;
+
+        // withdraw_settled_amounts<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // // Epoch 3, Alice proposes new fees, then unstakes
+        // // Bob proposes new fees as well after Alice unstakes, but quorum is based on old voting power
+        // // So neither proposal is passed
+        // // Stake of 200 deep should be returned to Alice, new proposal not passed
+        // test.next_epoch(OWNER);
+        // assert!(test.ctx().epoch() == 3, 0);
+
+        // submit_proposal<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     800_000,
+        //     400_000,
+        //     100 * constants::float_scaling(),
+        //     &mut test
+        // );
+
+        // unstake<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // alice_balance.deep = alice_balance.deep + 200 * constants::float_scaling();
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // submit_proposal<SUI, USDC>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     900_000,
+        //     500_000,
+        //     100 * constants::float_scaling(),
+        //     &mut test
+        // );
+
+        // // Epoch 4
+        // // Alice earned the 0.08% total fee collected in epoch 2
+        // // Alice 0.02% maker fee + Bob 0.06% taker = 0.08% total fees
+        // // Alice will make a claim for the fees collected
+        // // Bob will get no rebates as he only executed taker orders
+        // test.next_epoch(OWNER);
+        // assert!(test.ctx().epoch() == 4, 0);
+
+        // claim_rebates<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // let quantity = 3 * constants::float_scaling();
+        // alice_balance.deep = alice_balance.deep + math::mul(
+        //     quantity,
+        //     math::mul(800_000, deep_multiplier)
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // if (error_code == EIncorrectRebateClaimer) {
+        //     claim_rebates<SUI, USDC>(
+        //         BOB,
+        //         pool1_id,
+        //         alice_balance_manager_id,
+        //         &mut test
+        //     );
+        // };
+
+        // // Bob will get no rebates
+        // claim_rebates<SUI, USDC>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     &mut test
+        // );
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+
+        // // Alice restakes 100 DEEP into pool 1 during epoch 4
+        // stake<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     100 * constants::float_scaling(),
+        //     &mut test
+        // );
+        // alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // // Now the vault balance should only include the 2 stakes of 100 DEEP
+        // check_vault_balances<SUI, USDC>(
+        //     pool1_id,
+        //     &balances::new(
+        //         0,
+        //         0,
+        //         200 * constants::float_scaling()
+        //     ),
+        //     &mut test
+        // );
+
+        // // Advance to epoch 28
+        // let quantity = 1 * constants::float_scaling();
+        // let mut i = 23;
+        // // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
+        // // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
+        // // Discount will be 50% for Alice because sheplaces a maker order first that's taken
+        // // Bob will not get discount because he takes Alice's order
+        // // Fees paid for each should be 0.02% maker for both, 0.03% taker for Alice, 0.06% taker for Bob
+        // // Total fees collected should be 0.065% for each epoch
+        // // Alice should have 46 more SUI at the end of the loop
+        // // Bob should have 92 more USDC at the end of the loop
+        // while (i > 0) {
+        //     test.next_epoch(OWNER);
+        //     execute_cross_trading<SUI, USDC>(
+        //         pool1_id,
+        //         alice_balance_manager_id,
+        //         bob_balance_manager_id,
+        //         client_order_id,
+        //         order_type,
+        //         price,
+        //         quantity,
+        //         is_bid,
+        //         pay_with_deep,
+        //         constants::max_u64(),
+        //         &mut test
+        //     );
+        //     i = i - 1;
+        // };
+        // let taker_sui_traded = 23 * constants::float_scaling();
+        // let maker_sui_traded = 23 * constants::float_scaling();
+        // let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        // let avg_taker_fee = math::mul(taker_fee + math::mul(constants::half(), taker_fee), constants::half());
+        // alice_balance.sui = alice_balance.sui + quantity_sui_traded;
+        // alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
+        // alice_balance.deep = alice_balance.deep - math::mul(
+        //     math::mul(taker_sui_traded, math::mul(constants::half(), taker_fee)) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // bob_balance.sui = bob_balance.sui - quantity_sui_traded;
+        // bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
+        // bob_balance.deep = bob_balance.deep - math::mul(
+        //     math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+
+        // test.next_epoch(OWNER);
+        // assert!(test.ctx().epoch() == 28, 0);
+
+        // // Alice claims rebates for the past 23 epochs
+        // claim_rebates<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // let alice_rebates = math::mul(
+        //     math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // alice_balance.deep = alice_balance.deep + alice_rebates;
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+
+        // // Bob claims rebates for the past 23 epochs
+        // claim_rebates<SUI, USDC>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     &mut test
+        // );
+        // let bob_rebates = math::mul(
+        //     math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // bob_balance.deep = bob_balance.deep + bob_rebates;
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+
+        // // Same cross trading happens during epoch 28
+        // // quantity being traded is halved, each person will make 0.5 quantity and take 0.5 quantity
+        // let quantity = 500_000_000;
+        // execute_cross_trading<SUI, USDC>(
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     bob_balance_manager_id,
+        //     client_order_id,
+        //     order_type,
+        //     price,
+        //     quantity,
+        //     is_bid,
+        //     pay_with_deep,
+        //     constants::max_u64(),
+        //     &mut test
+        // );
+        // let taker_sui_traded = quantity;
+        // let maker_sui_traded = quantity;
+        // let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        // alice_balance.sui = alice_balance.sui + quantity_sui_traded;
+        // alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
+        // alice_balance.deep = alice_balance.deep - math::mul(
+        //     math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // bob_balance.sui = bob_balance.sui - quantity_sui_traded;
+        // bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
+        // bob_balance.deep = bob_balance.deep - math::mul(
+        //     math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        //     deep_multiplier
+        // );
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+
+        // // Epoch 29. Rebates should now be using the normal calculation
+        // test.next_epoch(OWNER);
+        // assert!(test.ctx().epoch() == 29, 0);
+        // claim_rebates<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     alice_balance_manager_id,
+        //     &mut test
+        // );
+        // claim_rebates<SUI, USDC>(
+        //     BOB,
+        //     pool1_id,
+        //     bob_balance_manager_id,
+        //     &mut test
+        // );
+        // let fees_generated = math::mul(
+        //     2 * (math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee)),
+        //     deep_multiplier
+        // );
+        // let historic_median = 2 * constants::float_scaling();
+        // let other_maker_liquidity = 500_000_000;
+        // let maker_rebate_percentage = if (historic_median > 0) {
+        //     constants::float_scaling() - constants::float_scaling().min(math::div(other_maker_liquidity, historic_median))
+        // } else {
+        //     0
+        // }; // 75%
+
+        // let maker_volume_proportion = 500_000_000;
+        // let maker_fee_proportion = math::mul(maker_volume_proportion, fees_generated); // 4000000
+        // let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion); // 3000000
+        // let expected_amount_burned = fees_generated - 2 * maker_rebate; // 1000000
+        // alice_balance.deep = alice_balance.deep + maker_rebate;
+        // check_balance(
+        //     alice_balance_manager_id,
+        //     &alice_balance,
+        //     &mut test
+        // );
+        // bob_balance.deep = bob_balance.deep + maker_rebate;
+        // check_balance(
+        //     bob_balance_manager_id,
+        //     &bob_balance,
+        //     &mut test
+        // );
+        // burn_deep<SUI, USDC>(
+        //     ALICE,
+        //     pool1_id,
+        //     expected_amount_burned,
+        //     &mut test
+        // );
+
+        end(test);
+    }
+
     fun test_master_deep_price(
         error_code: u64,
     ){
