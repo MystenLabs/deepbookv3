@@ -65,6 +65,11 @@ module deepbook::master_tests {
         test_master(NoError)
     }
 
+    #[test]
+    fun test_master_input_token_ok() {
+        test_master_input_tokens(NoError)
+    }
+
     #[test, expected_failure(abort_code = ::deepbook::registry::EPoolAlreadyExists)]
     fun test_master_duplicate_pool_e() {
         test_master(EDuplicatePool)
@@ -343,7 +348,7 @@ module deepbook::master_tests {
 
         end(test);
     }
-
+    
     fun test_master(
         error_code: u64,
     ) {
@@ -989,11 +994,6 @@ module deepbook::master_tests {
         );
 
         end(test);
-    }
-
-    #[test]
-    fun test_master_input_token_ok() {
-        test_master_input_tokens(NoError)
     }
 
     fun test_master_input_tokens(
