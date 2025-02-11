@@ -1303,6 +1303,8 @@ module deepbook::master_tests {
         let sui_base_fee = math::mul(taker_fee, executed_quantity);
         let sui_penalty_fee = math::mul(constants::fee_penalty_multiplier(), sui_base_fee);
         bob_balance.sui = bob_balance.sui - sui_penalty_fee;
+        std::debug::print(&b"sui_penalty_fee");
+        std::debug::print(&sui_penalty_fee);
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -1374,83 +1376,76 @@ module deepbook::master_tests {
         // Alice earned the 0.08% total fee collected in epoch 2
         // Alice 0.02% maker fee + Bob 0.06% taker = 0.08% total fees
         // There is also a penalty multiplier applied
-        // 0.02% is collected in USDC, 0.06% is collected in SUI
+        // 0.02% is collected in USDC (alice)
+        // 0.06% is collected in SUI (bob)
         // Alice will make a claim for the fees collected
         // Bob will get no rebates as he only executed taker orders
         // test.next_epoch(OWNER);
         // assert!(test.ctx().epoch() == 4, 0);
 
-        // claim_rebates<SUI, USDC>(
-        //     ALICE,
-        //     pool1_id,
-        //     alice_balance_manager_id,
-        //     &mut test
-        // );
-        // let quantity = 3 * constants::float_scaling();
-        // alice_balance.sui = alice_balance.sui + 
-        // std::debug::print(&8888888888);
-        // math::mul(constants::fee_penalty_multiplier(), math::mul(
-        //     quantity,
-        //     200_000
-        // ));
-        // alice_balance.usdc = alice_balance.usdc + 
-        // math::mul(constants::fee_penalty_multiplier(), math::mul(
-        //     math::mul(quantity, price),
-        //     600_000
-        // ));
-        // check_balance(
-        //     alice_balance_manager_id,
-        //     &alice_balance,
-        //     &mut test
-        // );
+        claim_rebates<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            &mut test
+        );
+        let quantity = 3 * constants::float_scaling();
+        alice_balance.sui = alice_balance.sui + 
+        math::mul(constants::fee_penalty_multiplier(), math::mul(
+            quantity,
+            600_000
+        ));
+        std::debug::print(&8888888888);
 
-        // if (error_code == EIncorrectRebateClaimer) {
-        //     claim_rebates<SUI, USDC>(
-        //         BOB,
-        //         pool1_id,
-        //         alice_balance_manager_id,
-        //         &mut test
-        //     );
-        // };
+        alice_balance.usdc = alice_balance.usdc + 
+        math::mul(constants::fee_penalty_multiplier(), math::mul(
+            math::mul(quantity, price),
+            200_000
+        ));
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
 
-        // // Bob will get no rebates
-        // claim_rebates<SUI, USDC>(
-        //     BOB,
-        //     pool1_id,
-        //     bob_balance_manager_id,
-        //     &mut test
-        // );
-        // check_balance(
-        //     bob_balance_manager_id,
-        //     &bob_balance,
-        //     &mut test
-        // );
+        // Bob will get no rebates
+        claim_rebates<SUI, USDC>(
+            BOB,
+            pool1_id,
+            bob_balance_manager_id,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
-        // // Alice restakes 100 DEEP into pool 1 during epoch 4
-        // stake<SUI, USDC>(
-        //     ALICE,
-        //     pool1_id,
-        //     alice_balance_manager_id,
-        //     100 * constants::float_scaling(),
-        //     &mut test
-        // );
-        // alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
-        // check_balance(
-        //     alice_balance_manager_id,
-        //     &alice_balance,
-        //     &mut test
-        // );
+        // Alice restakes 100 DEEP into pool 1 during epoch 4
+        stake<SUI, USDC>(
+            ALICE,
+            pool1_id,
+            alice_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test
+        );
+        alice_balance.deep = alice_balance.deep - 100 * constants::float_scaling();
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
 
-        // // Now the vault balance should only include the 2 stakes of 100 DEEP
-        // check_vault_balances<SUI, USDC>(
-        //     pool1_id,
-        //     &balances::new(
-        //         0,
-        //         0,
-        //         200 * constants::float_scaling()
-        //     ),
-        //     &mut test
-        // );
+        // Now the vault balance should only include the 2 stakes of 100 DEEP
+        check_vault_balances<SUI, USDC>(
+            pool1_id,
+            &balances::new(
+                0,
+                0,
+                200 * constants::float_scaling()
+            ),
+            &mut test
+        );
 
         // // Advance to epoch 28
         // let quantity = 1 * constants::float_scaling();
