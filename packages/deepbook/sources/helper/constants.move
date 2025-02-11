@@ -14,7 +14,7 @@ const MAX_PRICE: u64 = ((1u128 << 63) - 1) as u64;
 const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
-const FEE_PENALTY_MULTIPLIER: u64 = 250_000_000; // 25%
+const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
 
 // Restrictions on limit orders.
 // No restriction on the order.
