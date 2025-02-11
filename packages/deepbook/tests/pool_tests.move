@@ -750,6 +750,82 @@ fun test_modify_order_invalid_new_quantity_ask_e() {
 }
 
 #[test]
+fun test_modify_order_bid_input_ok() {
+    test_modify_order(
+        3 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        0,
+        true,
+        false
+    );
+}
+
+#[test]
+fun test_modify_order_ask_input_ok() {
+    test_modify_order(
+        3 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        0,
+        false,
+        false
+    );
+}
+
+#[
+    test,
+    expected_failure(
+        abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal,
+    ),
+]
+fun test_modify_order_increase_bid_input_e() {
+    test_modify_order(
+        2 * constants::float_scaling(),
+        3 * constants::float_scaling(),
+        0,
+        true,
+        false
+    );
+}
+
+#[
+    test,
+    expected_failure(
+        abort_code = ::deepbook::book::ENewQuantityMustBeLessThanOriginal,
+    ),
+]
+fun test_modify_order_increase_ask_input_e() {
+    test_modify_order(
+        2 * constants::float_scaling(),
+        3 * constants::float_scaling(),
+        0,
+        false,
+        false
+    );
+}
+
+#[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
+fun test_modify_order_invalid_new_quantity_bid_input_e() {
+    test_modify_order(
+        3 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        true,
+        false
+    );
+}
+
+#[test, expected_failure(abort_code = ::deepbook::order::EInvalidNewQuantity)]
+fun test_modify_order_invalid_new_quantity_ask_input_e() {
+    test_modify_order(
+        3 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        2 * constants::float_scaling(),
+        false,
+        false
+    );
+}
+
+#[test]
 fun test_queue_priority_bid_ok() {
     test_queue_priority(true);
 }

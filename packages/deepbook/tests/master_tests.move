@@ -39,24 +39,26 @@ module deepbook::master_tests {
 
     const NoError: u64 = 0;
     const NoErrorDeepAsBase: u64 = 1;
-    const EDuplicatePool: u64 = 2;
-    const ENotEnoughFunds: u64 = 3;
-    const EIncorrectStakeOwner: u64 = 4;
-    const ECannotPropose: u64 = 5;
-    const EIncorrectRebateClaimer: u64 = 6;
-    const EDataRecentlyAdded: u64 = 7;
-    const ENotEnoughBaseForLoan: u64 = 8;
-    const ENotEnoughQuoteForLoan: u64 = 9;
-    const EIncorrectLoanPool: u64 = 10;
-    const EIncorrectTypeReturned: u64 = 11;
-    const EInvalidOwner: u64 = 12;
-    const ETradeCapNotInList: u64 = 13;
-    const EInvalidTrader: u64 = 14;
-    const EIncorrectLevel2Price: u64 = 15;
-    const EIncorrectLevel2Quantity: u64 = 16;
-    const EInvalidStake: u64 = 17;
-    const EAddPricePointUnregisteredPool: u64 = 18;
-    const EIncorrectLevel2Length: u64 = 19;
+    const NoErrorPayWithInput: u64 = 2;
+
+    const EDuplicatePool: u64 = 1;
+    const ENotEnoughFunds: u64 = 2;
+    const EIncorrectStakeOwner: u64 = 3;
+    const ECannotPropose: u64 = 4;
+    const EIncorrectRebateClaimer: u64 = 5;
+    const EDataRecentlyAdded: u64 = 6;
+    const ENotEnoughBaseForLoan: u64 = 7;
+    const ENotEnoughQuoteForLoan: u64 = 8;
+    const EIncorrectLoanPool: u64 = 9;
+    const EIncorrectTypeReturned: u64 = 10;
+    const EInvalidOwner: u64 = 11;
+    const ETradeCapNotInList: u64 = 12;
+    const EInvalidTrader: u64 = 13;
+    const EIncorrectLevel2Price: u64 = 14;
+    const EIncorrectLevel2Quantity: u64 = 15;
+    const EInvalidStake: u64 = 16;
+    const EAddPricePointUnregisteredPool: u64 = 17;
+    const EIncorrectLevel2Length: u64 = 18;
 
     #[test]
     fun test_master_ok() {
@@ -146,6 +148,11 @@ module deepbook::master_tests {
     #[test]
     fun test_trader_permission_and_modify_returned_ok(){
         test_trader_permission_and_modify_returned(NoError)
+    }
+
+    #[test]
+    fun test_trader_permission_and_modify_returned_input_ok(){
+        test_trader_permission_and_modify_returned(NoErrorPayWithInput)
     }
 
     #[test]
@@ -2395,7 +2402,6 @@ module deepbook::master_tests {
             pool_tests::setup_reference_pool_deep_as_base<DEEP, SUI>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
         } else {
             pool_tests::setup_reference_pool<SUI, DEEP>(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
-
         };
 
         // Default price point of 100 deep per base will be added
@@ -2430,7 +2436,7 @@ module deepbook::master_tests {
         let quantity = 10 * constants::float_scaling();
         let expire_timestamp = constants::max_u64();
         let is_bid = true;
-        let pay_with_deep = true;
+        let pay_with_deep = error_code != NoErrorPayWithInput;
         let maker_fee = constants::maker_fee();
         let mut alice_balance = ExpectedBalances{
             sui: starting_balance,
@@ -2456,10 +2462,16 @@ module deepbook::master_tests {
             &mut test,
         );
         alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
-        alice_balance.deep = alice_balance.deep - math::mul(
+        if (error_code == NoErrorPayWithInput) {
+            alice_balance.usdc = alice_balance.usdc - 
+                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
+                math::mul(price, quantity));
+        } else {
+            alice_balance.deep = alice_balance.deep - math::mul(
             math::mul(maker_fee, constants::deep_multiplier()),
             quantity
-        );
+        )};
+        
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -2500,10 +2512,16 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.usdc = alice_balance.usdc + math::mul(price, cancelled_quantity);
-        alice_balance.deep = alice_balance.deep + math::mul(
-            math::mul(maker_fee, constants::deep_multiplier()),
-            cancelled_quantity
-        );
+        if (error_code == NoErrorPayWithInput) {
+            alice_balance.usdc = alice_balance.usdc + 
+                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
+                math::mul(price, cancelled_quantity));
+        } else {
+            alice_balance.deep = alice_balance.deep + math::mul(
+                math::mul(maker_fee, constants::deep_multiplier()),
+                cancelled_quantity
+            );
+        };
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
@@ -2519,10 +2537,16 @@ module deepbook::master_tests {
             &mut test
         );
         alice_balance.usdc = alice_balance.usdc + math::mul(price, remaining_quantity);
-        alice_balance.deep = alice_balance.deep + math::mul(
-            math::mul(maker_fee, constants::deep_multiplier()),
-            remaining_quantity
-        );
+        if (error_code == NoErrorPayWithInput) {
+            alice_balance.usdc = alice_balance.usdc + 
+                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
+                math::mul(price, remaining_quantity));
+        } else {
+            alice_balance.deep = alice_balance.deep + math::mul(
+                math::mul(maker_fee, constants::deep_multiplier()),
+                remaining_quantity
+            );
+        };
         check_balance(
             alice_balance_manager_id,
             &alice_balance,
