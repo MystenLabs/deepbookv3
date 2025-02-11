@@ -1303,8 +1303,6 @@ module deepbook::master_tests {
         let sui_base_fee = math::mul(taker_fee, executed_quantity);
         let sui_penalty_fee = math::mul(constants::fee_penalty_multiplier(), sui_base_fee);
         bob_balance.sui = bob_balance.sui - sui_penalty_fee;
-        std::debug::print(&b"sui_penalty_fee");
-        std::debug::print(&sui_penalty_fee);
         check_balance(
             bob_balance_manager_id,
             &bob_balance,
@@ -1380,8 +1378,9 @@ module deepbook::master_tests {
         // 0.06% is collected in SUI (bob)
         // Alice will make a claim for the fees collected
         // Bob will get no rebates as he only executed taker orders
-        // test.next_epoch(OWNER);
-        // assert!(test.ctx().epoch() == 4, 0);
+
+        test.next_epoch(OWNER);
+        assert!(test.ctx().epoch() == 4, 0);
 
         claim_rebates<SUI, USDC>(
             ALICE,
@@ -1395,7 +1394,6 @@ module deepbook::master_tests {
             quantity,
             600_000
         ));
-        std::debug::print(&8888888888);
 
         alice_balance.usdc = alice_balance.usdc + 
         math::mul(constants::fee_penalty_multiplier(), math::mul(
@@ -1447,76 +1445,73 @@ module deepbook::master_tests {
             &mut test
         );
 
-        // // Advance to epoch 28
-        // let quantity = 1 * constants::float_scaling();
-        // let mut i = 23;
-        // // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
-        // // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
-        // // Discount will be 50% for Alice because sheplaces a maker order first that's taken
-        // // Bob will not get discount because he takes Alice's order
-        // // Fees paid for each should be 0.02% maker for both, 0.03% taker for Alice, 0.06% taker for Bob
-        // // Total fees collected should be 0.065% for each epoch
-        // // Alice should have 46 more SUI at the end of the loop
-        // // Bob should have 92 more USDC at the end of the loop
-        // while (i > 0) {
-        //     test.next_epoch(OWNER);
-        //     execute_cross_trading<SUI, USDC>(
-        //         pool1_id,
-        //         alice_balance_manager_id,
-        //         bob_balance_manager_id,
-        //         client_order_id,
-        //         order_type,
-        //         price,
-        //         quantity,
-        //         is_bid,
-        //         pay_with_deep,
-        //         constants::max_u64(),
-        //         &mut test
-        //     );
-        //     i = i - 1;
-        // };
-        // let taker_sui_traded = 23 * constants::float_scaling();
-        // let maker_sui_traded = 23 * constants::float_scaling();
-        // let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
-        // let avg_taker_fee = math::mul(taker_fee + math::mul(constants::half(), taker_fee), constants::half());
-        // alice_balance.sui = alice_balance.sui + quantity_sui_traded;
-        // alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
-        // alice_balance.deep = alice_balance.deep - math::mul(
-        //     math::mul(taker_sui_traded, math::mul(constants::half(), taker_fee)) + math::mul(maker_sui_traded, maker_fee),
-        //     deep_multiplier
-        // );
-        // bob_balance.sui = bob_balance.sui - quantity_sui_traded;
-        // bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
-        // bob_balance.deep = bob_balance.deep - math::mul(
-        //     math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
-        //     deep_multiplier
-        // );
-        // check_balance(
-        //     alice_balance_manager_id,
-        //     &alice_balance,
-        //     &mut test
-        // );
-        // check_balance(
-        //     bob_balance_manager_id,
-        //     &bob_balance,
-        //     &mut test
-        // );
+        // Advance to epoch 28
+        let quantity = 1 * constants::float_scaling();
+        let mut i = 23;
+        // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and should get the full rebate
+        // Alice will place a bid for quantity 1, bob will place ask for quantity 2, then alice will place a bid for quantity 1
+        // Discount will be 50% for Alice because sheplaces a maker order first that's taken
+        // Bob will not get discount because he takes Alice's order
+        // Fees paid for each should be 0.02% maker for both, 0.06% taker for Alice, 0.06% taker for Bob
+        // Alice should have 46 more SUI at the end of the loop
+        // Bob should have 92 more USDC at the end of the loop
+        while (i > 0) {
+            test.next_epoch(OWNER);
+            execute_cross_trading<SUI, USDC>(
+                pool1_id,
+                alice_balance_manager_id,
+                bob_balance_manager_id,
+                client_order_id,
+                order_type,
+                price,
+                quantity,
+                is_bid,
+                pay_with_deep,
+                constants::max_u64(),
+                &mut test
+            );
+            i = i - 1;
+        };
+        let taker_sui_traded = 23 * constants::float_scaling();
+        let maker_sui_traded = 23 * constants::float_scaling();
+        let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
+        alice_balance.sui = alice_balance.sui + quantity_sui_traded;
+        alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
+        let alice_usdc_fee = math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            math::mul(price, constants::fee_penalty_multiplier())
+        );
+        alice_balance.usdc = alice_balance.usdc - alice_usdc_fee;
+        bob_balance.sui = bob_balance.sui - quantity_sui_traded;
+        bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
+        let bob_sui_fee = math::mul(
+            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+            constants::fee_penalty_multiplier()
+        );
+        bob_balance.sui = bob_balance.sui - bob_sui_fee;
+        check_balance(
+            alice_balance_manager_id,
+            &alice_balance,
+            &mut test
+        );
+        check_balance(
+            bob_balance_manager_id,
+            &bob_balance,
+            &mut test
+        );
 
-        // test.next_epoch(OWNER);
-        // assert!(test.ctx().epoch() == 28, 0);
+        test.next_epoch(OWNER);
+        assert!(test.ctx().epoch() == 28, 0);
 
-        // // Alice claims rebates for the past 23 epochs
+        // Alice claims rebates for the past 23 epochs
         // claim_rebates<SUI, USDC>(
         //     ALICE,
         //     pool1_id,
         //     alice_balance_manager_id,
         //     &mut test
         // );
-        // let alice_rebates = math::mul(
-        //     math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
-        //     deep_multiplier
-        // );
-        // alice_balance.deep = alice_balance.deep + alice_rebates;
+        // alice_balance.deep = alice_balance.deep + alice_usdc_fee / 2;
+        // alice_balance.sui = alice_balance.sui + bob_sui_fee / 2;
         // check_balance(
         //     alice_balance_manager_id,
         //     &alice_balance,
@@ -3083,12 +3078,14 @@ module deepbook::master_tests {
         {
             let my_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
             let sui = balance_manager::balance<SUI>(&my_manager);
-            std::debug::print(&sui);
-            std::debug::print(&expected_balances.sui);
             let usdc = balance_manager::balance<USDC>(&my_manager);
             let spam = balance_manager::balance<SPAM>(&my_manager);
             let deep = balance_manager::balance<DEEP>(&my_manager);
             let usdt = balance_manager::balance<USDT>(&my_manager);
+            std::debug::print(&b"actual_usdc");
+            std::debug::print(&usdc);
+            std::debug::print(&b"expected_usdc");
+            std::debug::print(&expected_balances.usdc);
             assert!(sui == expected_balances.sui, 0);
             assert!(usdc == expected_balances.usdc, 0);
             assert!(spam == expected_balances.spam, 0);
