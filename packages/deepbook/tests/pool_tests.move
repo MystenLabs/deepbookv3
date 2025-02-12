@@ -680,7 +680,7 @@ fun test_modify_order_bid_ok() {
         2 * constants::float_scaling(),
         0,
         true,
-        true
+        true,
     );
 }
 
@@ -691,7 +691,7 @@ fun test_modify_order_ask_ok() {
         2 * constants::float_scaling(),
         0,
         false,
-        true
+        true,
     );
 }
 
@@ -707,7 +707,7 @@ fun test_modify_order_increase_bid_e() {
         3 * constants::float_scaling(),
         0,
         true,
-        true
+        true,
     );
 }
 
@@ -723,7 +723,7 @@ fun test_modify_order_increase_ask_e() {
         3 * constants::float_scaling(),
         0,
         false,
-        true
+        true,
     );
 }
 
@@ -734,7 +734,7 @@ fun test_modify_order_invalid_new_quantity_bid_e() {
         2 * constants::float_scaling(),
         2 * constants::float_scaling(),
         true,
-        true
+        true,
     );
 }
 
@@ -745,7 +745,7 @@ fun test_modify_order_invalid_new_quantity_ask_e() {
         2 * constants::float_scaling(),
         2 * constants::float_scaling(),
         false,
-        true
+        true,
     );
 }
 
@@ -756,7 +756,7 @@ fun test_modify_order_bid_input_ok() {
         2 * constants::float_scaling(),
         0,
         true,
-        false
+        false,
     );
 }
 
@@ -767,7 +767,7 @@ fun test_modify_order_ask_input_ok() {
         2 * constants::float_scaling(),
         0,
         false,
-        false
+        false,
     );
 }
 
@@ -783,7 +783,7 @@ fun test_modify_order_increase_bid_input_e() {
         3 * constants::float_scaling(),
         0,
         true,
-        false
+        false,
     );
 }
 
@@ -799,7 +799,7 @@ fun test_modify_order_increase_ask_input_e() {
         3 * constants::float_scaling(),
         0,
         false,
-        false
+        false,
     );
 }
 
@@ -810,7 +810,7 @@ fun test_modify_order_invalid_new_quantity_bid_input_e() {
         2 * constants::float_scaling(),
         2 * constants::float_scaling(),
         true,
-        false
+        false,
     );
 }
 
@@ -821,7 +821,7 @@ fun test_modify_order_invalid_new_quantity_ask_input_e() {
         2 * constants::float_scaling(),
         2 * constants::float_scaling(),
         false,
-        false
+        false,
     );
 }
 
