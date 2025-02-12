@@ -329,7 +329,13 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     );
     let (settled, owed) = self
         .state
-        .process_modify(balance_manager.id(), cancel_quantity, order, ctx);
+        .process_modify(
+            balance_manager.id(),
+            cancel_quantity,
+            order,
+            self.pool_id,
+            ctx,
+        );
     self
         .vault
         .settle_balance_manager(settled, owed, balance_manager, trade_proof);
@@ -363,7 +369,7 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     );
     let (settled, owed) = self
         .state
-        .process_cancel(&mut order, balance_manager.id(), ctx);
+        .process_cancel(&mut order, balance_manager.id(), self.pool_id, ctx);
     self
         .vault
         .settle_balance_manager(settled, owed, balance_manager, trade_proof);
@@ -1265,6 +1271,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         .state
         .process_create(
             &mut order_info,
+            self.pool_id,
             ctx,
         );
     self

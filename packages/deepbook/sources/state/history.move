@@ -40,6 +40,20 @@ public struct History has store {
     balance_to_burn: u64,
 }
 
+public struct EpochData has store, copy, drop {
+    epoch: u64,
+    pool_id: ID,
+    total_volume: u128,
+    total_staked_volume: u128,
+    base_fees_collected: u64,
+    quote_fees_collected: u64,
+    deep_fees_collected: u64,
+    historic_median: u128,
+    taker_fee: u64,
+    maker_fee: u64,
+    stake_required: u64,
+}
+
 // === Public-Package Functions ===
 /// Create a new `History` instance. Called once upon pool creation. A single
 /// blank `Volumes` instance is created and added to the historic_volumes table.
@@ -72,6 +86,7 @@ public(package) fun empty(
 public(package) fun update(
     self: &mut History,
     trade_params: TradeParams,
+    pool_id: ID,
     ctx: &TxContext,
 ) {
     let epoch = ctx.epoch();
@@ -81,6 +96,20 @@ public(package) fun update(
     };
     self.update_historic_median();
     self.historic_volumes.add(self.epoch, self.volumes);
+
+    event::emit(EpochData {
+        epoch: self.epoch,
+        pool_id,
+        total_volume: self.volumes.total_volume,
+        total_staked_volume: self.volumes.total_staked_volume,
+        base_fees_collected: self.volumes.total_fees_collected.base(),
+        quote_fees_collected: self.volumes.total_fees_collected.quote(),
+        deep_fees_collected: self.volumes.total_fees_collected.deep(),
+        historic_median: self.volumes.historic_median,
+        taker_fee: trade_params.taker_fee(),
+        maker_fee: trade_params.maker_fee(),
+        stake_required: trade_params.stake_required(),
+    });
 
     self.epoch = epoch;
     self.reset_volumes(trade_params);

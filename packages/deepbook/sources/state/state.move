@@ -96,10 +96,11 @@ public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
 public(package) fun process_create(
     self: &mut State,
     order_info: &mut OrderInfo,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     let fills = order_info.fills_ref();
     self.process_fills(fills, ctx);
 
@@ -172,10 +173,11 @@ public(package) fun process_cancel(
     self: &mut State,
     order: &mut Order,
     balance_manager_id: ID,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
     order.set_canceled();
 
@@ -196,10 +198,11 @@ public(package) fun process_modify(
     balance_manager_id: ID,
     cancel_quantity: u64,
     order: &Order,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let epoch = order.epoch();
@@ -223,7 +226,7 @@ public(package) fun process_stake(
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let (stake_before, stake_after) = self
@@ -250,7 +253,7 @@ public(package) fun process_unstake(
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
@@ -282,7 +285,7 @@ public(package) fun process_proposal(
     ctx: &TxContext,
 ) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
     let account = &mut self.accounts[balance_manager_id];
     let stake = account.active_stake();
@@ -322,7 +325,7 @@ public(package) fun process_vote(
     ctx: &TxContext,
 ) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
@@ -357,7 +360,7 @@ public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
 ): (Balances, Balances) {
     let balance_manager_id = balance_manager.id();
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
