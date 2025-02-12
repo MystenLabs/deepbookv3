@@ -196,24 +196,24 @@ public(package) fun get_quantity_out(
             else book_side.prev_slice(ref, offset);
     };
 
-    let fee_quantity = if (is_bid) {
-        deep_price.fee_quantity(
-            quantity_out,
-            quote_quantity - quantity_in_left,
-            is_bid,
-        )
-    } else {
-        deep_price.fee_quantity(
-            base_quantity - quantity_in_left,
-            quantity_out,
-            is_bid,
-        )
-    };
-
-    let deep_fee = if (pay_with_deep) {
-        math::mul(taker_fee, fee_quantity.deep())
-    } else {
+    let deep_fee = if (!pay_with_deep) {
         0
+    } else {
+        let fee_quantity = if (is_bid) {
+            deep_price.fee_quantity(
+                quantity_out,
+                quote_quantity - quantity_in_left,
+                is_bid,
+            )
+        } else {
+            deep_price.fee_quantity(
+                base_quantity - quantity_in_left,
+                quantity_out,
+                is_bid,
+            )
+        };
+
+        math::mul(taker_fee, fee_quantity.deep())
     };
 
     if (is_bid) {

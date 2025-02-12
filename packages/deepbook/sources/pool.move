@@ -839,6 +839,7 @@ public fun registered_pool<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the quote quantity out for a given base quantity.
+/// Uses DEEP token as fee.
 public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,
@@ -848,6 +849,7 @@ public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the base quantity out for a given quote quantity.
+/// Uses DEEP token as fee.
 public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     quote_quantity: u64,
@@ -857,6 +859,7 @@ public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the quote quantity out for a given base quantity.
+/// Uses input token as fee.
 public fun get_quote_quantity_out_input_fee<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,
@@ -866,6 +869,7 @@ public fun get_quote_quantity_out_input_fee<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the base quantity out for a given quote quantity.
+/// Uses input token as fee.
 public fun get_base_quantity_out_input_fee<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     quote_quantity: u64,
@@ -877,6 +881,7 @@ public fun get_base_quantity_out_input_fee<BaseAsset, QuoteAsset>(
 /// Dry run to determine the quantity out for a given base or quote quantity.
 /// Only one out of base or quote quantity should be non-zero.
 /// Returns the (base_quantity_out, quote_quantity_out, deep_quantity_required)
+/// Uses DEEP token as fee.
 public fun get_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,
@@ -904,6 +909,7 @@ public fun get_quantity_out<BaseAsset, QuoteAsset>(
 /// Dry run to determine the quantity out for a given base or quote quantity.
 /// Only one out of base or quote quantity should be non-zero.
 /// Returns the (base_quantity_out, quote_quantity_out, deep_quantity_required)
+/// Uses input token as fee.
 public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,

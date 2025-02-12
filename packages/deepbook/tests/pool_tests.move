@@ -498,6 +498,11 @@ fun test_swap_exact_amount_with_input_bid_ask() {
     test_swap_exact_amount_with_input(true);
 }
 
+#[test]
+fun test_swap_exact_amount_with_input_ask_bid() {
+    test_swap_exact_amount_with_input(false);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
 fun test_cancel_all_orders_bid_e() {
     test_cancel_all_orders(true, true);
