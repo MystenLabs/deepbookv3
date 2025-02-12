@@ -136,9 +136,6 @@ public(package) fun get_quantity_out(
         constants::fee_penalty_multiplier(),
         taker_fee,
     );
-    std::debug::print(&128390281390218390);
-    std::debug::print(&base_quantity);
-    std::debug::print(&quote_quantity);
 
     let book_side = if (is_bid) &self.asks else &self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice()

@@ -288,9 +288,6 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
                 );
         }
     };
-    std::debug::print(&12378219);
-    std::debug::print(&pay_with_deep);
-    std::debug::print(&base_quantity);
     base_quantity =
         base_quantity - base_quantity % self.load_inner().book.lot_size();
     if (base_quantity < self.load_inner().book.min_size()) {

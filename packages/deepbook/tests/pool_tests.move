@@ -3581,10 +3581,6 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
         &mut test,
     );
 
-    std::debug::print(&base);
-    std::debug::print(&quote);
-    std::debug::print(&deep_required);
-
     let (base_2, quote_2, deep_required_2) = if (is_bid) {
         get_quote_quantity_out_input_fee<SUI, USDC>(
             pool_id,
@@ -3598,14 +3594,6 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
             &mut test,
         )
     };
-
-    std::debug::print(&base_2);
-    std::debug::print(&quote_2);
-    std::debug::print(&deep_required_2);
-    std::debug::print(&888888);
-    std::debug::print(&base_in);
-    std::debug::print(&quote_in);
-    std::debug::print(&deep_in);
 
     let (base_out, quote_out, deep_out) = if (is_bid) {
         place_swap_exact_base_for_quote<SUI, USDC>(
@@ -3626,8 +3614,6 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
             &mut test,
         )
     };
-
-    std::debug::print(&99999);
 
     if (is_bid) {
         assert!(
