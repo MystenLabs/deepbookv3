@@ -121,6 +121,7 @@ public(package) fun get_quantity_out(
     taker_fee: u64,
     deep_price: OrderDeepPrice,
     lot_size: u64,
+    pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
     assert!(
@@ -131,6 +132,13 @@ public(package) fun get_quantity_out(
     let is_bid = quote_quantity > 0;
     let mut quantity_out = 0;
     let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
+    let input_fee_rate = math::mul(
+        constants::fee_penalty_multiplier(),
+        taker_fee,
+    );
+    std::debug::print(&128390281390218390);
+    std::debug::print(&base_quantity);
+    std::debug::print(&quote_quantity);
 
     let book_side = if (is_bid) &self.asks else &self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
@@ -143,24 +151,44 @@ public(package) fun get_quantity_out(
 
         if (current_timestamp <= order.expire_timestamp()) {
             let mut matched_base_quantity;
+            let quantity_to_match = if (pay_with_deep) {
+                quantity_in_left
+            } else {
+                math::div(
+                    quantity_in_left,
+                    constants::float_scaling() + input_fee_rate,
+                )
+            };
             if (is_bid) {
                 matched_base_quantity =
-                    math::div(quantity_in_left, cur_price).min(cur_quantity);
+                    math::div(quantity_to_match, cur_price).min(cur_quantity);
                 matched_base_quantity =
                     matched_base_quantity -
                     matched_base_quantity % lot_size;
                 quantity_out = quantity_out + matched_base_quantity;
-                quantity_in_left =
-                    quantity_in_left -
-                    math::mul(matched_base_quantity, cur_price);
+                let matched_quote_quantity = math::mul(
+                    matched_base_quantity,
+                    cur_price,
+                );
+                quantity_in_left = quantity_in_left - matched_quote_quantity;
+                if (!pay_with_deep) {
+                    quantity_in_left =
+                        quantity_in_left -
+                        math::mul(matched_quote_quantity, input_fee_rate);
+                };
             } else {
-                matched_base_quantity = quantity_in_left.min(cur_quantity);
+                matched_base_quantity = quantity_to_match.min(cur_quantity);
                 matched_base_quantity =
                     matched_base_quantity -
                     matched_base_quantity % lot_size;
                 quantity_out =
                     quantity_out + math::mul(matched_base_quantity, cur_price);
                 quantity_in_left = quantity_in_left - matched_base_quantity;
+                if (!pay_with_deep) {
+                    quantity_in_left =
+                        quantity_in_left -
+                        math::mul(matched_base_quantity, input_fee_rate);
+                };
             };
 
             if (matched_base_quantity == 0) break;
@@ -185,7 +213,11 @@ public(package) fun get_quantity_out(
         )
     };
 
-    let deep_fee = math::mul(taker_fee, fee_quantity.deep());
+    let deep_fee = if (pay_with_deep) {
+        math::mul(taker_fee, fee_quantity.deep())
+    } else {
+        0
+    };
 
     if (is_bid) {
         (quantity_out, quantity_in_left, deep_fee)
