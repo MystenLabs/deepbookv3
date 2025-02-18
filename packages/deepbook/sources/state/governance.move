@@ -22,14 +22,14 @@ const EWhitelistedPoolCannotChange: u64 = 5;
 
 // === Constants ===
 const FEE_MULTIPLE: u64 = 1000; // 0.01 basis points
-const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
-const MAX_TAKER_STABLE: u64 = 100000;
-const MIN_MAKER_STABLE: u64 = 20000;
-const MAX_MAKER_STABLE: u64 = 50000;
-const MIN_TAKER_VOLATILE: u64 = 500000;
-const MAX_TAKER_VOLATILE: u64 = 1000000;
-const MIN_MAKER_VOLATILE: u64 = 200000;
-const MAX_MAKER_VOLATILE: u64 = 500000;
+const MIN_TAKER_STABLE: u64 = 10000; // 0.1 basis points
+const MAX_TAKER_STABLE: u64 = 100000; // 1 basis points
+const MIN_MAKER_STABLE: u64 = 0;
+const MAX_MAKER_STABLE: u64 = 50000; // 0.5 basis points
+const MIN_TAKER_VOLATILE: u64 = 100000; // 1 basis points
+const MAX_TAKER_VOLATILE: u64 = 1000000; // 10 basis points
+const MIN_MAKER_VOLATILE: u64 = 0;
+const MAX_MAKER_VOLATILE: u64 = 500000; // 5 basis points
 const MAX_PROPOSALS: u64 = 100;
 const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000; // 100k deep
 
