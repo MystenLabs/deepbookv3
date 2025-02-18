@@ -27,7 +27,7 @@ fun test_rebate_amount() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
@@ -38,7 +38,7 @@ fun test_rebate_amount() {
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
@@ -48,7 +48,7 @@ fun test_rebate_amount() {
 
     // epoch 30
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         29,
@@ -77,7 +77,7 @@ fun test_epoch_skipped() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
@@ -88,7 +88,7 @@ fun test_epoch_skipped() {
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
@@ -99,7 +99,7 @@ fun test_epoch_skipped() {
     // epoch 31
     test.next_epoch(owner);
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate_epoch_0_alice = history.calculate_rebate_amount(
         28,
@@ -145,7 +145,7 @@ fun test_other_maker_volume_above_phase_out() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
@@ -156,7 +156,7 @@ fun test_other_maker_volume_above_phase_out() {
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         15 * FLOAT_SCALING,
@@ -166,7 +166,7 @@ fun test_other_maker_volume_above_phase_out() {
 
     // epoch 30
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         29,
@@ -202,7 +202,7 @@ fun test_rebate_edge_epoch_ok() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
@@ -221,7 +221,7 @@ fun test_rebate_edge_epoch_ok() {
 
     // epoch 28
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
@@ -231,7 +231,7 @@ fun test_rebate_edge_epoch_ok() {
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         28,
