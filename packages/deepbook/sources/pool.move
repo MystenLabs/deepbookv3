@@ -259,12 +259,34 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     let mut base_quantity = base_in.value();
     let quote_quantity = quote_in.value();
+    let taker_fee = self
+        .load_inner()
+        .state
+        .governance()
+        .trade_params()
+        .taker_fee();
+    let input_fee_rate = math::mul(
+        taker_fee,
+        constants::fee_penalty_multiplier(),
+    );
     assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidQuantityIn);
 
     let pay_with_deep = deep_in.value() > 0;
     let is_bid = quote_quantity > 0;
     if (is_bid) {
-        (base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock);
+        (base_quantity, _, _) = if (pay_with_deep) {
+                self.get_quantity_out(0, quote_quantity, clock)
+            } else {
+                self.get_quantity_out_input_fee(0, quote_quantity, clock)
+            }
+    } else {
+        if (!pay_with_deep) {
+            base_quantity =
+                math::div(
+                    base_quantity,
+                    constants::float_scaling() + input_fee_rate,
+                );
+        }
     };
     base_quantity =
         base_quantity - base_quantity % self.load_inner().book.lot_size();
@@ -817,6 +839,7 @@ public fun registered_pool<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the quote quantity out for a given base quantity.
+/// Uses DEEP token as fee.
 public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,
@@ -826,6 +849,7 @@ public fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
 }
 
 /// Dry run to determine the base quantity out for a given quote quantity.
+/// Uses DEEP token as fee.
 public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     quote_quantity: u64,
@@ -834,9 +858,30 @@ public fun get_base_quantity_out<BaseAsset, QuoteAsset>(
     self.get_quantity_out(0, quote_quantity, clock)
 }
 
+/// Dry run to determine the quote quantity out for a given base quantity.
+/// Uses input token as fee.
+public fun get_quote_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    base_quantity: u64,
+    clock: &Clock,
+): (u64, u64, u64) {
+    self.get_quantity_out_input_fee(base_quantity, 0, clock)
+}
+
+/// Dry run to determine the base quantity out for a given quote quantity.
+/// Uses input token as fee.
+public fun get_base_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    quote_quantity: u64,
+    clock: &Clock,
+): (u64, u64, u64) {
+    self.get_quantity_out_input_fee(0, quote_quantity, clock)
+}
+
 /// Dry run to determine the quantity out for a given base or quote quantity.
 /// Only one out of base or quote quantity should be non-zero.
 /// Returns the (base_quantity_out, quote_quantity_out, deep_quantity_required)
+/// Uses DEEP token as fee.
 public fun get_quantity_out<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     base_quantity: u64,
@@ -856,6 +901,34 @@ public fun get_quantity_out<BaseAsset, QuoteAsset>(
             taker_fee,
             deep_price,
             self.book.lot_size(),
+            true,
+            clock.timestamp_ms(),
+        )
+}
+
+/// Dry run to determine the quantity out for a given base or quote quantity.
+/// Only one out of base or quote quantity should be non-zero.
+/// Returns the (base_quantity_out, quote_quantity_out, deep_quantity_required)
+/// Uses input token as fee.
+public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    base_quantity: u64,
+    quote_quantity: u64,
+    clock: &Clock,
+): (u64, u64, u64) {
+    let self = self.load_inner();
+    let params = self.state.governance().trade_params();
+    let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    let deep_price = self.deep_price.empty_deep_price();
+    self
+        .book
+        .get_quantity_out(
+            base_quantity,
+            quote_quantity,
+            taker_fee,
+            deep_price,
+            self.book.lot_size(),
+            false,
             clock.timestamp_ms(),
         )
 }

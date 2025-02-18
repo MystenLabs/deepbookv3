@@ -493,6 +493,16 @@ fun test_swap_exact_amount_ask_bid() {
     test_swap_exact_amount(false);
 }
 
+#[test]
+fun test_swap_exact_amount_with_input_bid_ask() {
+    test_swap_exact_amount_with_input(true);
+}
+
+#[test]
+fun test_swap_exact_amount_with_input_ask_bid() {
+    test_swap_exact_amount_with_input(false);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
 fun test_cancel_all_orders_bid_e() {
     test_cancel_all_orders(true, true);
@@ -3489,6 +3499,169 @@ fun test_swap_exact_amount(is_bid: bool) {
     end(test);
 }
 
+/// Alice places a bid order, Bob places a swap_exact_amount order
+/// Make sure the assets returned to Bob are correct
+/// Make sure expired orders are skipped over
+fun test_swap_exact_amount_with_input(is_bid: bool) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        ALICE,
+        registry_id,
+        false,
+        false,
+        &mut test,
+    );
+
+    let alice_client_order_id = 1;
+    let alice_price = 2 * constants::float_scaling();
+    let alice_quantity = 2 * constants::float_scaling();
+    let expired_price = if (is_bid) {
+        3 * constants::float_scaling()
+    } else {
+        1 * constants::float_scaling()
+    };
+    let expire_timestamp = constants::max_u64();
+    let expire_timestamp_e = get_time(&mut test) + 100;
+    let pay_with_deep = false;
+    let residual = constants::lot_size() - 1;
+    let input_fee_rate = math::mul(
+        constants::fee_penalty_multiplier(),
+        constants::taker_fee(),
+    );
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price,
+        alice_quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        expired_price,
+        alice_quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp_e,
+        &mut test,
+    );
+
+    set_time(200, &mut test);
+
+    let base_in = if (is_bid) {
+        math::mul(1 * constants::float_scaling(), constants::float_scaling() + input_fee_rate) + residual
+    } else {
+        0
+    };
+    let quote_in = if (is_bid) {
+        0
+    } else {
+        math::mul(2 * constants::float_scaling(),constants::float_scaling() + input_fee_rate) + 2 * residual
+    };
+    let deep_in = 0;
+
+    let (base, quote, deep_required) = get_quantity_out_input_fee<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+
+    let (base_2, quote_2, deep_required_2) = if (is_bid) {
+        get_quote_quantity_out_input_fee<SUI, USDC>(
+            pool_id,
+            base_in,
+            &mut test,
+        )
+    } else {
+        get_base_quantity_out_input_fee<SUI, USDC>(
+            pool_id,
+            quote_in,
+            &mut test,
+        )
+    };
+
+    let (base_out, quote_out, deep_out) = if (is_bid) {
+        place_swap_exact_base_for_quote<SUI, USDC>(
+            pool_id,
+            BOB,
+            base_in,
+            deep_in,
+            0,
+            &mut test,
+        )
+    } else {
+        place_swap_exact_quote_for_base<SUI, USDC>(
+            pool_id,
+            BOB,
+            quote_in,
+            deep_in,
+            0,
+            &mut test,
+        )
+    };
+
+    if (is_bid) {
+        assert!(
+            base_out.value() == residual,
+            constants::e_order_info_mismatch(),
+        );
+        assert!(
+            quote_out.value() == 2 * constants::float_scaling(),
+            constants::e_order_info_mismatch(),
+        );
+    } else {
+        assert!(
+            base_out.value() == 1 * constants::float_scaling(),
+            constants::e_order_info_mismatch(),
+        );
+        assert!(
+            quote_out.value() == 2 * residual,
+            constants::e_order_info_mismatch(),
+        );
+    };
+
+    assert!(deep_out.value() == 0, constants::e_order_info_mismatch());
+    assert!(
+        base == base_2 && base == base_out.value(),
+        constants::e_order_info_mismatch(),
+    );
+    assert!(
+        quote == quote_2 && quote == quote_out.value(),
+        constants::e_order_info_mismatch(),
+    );
+    assert!(
+        deep_required == deep_required_2 &&
+        deep_required == deep_in - deep_out.value(),
+        constants::e_order_info_mismatch(),
+    );
+
+    base_out.burn_for_testing();
+    quote_out.burn_for_testing();
+    deep_out.burn_for_testing();
+
+    end(test);
+}
+
 /// Alice places a bid/ask order
 /// Alice then places an ask/bid order that crosses with that order with
 /// cancel_taker option
@@ -5025,6 +5198,33 @@ fun get_quantity_out<BaseAsset, QuoteAsset>(
     }
 }
 
+fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    base_quantity: u64,
+    quote_quantity: u64,
+    test: &mut Scenario,
+): (u64, u64, u64) {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (
+            base_out,
+            quote_out,
+            deep_required,
+        ) = pool.get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+            base_quantity,
+            quote_quantity,
+            &clock,
+        );
+        return_shared(pool);
+        return_shared(clock);
+
+        (base_out, quote_out, deep_required)
+    }
+}
+
 fun get_base_quantity_out<BaseAsset, QuoteAsset>(
     pool_id: ID,
     quote_quantity: u64,
@@ -5063,6 +5263,56 @@ fun get_quote_quantity_out<BaseAsset, QuoteAsset>(
             BaseAsset,
             QuoteAsset,
         >(
+            base_quantity,
+            &clock,
+        );
+        return_shared(pool);
+        return_shared(clock);
+
+        (base_out, quote_out, deep_required)
+    }
+}
+
+fun get_base_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    quote_quantity: u64,
+    test: &mut Scenario,
+): (u64, u64, u64) {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (
+            base_out,
+            quote_out,
+            deep_required,
+        ) = pool.get_base_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+            quote_quantity,
+            &clock,
+        );
+        return_shared(pool);
+        return_shared(clock);
+
+        (base_out, quote_out, deep_required)
+    }
+}
+
+fun get_quote_quantity_out_input_fee<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    base_quantity: u64,
+    test: &mut Scenario,
+): (u64, u64, u64) {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (
+            base_out,
+            quote_out,
+            deep_required,
+        ) = pool.get_quote_quantity_out_input_fee<BaseAsset, QuoteAsset>(
             base_quantity,
             &clock,
         );
