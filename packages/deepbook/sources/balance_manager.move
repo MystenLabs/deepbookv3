@@ -60,7 +60,7 @@ public struct TradeCap has key, store {
     balance_manager_id: ID,
 }
 
-/// DepositCap is used to deposit funds to a balance_manager by a non-owner.
+/// `DepositCap` is used to deposit funds to a balance_manager by a non-owner.
 /// Deleted when used.
 public struct DepositCap has key, store {
     id: UID,
@@ -99,7 +99,7 @@ public fun new(ctx: &mut TxContext): BalanceManager {
     }
 }
 
-// Create a new balance_manager with an owner.
+// Create a new balance manager with an owner.
 public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
     let id = object::new(ctx);
     event::emit(BalanceManagerEvent {
@@ -115,7 +115,7 @@ public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
     }
 }
 
-/// Returns the balance of a Coin in a balance_manager.
+/// Returns the balance of a Coin in a balance manager.
 public fun balance<T>(balance_manager: &BalanceManager): u64 {
     let key = BalanceKey<T> {};
     if (!balance_manager.balances.contains(key)) {
@@ -219,7 +219,7 @@ public fun generate_proof_as_trader(
     }
 }
 
-/// Deposit funds to a balance_manager. Only owner can call this directly.
+/// Deposit funds to a balance manager. Only owner can call this directly.
 public fun deposit<T>(
     balance_manager: &mut BalanceManager,
     coin: Coin<T>,
@@ -235,7 +235,7 @@ public fun deposit<T>(
     balance_manager.deposit_with_proof(&proof, coin.into_balance());
 }
 
-/// Deposit funds into a balance manager by a DepositCap owner.
+/// Deposit funds into a balance manager by a `DepositCap` owner.
 public fun deposit_with_cap<T>(
     balance_manager: &mut BalanceManager,
     deposit_cap: DepositCap,
@@ -252,6 +252,7 @@ public fun deposit_with_cap<T>(
     balance_manager.deposit_with_proof(&proof, coin.into_balance());
 }
 
+/// Withdraw funds from a balance manager by a `WithdrawCap` owner.
 public fun withdraw_with_cap<T>(
     balance_manager: &mut BalanceManager,
     withdraw_cap: WithdrawCap<T>,
@@ -348,6 +349,7 @@ public(package) fun deposit_with_proof<T>(
     }
 }
 
+/// Generate a `TradeProof` by a `DepositCap` owner.
 public(package) fun generate_proof_as_depositor(
     balance_manager: &BalanceManager,
     deposit_cap: DepositCap,
@@ -365,6 +367,7 @@ public(package) fun generate_proof_as_depositor(
     }
 }
 
+/// Generate a `TradeProof` by a `WithdrawCap` owner.
 public(package) fun generate_proof_as_withdrawer<T>(
     balance_manager: &BalanceManager,
     withdraw_cap: WithdrawCap<T>,
