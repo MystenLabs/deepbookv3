@@ -302,9 +302,9 @@ public fun release_withdrawal_cap_fund<T>(
         &mut balance_manager.id,
         LockedKey<T> {},
     );
-    let coin = locked_balance.split(withdraw_cap.amount).into_coin(ctx);
+    let balance = locked_balance.split(withdraw_cap.amount);
     let proof = balance_manager.generate_proof_as_withdrawer(withdraw_cap, ctx);
-    balance_manager.deposit_with_proof(&proof, coin.into_balance());
+    balance_manager.deposit_with_proof(&proof, balance);
 }
 
 /// Withdraw funds from a balance_manager. Only owner can call this directly.
