@@ -282,19 +282,29 @@ public fun withdraw_with_cap<T>(
     ctx: &mut TxContext,
 ): Coin<T> {
     let amount = withdraw_cap.amount;
+    assert!(withdraw_cap.balance_manager_id == balance_manager.id(), EWithdrawCapBalanceManagerMismatch);
     withdraw_cap.delete_withdraw_cap();
     let locked_balance: &mut Balance<T> = dynamic_field::borrow_mut(
         &mut balance_manager.id,
         LockedKey<T> {},
     );
     let coin = locked_balance.split(amount).into_coin(ctx);
-    balance_manager.emit_balance_event(
-        type_name::get<T>(),
-        coin.value(),
-        false,
-    );
 
     coin
+}
+
+public fun release_withdrawal_cap_fund<T>(
+    balance_manager: &mut BalanceManager,
+    withdraw_cap: WithdrawCap<T>,
+    ctx: &mut TxContext,
+) {
+    let locked_balance: &mut Balance<T> = dynamic_field::borrow_mut(
+        &mut balance_manager.id,
+        LockedKey<T> {},
+    );
+    let coin = locked_balance.split(withdraw_cap.amount).into_coin(ctx);
+    let proof = balance_manager.generate_proof_as_withdrawer(withdraw_cap, ctx);
+    balance_manager.deposit_with_proof(&proof, coin.into_balance());
 }
 
 /// Withdraw funds from a balance_manager. Only owner can call this directly.
