@@ -22,6 +22,8 @@ const EInvalidProof: u64 = 2;
 const EBalanceManagerBalanceTooLow: u64 = 3;
 const EMaxTradeCapsReached: u64 = 4;
 const ETradeCapNotInList: u64 = 5;
+const EDepositCapBalanceManagerMismatch: u64 = 6;
+const EWithdrawCapBalanceManagerMismatch: u64 = 8;
 
 // === Constants ===
 const MAX_TRADE_CAPS: u64 = 1000;
@@ -58,6 +60,22 @@ public struct TradeCap has key, store {
     balance_manager_id: ID,
 }
 
+/// DepositCap is used to deposit funds to a balance_manager by a non-owner.
+/// Deleted when used.
+public struct DepositCap has key, store {
+    id: UID,
+    balance_manager_id: ID,
+}
+
+/// WithdrawCap is used to withdraw funds from a balance_manager by a non-owner.
+/// Deleted when used.
+public struct WithdrawCap<phantom T> has key, store {
+    id: UID,
+    balance_manager_id: ID,
+    balance_key: BalanceKey<T>,
+    amount: u64,
+}
+
 /// BalanceManager owner and `TradeCap` owners can generate a `TradeProof`.
 /// `TradeProof` is used to validate the balance_manager when trading on DeepBook.
 public struct TradeProof has drop {
@@ -76,6 +94,22 @@ public fun new(ctx: &mut TxContext): BalanceManager {
     BalanceManager {
         id,
         owner: ctx.sender(),
+        balances: bag::new(ctx),
+        allow_listed: vec_set::empty(),
+    }
+}
+
+// Create a new balance_manager with an owner.
+public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
+    let id = object::new(ctx);
+    event::emit(BalanceManagerEvent {
+        balance_manager_id: id.to_inner(),
+        owner,
+    });
+
+    BalanceManager {
+        id,
+        owner,
         balances: bag::new(ctx),
         allow_listed: vec_set::empty(),
     }
@@ -109,6 +143,35 @@ public fun mint_trade_cap(
     TradeCap {
         id,
         balance_manager_id: object::id(balance_manager),
+    }
+}
+
+/// Mint a `DepositCap`, only owner can mint.
+public fun mint_deposit_cap(
+    balance_manager: &mut BalanceManager,
+    ctx: &mut TxContext,
+): DepositCap {
+    balance_manager.validate_owner(ctx);
+
+    DepositCap {
+        id: object::new(ctx),
+        balance_manager_id: object::id(balance_manager),
+    }
+}
+
+/// Mint a `WithdrawCap`, only owner can mint.
+public fun mint_withdraw_cap<T>(
+    balance_manager: &mut BalanceManager,
+    amount: u64,
+    ctx: &mut TxContext,
+): WithdrawCap<T> {
+    balance_manager.validate_owner(ctx);
+
+    WithdrawCap {
+        id: object::new(ctx),
+        balance_manager_id: object::id(balance_manager),
+        balance_key: BalanceKey<T> {},
+        amount,
     }
 }
 
@@ -168,8 +231,44 @@ public fun deposit<T>(
         true,
     );
 
-    let proof = generate_proof_as_owner(balance_manager, ctx);
+    let proof = balance_manager.generate_proof_as_owner(ctx);
     balance_manager.deposit_with_proof(&proof, coin.into_balance());
+}
+
+/// Deposit funds into a balance manager by a DepositCap owner.
+public fun deposit_with_cap<T>(
+    balance_manager: &mut BalanceManager,
+    deposit_cap: DepositCap,
+    coin: Coin<T>,
+    ctx: &TxContext,
+) {
+    balance_manager.emit_balance_event(
+        type_name::get<T>(),
+        coin.value(),
+        true,
+    );
+
+    let proof = balance_manager.generate_proof_as_depositor(deposit_cap, ctx);
+    balance_manager.deposit_with_proof(&proof, coin.into_balance());
+}
+
+public fun withdraw_with_cap<T>(
+    balance_manager: &mut BalanceManager,
+    withdraw_cap: WithdrawCap<T>,
+    ctx: &mut TxContext,
+): Coin<T> {
+    let amount = withdraw_cap.amount;
+    let proof = balance_manager.generate_proof_as_withdrawer(withdraw_cap, ctx);
+    let coin = balance_manager
+        .withdraw_with_proof(&proof, amount, false)
+        .into_coin(ctx);
+    balance_manager.emit_balance_event(
+        type_name::get<T>(),
+        coin.value(),
+        false,
+    );
+
+    coin
 }
 
 /// Withdraw funds from a balance_manager. Only owner can call this directly.
@@ -249,6 +348,40 @@ public(package) fun deposit_with_proof<T>(
     }
 }
 
+public(package) fun generate_proof_as_depositor(
+    balance_manager: &BalanceManager,
+    deposit_cap: DepositCap,
+    ctx: &TxContext,
+): TradeProof {
+    assert!(
+        balance_manager.id() == deposit_cap.balance_manager_id,
+        EDepositCapBalanceManagerMismatch,
+    );
+    deposit_cap.delete_deposit_cap();
+
+    TradeProof {
+        balance_manager_id: object::id(balance_manager),
+        trader: ctx.sender(),
+    }
+}
+
+public(package) fun generate_proof_as_withdrawer<T>(
+    balance_manager: &BalanceManager,
+    withdraw_cap: WithdrawCap<T>,
+    ctx: &TxContext,
+): TradeProof {
+    assert!(
+        balance_manager.id() == withdraw_cap.balance_manager_id,
+        EWithdrawCapBalanceManagerMismatch,
+    );
+    withdraw_cap.delete_withdraw_cap();
+
+    TradeProof {
+        balance_manager_id: object::id(balance_manager),
+        trader: ctx.sender(),
+    }
+}
+
 /// Withdraw funds from a balance_manager. Pool will call this to withdraw funds.
 public(package) fun withdraw_with_proof<T>(
     balance_manager: &mut BalanceManager,
@@ -291,6 +424,24 @@ public(package) fun delete(balance_manager: BalanceManager) {
 
     id.delete();
     balances.destroy_empty();
+}
+
+public(package) fun delete_deposit_cap(deposit_cap: DepositCap) {
+    let DepositCap {
+        id,
+        balance_manager_id: _,
+    } = deposit_cap;
+    id.delete();
+}
+
+public(package) fun delete_withdraw_cap<T>(withdraw_cap: WithdrawCap<T>) {
+    let WithdrawCap {
+        id,
+        balance_manager_id: _,
+        balance_key: _,
+        amount: _,
+    } = withdraw_cap;
+    id.delete();
 }
 
 public(package) fun trader(trade_proof: &TradeProof): address {
