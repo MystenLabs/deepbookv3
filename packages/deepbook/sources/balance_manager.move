@@ -12,6 +12,7 @@ use std::type_name::{Self, TypeName};
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::coin::Coin;
+use sui::dynamic_field;
 use sui::event;
 use sui::vec_set::{Self, VecSet};
 
@@ -53,6 +54,7 @@ public struct BalanceEvent has copy, drop {
 
 /// Balance identifier.
 public struct BalanceKey<phantom T> has store, copy, drop {}
+public struct LockedKey<phantom T> has store, copy, drop {}
 
 /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
 public struct TradeCap has key, store {
@@ -167,6 +169,27 @@ public fun mint_withdraw_cap<T>(
 ): WithdrawCap<T> {
     balance_manager.validate_owner(ctx);
 
+    let coin = balance_manager.withdraw<T>(amount, ctx);
+
+    if (
+        !dynamic_field::exists_(
+            &balance_manager.id,
+            LockedKey<T> {},
+        )
+    ) {
+        dynamic_field::add(
+            &mut balance_manager.id,
+            LockedKey<T> {},
+            balance::zero<T>(),
+        );
+    };
+    let locked_balance: &mut Balance<T> = dynamic_field::borrow_mut(
+        &mut balance_manager.id,
+        LockedKey<T> {},
+    );
+
+    locked_balance.join(coin.into_balance());
+
     WithdrawCap {
         id: object::new(ctx),
         balance_manager_id: object::id(balance_manager),
@@ -259,10 +282,12 @@ public fun withdraw_with_cap<T>(
     ctx: &mut TxContext,
 ): Coin<T> {
     let amount = withdraw_cap.amount;
-    let proof = balance_manager.generate_proof_as_withdrawer(withdraw_cap, ctx);
-    let coin = balance_manager
-        .withdraw_with_proof(&proof, amount, false)
-        .into_coin(ctx);
+    withdraw_cap.delete_withdraw_cap();
+    let locked_balance: &mut Balance<T> = dynamic_field::borrow_mut(
+        &mut balance_manager.id,
+        LockedKey<T> {},
+    );
+    let coin = locked_balance.split(amount).into_coin(ctx);
     balance_manager.emit_balance_event(
         type_name::get<T>(),
         coin.value(),
