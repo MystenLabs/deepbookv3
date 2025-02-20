@@ -417,7 +417,8 @@ public fun cancel_orders<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ) {
     let mut i = 0;
-    while (i < order_ids.length()) {
+    let num_orders = order_ids.length();
+    while (i < num_orders) {
         let order_id = order_ids[i];
         self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
         i = i + 1;
@@ -440,7 +441,8 @@ public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     };
 
     let mut i = 0;
-    while (i < open_orders.length()) {
+    let num_orders = open_orders.length();
+    while (i < num_orders) {
         let order_id = open_orders[i];
         self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
         i = i + 1;
@@ -1048,7 +1050,8 @@ public fun get_orders<BaseAsset, QuoteAsset>(
 ): vector<Order> {
     let mut orders = vector[];
     let mut i = 0;
-    while (i < order_ids.length()) {
+    let num_orders = order_ids.length();
+    while (i < num_orders) {
         let order_id = order_ids[i];
         orders.push_back(self.get_order(order_id));
         i = i + 1;

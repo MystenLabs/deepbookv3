@@ -425,7 +425,8 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
     let whitelisted = self.governance.whitelisted();
 
     let mut i = 0;
-    while (i < fills.length()) {
+    let num_fills = fills.length();
+    while (i < num_fills) {
         let fill = &mut fills[i];
         let maker = fill.balance_manager_id();
         self.update_account(maker, ctx);
