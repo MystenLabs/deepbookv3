@@ -449,7 +449,7 @@ fun match_against_book(
         };
     });
 
-    if (order_info.fills_ref().length() == max_fills) {
+    if (current_fills == max_fills) {
         order_info.set_fill_limit_reached();
     }
 }
