@@ -20,7 +20,7 @@ const EInvalidOwner: u64 = 0;
 const EInvalidTrader: u64 = 1;
 const EInvalidProof: u64 = 2;
 const EBalanceManagerBalanceTooLow: u64 = 3;
-const EMaxTradeCapsReached: u64 = 4;
+const EMaxCapsReached: u64 = 4;
 const ETradeCapNotInList: u64 = 5;
 const EDepositCapBalanceManagerMismatch: u64 = 6;
 const EWithdrawCapBalanceManagerMismatch: u64 = 8;
@@ -61,14 +61,12 @@ public struct TradeCap has key, store {
 }
 
 /// `DepositCap` is used to deposit funds to a balance_manager by a non-owner.
-/// Deleted when used.
 public struct DepositCap has key, store {
     id: UID,
     balance_manager_id: ID,
 }
 
 /// WithdrawCap is used to withdraw funds from a balance_manager by a non-owner.
-/// Deleted when used.
 public struct WithdrawCap has key, store {
     id: UID,
     balance_manager_id: ID,
@@ -97,7 +95,7 @@ public fun new(ctx: &mut TxContext): BalanceManager {
     }
 }
 
-// Create a new balance manager with an owner.
+/// Create a new balance manager with an owner.
 public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
     let id = object::new(ctx);
     event::emit(BalanceManagerEvent {
@@ -132,7 +130,7 @@ public fun mint_trade_cap(
     balance_manager.validate_owner(ctx);
     assert!(
         balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
-        EMaxTradeCapsReached,
+        EMaxCapsReached,
     );
 
     let id = object::new(ctx);
@@ -150,9 +148,16 @@ public fun mint_deposit_cap(
     ctx: &mut TxContext,
 ): DepositCap {
     balance_manager.validate_owner(ctx);
+    assert!(
+        balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
+        EMaxCapsReached,
+    );
+
+    let id = object::new(ctx);
+    balance_manager.allow_listed.insert(id.to_inner());
 
     DepositCap {
-        id: object::new(ctx),
+        id,
         balance_manager_id: object::id(balance_manager),
     }
 }
@@ -163,14 +168,22 @@ public fun mint_withdraw_cap(
     ctx: &mut TxContext,
 ): WithdrawCap {
     balance_manager.validate_owner(ctx);
+    assert!(
+        balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
+        EMaxCapsReached,
+    );
+
+    let id = object::new(ctx);
+    balance_manager.allow_listed.insert(id.to_inner());
 
     WithdrawCap {
-        id: object::new(ctx),
+        id,
         balance_manager_id: object::id(balance_manager),
     }
 }
 
 /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
+/// Can also be used to revoke `DepositCap` and `WithdrawCap`.
 public fun revoke_trade_cap(
     balance_manager: &mut BalanceManager,
     trade_cap_id: &ID,
