@@ -314,7 +314,8 @@ public(package) fun calculate_partial_fill_balances(
 
     let fills = &mut self.fills;
     let mut i = 0;
-    while (i < fills.length()) {
+    let num_fills = fills.length();
+    while (i < num_fills) {
         let fill = &mut fills[i];
         if (!fill.expired()) {
             let base_quantity = fill.base_quantity();
@@ -512,7 +513,8 @@ public(package) fun match_maker(
 /// fills can be emitted in a single call.
 public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
     let mut i = 0;
-    while (i < self.fills.length()) {
+    let num_fills = self.fills.length();
+    while (i < num_fills) {
         let fill = &self.fills[i];
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));

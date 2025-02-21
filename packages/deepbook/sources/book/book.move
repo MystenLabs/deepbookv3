@@ -425,10 +425,12 @@ fun match_against_book(
     let book_side = if (is_bid) &mut self.asks else &mut self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
     else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
 
     while (
         !ref.is_null() &&
-        order_info.fills_ref().length() < constants::max_fills()
+        current_fills < max_fills
     ) {
         let maker_order = slice_borrow_mut(
             book_side.borrow_slice_mut(ref),
@@ -438,6 +440,7 @@ fun match_against_book(
         (ref, offset) =
             if (is_bid) book_side.next_slice(ref, offset)
             else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
     };
 
     order_info.fills_ref().do_ref!(|fill| {
@@ -446,7 +449,7 @@ fun match_against_book(
         };
     });
 
-    if (order_info.fills_ref().length() == constants::max_fills()) {
+    if (current_fills == max_fills) {
         order_info.set_fill_limit_reached();
     }
 }
