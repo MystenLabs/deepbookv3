@@ -43,7 +43,7 @@ const ENotEnoughQuoteForLoan: u64 = 8;
 const EIncorrectLoanPool: u64 = 9;
 const EIncorrectTypeReturned: u64 = 10;
 const EInvalidOwner: u64 = 11;
-const ETradeCapNotInList: u64 = 12;
+const ECapNotInList: u64 = 12;
 const EInvalidTrader: u64 = 13;
 const EIncorrectLevel2Price: u64 = 14;
 const EIncorrectLevel2Quantity: u64 = 15;
@@ -204,11 +204,11 @@ fun test_trader_permission_and_modify_returned_invalid_owner_e() {
 #[
     test,
     expected_failure(
-        abort_code = ::deepbook::balance_manager::ETradeCapNotInList,
+        abort_code = ::deepbook::balance_manager::ECapNotInList,
     ),
 ]
 fun test_trader_permission_and_modify_trader_not_in_list_e() {
-    test_trader_permission_and_modify_returned(ETradeCapNotInList)
+    test_trader_permission_and_modify_returned(ECapNotInList)
 }
 
 #[
@@ -339,9 +339,10 @@ fun test_locked_balance(is_bid: bool) {
         alice_locked_balance.sui = alice_locked_balance.sui + quantity;
     };
     alice_locked_balance.deep =
-        alice_locked_balance.deep + math::mul(
+        alice_locked_balance.deep +
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
 
     check_locked_balance<SUI, USDC>(
@@ -379,10 +380,12 @@ fun test_locked_balance(is_bid: bool) {
     };
 
     alice_locked_balance.deep =
-        alice_locked_balance.deep - math::mul(
+        alice_locked_balance.deep -
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
-        ) / 2;
+            quantity,
+        ) /
+        2;
 
     check_locked_balance<SUI, USDC>(
         ALICE,
@@ -411,16 +414,21 @@ fun test_locked_balance(is_bid: bool) {
     if (is_bid) {
         alice_locked_balance.usdc =
             alice_locked_balance.usdc + math::mul(price, quantity);
-        alice_locked_balance.sui = alice_locked_balance.sui - quantity / 2; // Alice withdraws the settled sui during placement
+        alice_locked_balance.sui =
+            alice_locked_balance.sui -
+            quantity / 2; // Alice withdraws the settled sui during placement
     } else {
         alice_locked_balance.sui = alice_locked_balance.sui + quantity;
         alice_locked_balance.usdc =
-            alice_locked_balance.usdc - math::mul(price, quantity) / 2; // Alice withdraws the settled usdc during placement
+            alice_locked_balance.usdc -
+            math::mul(price, quantity) /
+            2; // Alice withdraws the settled usdc during placement
     };
     alice_locked_balance.deep =
-        alice_locked_balance.deep + math::mul(
+        alice_locked_balance.deep +
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
 
     check_locked_balance<SUI, USDC>(
@@ -593,9 +601,10 @@ fun test_master(error_code: u64) {
     );
     alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
     alice_balance.deep =
-        alice_balance.deep - math::mul(
+        alice_balance.deep -
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
 
     // Alice places ask order in pool 2
@@ -616,9 +625,10 @@ fun test_master(error_code: u64) {
 
     alice_balance.spam = alice_balance.spam - quantity;
     alice_balance.deep =
-        alice_balance.deep - math::mul(
+        alice_balance.deep -
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
     check_balance(
         alice_balance_manager_id,
@@ -726,9 +736,10 @@ fun test_master(error_code: u64) {
     );
     alice_balance.usdc = alice_balance.usdc + math::mul(price, quantity);
     alice_balance.deep =
-        alice_balance.deep + math::mul(
+        alice_balance.deep +
+        math::mul(
             math::mul(old_maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
     check_balance(
         alice_balance_manager_id,
@@ -755,9 +766,10 @@ fun test_master(error_code: u64) {
     );
     alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity);
     alice_balance.deep =
-        alice_balance.deep - math::mul(
+        alice_balance.deep -
+        math::mul(
             math::mul(maker_fee, deep_multiplier),
-            quantity
+            quantity,
         );
     check_balance(
         alice_balance_manager_id,
@@ -787,9 +799,10 @@ fun test_master(error_code: u64) {
     bob_balance.sui = bob_balance.sui - executed_quantity;
     bob_balance.usdc = bob_balance.usdc + math::mul(price, executed_quantity);
     bob_balance.deep =
-        bob_balance.deep - math::mul(
+        bob_balance.deep -
+        math::mul(
             math::mul(taker_fee, deep_multiplier),
-            executed_quantity
+            executed_quantity,
         );
     check_balance(
         bob_balance_manager_id,
@@ -875,9 +888,10 @@ fun test_master(error_code: u64) {
     );
     let quantity = 3 * constants::float_scaling();
     alice_balance.deep =
-        alice_balance.deep + math::mul(
+        alice_balance.deep +
+        math::mul(
             quantity,
-            math::mul(800_000, deep_multiplier)
+            math::mul(800_000, deep_multiplier),
         );
     check_balance(
         alice_balance_manager_id,
@@ -976,16 +990,23 @@ fun test_master(error_code: u64) {
     alice_balance.usdc =
         alice_balance.usdc - math::mul(price, quantity_sui_traded);
     alice_balance.deep =
-        alice_balance.deep - math::mul(
-            math::mul(taker_sui_traded, math::mul(constants::half(), taker_fee)) + math::mul(maker_sui_traded, maker_fee),
-            deep_multiplier
+        alice_balance.deep -
+        math::mul(
+            math::mul(
+                taker_sui_traded,
+                math::mul(constants::half(), taker_fee),
+            ) +
+            math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier,
         );
     bob_balance.sui = bob_balance.sui - quantity_sui_traded;
     bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
     bob_balance.deep =
-        bob_balance.deep - math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
-            deep_multiplier
+        bob_balance.deep -
+        math::mul(
+            math::mul(taker_sui_traded, taker_fee) +
+            math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier,
         );
     check_balance(
         alice_balance_manager_id,
@@ -1009,7 +1030,8 @@ fun test_master(error_code: u64) {
         &mut test,
     );
     let alice_rebates = math::mul(
-        math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, avg_taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         deep_multiplier,
     );
     alice_balance.deep = alice_balance.deep + alice_rebates;
@@ -1027,7 +1049,8 @@ fun test_master(error_code: u64) {
         &mut test,
     );
     let bob_rebates = math::mul(
-        math::mul(taker_sui_traded, avg_taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, avg_taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         deep_multiplier,
     );
     bob_balance.deep = bob_balance.deep + bob_rebates;
@@ -1061,16 +1084,20 @@ fun test_master(error_code: u64) {
     alice_balance.usdc =
         alice_balance.usdc - math::mul(price, quantity_sui_traded);
     alice_balance.deep =
-        alice_balance.deep - math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
-            deep_multiplier
+        alice_balance.deep -
+        math::mul(
+            math::mul(taker_sui_traded, taker_fee) +
+            math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier,
         );
     bob_balance.sui = bob_balance.sui - quantity_sui_traded;
     bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
     bob_balance.deep =
-        bob_balance.deep - math::mul(
-            math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
-            deep_multiplier
+        bob_balance.deep -
+        math::mul(
+            math::mul(taker_sui_traded, taker_fee) +
+            math::mul(maker_sui_traded, maker_fee),
+            deep_multiplier,
         );
     check_balance(
         alice_balance_manager_id,
@@ -1099,13 +1126,18 @@ fun test_master(error_code: u64) {
         &mut test,
     );
     let fees_generated = math::mul(
-        2 * (math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee)),
+        2 * (
+            math::mul(taker_sui_traded, taker_fee) +
+            math::mul(maker_sui_traded, maker_fee),
+        ),
         deep_multiplier,
     );
     let historic_median = 2 * constants::float_scaling();
     let other_maker_liquidity = 500_000_000;
     let maker_rebate_percentage = if (historic_median > 0) {
-        constants::float_scaling() - constants::float_scaling().min(math::div(other_maker_liquidity, historic_median))
+        constants::float_scaling() - constants::float_scaling().min(
+            math::div(other_maker_liquidity, historic_median),
+        )
     } else {
         0
     }; // 75%
@@ -1115,7 +1147,10 @@ fun test_master(error_code: u64) {
         maker_volume_proportion,
         fees_generated,
     ); // 4000000
-    let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion); // 3000000
+    let maker_rebate = math::mul(
+        maker_rebate_percentage,
+        maker_fee_proportion,
+    ); // 3000000
     let expected_amount_burned = fees_generated - 2 * maker_rebate; // 1000000
     alice_balance.deep = alice_balance.deep + maker_rebate;
     check_balance(
@@ -1549,17 +1584,23 @@ fun test_master_input_tokens(error_code: u64) {
     let quantity = 3 * constants::float_scaling();
     alice_balance.sui =
         alice_balance.sui +
-        math::mul(constants::fee_penalty_multiplier(), math::mul(
-            quantity,
-            600_000
-        ));
+        math::mul(
+            constants::fee_penalty_multiplier(),
+            math::mul(
+                quantity,
+                600_000,
+            ),
+        );
 
     alice_balance.usdc =
         alice_balance.usdc +
-        math::mul(constants::fee_penalty_multiplier(), math::mul(
-            math::mul(quantity, price),
-            200_000
-        ));
+        math::mul(
+            constants::fee_penalty_multiplier(),
+            math::mul(
+                math::mul(quantity, price),
+                200_000,
+            ),
+        );
     check_balance(
         alice_balance_manager_id,
         &alice_balance,
@@ -1643,14 +1684,16 @@ fun test_master_input_tokens(error_code: u64) {
     alice_balance.usdc =
         alice_balance.usdc - math::mul(price, quantity_sui_traded);
     let alice_usdc_fee = math::mul(
-        math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         math::mul(price, constants::fee_penalty_multiplier()),
     );
     alice_balance.usdc = alice_balance.usdc - alice_usdc_fee;
     bob_balance.sui = bob_balance.sui - quantity_sui_traded;
     bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
     let bob_sui_fee = math::mul(
-        math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         constants::fee_penalty_multiplier(),
     );
     bob_balance.sui = bob_balance.sui - bob_sui_fee;
@@ -1722,14 +1765,16 @@ fun test_master_input_tokens(error_code: u64) {
     alice_balance.usdc =
         alice_balance.usdc - math::mul(price, quantity_sui_traded);
     let alice_usdc_fee = math::mul(
-        math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         math::mul(price, constants::fee_penalty_multiplier()),
     );
     alice_balance.usdc = alice_balance.usdc - alice_usdc_fee;
     bob_balance.sui = bob_balance.sui - quantity_sui_traded;
     bob_balance.usdc = bob_balance.usdc + math::mul(price, quantity_sui_traded);
     let bob_sui_fee = math::mul(
-        math::mul(taker_sui_traded, taker_fee) + math::mul(maker_sui_traded, maker_fee),
+        math::mul(taker_sui_traded, taker_fee) +
+        math::mul(maker_sui_traded, maker_fee),
         constants::fee_penalty_multiplier(),
     );
     bob_balance.sui = bob_balance.sui - bob_sui_fee;
@@ -1762,7 +1807,9 @@ fun test_master_input_tokens(error_code: u64) {
     let historic_median = 2 * constants::float_scaling();
     let other_maker_liquidity = 500_000_000;
     let maker_rebate_percentage = if (historic_median > 0) {
-        constants::float_scaling() - constants::float_scaling().min(math::div(other_maker_liquidity, historic_median))
+        constants::float_scaling() - constants::float_scaling().min(
+            math::div(other_maker_liquidity, historic_median),
+        )
     } else {
         0
     }; // 75%
@@ -2038,9 +2085,10 @@ fun test_master_deep_price(error_code: u64) {
     let deep_multiplier = 125_000_000_000;
     alice_balance.sui = alice_balance.sui - math::mul(price, quantity);
     alice_balance.deep =
-        alice_balance.deep - math::mul(
+        alice_balance.deep -
+        math::mul(
             math::mul(maker_fee, math::mul(price, quantity)),
-            deep_multiplier
+            deep_multiplier,
         );
     check_balance(
         alice_balance_manager_id,
@@ -2058,9 +2106,10 @@ fun test_master_deep_price(error_code: u64) {
     );
     alice_balance.sui = alice_balance.sui + math::mul(price, quantity);
     alice_balance.deep =
-        alice_balance.deep + math::mul(
+        alice_balance.deep +
+        math::mul(
             math::mul(maker_fee, math::mul(price, quantity)),
-            deep_multiplier
+            deep_multiplier,
         );
     check_balance(
         alice_balance_manager_id,
@@ -2327,9 +2376,10 @@ fun test_flash_loan(error_code: u64) {
         alice_balance.sui = alice_balance.sui + quantity;
         alice_balance.usdt = alice_balance.usdt - math::mul(quantity, price);
         alice_balance.deep =
-            alice_balance.deep - math::mul(
+            alice_balance.deep -
+            math::mul(
                 math::mul(taker_fee, quantity),
-                constants::deep_multiplier()
+                constants::deep_multiplier(),
             );
 
         let quantity = 1 * constants::float_scaling();
@@ -2734,14 +2784,20 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
     if (error_code == NoErrorPayWithInput) {
         alice_balance.usdc =
             alice_balance.usdc -
-                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
-                math::mul(price, quantity));
+            math::mul(
+                math::mul(
+                    constants::maker_fee(),
+                    constants::fee_penalty_multiplier(),
+                ),
+                math::mul(price, quantity),
+            );
     } else {
         alice_balance.deep =
-            alice_balance.deep - math::mul(
-            math::mul(maker_fee, constants::deep_multiplier()),
-            quantity
-        )
+            alice_balance.deep -
+            math::mul(
+                math::mul(maker_fee, constants::deep_multiplier()),
+                quantity,
+            )
     };
 
     check_balance(
@@ -2789,13 +2845,19 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
     if (error_code == NoErrorPayWithInput) {
         alice_balance.usdc =
             alice_balance.usdc +
-                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
-                math::mul(price, cancelled_quantity));
+            math::mul(
+                math::mul(
+                    constants::maker_fee(),
+                    constants::fee_penalty_multiplier(),
+                ),
+                math::mul(price, cancelled_quantity),
+            );
     } else {
         alice_balance.deep =
-            alice_balance.deep + math::mul(
+            alice_balance.deep +
+            math::mul(
                 math::mul(maker_fee, constants::deep_multiplier()),
-                cancelled_quantity
+                cancelled_quantity,
             );
     };
     check_balance(
@@ -2818,13 +2880,19 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
     if (error_code == NoErrorPayWithInput) {
         alice_balance.usdc =
             alice_balance.usdc +
-                math::mul(math::mul(constants::maker_fee(), constants::fee_penalty_multiplier()),
-                math::mul(price, remaining_quantity));
+            math::mul(
+                math::mul(
+                    constants::maker_fee(),
+                    constants::fee_penalty_multiplier(),
+                ),
+                math::mul(price, remaining_quantity),
+            );
     } else {
         alice_balance.deep =
-            alice_balance.deep + math::mul(
+            alice_balance.deep +
+            math::mul(
                 math::mul(maker_fee, constants::deep_multiplier()),
-                remaining_quantity
+                remaining_quantity,
             );
     };
     check_balance(
@@ -2838,7 +2906,7 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
 
     // Alice revokes Bob's trading permission again, removing a trader not in
     // list will error
-    if (error_code == ETradeCapNotInList) {
+    if (error_code == ECapNotInList) {
         remove_trader(
             ALICE,
             alice_balance_manager_id,
