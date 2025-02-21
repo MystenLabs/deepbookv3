@@ -21,7 +21,7 @@ const EInvalidTrader: u64 = 1;
 const EInvalidProof: u64 = 2;
 const EBalanceManagerBalanceTooLow: u64 = 3;
 const EMaxCapsReached: u64 = 4;
-const ETradeCapNotInList: u64 = 5;
+const ECapNotInList: u64 = 5;
 const EDepositCapBalanceManagerMismatch: u64 = 6;
 const EWithdrawCapBalanceManagerMismatch: u64 = 8;
 
@@ -191,10 +191,7 @@ public fun revoke_trade_cap(
 ) {
     balance_manager.validate_owner(ctx);
 
-    assert!(
-        balance_manager.allow_listed.contains(trade_cap_id),
-        ETradeCapNotInList,
-    );
+    assert!(balance_manager.allow_listed.contains(trade_cap_id), ECapNotInList);
     balance_manager.allow_listed.remove(trade_cap_id);
 }
 
