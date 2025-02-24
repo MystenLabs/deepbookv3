@@ -166,10 +166,22 @@ public(package) fun get_settled_maker_quantities(self: &Fill): Balances {
     balances::new(base, quote, 0)
 }
 
-public(package) fun set_fill_maker_fee(self: &mut Fill, fee: u64) {
-    self.maker_fee = fee;
+public(package) fun set_fill_maker_fee(self: &mut Fill, fee: &Balances) {
+    if (fee.deep() > 0) {
+        self.maker_fee_is_deep = true;
+    } else {
+        self.maker_fee_is_deep = false;
+    };
+
+    self.maker_fee = fee.non_zero_value();
 }
 
-public(package) fun set_fill_taker_fee(self: &mut Fill, fee: u64) {
-    self.taker_fee = fee;
+public(package) fun set_fill_taker_fee(self: &mut Fill, fee: &Balances) {
+    if (fee.deep() > 0) {
+        self.taker_fee_is_deep = true;
+    } else {
+        self.taker_fee_is_deep = false;
+    };
+
+    self.taker_fee = fee.non_zero_value();
 }

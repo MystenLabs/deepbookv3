@@ -16,7 +16,7 @@ use token::deep::DEEP;
 // === Errors ===
 const ENotEnoughBaseForLoan: u64 = 1;
 const ENotEnoughQuoteForLoan: u64 = 2;
-const EinvalidLoanQuantity: u64 = 3;
+const EInvalidLoanQuantity: u64 = 3;
 const EIncorrectLoanPool: u64 = 4;
 const EIncorrectTypeReturned: u64 = 5;
 const EIncorrectQuantityReturned: u64 = 6;
@@ -128,7 +128,7 @@ public(package) fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
     borrow_quantity: u64,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, FlashLoan) {
-    assert!(borrow_quantity > 0, EinvalidLoanQuantity);
+    assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(
         self.base_balance.value() >= borrow_quantity,
         ENotEnoughBaseForLoan,
@@ -160,7 +160,7 @@ public(package) fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
     borrow_quantity: u64,
     ctx: &mut TxContext,
 ): (Coin<QuoteAsset>, FlashLoan) {
-    assert!(borrow_quantity > 0, EinvalidLoanQuantity);
+    assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(
         self.quote_balance.value() >= borrow_quantity,
         ENotEnoughQuoteForLoan,

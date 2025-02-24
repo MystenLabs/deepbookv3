@@ -159,8 +159,8 @@ public(package) fun add_rebates(self: &mut Account, rebates: Balances) {
     self.unclaimed_rebates.add_balances(rebates);
 }
 
-public(package) fun claim_rebates(self: &mut Account): u64 {
-    let rebate_amount = self.unclaimed_rebates.deep();
+public(package) fun claim_rebates(self: &mut Account): Balances {
+    let rebate_amount = self.unclaimed_rebates;
     self.settled_balances.add_balances(self.unclaimed_rebates);
     self.unclaimed_rebates.reset();
 
