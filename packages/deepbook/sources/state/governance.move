@@ -1,7 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Governance module handles the governance of the `Pool` that it's attached to.
+/// Governance module handles the governance of the `Pool` that it's attached
+/// to.
 /// Users with non zero stake can create proposals and vote on them. Winning
 /// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance;
@@ -21,19 +22,20 @@ const EWhitelistedPoolCannotChange: u64 = 5;
 
 // === Constants ===
 const FEE_MULTIPLE: u64 = 1000; // 0.01 basis points
-const MIN_TAKER_STABLE: u64 = 50000; // 0.5 basis points
-const MAX_TAKER_STABLE: u64 = 100000;
-const MIN_MAKER_STABLE: u64 = 20000;
-const MAX_MAKER_STABLE: u64 = 50000;
-const MIN_TAKER_VOLATILE: u64 = 500000;
-const MAX_TAKER_VOLATILE: u64 = 1000000;
-const MIN_MAKER_VOLATILE: u64 = 200000;
-const MAX_MAKER_VOLATILE: u64 = 500000;
+const MIN_TAKER_STABLE: u64 = 10000; // 0.1 basis points
+const MAX_TAKER_STABLE: u64 = 100000; // 1 basis points
+const MIN_MAKER_STABLE: u64 = 0;
+const MAX_MAKER_STABLE: u64 = 50000; // 0.5 basis points
+const MIN_TAKER_VOLATILE: u64 = 100000; // 1 basis points
+const MAX_TAKER_VOLATILE: u64 = 1000000; // 10 basis points
+const MIN_MAKER_VOLATILE: u64 = 0;
+const MAX_MAKER_VOLATILE: u64 = 500000; // 5 basis points
 const MAX_PROPOSALS: u64 = 100;
 const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000; // 100k deep
 
 // === Structs ===
-/// `Proposal` struct that holds the parameters of a proposal and its current total votes.
+/// `Proposal` struct that holds the parameters of a proposal and its current
+/// total votes.
 public struct Proposal has store, drop, copy {
     taker_fee: u64,
     maker_fee: u64,
@@ -112,6 +114,14 @@ public(package) fun whitelisted(self: &Governance): bool {
     self.whitelisted
 }
 
+public(package) fun stable(self: &Governance): bool {
+    self.stable
+}
+
+public(package) fun quorum(self: &Governance): u64 {
+    self.quorum
+}
+
 /// Update the governance state. This is called at the start of every epoch.
 public(package) fun update(self: &mut Governance, ctx: &TxContext) {
     let epoch = ctx.epoch();
@@ -132,7 +142,8 @@ public(package) fun update(self: &mut Governance, ctx: &TxContext) {
 /// Add a new proposal to governance.
 /// Check if proposer already voted, if so will give error.
 /// If proposer has not voted, and there are already MAX_PROPOSALS proposals,
-/// remove the proposal with the lowest votes if it has less votes than the voting power.
+/// remove the proposal with the lowest votes if it has less votes than the
+/// voting power.
 /// Validation of the account adding is done in `State`.
 public(package) fun add_proposal(
     self: &mut Governance,
@@ -176,7 +187,8 @@ public(package) fun add_proposal(
 }
 
 /// Vote on a proposal. Validation of the account and stake is done in `State`.
-/// If `from_proposal_id` is some, the account is removing their vote from that proposal.
+/// If `from_proposal_id` is some, the account is removing their vote from that
+/// proposal.
 /// If `to_proposal_id` is some, the account is voting for that proposal.
 public(package) fun adjust_vote(
     self: &mut Governance,
@@ -211,8 +223,10 @@ public(package) fun adjust_vote(
     });
 }
 
-/// Adjust the total voting power by adding and removing stake. For example, if an account's
-/// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after` is 3000.
+/// Adjust the total voting power by adding and removing stake. For example, if
+/// an account's
+/// stake goes from 2000 to 3000, then `stake_before` is 2000 and `stake_after`
+/// is 3000.
 /// Validation of inputs done in `State`.
 public(package) fun adjust_voting_power(
     self: &mut Governance,
@@ -250,8 +264,10 @@ fun new_proposal(
     Proposal { taker_fee, maker_fee, stake_required, votes: 0 }
 }
 
-/// Remove the proposal with the lowest votes if it has less votes than the voting power.
-/// If there are multiple proposals with the same lowest votes, the latest one is removed.
+/// Remove the proposal with the lowest votes if it has less votes than the
+/// voting power.
+/// If there are multiple proposals with the same lowest votes, the latest one
+/// is removed.
 fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
     let mut removal_id = option::none();
     let mut cur_lowest_votes = constants::max_u64();
@@ -298,16 +314,6 @@ fun to_trade_params(proposal: &Proposal): TradeParams {
 #[test_only]
 public fun voting_power(self: &Governance): u64 {
     self.voting_power
-}
-
-#[test_only]
-public fun stable(self: &Governance): bool {
-    self.stable
-}
-
-#[test_only]
-public fun quorum(self: &Governance): u64 {
-    self.quorum
 }
 
 #[test_only]

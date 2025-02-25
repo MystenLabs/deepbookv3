@@ -56,7 +56,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -81,7 +81,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -107,7 +107,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -134,7 +134,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -220,7 +220,7 @@ fun update_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
 
@@ -306,19 +306,19 @@ fun claim_rebates_ok() {
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 0, 0));
 
-    account.add_rebates(balances::new(0, 0, 100));
+    account.add_rebates(balances::new(50, 150, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 100));
+    assert_eq(settled, balances::new(50, 150, 100));
     assert_eq(owed, balances::new(0, 0, 0));
 
     // user owes 100 DEEP for staking
     account.add_stake(100);
-    // user receives 100 DEEP from rebates
-    account.add_rebates(balances::new(0, 0, 100));
+    // user receives 150 base, 50 quote, 100 DEEP from rebates
+    account.add_rebates(balances::new(150, 50, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 100));
+    assert_eq(settled, balances::new(150, 50, 100));
     assert_eq(owed, balances::new(0, 0, 100));
 
     test.end();

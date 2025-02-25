@@ -7,6 +7,7 @@
 module deepbook::state;
 
 use deepbook::account::{Self, Account};
+use deepbook::balance_manager::BalanceManager;
 use deepbook::balances::{Self, Balances};
 use deepbook::constants;
 use deepbook::fill::Fill;
@@ -15,8 +16,10 @@ use deepbook::history::{Self, History};
 use deepbook::math;
 use deepbook::order::Order;
 use deepbook::order_info::OrderInfo;
+use std::type_name;
 use sui::event;
 use sui::table::{Self, Table};
+use token::deep::DEEP;
 
 // === Errors ===
 const ENoStake: u64 = 1;
@@ -56,6 +59,14 @@ public struct VoteEvent has copy, drop {
     stake: u64,
 }
 
+public struct RebateEventV2 has copy, drop {
+    pool_id: ID,
+    balance_manager_id: ID,
+    epoch: u64,
+    claim_amount: Balances,
+}
+
+#[allow(unused_field)]
 public struct RebateEvent has copy, drop {
     pool_id: ID,
     balance_manager_id: ID,
@@ -74,19 +85,22 @@ public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
     State { history, governance, accounts: table::new(ctx) }
 }
 
-/// Up until this point, an OrderInfo object has been created and potentially filled.
-/// The OrderInfo object contains all of the necessary information to update the state
-/// of the pool. This includes the volumes for the taker and potentially multiple makers.
-/// First, fills are iterated and processed, updating the appropriate user's volumes.
-/// Funds are settled for those makers. Then, the taker's trading fee is calculated
-/// and the taker's volumes are updated. Finally, the taker's balances are settled.
+/// Up until this point, an OrderInfo object has been created and potentially
+/// filled. The OrderInfo object contains all of the necessary information to
+/// update the state of the pool. This includes the volumes for the taker and
+/// potentially multiple makers.
+/// First, fills are iterated and processed, updating the appropriate user's
+/// volumes. Funds are settled for those makers. Then, the taker's trading fee
+/// is calculated and the taker's volumes are updated. Finally, the taker's
+/// balances are settled.
 public(package) fun process_create(
     self: &mut State,
     order_info: &mut OrderInfo,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     let fills = order_info.fills_ref();
     self.process_fills(fills, ctx);
 
@@ -111,7 +125,8 @@ public(package) fun process_create(
             math::mul_u128(account_volume, avg_executed_price as u128),
         );
 
-    // taker fee will almost be calculated as 0 for whitelisted pools by default, as account_volume_in_deep is 0
+    // taker fee will almost be calculated as 0 for whitelisted pools by
+    // default, as account_volume_in_deep is 0
     let taker_fee = self
         .governance
         .trade_params()
@@ -132,9 +147,7 @@ public(package) fun process_create(
         maker_fee,
     );
     let (old_settled, old_owed) = account.settle();
-    self
-        .history
-        .add_total_fees_collected(balances::new(0, 0, order_info.paid_fees()));
+    self.history.add_total_fees_collected(order_info.paid_fees_balances());
     settled.add_balances(old_settled);
     owed.add_balances(old_owed);
 
@@ -145,9 +158,13 @@ public(package) fun withdraw_settled_amounts(
     self: &mut State,
     balance_manager_id: ID,
 ): (Balances, Balances) {
-    let account = &mut self.accounts[balance_manager_id];
+    if (self.accounts.contains(balance_manager_id)) {
+        let account = &mut self.accounts[balance_manager_id];
 
-    account.settle()
+        account.settle()
+    } else {
+        (balances::empty(), balances::empty())
+    }
 }
 
 /// Update account settled balances and volumes.
@@ -156,10 +173,11 @@ public(package) fun process_cancel(
     self: &mut State,
     order: &mut Order,
     balance_manager_id: ID,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
     order.set_canceled();
 
@@ -180,10 +198,11 @@ public(package) fun process_modify(
     balance_manager_id: ID,
     cancel_quantity: u64,
     order: &Order,
+    pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let epoch = order.epoch();
@@ -207,7 +226,7 @@ public(package) fun process_stake(
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let (stake_before, stake_after) = self
@@ -225,7 +244,8 @@ public(package) fun process_stake(
     self.accounts[balance_manager_id].settle()
 }
 
-/// Process unstake transaction. Remove stake from account and update governance.
+/// Process unstake transaction.
+/// Remove stake from account and update governance.
 public(package) fun process_unstake(
     self: &mut State,
     pool_id: ID,
@@ -233,7 +253,7 @@ public(package) fun process_unstake(
     ctx: &TxContext,
 ): (Balances, Balances) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
@@ -265,7 +285,7 @@ public(package) fun process_proposal(
     ctx: &TxContext,
 ) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
     let account = &mut self.accounts[balance_manager_id];
     let stake = account.active_stake();
@@ -305,7 +325,7 @@ public(package) fun process_vote(
     ctx: &TxContext,
 ) {
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
@@ -330,25 +350,42 @@ public(package) fun process_vote(
     });
 }
 
-/// Process claim rebates transaction. Update account rebates and settle balances.
-public(package) fun process_claim_rebates(
+/// Process claim rebates transaction.
+/// Update account rebates and settle balances.
+public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
     self: &mut State,
     pool_id: ID,
-    balance_manager_id: ID,
+    balance_manager: &BalanceManager,
     ctx: &TxContext,
 ): (Balances, Balances) {
+    let balance_manager_id = balance_manager.id();
     self.governance.update(ctx);
-    self.history.update(self.governance.trade_params(), ctx);
+    self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
     let account = &mut self.accounts[balance_manager_id];
     let claim_amount = account.claim_rebates();
-    event::emit(RebateEvent {
+    event::emit(RebateEventV2 {
         pool_id,
         balance_manager_id,
         epoch: ctx.epoch(),
         claim_amount,
     });
+    balance_manager.emit_balance_event(
+        type_name::get<DEEP>(),
+        claim_amount.deep(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<BaseAsset>(),
+        claim_amount.base(),
+        true,
+    );
+    balance_manager.emit_balance_event(
+        type_name::get<QuoteAsset>(),
+        claim_amount.quote(),
+        true,
+    );
 
     account.settle()
 }
@@ -388,7 +425,8 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
     let whitelisted = self.governance.whitelisted();
 
     let mut i = 0;
-    while (i < fills.length()) {
+    let num_fills = fills.length();
+    while (i < num_fills) {
         let fill = &mut fills[i];
         let maker = fill.balance_manager_id();
         self.update_account(maker, ctx);
@@ -400,25 +438,23 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
         let historic_maker_fee = self
             .history
             .historic_maker_fee(fill.maker_epoch());
-        let fee_volume = fill
+        let maker_is_bid = !fill.taker_is_bid();
+        let mut fee_quantity = fill
             .maker_deep_price()
-            .deep_quantity(base_volume, quote_volume);
-        let order_maker_fee = if (whitelisted) {
-            0
+            .fee_quantity(base_volume, quote_volume, maker_is_bid);
+
+        if (whitelisted) {
+            fee_quantity.mul(0)
         } else {
-            math::mul(fee_volume, historic_maker_fee)
+            fee_quantity.mul(historic_maker_fee)
         };
 
         if (!fill.expired()) {
-            if (order_maker_fee > 0) {
-                fill.set_fill_maker_fee(order_maker_fee);
-            };
+            fill.set_fill_maker_fee(&fee_quantity);
             self.history.add_volume(base_volume, account.active_stake());
-            self
-                .history
-                .add_total_fees_collected(balances::new(0, 0, order_maker_fee));
+            self.history.add_total_fees_collected(fee_quantity);
         } else {
-            account.add_settled_balances(balances::new(0, 0, order_maker_fee));
+            account.add_settled_balances(fee_quantity);
         };
 
         i = i + 1;

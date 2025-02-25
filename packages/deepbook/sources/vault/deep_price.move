@@ -5,6 +5,8 @@
 /// between DEEP and the base and quote assets.
 module deepbook::deep_price;
 
+use deepbook::balances::{Self, Balances};
+use deepbook::constants;
 use deepbook::math;
 use sui::event;
 
@@ -89,15 +91,39 @@ public(package) fun get_order_deep_price(
     new_order_deep_price(asset_is_base, deep_per_asset)
 }
 
-public(package) fun deep_quantity(
+public(package) fun empty_deep_price(_self: &DeepPrice): OrderDeepPrice {
+    new_order_deep_price(false, 0)
+}
+
+public(package) fun fee_quantity(
     self: &OrderDeepPrice,
     base_quantity: u64,
     quote_quantity: u64,
-): u64 {
-    if (self.asset_is_base) {
+    is_bid: bool,
+): Balances {
+    let deep_quantity = if (self.asset_is_base) {
         math::mul(base_quantity, self.deep_per_asset)
     } else {
         math::mul(quote_quantity, self.deep_per_asset)
+    };
+
+    if (deep_quantity > 0) {
+        balances::new(0, 0, deep_quantity)
+    } else if (is_bid) {
+        balances::new(
+            0,
+            math::mul(
+                quote_quantity,
+                constants::fee_penalty_multiplier(),
+            ),
+            0,
+        )
+    } else {
+        balances::new(
+            math::mul(base_quantity, constants::fee_penalty_multiplier()),
+            0,
+            0,
+        )
     }
 }
 
