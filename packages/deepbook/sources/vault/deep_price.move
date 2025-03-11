@@ -5,9 +5,7 @@
 /// between DEEP and the base and quote assets.
 module deepbook::deep_price;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::math;
+use deepbook::{balances::{Self, Balances}, constants, math};
 use sui::event;
 
 // === Errors ===
@@ -24,7 +22,7 @@ const MAX_DATA_POINTS: u64 = 100;
 
 // === Structs ===
 /// DEEP price point.
-public struct Price has store, drop {
+public struct Price has drop, store {
     conversion_rate: u64,
     timestamp: u64,
 }
@@ -39,14 +37,14 @@ public struct PriceAdded has copy, drop {
 }
 
 /// DEEP price points used for trading fee calculations.
-public struct DeepPrice has store, drop {
+public struct DeepPrice has drop, store {
     base_prices: vector<Price>,
     cumulative_base: u64,
     quote_prices: vector<Price>,
     cumulative_quote: u64,
 }
 
-public struct OrderDeepPrice has copy, store, drop {
+public struct OrderDeepPrice has copy, drop, store {
     asset_is_base: bool,
     deep_per_asset: u64,
 }
@@ -70,20 +68,14 @@ public(package) fun empty(): DeepPrice {
     }
 }
 
-public(package) fun new_order_deep_price(
-    asset_is_base: bool,
-    deep_per_asset: u64,
-): OrderDeepPrice {
+public(package) fun new_order_deep_price(asset_is_base: bool, deep_per_asset: u64): OrderDeepPrice {
     OrderDeepPrice {
         asset_is_base: asset_is_base,
         deep_per_asset: deep_per_asset,
     }
 }
 
-public(package) fun get_order_deep_price(
-    self: &DeepPrice,
-    whitelisted: bool,
-): OrderDeepPrice {
+public(package) fun get_order_deep_price(self: &DeepPrice, whitelisted: bool): OrderDeepPrice {
     let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(
         whitelisted,
     );
@@ -169,8 +161,7 @@ public(package) fun add_price_point(
             asset_prices.length() == MAX_DATA_POINTS + 1 ||
             asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
         ) {
-            self.cumulative_base =
-                self.cumulative_base - asset_prices[0].conversion_rate;
+            self.cumulative_base = self.cumulative_base - asset_prices[0].conversion_rate;
             asset_prices.remove(0);
         }
     } else {
@@ -179,8 +170,7 @@ public(package) fun add_price_point(
             asset_prices.length() == MAX_DATA_POINTS + 1 ||
             asset_prices[0].timestamp + MAX_DATA_POINT_AGE_MS < timestamp
         ) {
-            self.cumulative_quote =
-                self.cumulative_quote - asset_prices[0].conversion_rate;
+            self.cumulative_quote = self.cumulative_quote - asset_prices[0].conversion_rate;
             asset_prices.remove(0);
         }
     };
@@ -205,10 +195,7 @@ public(package) fun emit_deep_price_added(
 // === Private Functions ===
 /// Returns the conversion rate of DEEP per asset token.
 /// Quote will be used by default, if there are no quote data then base will be used
-fun calculate_order_deep_price(
-    self: &DeepPrice,
-    whitelisted: bool,
-): (bool, u64) {
+fun calculate_order_deep_price(self: &DeepPrice, whitelisted: bool): (bool, u64) {
     if (whitelisted) {
         return (false, 0) // no fees for whitelist
     };

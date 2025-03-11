@@ -7,11 +7,8 @@
 /// proposals are used to set the trade parameters for the next epoch.
 module deepbook::governance;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::trade_params::{Self, TradeParams};
-use sui::event;
-use sui::vec_map::{Self, VecMap};
+use deepbook::{constants, math, trade_params::{Self, TradeParams}};
+use sui::{event, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const EInvalidMakerFee: u64 = 1;
@@ -36,7 +33,7 @@ const VOTING_POWER_THRESHOLD: u64 = 100_000_000_000; // 100k deep
 // === Structs ===
 /// `Proposal` struct that holds the parameters of a proposal and its current
 /// total votes.
-public struct Proposal has store, drop, copy {
+public struct Proposal has copy, drop, store {
     taker_fee: u64,
     maker_fee: u64,
     stake_required: u64,
@@ -158,14 +155,8 @@ public(package) fun add_proposal(
     assert!(maker_fee % FEE_MULTIPLE == 0, EInvalidMakerFee);
 
     if (self.stable) {
-        assert!(
-            taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE,
-            EInvalidTakerFee,
-        );
-        assert!(
-            maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE,
-            EInvalidMakerFee,
-        );
+        assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
+        assert!(maker_fee >= MIN_MAKER_STABLE && maker_fee <= MAX_MAKER_STABLE, EInvalidMakerFee);
     } else {
         assert!(
             taker_fee >= MIN_TAKER_VOLATILE && taker_fee <= MAX_TAKER_VOLATILE,
@@ -205,9 +196,7 @@ public(package) fun adjust_vote(
     ) {
         let proposal = &mut self.proposals[from_proposal_id.borrow()];
         proposal.votes = proposal.votes - votes;
-        if (
-            proposal.votes + votes > self.quorum && proposal.votes < self.quorum
-        ) {
+        if (proposal.votes + votes > self.quorum && proposal.votes < self.quorum) {
             self.next_trade_params = self.trade_params;
         };
     };
@@ -256,11 +245,7 @@ fun stake_to_voting_power(stake: u64): u64 {
     voting_power
 }
 
-fun new_proposal(
-    taker_fee: u64,
-    maker_fee: u64,
-    stake_required: u64,
-): Proposal {
+fun new_proposal(taker_fee: u64, maker_fee: u64, stake_required: u64): Proposal {
     Proposal { taker_fee, maker_fee, stake_required, votes: 0 }
 }
 
@@ -275,9 +260,7 @@ fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
 
     self.proposals.size().do!(|i| {
         let proposal_votes = values[i].votes;
-        if (
-            proposal_votes < voting_power && proposal_votes <= cur_lowest_votes
-        ) {
+        if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
             removal_id = option::some(keys[i]);
             cur_lowest_votes = proposal_votes;
         };
@@ -293,11 +276,9 @@ fun reset_trade_params(self: &mut Governance) {
     if (self.whitelisted) {
         self.trade_params = trade_params::new(0, 0, 0);
     } else if (self.stable) {
-        self.trade_params =
-            trade_params::new(MAX_TAKER_STABLE, MAX_MAKER_STABLE, stake);
+        self.trade_params = trade_params::new(MAX_TAKER_STABLE, MAX_MAKER_STABLE, stake);
     } else {
-        self.trade_params =
-            trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, stake);
+        self.trade_params = trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, stake);
     };
     self.next_trade_params = self.trade_params;
 }

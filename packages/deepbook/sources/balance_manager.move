@@ -9,11 +9,7 @@
 module deepbook::balance_manager;
 
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::event;
-use sui::vec_set::{Self, VecSet};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, coin::Coin, event, vec_set::{Self, VecSet}};
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
@@ -52,7 +48,7 @@ public struct BalanceEvent has copy, drop {
 }
 
 /// Balance identifier.
-public struct BalanceKey<phantom T> has store, copy, drop {}
+public struct BalanceKey<phantom T> has copy, drop, store {}
 
 /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
 public struct TradeCap has key, store {
@@ -123,15 +119,9 @@ public fun balance<T>(balance_manager: &BalanceManager): u64 {
 }
 
 /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
-public fun mint_trade_cap(
-    balance_manager: &mut BalanceManager,
-    ctx: &mut TxContext,
-): TradeCap {
+public fun mint_trade_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
     balance_manager.validate_owner(ctx);
-    assert!(
-        balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
-        EMaxCapsReached,
-    );
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
@@ -143,15 +133,9 @@ public fun mint_trade_cap(
 }
 
 /// Mint a `DepositCap`, only owner can mint.
-public fun mint_deposit_cap(
-    balance_manager: &mut BalanceManager,
-    ctx: &mut TxContext,
-): DepositCap {
+public fun mint_deposit_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): DepositCap {
     balance_manager.validate_owner(ctx);
-    assert!(
-        balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
-        EMaxCapsReached,
-    );
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
@@ -168,10 +152,7 @@ public fun mint_withdraw_cap(
     ctx: &mut TxContext,
 ): WithdrawCap {
     balance_manager.validate_owner(ctx);
-    assert!(
-        balance_manager.allow_listed.size() < MAX_TRADE_CAPS,
-        EMaxCapsReached,
-    );
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
@@ -225,11 +206,7 @@ public fun generate_proof_as_trader(
 }
 
 /// Deposit funds to a balance manager. Only owner can call this directly.
-public fun deposit<T>(
-    balance_manager: &mut BalanceManager,
-    coin: Coin<T>,
-    ctx: &mut TxContext,
-) {
+public fun deposit<T>(balance_manager: &mut BalanceManager, coin: Coin<T>, ctx: &mut TxContext) {
     balance_manager.emit_balance_event(
         type_name::get<T>(),
         coin.value(),
@@ -268,9 +245,7 @@ public fun withdraw_with_cap<T>(
         withdraw_cap,
         ctx,
     );
-    let coin = balance_manager
-        .withdraw_with_proof(&proof, withdraw_amount, false)
-        .into_coin(ctx);
+    let coin = balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx);
     balance_manager.emit_balance_event(
         type_name::get<T>(),
         coin.value(),
@@ -289,9 +264,7 @@ public fun withdraw<T>(
     ctx: &mut TxContext,
 ): Coin<T> {
     let proof = generate_proof_as_owner(balance_manager, ctx);
-    let coin = balance_manager
-        .withdraw_with_proof(&proof, withdraw_amount, false)
-        .into_coin(ctx);
+    let coin = balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx);
     balance_manager.emit_balance_event(
         type_name::get<T>(),
         coin.value(),
@@ -301,14 +274,9 @@ public fun withdraw<T>(
     coin
 }
 
-public fun withdraw_all<T>(
-    balance_manager: &mut BalanceManager,
-    ctx: &mut TxContext,
-): Coin<T> {
+public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxContext): Coin<T> {
     let proof = generate_proof_as_owner(balance_manager, ctx);
-    let coin = balance_manager
-        .withdraw_with_proof(&proof, 0, true)
-        .into_coin(ctx);
+    let coin = balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
     balance_manager.emit_balance_event(
         type_name::get<T>(),
         coin.value(),
@@ -318,14 +286,8 @@ public fun withdraw_all<T>(
     coin
 }
 
-public fun validate_proof(
-    balance_manager: &BalanceManager,
-    proof: &TradeProof,
-) {
-    assert!(
-        object::id(balance_manager) == proof.balance_manager_id,
-        EInvalidProof,
-    );
+public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
+    assert!(object::id(balance_manager) == proof.balance_manager_id, EInvalidProof);
 }
 
 /// Returns the owner of the balance_manager.
@@ -459,8 +421,5 @@ fun validate_owner(balance_manager: &BalanceManager, ctx: &TxContext) {
 }
 
 fun validate_trader(balance_manager: &BalanceManager, trade_cap: &TradeCap) {
-    assert!(
-        balance_manager.allow_listed.contains(object::borrow_id(trade_cap)),
-        EInvalidTrader,
-    );
+    assert!(balance_manager.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
 }

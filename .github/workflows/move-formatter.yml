@@ -1,23 +1,23 @@
 name: Check Move formatting
 
 on:
-    pull_request:
-        paths:
-            - "packages/**"
+  pull_request:
+    paths:
+      - "packages/deepbook"
 
 env:
-    MOVE_PACKAGES_PATH: packages
+  MOVE_PACKAGES_PATH: packages
 
 jobs:
-    prettier-move:
-        name: Check Move files formatting
-        runs-on: ubuntu-latest
-        defaults:
-            run:
-                working-directory: ${{ env.MOVE_PACKAGES_PATH }}
-        steps:
-            - uses: actions/checkout@v4
-            - name: Use Node.js
-              uses: actions/setup-node@v4
-            - run: npm i @mysten/prettier-plugin-move
-            - run: npx prettier-move -c **/*.move
+  prettier-move:
+    name: Check Move files formatting
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.MOVE_PACKAGES_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+      - run: npm i @mysten/prettier-plugin-move
+      - run: npx prettier-move -c **/*.move

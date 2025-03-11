@@ -4,29 +4,28 @@
 /// Public-facing interface for the package.
 module deepbook::pool;
 
-use deepbook::account::Account;
-use deepbook::balance_manager::{Self, BalanceManager, TradeProof};
-use deepbook::big_vector::BigVector;
-use deepbook::book::{Self, Book};
-use deepbook::constants;
-use deepbook::deep_price::{
-    Self,
-    DeepPrice,
-    OrderDeepPrice,
-    emit_deep_price_added
+use deepbook::{
+    account::Account,
+    balance_manager::{Self, BalanceManager, TradeProof},
+    big_vector::BigVector,
+    book::{Self, Book},
+    constants,
+    deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
+    math,
+    order::Order,
+    order_info::{Self, OrderInfo},
+    registry::{DeepbookAdminCap, Registry},
+    state::{Self, State},
+    vault::{Self, Vault, FlashLoan}
 };
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::{Self, OrderInfo};
-use deepbook::registry::{DeepbookAdminCap, Registry};
-use deepbook::state::{Self, State};
-use deepbook::vault::{Self, Vault, FlashLoan};
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::{Self, Coin};
-use sui::event;
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{
+    clock::Clock,
+    coin::{Self, Coin},
+    event,
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 use token::deep::{DEEP, ProtectedTreasury};
 
 // === Errors ===
@@ -61,10 +60,7 @@ public struct PoolInner<phantom BaseAsset, phantom QuoteAsset> has store {
     registered_pool: bool,
 }
 
-public struct PoolCreated<
-    phantom BaseAsset,
-    phantom QuoteAsset,
-> has copy, store, drop {
+public struct PoolCreated<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     pool_id: ID,
     taker_fee: u64,
     maker_fee: u64,
@@ -75,10 +71,7 @@ public struct PoolCreated<
     treasury_address: address,
 }
 
-public struct BookParamsUpdated<
-    phantom BaseAsset,
-    phantom QuoteAsset,
-> has copy, store, drop {
+public struct BookParamsUpdated<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     pool_id: ID,
     tick_size: u64,
     lot_size: u64,
@@ -86,10 +79,7 @@ public struct BookParamsUpdated<
     timestamp: u64,
 }
 
-public struct DeepBurned<
-    phantom BaseAsset,
-    phantom QuoteAsset,
-> has copy, store, drop {
+public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     pool_id: ID,
     deep_burned: u64,
 }
@@ -108,15 +98,11 @@ public fun create_permissionless_pool<BaseAsset, QuoteAsset>(
     creation_fee: Coin<DEEP>,
     ctx: &mut TxContext,
 ): ID {
-    assert!(
-        creation_fee.value() == constants::pool_creation_fee(),
-        EInvalidFee,
-    );
+    assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
     let base_type = type_name::get<BaseAsset>();
     let quote_type = type_name::get<QuoteAsset>();
     let whitelisted_pool = false;
-    let stable_pool =
-        registry.is_stablecoin(base_type) && registry.is_stablecoin(quote_type);
+    let stable_pool = registry.is_stablecoin(base_type) && registry.is_stablecoin(quote_type);
 
     create_pool<BaseAsset, QuoteAsset>(
         registry,
@@ -259,12 +245,7 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     let mut base_quantity = base_in.value();
     let quote_quantity = quote_in.value();
-    let taker_fee = self
-        .load_inner()
-        .state
-        .governance()
-        .trade_params()
-        .taker_fee();
+    let taker_fee = self.load_inner().state.governance().trade_params().taker_fee();
     let input_fee_rate = math::mul(
         taker_fee,
         constants::fee_penalty_multiplier(),
@@ -288,8 +269,7 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
                 );
         }
     };
-    base_quantity =
-        base_quantity - base_quantity % self.load_inner().book.lot_size();
+    base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
     if (base_quantity < self.load_inner().book.min_size()) {
         return (base_in, quote_in, deep_in)
     };
@@ -345,10 +325,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     let (cancel_quantity, order) = self
         .book
         .modify_order(order_id, new_quantity, clock.timestamp_ms());
-    assert!(
-        order.balance_manager_id() == balance_manager.id(),
-        EInvalidOrderBalanceManager,
-    );
+    assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
     let (settled, owed) = self
         .state
         .process_modify(
@@ -358,9 +335,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
             self.pool_id,
             ctx,
         );
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 
     order.emit_order_modified(
         self.pool_id,
@@ -385,16 +360,11 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
 ) {
     let self = self.load_inner_mut();
     let mut order = self.book.cancel_order(order_id);
-    assert!(
-        order.balance_manager_id() == balance_manager.id(),
-        EInvalidOrderBalanceManager,
-    );
+    assert!(order.balance_manager_id() == balance_manager.id(), EInvalidOrderBalanceManager);
     let (settled, owed) = self
         .state
         .process_cancel(&mut order, balance_manager.id(), self.pool_id, ctx);
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 
     order.emit_order_canceled(
         self.pool_id,
@@ -436,8 +406,7 @@ public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     let inner = self.load_inner_mut();
     let mut open_orders = vector[];
     if (inner.state.account_exists(balance_manager.id())) {
-        open_orders =
-            inner.state.account(balance_manager.id()).open_orders().into_keys();
+        open_orders = inner.state.account(balance_manager.id()).open_orders().into_keys();
     };
 
     let mut i = 0;
@@ -456,12 +425,8 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     trade_proof: &TradeProof,
 ) {
     let self = self.load_inner_mut();
-    let (settled, owed) = self
-        .state
-        .withdraw_settled_amounts(balance_manager.id());
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
 // === Public-Mutative Functions * GOVERNANCE * ===
@@ -477,12 +442,8 @@ public fun stake<BaseAsset, QuoteAsset>(
 ) {
     assert!(amount > 0, EInvalidStake);
     let self = self.load_inner_mut();
-    let (settled, owed) = self
-        .state
-        .process_stake(self.pool_id, balance_manager.id(), amount, ctx);
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    let (settled, owed) = self.state.process_stake(self.pool_id, balance_manager.id(), amount, ctx);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
 /// Unstake DEEP tokens from the pool. The balance_manager must have enough
@@ -496,12 +457,8 @@ public fun unstake<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ) {
     let self = self.load_inner_mut();
-    let (settled, owed) = self
-        .state
-        .process_unstake(self.pool_id, balance_manager.id(), ctx);
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    let (settled, owed) = self.state.process_unstake(self.pool_id, balance_manager.id(), ctx);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
 /// Submit a proposal to change the taker fee, maker fee, and stake required.
@@ -547,9 +504,7 @@ public fun vote<BaseAsset, QuoteAsset>(
 ) {
     let self = self.load_inner_mut();
     balance_manager.validate_proof(trade_proof);
-    self
-        .state
-        .process_vote(self.pool_id, balance_manager.id(), proposal_id, ctx);
+    self.state.process_vote(self.pool_id, balance_manager.id(), proposal_id, ctx);
 }
 
 /// Claim the rewards for the balance_manager. The balance_manager must have
@@ -569,9 +524,7 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
             balance_manager,
             ctx,
         );
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
 // === Public-Mutative Functions * FLASHLOAN * ===
@@ -625,12 +578,7 @@ public fun return_flashloan_quote<BaseAsset, QuoteAsset>(
 
 /// Adds a price point along with a timestamp to the deep price.
 /// Allows for the calculation of deep price per base asset.
-public fun add_deep_price_point<
-    BaseAsset,
-    QuoteAsset,
-    ReferenceBaseAsset,
-    ReferenceQuoteAsset,
->(
+public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, ReferenceQuoteAsset>(
     target_pool: &mut Pool<BaseAsset, QuoteAsset>,
     reference_pool: &Pool<ReferenceBaseAsset, ReferenceQuoteAsset>,
     clock: &Clock,
@@ -660,10 +608,8 @@ public fun add_deep_price_point<
     } else {
         reference_base_type
     };
-    let reference_other_is_target_base =
-        reference_other_type == target_base_type;
-    let reference_other_is_target_quote =
-        reference_other_type == target_quote_type;
+    let reference_other_is_target_base = reference_other_type == target_base_type;
+    let reference_other_is_target_quote = reference_other_type == target_quote_type;
     assert!(
         reference_other_is_target_base || reference_other_is_target_quote,
         EIneligibleTargetPool,
@@ -707,10 +653,7 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 ): u64 {
     let self = self.load_inner_mut();
     let balance_to_burn = self.state.history_mut().reset_balance_to_burn();
-    let deep_to_burn = self
-        .vault
-        .withdraw_deep_to_burn(balance_to_burn)
-        .into_coin(ctx);
+    let deep_to_burn = self.vault.withdraw_deep_to_burn(balance_to_burn).into_coin(ctx);
     let amount_burned = deep_to_burn.value();
     token::deep::burn(treasury_cap, deep_to_burn);
 
@@ -771,9 +714,7 @@ public fun update_allowed_versions<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
 ) {
     let allowed_versions = registry.allowed_versions();
-    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self
-        .inner
-        .load_value_mut();
+    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
     inner.allowed_versions = allowed_versions;
 }
 
@@ -827,22 +768,16 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
 
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
-public fun whitelisted<BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-): bool {
+public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     self.load_inner().state.governance().whitelisted()
 }
 
 /// Accessor to check if the pool is a stablecoin pool.
-public fun stable_pool<BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-): bool {
+public fun stable_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     self.load_inner().state.governance().stable()
 }
 
-public fun registered_pool<BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-): bool {
+public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     self.load_inner().registered_pool
 }
 
@@ -1029,9 +964,7 @@ public fun vault_balances<BaseAsset, QuoteAsset>(
 }
 
 /// Get the ID of the pool given the asset types.
-public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(
-    registry: &Registry,
-): ID {
+public fun get_pool_id_by_asset<BaseAsset, QuoteAsset>(registry: &Registry): ID {
     registry.get_pool_id<BaseAsset, QuoteAsset>()
 }
 
@@ -1065,9 +998,7 @@ public fun get_account_order_details<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     balance_manager: &BalanceManager,
 ): vector<Order> {
-    let acct_open_orders = self
-        .account_open_orders(balance_manager)
-        .into_keys();
+    let acct_open_orders = self.account_open_orders(balance_manager).into_keys();
 
     self.get_orders(acct_open_orders)
 }
@@ -1130,10 +1061,7 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
         deep_quantity = deep_quantity + locked_balance.deep();
     });
 
-    let settled_balances = self
-        .state
-        .account(balance_manager.id())
-        .settled_balances();
+    let settled_balances = self.state.account(balance_manager.id()).settled_balances();
     base_quantity = base_quantity + settled_balances.base();
     quote_quantity = quote_quantity + settled_balances.quote();
     deep_quantity = deep_quantity + settled_balances.deep();
@@ -1148,11 +1076,7 @@ public fun pool_trade_params<BaseAsset, QuoteAsset>(
     let self = self.load_inner();
     let taker_fee = self.state.governance().trade_params().taker_fee();
     let maker_fee = self.state.governance().trade_params().maker_fee();
-    let stake_required = self
-        .state
-        .governance()
-        .trade_params()
-        .stake_required();
+    let stake_required = self.state.governance().trade_params().stake_required();
 
     (taker_fee, maker_fee, stake_required)
 }
@@ -1179,9 +1103,7 @@ public fun account<BaseAsset, QuoteAsset>(
 }
 
 /// Returns the quorum needed to pass proposal in the current epoch
-public fun quorum<BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-): u64 {
+public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u64 {
     self.load_inner().state.governance().quorum()
 }
 
@@ -1201,14 +1123,8 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
     assert!(lot_size > 0, EInvalidLotSize);
     assert!(min_size > 0, EInvalidMinSize);
     assert!(min_size % lot_size == 0, EInvalidMinSize);
-    assert!(
-        !(whitelisted_pool && stable_pool),
-        EPoolCannotBeBothWhitelistedAndStable,
-    );
-    assert!(
-        type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(),
-        ESameBaseAndQuote,
-    );
+    assert!(!(whitelisted_pool && stable_pool), EPoolCannotBeBothWhitelistedAndStable);
+    assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
     let pool_id = object::new(ctx);
     let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
@@ -1267,10 +1183,7 @@ public(package) fun load_inner<BaseAsset, QuoteAsset>(
 ): &PoolInner<BaseAsset, QuoteAsset> {
     let inner: &PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value();
     let package_version = constants::current_version();
-    assert!(
-        inner.allowed_versions.contains(&package_version),
-        EPackageVersionDisabled,
-    );
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
     inner
 }
@@ -1278,14 +1191,9 @@ public(package) fun load_inner<BaseAsset, QuoteAsset>(
 public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
 ): &mut PoolInner<BaseAsset, QuoteAsset> {
-    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self
-        .inner
-        .load_value_mut();
+    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
     let package_version = constants::current_version();
-    assert!(
-        inner.allowed_versions.contains(&package_version),
-        EPackageVersionDisabled,
-    );
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
 
     inner
 }
@@ -1350,9 +1258,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
             self.pool_id,
             ctx,
         );
-    self
-        .vault
-        .settle_balance_manager(settled, owed, balance_manager, trade_proof);
+    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     order_info.emit_order_info();
     order_info.emit_orders_filled(clock.timestamp_ms());
 

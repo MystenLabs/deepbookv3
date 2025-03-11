@@ -4,14 +4,8 @@
 #[test_only]
 module deepbook::order_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::order::{Self, Order};
-use deepbook::utils;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::assert_eq;
+use deepbook::{balances, constants, deep_price, order::{Self, Order}, utils};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -32,10 +26,7 @@ fun generate_fill_partial_fill_ok() {
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
     assert!(fill.taker_is_bid(), 0);
-    assert!(
-        fill.quote_quantity() == 75 * constants::usdc_unit(),
-        0,
-    ); // 5 * $15 = $75
+    assert!(fill.quote_quantity() == 75 * constants::usdc_unit(), 0); // 5 * $15 = $75
     assert_eq(
         fill.get_settled_maker_quantities(),
         balances::new(0, 75 * constants::usdc_unit(), 0),
@@ -62,10 +53,7 @@ fun generate_fill_multiple_partial_fill_ok() {
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
     assert!(fill.taker_is_bid(), 0);
-    assert!(
-        fill.quote_quantity() == 75 * constants::usdc_unit(),
-        0,
-    ); // 5 * $15 = $75
+    assert!(fill.quote_quantity() == 75 * constants::usdc_unit(), 0); // 5 * $15 = $75
     assert_eq(
         fill.get_settled_maker_quantities(),
         balances::new(0, 75 * constants::usdc_unit(), 0),
@@ -79,10 +67,7 @@ fun generate_fill_multiple_partial_fill_ok() {
     assert!(fill.completed(), 0);
     assert!(fill.base_quantity() == 7 * constants::sui_unit(), 0);
     assert!(fill.taker_is_bid(), 0);
-    assert!(
-        fill.quote_quantity() == 105 * constants::usdc_unit(),
-        0,
-    ); // 7 * $15 = $105
+    assert!(fill.quote_quantity() == 105 * constants::usdc_unit(), 0); // 7 * $15 = $105
     assert_eq(
         fill.get_settled_maker_quantities(),
         balances::new(0, 105 * constants::usdc_unit(), 0),
@@ -110,7 +95,7 @@ fun generate_fill_full_fill_ok() {
         1 * constants::sui_unit() / 10,
         true,
         false,
-        true
+        true,
     );
     assert!(!fill.expired(), 0);
     assert!(fill.completed(), 0);
@@ -144,7 +129,7 @@ fun generate_fill_partial_fill_ok_bid() {
         1 * constants::sui_unit() / 100,
         false,
         false,
-        true
+        true,
     );
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -223,7 +208,7 @@ fun generate_fill_expired_ok() {
         10 * constants::sui_unit(),
         false,
         false,
-        true
+        true,
     );
     assert!(fill.expired(), 0);
     assert!(!fill.completed(), 0);
@@ -272,15 +257,12 @@ fun generate_fill_expired_partial_ok() {
         5 * constants::sui_unit(),
         false,
         false,
-        true
+        true,
     );
     assert!(!fill.expired(), 0);
     assert!(!fill.completed(), 0);
     assert!(fill.base_quantity() == 5 * constants::sui_unit(), 0);
-    assert!(
-        fill.quote_quantity() == 50 * constants::usdc_unit(),
-        0,
-    ); // 5 * $10 = $50
+    assert!(fill.quote_quantity() == 50 * constants::usdc_unit(), 0); // 5 * $10 = $50
     assert_eq(
         fill.get_settled_maker_quantities(),
         balances::new(5 * constants::sui_unit(), 0, 0),
@@ -294,7 +276,7 @@ fun generate_fill_expired_partial_ok() {
         5 * constants::sui_unit(),
         false,
         false,
-        true
+        true,
     );
     assert!(fill.expired(), 0);
     assert!(!fill.completed(), 0);

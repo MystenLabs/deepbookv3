@@ -5,9 +5,7 @@
 module deepbook::balance_manager_tests;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap};
-use sui::coin::mint_for_testing;
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end};
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -202,12 +200,7 @@ fun test_withdraw_all_ok() {
     end(test);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = balance_manager::EBalanceManagerBalanceTooLow,
-    ),
-]
+#[test, expected_failure(abort_code = balance_manager::EBalanceManagerBalanceTooLow)]
 fun test_withdraw_balance_too_low_e() {
     let mut test = begin(@0xF);
     let alice = @0xA;

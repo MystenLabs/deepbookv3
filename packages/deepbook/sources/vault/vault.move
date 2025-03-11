@@ -5,12 +5,9 @@
 /// transaction processing, the vault is used to settle the balances for the user.
 module deepbook::vault;
 
-use deepbook::balance_manager::{TradeProof, BalanceManager};
-use deepbook::balances::Balances;
+use deepbook::{balance_manager::{TradeProof, BalanceManager}, balances::Balances};
 use std::type_name::{Self, TypeName};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::event;
+use sui::{balance::{Self, Balance}, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -44,17 +41,10 @@ public struct FlashLoanBorrowed has copy, drop {
 public(package) fun balances<BaseAsset, QuoteAsset>(
     self: &Vault<BaseAsset, QuoteAsset>,
 ): (u64, u64, u64) {
-    (
-        self.base_balance.value(),
-        self.quote_balance.value(),
-        self.deep_balance.value(),
-    )
+    (self.base_balance.value(), self.quote_balance.value(), self.deep_balance.value())
 }
 
-public(package) fun empty<BaseAsset, QuoteAsset>(): Vault<
-    BaseAsset,
-    QuoteAsset,
-> {
+public(package) fun empty<BaseAsset, QuoteAsset>(): Vault<BaseAsset, QuoteAsset> {
     Vault {
         base_balance: balance::zero(),
         quote_balance: balance::zero(),
@@ -72,21 +62,15 @@ public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
 ) {
     balance_manager.validate_proof(trade_proof);
     if (balances_out.base() > balances_in.base()) {
-        let balance = self
-            .base_balance
-            .split(balances_out.base() - balances_in.base());
+        let balance = self.base_balance.split(balances_out.base() - balances_in.base());
         balance_manager.deposit_with_proof(trade_proof, balance);
     };
     if (balances_out.quote() > balances_in.quote()) {
-        let balance = self
-            .quote_balance
-            .split(balances_out.quote() - balances_in.quote());
+        let balance = self.quote_balance.split(balances_out.quote() - balances_in.quote());
         balance_manager.deposit_with_proof(trade_proof, balance);
     };
     if (balances_out.deep() > balances_in.deep()) {
-        let balance = self
-            .deep_balance
-            .split(balances_out.deep() - balances_in.deep());
+        let balance = self.deep_balance.split(balances_out.deep() - balances_in.deep());
         balance_manager.deposit_with_proof(trade_proof, balance);
     };
     if (balances_in.base() > balances_out.base()) {
@@ -129,15 +113,9 @@ public(package) fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
-    assert!(
-        self.base_balance.value() >= borrow_quantity,
-        ENotEnoughBaseForLoan,
-    );
+    assert!(self.base_balance.value() >= borrow_quantity, ENotEnoughBaseForLoan);
     let borrow_type_name = type_name::get<BaseAsset>();
-    let borrow: Coin<BaseAsset> = self
-        .base_balance
-        .split(borrow_quantity)
-        .into_coin(ctx);
+    let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
         pool_id,
@@ -161,15 +139,9 @@ public(package) fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): (Coin<QuoteAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
-    assert!(
-        self.quote_balance.value() >= borrow_quantity,
-        ENotEnoughQuoteForLoan,
-    );
+    assert!(self.quote_balance.value() >= borrow_quantity, ENotEnoughQuoteForLoan);
     let borrow_type_name = type_name::get<QuoteAsset>();
-    let borrow: Coin<QuoteAsset> = self
-        .quote_balance
-        .split(borrow_quantity)
-        .into_coin(ctx);
+    let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
         pool_id,
@@ -193,14 +165,8 @@ public(package) fun return_flashloan_base<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(
-        type_name::get<BaseAsset>() == flash_loan.type_name,
-        EIncorrectTypeReturned,
-    );
-    assert!(
-        coin.value() == flash_loan.borrow_quantity,
-        EIncorrectQuantityReturned,
-    );
+    assert!(type_name::get<BaseAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.base_balance.join(coin.into_balance<BaseAsset>());
 
@@ -218,14 +184,8 @@ public(package) fun return_flashloan_quote<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(
-        type_name::get<QuoteAsset>() == flash_loan.type_name,
-        EIncorrectTypeReturned,
-    );
-    assert!(
-        coin.value() == flash_loan.borrow_quantity,
-        EIncorrectQuantityReturned,
-    );
+    assert!(type_name::get<QuoteAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.quote_balance.join(coin.into_balance<QuoteAsset>());
 
