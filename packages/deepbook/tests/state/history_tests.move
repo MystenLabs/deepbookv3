@@ -4,12 +4,8 @@
 #[test_only]
 module deepbook::history_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::history;
-use deepbook::trade_params;
-use sui::test_scenario::{begin, end};
-use sui::test_utils;
+use deepbook::{balances, constants, history, trade_params};
+use sui::{test_scenario::{begin, end}, test_utils};
 
 const EWrongRebateAmount: u64 = 0;
 

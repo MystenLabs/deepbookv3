@@ -5,12 +5,14 @@
 /// All order matching happens in this module.
 module deepbook::order;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::fill::{Self, Fill};
-use deepbook::math;
-use deepbook::utils;
+use deepbook::{
+    balances::{Self, Balances},
+    constants,
+    deep_price::OrderDeepPrice,
+    fill::{Self, Fill},
+    math,
+    utils
+};
 use sui::event;
 
 // === Errors ===
@@ -19,7 +21,7 @@ const EOrderExpired: u64 = 1;
 
 // === Structs ===
 /// Order struct represents the order in the order book. It is optimized for space.
-public struct Order has store, drop {
+public struct Order has drop, store {
     balance_manager_id: ID,
     order_id: u128,
     client_order_id: u64,
@@ -33,7 +35,7 @@ public struct Order has store, drop {
 }
 
 /// Emitted when a maker order is canceled.
-public struct OrderCanceled has copy, store, drop {
+public struct OrderCanceled has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -47,7 +49,7 @@ public struct OrderCanceled has copy, store, drop {
 }
 
 /// Emitted when a maker order is modified.
-public struct OrderModified has copy, store, drop {
+public struct OrderModified has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -186,11 +188,7 @@ public(package) fun generate_fill(
 /// Modify the order with a new quantity. The new quantity must be greater
 /// than the filled quantity and less than the original quantity. The
 /// timestamp must be less than the expire timestamp.
-public(package) fun modify(
-    self: &mut Order,
-    new_quantity: u64,
-    timestamp: u64,
-) {
+public(package) fun modify(self: &mut Order, new_quantity: u64, timestamp: u64) {
     assert!(
         new_quantity > self.filled_quantity &&
         new_quantity < self.quantity,

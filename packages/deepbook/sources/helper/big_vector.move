@@ -51,7 +51,7 @@ public struct BigVector<phantom E: store> has key, store {
 /// case `vals` contain the IDs of its children and `keys`
 /// represent the partitions between children. There will be one
 /// fewer key than value in this configuration.
-public struct Slice<E: store> has store, drop {
+public struct Slice<E: store> has drop, store {
     /// Previous node in the intrusive doubly-linked list data
     /// structure.
     prev: u64,
@@ -215,10 +215,7 @@ public(package) fun borrow<E: store>(self: &BigVector<E>, ix: u128): &E {
 }
 
 /// Access the element at index `ix` in `self`, mutably.
-public(package) fun borrow_mut<E: store>(
-    self: &mut BigVector<E>,
-    ix: u128,
-): &mut E {
+public(package) fun borrow_mut<E: store>(self: &mut BigVector<E>, ix: u128): &mut E {
     let (ref, offset) = self.slice_around(ix);
     let slice = self.borrow_slice_mut(ref);
     slice_borrow_mut(slice, offset)
@@ -228,11 +225,7 @@ public(package) fun borrow_mut<E: store>(
 
 /// Add `val` to `self` at index `key`. Aborts if `key` is already
 /// present in `self`.
-public(package) fun insert<E: store>(
-    self: &mut BigVector<E>,
-    key: u128,
-    val: E,
-) {
+public(package) fun insert<E: store>(self: &mut BigVector<E>, key: u128, val: E) {
     self.length = self.length + 1;
 
     if (self.root_id == NO_SLICE) {
@@ -311,10 +304,7 @@ public(package) fun remove_batch<E: store>(
 /// assuming it exists in the data structure. Returns the
 /// reference to the slice and the local offset within the slice
 /// if it exists, aborts with `ENotFound` otherwise.
-public(package) fun slice_around<E: store>(
-    self: &BigVector<E>,
-    key: u128,
-): (SliceRef, u64) {
+public(package) fun slice_around<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         abort ENotFound
     };
@@ -335,10 +325,7 @@ public(package) fun slice_around<E: store>(
 /// reference to the slice and the local offset within the slice
 /// if it exists, or (NO_SLICE, 0), if there is no matching
 /// key-value pair.
-public(package) fun slice_following<E: store>(
-    self: &BigVector<E>,
-    key: u128,
-): (SliceRef, u64) {
+public(package) fun slice_following<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -355,10 +342,7 @@ public(package) fun slice_following<E: store>(
 /// to the previous key in `self`. Returns the reference to the slice
 /// and the local offset within the slice if it exists, or (NO_SLICE, 0),
 /// if there is no matching key-value pair.
-public(package) fun slice_before<E: store>(
-    self: &BigVector<E>,
-    key: u128,
-): (SliceRef, u64) {
+public(package) fun slice_before<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -438,10 +422,7 @@ public(package) fun prev_slice<E: store>(
 }
 
 /// Borrow a slice from this vector.
-public(package) fun borrow_slice<E: store>(
-    self: &BigVector<E>,
-    ref: SliceRef,
-): &Slice<E> {
+public(package) fun borrow_slice<E: store>(self: &BigVector<E>, ref: SliceRef): &Slice<E> {
     df::borrow(&self.id, ref.ix)
 }
 
@@ -510,10 +491,7 @@ public(package) fun slice_borrow<E: store>(self: &Slice<E>, ix: u64): &E {
 
 /// Access a value from this slice, mutably, referenced by its
 /// offset, local to the slice.
-public(package) fun slice_borrow_mut<E: store>(
-    self: &mut Slice<E>,
-    ix: u64,
-): &mut E {
+public(package) fun slice_borrow_mut<E: store>(self: &mut Slice<E>, ix: u64): &mut E {
     &mut self.vals[ix]
 }
 
@@ -628,8 +606,7 @@ fun find_max_leaf<E: store>(self: &BigVector<E>): (u64, &Slice<E>, u64) {
     // Traverse down to the rightmost leaf node
     while (depth > 0) {
         let slice: &Slice<u64> = df::borrow(&self.id, slice_id);
-        slice_id =
-            slice.vals[slice.keys.length()]; // Always take the rightmost child
+        slice_id = slice.vals[slice.keys.length()]; // Always take the rightmost child
         depth = depth - 1;
     };
 
@@ -702,19 +679,12 @@ fun slice_insert<E: store>(
 }
 
 /// Like `slice_insert` but you know that `slice_id` points to a leaf node.
-fun leaf_insert<E: store>(
-    self: &mut BigVector<E>,
-    slice_id: u64,
-    key: u128,
-    val: E,
-): (u128, u64) {
+fun leaf_insert<E: store>(self: &mut BigVector<E>, slice_id: u64, key: u128, val: E): (u128, u64) {
     let leaf: &mut Slice<E> = df::borrow_mut(&mut self.id, slice_id);
     let off = leaf.bisect_left(key);
 
-    if (
-        off < leaf.keys.length() &&
-        key == leaf.keys[off]
-    ) {
+    if (off < leaf.keys.length() &&
+        key == leaf.keys[off]) {
         abort EExists
     };
 
@@ -964,17 +934,11 @@ fun node_remove<E: store>(
 
     let (child_prev_id, child_prev_key) = if (off == 0) {
         (NO_SLICE, 0)
-    } else (
-        node.vals[off - 1],
-        node.keys[off - 1],
-    );
+    } else (node.vals[off - 1], node.keys[off - 1]);
 
     let (child_next_id, child_next_key) = if (off == node.keys.length()) {
         (NO_SLICE, 0)
-    } else (
-        node.vals[off + 1],
-        node.keys[off],
-    );
+    } else (node.vals[off + 1], node.keys[off]);
 
     let (val, rm_fix, pivot) = self.slice_remove(
         child_prev_id,
@@ -1234,9 +1198,7 @@ fun test_slice(keys: vector<u128>): Slice<u64> {
 
 #[test_only]
 /// Returns the keys from `self`, in pre-order.
-public(package) fun preorder_keys<E: store>(
-    self: &BigVector<E>,
-): vector<vector<u128>> {
+public(package) fun preorder_keys<E: store>(self: &BigVector<E>): vector<vector<u128>> {
     let mut keys = vector[];
     let (slice_id, depth) = (self.root_id, self.depth);
     self.preorder_key_traversal(&mut keys, slice_id, depth);
@@ -1273,9 +1235,7 @@ fun preorder_key_traversal<E: store>(
 
 #[test_only]
 /// Returns the values from `self`, in-order.
-public(package) fun inorder_values<E: store + copy>(
-    self: &BigVector<E>,
-): vector<vector<E>> {
+public(package) fun inorder_values<E: store + copy>(self: &BigVector<E>): vector<vector<E>> {
     let mut vals = vector[];
     if (self.root_id == NO_SLICE) {
         return vals

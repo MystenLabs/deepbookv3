@@ -4,14 +4,18 @@
 #[test_only]
 module deepbook::state_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::order_info_tests::{create_order_info_base, create_order_info};
-use deepbook::state;
-use deepbook::utils;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::{assert_eq, destroy};
+use deepbook::{
+    balances,
+    constants,
+    order_info_tests::{create_order_info_base, create_order_info},
+    state,
+    utils
+};
+use sui::{
+    object::id_from_address,
+    test_scenario::{next_tx, begin, end},
+    test_utils::{assert_eq, destroy}
+};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -1069,10 +1073,7 @@ fun process_proposal_vote_ok() {
     // 7.071067811 = 58.740320489 rounded down
     // total = 52.928932189 + 58.740320489 = 111.669252678
     // quorum = 111.669252678 * 0.5 = 55.834626339 rouned down
-    assert!(
-        state.governance().voting_power() == 350 * constants::deep_unit(),
-        0,
-    );
+    assert!(state.governance().voting_power() == 350 * constants::deep_unit(), 0);
     assert!(state.governance().quorum() == 175 * constants::deep_unit(), 0);
     assert!(
         state.governance().proposals().get(&id_from_address(ALICE)).votes() ==
@@ -1099,10 +1100,7 @@ fun process_proposal_vote_ok() {
         id_from_address(ALICE),
         test.ctx(),
     );
-    assert!(
-        state.governance().voting_power() == 250 * constants::deep_unit(),
-        0,
-    );
+    assert!(state.governance().voting_power() == 250 * constants::deep_unit(), 0);
     assert!(
         state.governance().proposals().get(&id_from_address(ALICE)).votes() ==
         250 * constants::deep_unit(),

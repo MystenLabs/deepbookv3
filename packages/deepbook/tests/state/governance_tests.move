@@ -4,12 +4,13 @@
 #[test_only]
 module deepbook::governance_tests;
 
-use deepbook::constants;
-use deepbook::governance;
-use sui::address;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::{destroy, assert_eq};
+use deepbook::{constants, governance};
+use sui::{
+    address,
+    object::id_from_address,
+    test_scenario::{next_tx, begin, end},
+    test_utils::{destroy, assert_eq}
+};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -280,10 +281,7 @@ fun update_ok() {
     let trade_params = gov.trade_params();
     assert!(trade_params.taker_fee() == 1000000, 0);
     assert!(trade_params.maker_fee() == 500000, 0);
-    assert!(
-        trade_params.stake_required() == constants::default_stake_required(),
-        0,
-    );
+    assert!(trade_params.stake_required() == constants::default_stake_required(), 0);
     let next_trade_params = gov.next_trade_params();
     assert!(next_trade_params.taker_fee() == 500000, 0);
     assert!(next_trade_params.maker_fee() == 200000, 0);
@@ -526,12 +524,7 @@ fun remove_proposal_vote_e() {
     end(test);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = governance::EMaxProposalsReachedNotEnoughVotes,
-    ),
-]
+#[test, expected_failure(abort_code = governance::EMaxProposalsReachedNotEnoughVotes)]
 fun remove_proposal_stake_too_low_e() {
     let mut test = begin(OWNER);
     let alice = ALICE;

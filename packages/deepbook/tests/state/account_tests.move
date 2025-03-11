@@ -4,14 +4,8 @@
 #[test_only]
 module deepbook::account_tests;
 
-use deepbook::account;
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::fill;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::assert_eq;
+use deepbook::{account, balances, constants, deep_price, fill};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -196,11 +190,7 @@ fun update_ok() {
 
     test.next_tx(ALICE);
     let mut account = account::empty(test.ctx());
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
@@ -225,22 +215,14 @@ fun update_ok() {
     account.process_maker_fill(&fill);
 
     // update doesn't do anything until next epoch
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 100, 0);
     assert!(prev_active_stake == 0, 0);
@@ -252,22 +234,14 @@ fun update_ok() {
     assert!(account.inactive_stake() == 100, 0);
 
     // already reset earlier, new stake not counted yet
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 1, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
@@ -281,11 +255,7 @@ fun update_ok() {
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 2, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 100, 0);

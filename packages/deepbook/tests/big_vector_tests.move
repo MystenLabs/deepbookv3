@@ -4,12 +4,7 @@
 #[test_only]
 module deepbook::big_vector_tests;
 
-use deepbook::big_vector::{
-    Self as bv,
-    BigVector,
-    borrow as borrow,
-    borrow_mut as borrow_mut
-};
+use deepbook::big_vector::{Self as bv, BigVector, borrow as borrow, borrow_mut as borrow_mut};
 
 #[test]
 fun test_destroy_empty() {

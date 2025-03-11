@@ -4,16 +4,20 @@
 #[test_only]
 module deepbook::master_tests;
 
-use deepbook::balance_manager::{Self, BalanceManager, TradeCap};
-use deepbook::balance_manager_tests::{Self, USDC, SPAM, USDT};
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::{Self, Pool};
-use deepbook::pool_tests;
-use sui::clock::Clock;
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end, return_shared, return_to_sender};
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap},
+    balance_manager_tests::{Self, USDC, SPAM, USDT},
+    balances::{Self, Balances},
+    constants,
+    math,
+    pool::{Self, Pool},
+    pool_tests
+};
+use sui::{
+    clock::Clock,
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared, return_to_sender}
+};
 use token::deep::{Self, DEEP, ProtectedTreasury};
 
 public struct ExpectedBalances has drop {
@@ -66,22 +70,12 @@ fun test_master_duplicate_pool_e() {
     test_master(EDuplicatePool)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::EBalanceManagerBalanceTooLow,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EBalanceManagerBalanceTooLow)]
 fun test_master_not_enough_funds_e() {
     test_master(ENotEnoughFunds)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::EInvalidOwner,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
 fun test_master_incorrect_stake_owner_e() {
     test_master(EIncorrectStakeOwner)
 }
@@ -96,22 +90,12 @@ fun test_master_cannot_propose_e() {
     test_master(ECannotPropose)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::EInvalidTrader,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
 fun test_master_incorrect_rebate_claimer_e() {
     test_master(EIncorrectRebateClaimer)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::pool::EIneligibleReferencePool,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::pool::EIneligibleReferencePool)]
 fun test_add_deep_price_unregistered_pool_e() {
     test_master(EAddPricePointUnregisteredPool)
 }
@@ -121,12 +105,7 @@ fun test_master_deep_price_ok() {
     test_master_deep_price(NoError)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::deep_price::EDataPointRecentlyAdded)]
 fun test_master_deep_price_recently_added_e() {
     test_master_deep_price(EDataRecentlyAdded)
 }
@@ -151,12 +130,7 @@ fun test_flash_loan_base_e() {
     test_flash_loan(ENotEnoughBaseForLoan)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::vault::ENotEnoughQuoteForLoan,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::vault::ENotEnoughQuoteForLoan)]
 fun test_flash_loan_quote_e() {
     test_flash_loan(ENotEnoughQuoteForLoan)
 }
@@ -166,12 +140,7 @@ fun test_flash_loan_incorrect_pool_e() {
     test_flash_loan(EIncorrectLoanPool)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::vault::EIncorrectTypeReturned,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::vault::EIncorrectTypeReturned)]
 fun test_flash_loan_incorrect_type_returned_e() {
     test_flash_loan(EIncorrectTypeReturned)
 }
@@ -191,32 +160,17 @@ fun test_trader_permission_and_modify_returned_deep_as_base_ok() {
     test_trader_permission_and_modify_returned(NoErrorDeepAsBase)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::EInvalidOwner,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidOwner)]
 fun test_trader_permission_and_modify_returned_invalid_owner_e() {
     test_trader_permission_and_modify_returned(EInvalidOwner)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::ECapNotInList,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::ECapNotInList)]
 fun test_trader_permission_and_modify_trader_not_in_list_e() {
     test_trader_permission_and_modify_returned(ECapNotInList)
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = ::deepbook::balance_manager::EInvalidTrader,
-    ),
-]
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidTrader)]
 fun test_trader_permission_invalid_trader_e() {
     test_trader_permission_and_modify_returned(EInvalidTrader)
 }
@@ -333,8 +287,7 @@ fun test_locked_balance(is_bid: bool) {
     );
 
     if (is_bid) {
-        alice_locked_balance.usdc =
-            alice_locked_balance.usdc + math::mul(price, quantity);
+        alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity);
     } else {
         alice_locked_balance.sui = alice_locked_balance.sui + quantity;
     };
@@ -370,12 +323,10 @@ fun test_locked_balance(is_bid: bool) {
     );
 
     if (is_bid) {
-        alice_locked_balance.usdc =
-            alice_locked_balance.usdc - math::mul(price, quantity) / 2;
+        alice_locked_balance.usdc = alice_locked_balance.usdc - math::mul(price, quantity) / 2;
         alice_locked_balance.sui = alice_locked_balance.sui + quantity / 2;
     } else {
-        alice_locked_balance.usdc =
-            alice_locked_balance.usdc + math::mul(price, quantity) / 2;
+        alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity) / 2;
         alice_locked_balance.sui = alice_locked_balance.sui - quantity / 2;
     };
 
@@ -412,10 +363,8 @@ fun test_locked_balance(is_bid: bool) {
     );
 
     if (is_bid) {
-        alice_locked_balance.usdc =
-            alice_locked_balance.usdc + math::mul(price, quantity);
-        alice_locked_balance.sui =
-            alice_locked_balance.sui -
+        alice_locked_balance.usdc = alice_locked_balance.usdc + math::mul(price, quantity);
+        alice_locked_balance.sui = alice_locked_balance.sui -
             quantity / 2; // Alice withdraws the settled sui during placement
     } else {
         alice_locked_balance.sui = alice_locked_balance.sui + quantity;
@@ -987,8 +936,7 @@ fun test_master(error_code: u64) {
         constants::half(),
     );
     alice_balance.sui = alice_balance.sui + quantity_sui_traded;
-    alice_balance.usdc =
-        alice_balance.usdc - math::mul(price, quantity_sui_traded);
+    alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
     alice_balance.deep =
         alice_balance.deep -
         math::mul(
@@ -1081,8 +1029,7 @@ fun test_master(error_code: u64) {
     let maker_sui_traded = quantity;
     let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
     alice_balance.sui = alice_balance.sui + quantity_sui_traded;
-    alice_balance.usdc =
-        alice_balance.usdc - math::mul(price, quantity_sui_traded);
+    alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
     alice_balance.deep =
         alice_balance.deep -
         math::mul(
@@ -1681,8 +1628,7 @@ fun test_master_input_tokens(error_code: u64) {
     let maker_sui_traded = 23 * constants::float_scaling();
     let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
     alice_balance.sui = alice_balance.sui + quantity_sui_traded;
-    alice_balance.usdc =
-        alice_balance.usdc - math::mul(price, quantity_sui_traded);
+    alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
     let alice_usdc_fee = math::mul(
         math::mul(taker_sui_traded, taker_fee) +
         math::mul(maker_sui_traded, maker_fee),
@@ -1762,8 +1708,7 @@ fun test_master_input_tokens(error_code: u64) {
     let maker_sui_traded = quantity;
     let quantity_sui_traded = taker_sui_traded + maker_sui_traded;
     alice_balance.sui = alice_balance.sui + quantity_sui_traded;
-    alice_balance.usdc =
-        alice_balance.usdc - math::mul(price, quantity_sui_traded);
+    alice_balance.usdc = alice_balance.usdc - math::mul(price, quantity_sui_traded);
     let alice_usdc_fee = math::mul(
         math::mul(taker_sui_traded, taker_fee) +
         math::mul(maker_sui_traded, maker_fee),
@@ -2325,10 +2270,7 @@ fun test_flash_loan(error_code: u64) {
         };
         if (error_code == ENotEnoughBaseForLoan) {
             let base_needed = 10000 * constants::float_scaling();
-            let (_base_borrowed, _flash_loan) = pool::borrow_flashloan_base<
-                SUI,
-                DEEP,
-            >(
+            let (_base_borrowed, _flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
                 &mut loan_pool,
                 base_needed,
                 test.ctx(),
@@ -2336,10 +2278,7 @@ fun test_flash_loan(error_code: u64) {
             abort 0
         };
 
-        let (quote_borrowed, flash_loan) = pool::borrow_flashloan_quote<
-            SUI,
-            DEEP,
-        >(
+        let (quote_borrowed, flash_loan) = pool::borrow_flashloan_quote<SUI, DEEP>(
             &mut loan_pool,
             quote_needed,
             test.ctx(),
@@ -2448,10 +2387,7 @@ fun test_flash_loan(error_code: u64) {
         );
 
         let base_needed = 1 * constants::float_scaling();
-        let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<
-            SUI,
-            DEEP,
-        >(
+        let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
             &mut loan_pool,
             base_needed,
             test.ctx(),
@@ -2490,15 +2426,12 @@ fun test_flash_loan(error_code: u64) {
                 reference_pool_id,
             );
             let clock = test.take_shared<Clock>();
-            let mut alice_balance_manager = test.take_shared_by_id<
-                BalanceManager,
-            >(alice_balance_manager_id);
+            let mut alice_balance_manager = test.take_shared_by_id<BalanceManager>(
+                alice_balance_manager_id,
+            );
 
             let base_needed = 1 * constants::float_scaling();
-            let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<
-                SUI,
-                DEEP,
-            >(
+            let (base_borrowed, flash_loan) = pool::borrow_flashloan_base<SUI, DEEP>(
                 &mut loan_pool,
                 base_needed,
                 test.ctx(),
@@ -2543,15 +2476,21 @@ fun test_master_both_conversion_available(deep_is_base: bool) {
     // asset
     // Conversion is 100 DEEP per SUI, 95 DEEP per SPAM
     let pool1_reference_id = if (deep_is_base) {
-        pool_tests::setup_reference_pool_deep_as_base<
-            DEEP,
-            SUI,
-        >(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        pool_tests::setup_reference_pool_deep_as_base<DEEP, SUI>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        )
     } else {
-        pool_tests::setup_reference_pool<
-            SUI,
-            DEEP,
-        >(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        pool_tests::setup_reference_pool<SUI, DEEP>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        )
     };
     let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(
         OWNER,
@@ -2706,15 +2645,21 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
         &mut test,
     );
     let pool1_reference_id = if (error_code == NoErrorDeepAsBase) {
-        pool_tests::setup_reference_pool_deep_as_base<
-            DEEP,
-            SUI,
-        >(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        pool_tests::setup_reference_pool_deep_as_base<DEEP, SUI>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        )
     } else {
-        pool_tests::setup_reference_pool<
-            SUI,
-            DEEP,
-        >(OWNER, registry_id, owner_balance_manager_id, 100 * constants::float_scaling(), &mut test)
+        pool_tests::setup_reference_pool<SUI, DEEP>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        )
     };
 
     // Default price point of 100 deep per base will be added
@@ -2840,8 +2785,7 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
         new_quantity,
         &mut test,
     );
-    alice_balance.usdc =
-        alice_balance.usdc + math::mul(price, cancelled_quantity);
+    alice_balance.usdc = alice_balance.usdc + math::mul(price, cancelled_quantity);
     if (error_code == NoErrorPayWithInput) {
         alice_balance.usdc =
             alice_balance.usdc +
@@ -2875,8 +2819,7 @@ fun test_trader_permission_and_modify_returned(error_code: u64) {
         order_info.order_id(),
         &mut test,
     );
-    alice_balance.usdc =
-        alice_balance.usdc + math::mul(price, remaining_quantity);
+    alice_balance.usdc = alice_balance.usdc + math::mul(price, remaining_quantity);
     if (error_code == NoErrorPayWithInput) {
         alice_balance.usdc =
             alice_balance.usdc +
@@ -3027,22 +2970,10 @@ fun test_get_level_2_range() {
         is_bid,
         &mut test,
     );
-    assert!(
-        prices[0] == 30 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        prices[1] == 20 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
 
     // Include price 20 but exclude price 30
     let (prices, quantities) = get_level2_range<SUI, DEEP>(
@@ -3053,14 +2984,8 @@ fun test_get_level_2_range() {
         is_bid,
         &mut test,
     );
-    assert!(
-        prices[0] == 20 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        quantities[0] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(prices[0] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(quantities[0] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
 
     // Exclude all prices
     let (prices, quantities) = get_level2_range<SUI, DEEP>(
@@ -3143,22 +3068,10 @@ fun test_get_level_2_range() {
         &mut test,
     );
 
-    assert!(
-        prices[0] == 170 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        prices[1] == 180 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
 
     // Include price 180 but exclude price 170
     let (prices, quantities) = get_level2_range<SUI, DEEP>(
@@ -3169,14 +3082,8 @@ fun test_get_level_2_range() {
         is_bid,
         &mut test,
     );
-    assert!(
-        prices[0] == 180 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        quantities[0] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(prices[0] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(quantities[0] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
 
     // Include price 170 but exclude 180
     let (prices, quantities) = get_level2_range<SUI, DEEP>(
@@ -3187,141 +3094,69 @@ fun test_get_level_2_range() {
         is_bid,
         &mut test,
     );
-    assert!(
-        prices[0] == 170 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
 
     // Only the best bid of 30 and best ask of 170 should be returned
-    let (
-        bid_prices,
-        bid_quantities,
-        ask_prices,
-        ask_quantities,
-    ) = get_level2_ticks_from_mid<SUI, DEEP>(
+    let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<
+        SUI,
+        DEEP,
+    >(
         OWNER,
         pool1_reference_id,
         1,
         &mut test,
     );
-    assert!(
-        bid_prices[0] == 30 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        bid_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        ask_prices[0] == 170 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        ask_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
     assert!(bid_prices.length() == 1, EIncorrectLevel2Length);
     assert!(ask_prices.length() == 1, EIncorrectLevel2Length);
     assert!(bid_quantities.length() == 1, EIncorrectLevel2Length);
     assert!(ask_quantities.length() == 1, EIncorrectLevel2Length);
 
     // Both bids and asks (2 each) should be returned
-    let (
-        bid_prices,
-        bid_quantities,
-        ask_prices,
-        ask_quantities,
-    ) = get_level2_ticks_from_mid<SUI, DEEP>(
+    let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<
+        SUI,
+        DEEP,
+    >(
         OWNER,
         pool1_reference_id,
         2,
         &mut test,
     );
-    assert!(
-        bid_prices[0] == 30 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        bid_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        bid_prices[1] == 20 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        bid_quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        ask_prices[0] == 170 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        ask_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        ask_prices[1] == 180 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        ask_quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(bid_prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(bid_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(ask_prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(ask_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
     assert!(bid_prices.length() == 2, EIncorrectLevel2Length);
     assert!(ask_prices.length() == 2, EIncorrectLevel2Length);
     assert!(bid_quantities.length() == 2, EIncorrectLevel2Length);
     assert!(ask_quantities.length() == 2, EIncorrectLevel2Length);
 
     // Should only return 2 bids and 2 asks even though tick is higher
-    let (
-        bid_prices,
-        bid_quantities,
-        ask_prices,
-        ask_quantities,
-    ) = get_level2_ticks_from_mid<SUI, DEEP>(
+    let (bid_prices, bid_quantities, ask_prices, ask_quantities) = get_level2_ticks_from_mid<
+        SUI,
+        DEEP,
+    >(
         OWNER,
         pool1_reference_id,
         3,
         &mut test,
     );
-    assert!(
-        bid_prices[0] == 30 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        bid_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        bid_prices[1] == 20 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        bid_quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        ask_prices[0] == 170 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        ask_quantities[0] == 5 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
-    assert!(
-        ask_prices[1] == 180 * constants::float_scaling(),
-        EIncorrectLevel2Price,
-    );
-    assert!(
-        ask_quantities[1] == 3 * constants::float_scaling(),
-        EIncorrectLevel2Quantity,
-    );
+    assert!(bid_prices[0] == 30 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(bid_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(bid_prices[1] == 20 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(bid_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(ask_prices[0] == 170 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(ask_quantities[0] == 5 * constants::float_scaling(), EIncorrectLevel2Quantity);
+    assert!(ask_prices[1] == 180 * constants::float_scaling(), EIncorrectLevel2Price);
+    assert!(ask_quantities[1] == 3 * constants::float_scaling(), EIncorrectLevel2Quantity);
     assert!(bid_prices.length() == 2, EIncorrectLevel2Length);
     assert!(ask_prices.length() == 2, EIncorrectLevel2Length);
     assert!(bid_quantities.length() == 2, EIncorrectLevel2Length);
@@ -3351,12 +3186,7 @@ fun authorize_trader(
     }
 }
 
-fun remove_trader(
-    sender: address,
-    balance_manager_id: ID,
-    trade_cap_id: ID,
-    test: &mut Scenario,
-) {
+fun remove_trader(sender: address, balance_manager_id: ID, trade_cap_id: ID, test: &mut Scenario) {
     test.next_tx(sender);
     {
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(
@@ -3499,10 +3329,9 @@ fun check_vault_balances<BaseAsset, QuoteAsset>(
     test.next_tx(OWNER);
     {
         let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-        let (vault_base, vault_quote, vault_deep) = pool::vault_balances<
-            BaseAsset,
-            QuoteAsset,
-        >(&pool);
+        let (vault_base, vault_quote, vault_deep) = pool::vault_balances<BaseAsset, QuoteAsset>(
+            &pool,
+        );
         assert!(vault_base == expected_balances.base(), 0);
         assert!(vault_quote == expected_balances.quote(), 0);
         assert!(vault_deep == expected_balances.deep(), 0);
