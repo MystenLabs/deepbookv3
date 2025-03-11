@@ -3,7 +3,11 @@ name: Check Move formatting
 on:
   pull_request:
     paths:
-      - "packages/deepbook"
+      - ".github/workflows/**"
+      - "packages/**"
+  push:
+    branches:
+      - main
 
 env:
   MOVE_PACKAGES_PATH: packages
