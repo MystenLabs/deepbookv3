@@ -55,8 +55,6 @@ jobs:
         run: |
           for dir in packages/*; do
             dir_name=$(basename "$dir")
-            if [[ ! " ${excluded_dirs[*]} " =~ (^|[[:space:]])${dir_name}($|[[:space:]]) ]] && [ -d "$dir" ]; then
-              echo "Running sui move test in $dir"
-              sui move test --path "$dir"
-            fi
+            echo "Running sui move test in $dir"
+            sui move test -i 100000000 --path "$dir"
           done
