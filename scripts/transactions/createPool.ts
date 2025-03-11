@@ -31,8 +31,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     const tx = new Transaction();
 
     dbClient.deepBookAdmin.createPoolAdmin({
-        baseCoinKey: "WGIGA",
-        quoteCoinKey: "SUI",
+        baseCoinKey: "SEND",
+        quoteCoinKey: "USDC",
         tickSize: 0.000001,
         lotSize: 0.1,
         minSize: 1,
