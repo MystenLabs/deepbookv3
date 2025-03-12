@@ -44,6 +44,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     dbClient.deepBookAdmin.updateAllowedVersions("SUI_AUSD")(tx);
     dbClient.deepBookAdmin.updateAllowedVersions("AUSD_USDC")(tx);
     dbClient.deepBookAdmin.updateAllowedVersions("DRF_SUI")(tx);
+    dbClient.deepBookAdmin.updateAllowedVersions("SEND_USDC")(tx);
 
     let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
