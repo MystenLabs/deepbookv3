@@ -83,38 +83,60 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   const env = "testnet";
   const transaction = newTransaction();
 
-  /// We pass in our UpgradeCap
-  const packageInfo = transaction.moveCall({
-    target: `@mvr/metadata::package_info::new`,
+  // /// We pass in our UpgradeCap
+  // const packageInfo = transaction.moveCall({
+  //   target: `@mvr/metadata::package_info::new`,
+  //   arguments: [
+  //     transaction.object(
+  //       "0x479467ad71ba0b7f93b38b26cb121fbd181ae2db8c91585d3572db4aaa764ffb"
+  //     ),
+  //   ],
+  // });
+
+  // // We also need to create the visual representation of our "info" object.
+  // // You can also call `@mvr/metadata::display::new` instead,
+  // // that allows customizing the colors of your metadata object!
+  // const display = transaction.moveCall({
+  //   target: `@mvr/metadata::display::default`,
+  //   arguments: [transaction.pure.string("DeepbookV3")],
+  // });
+
+  // // Set that display object to our info object.
+  // transaction.moveCall({
+  //   target: `@mvr/metadata::package_info::set_display`,
+  //   arguments: [transaction.object(packageInfo), display],
+  // });
+
+  // // transfer the `PackageInfo` object to a safe address.
+  // transaction.moveCall({
+  //   target: `@mvr/metadata::package_info::transfer`,
+  //   arguments: [
+  //     transaction.object(packageInfo),
+  //     transaction.pure.address(
+  //       "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e"
+  //     ),
+  //   ],
+  // });
+
+  const git = transaction.moveCall({
+    target: `@mvr/metadata::git::new`,
     arguments: [
-      transaction.object(
-        "0x479467ad71ba0b7f93b38b26cb121fbd181ae2db8c91585d3572db4aaa764ffb"
+      transaction.pure.string("https://github.com/MystenLabs/deepbookv3"),
+      transaction.pure.string("packages/deepbook"),
+      transaction.pure.string(
+        "<Your git commit hash or tag, e.g. `636d22d6bc4195afec9a1c0a8563b61fc813acfc`>"
       ),
     ],
   });
 
-  // We also need to create the visual representation of our "info" object.
-  // You can also call `@mvr/metadata::display::new` instead,
-  // that allows customizing the colors of your metadata object!
-  const display = transaction.moveCall({
-    target: `@mvr/metadata::display::default`,
-    arguments: [transaction.pure.string("DeepbookV3")],
-  });
-
-  // Set that display object to our info object.
   transaction.moveCall({
-    target: `@mvr/metadata::package_info::set_display`,
-    arguments: [transaction.object(packageInfo), display],
-  });
-
-  // transfer the `PackageInfo` object to a safe address.
-  transaction.moveCall({
-    target: `@mvr/metadata::package_info::transfer`,
+    target: `@mvr/metadata::package_info::set_git_versioning`,
     arguments: [
-      transaction.object(packageInfo),
-      transaction.pure.address(
-        "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e"
+      transaction.object(
+        `0x35f509124a4a34981e5b1ba279d1fdfc0af3502ae1edf101e49a2d724a4c1a34`
       ),
+      transaction.pure.u64(`1`),
+      git,
     ],
   });
 
