@@ -118,27 +118,49 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   //   ],
   // });
 
-  const git = transaction.moveCall({
-    target: `@mvr/metadata::git::new`,
+  // const git = transaction.moveCall({
+  //   target: `@mvr/metadata::git::new`,
+  //   arguments: [
+  //     transaction.pure.string("https://github.com/MystenLabs/deepbookv3"),
+  //     transaction.pure.string("packages/deepbook"),
+  //     transaction.pure.string("b9082548ee8181e118fcab618778cf2a9bae3b2e"),
+  //   ],
+  // });
+
+  // transaction.moveCall({
+  //   target: `@mvr/metadata::package_info::set_git_versioning`,
+  //   arguments: [
+  //     transaction.object(
+  //       `0x35f509124a4a34981e5b1ba279d1fdfc0af3502ae1edf101e49a2d724a4c1a34`
+  //     ),
+  //     transaction.pure.u64(`1`),
+  //     git,
+  //   ],
+  // });
+
+  //   public fun set_metadata(registry: &mut MoveRegistry, cap: &AppCap, key: String, value: String) {
+  //     registry.borrow_record_mut(cap).set_metadata_key(key, value);
+  // }
+
+  const appCap = transaction.moveCall({
+    target: `@mvr/core::move_registry::register`,
     arguments: [
-      transaction.pure.string("https://github.com/MystenLabs/deepbookv3"),
-      transaction.pure.string("packages/deepbook"),
-      transaction.pure.string(
-        "<Your git commit hash or tag, e.g. `636d22d6bc4195afec9a1c0a8563b61fc813acfc`>"
+      // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
       ),
+      transaction.object(
+        "0xd0815f9867a0a02690a9fe3b5be9a044bb381f96c660ba6aa28dfaaaeb76af76"
+      ), // deepbook domain
+      transaction.pure.string("core"), // name
+      transaction.object.clock(),
     ],
   });
 
-  transaction.moveCall({
-    target: `@mvr/metadata::package_info::set_git_versioning`,
-    arguments: [
-      transaction.object(
-        `0x35f509124a4a34981e5b1ba279d1fdfc0af3502ae1edf101e49a2d724a4c1a34`
-      ),
-      transaction.pure.u64(`1`),
-      git,
-    ],
-  });
+  transaction.transferObjects(
+    [appCap],
+    "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e"
+  ); // This is the deepbook adminCap owner
 
   let res = await signAndExecute(transaction, env);
 
