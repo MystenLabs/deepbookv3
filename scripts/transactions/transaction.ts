@@ -6,7 +6,7 @@ Transaction.registerGlobalSerializationPlugin(
   "namedPackagesPlugin",
   namedPackagesPlugin({
     suiGraphQLClient: new SuiGraphQLClient({
-      url: `https://mvr-rpc.sui-testnet.mystenlabs.com/graphql`,
+      url: `https://mvr-rpc.sui-mainnet.mystenlabs.com/graphql`,
     }),
   })
 );
