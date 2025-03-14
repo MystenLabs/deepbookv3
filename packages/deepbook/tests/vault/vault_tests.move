@@ -4,18 +4,14 @@
 #[test_only]
 module deepbook::vault_tests;
 
-use deepbook::balance_manager::{Self, BalanceManager};
-use deepbook::balance_manager_tests::{
-    USDC,
-    SPAM,
-    create_acct_and_share_with_funds
+use deepbook::{
+    balance_manager::{Self, BalanceManager},
+    balance_manager_tests::{USDC, SPAM, create_acct_and_share_with_funds},
+    balances,
+    constants,
+    vault
 };
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::vault;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::destroy;
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::destroy};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;

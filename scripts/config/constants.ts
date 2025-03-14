@@ -12,11 +12,11 @@ export const upgradeCapOwner = {
 };
 
 export const upgradeCapID = {
-    "mainnet": "0xc3670c420ee0e3cccfae819be4b6780007d56727467d5e5c60c0d3b6e264f5d9", // change after publish
+    "mainnet": "0xdadf253cea3b91010e64651b03da6d56166a4f44b43bdd4e185c277658634483",
     "testnet": "0x56632f4f1b707b5b0c1b99defe65a056af3f846d95700b4a1cbd3adc94bf7c96",
 };
 
 export const adminCapID = {
-    "mainnet": "0xd542cd47d94009452de200032ac80ff1ceb31bb5f9ed6df5d97c9ae54a1976dd", // change after publish
+    "mainnet": "0xada554b8b712556b8509be47ac1bc04db9505c3532049a543721aca0c010a840",
     "testnet": "0x014e6a65f60936177820141ad64430290b6ad5e16421691dc9f3fa9907154b2e"
 };

@@ -5,9 +5,7 @@
 module deepbook::balance_manager_tests;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap};
-use sui::coin::mint_for_testing;
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end};
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -202,12 +200,7 @@ fun test_withdraw_all_ok() {
     end(test);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = balance_manager::EBalanceManagerBalanceTooLow,
-    ),
-]
+#[test, expected_failure(abort_code = balance_manager::EBalanceManagerBalanceTooLow)]
 fun test_withdraw_balance_too_low_e() {
     let mut test = begin(@0xF);
     let alice = @0xA;
@@ -278,8 +271,16 @@ public(package) fun create_acct_and_share_with_funds_typed<
         let mut balance_manager = balance_manager::new(test.ctx());
         deposit_into_account<BaseAsset>(&mut balance_manager, amount, test);
         deposit_into_account<QuoteAsset>(&mut balance_manager, amount, test);
-        deposit_into_account<ReferenceBaseAsset>(&mut balance_manager, amount, test);
-        deposit_into_account<ReferenceQuoteAsset>(&mut balance_manager, amount, test);
+        deposit_into_account<ReferenceBaseAsset>(
+            &mut balance_manager,
+            amount,
+            test,
+        );
+        deposit_into_account<ReferenceQuoteAsset>(
+            &mut balance_manager,
+            amount,
+            test,
+        );
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
         let id = object::id(&balance_manager);

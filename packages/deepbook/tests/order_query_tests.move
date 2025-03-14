@@ -4,21 +4,17 @@
 #[test_only]
 module deepbook::order_query_tests;
 
-use deepbook::balance_manager_tests::{
-    USDC,
-    create_acct_and_share_with_funds as create_acct_and_share_with_funds
+use deepbook::{
+    balance_manager_tests::{
+        USDC,
+        create_acct_and_share_with_funds as create_acct_and_share_with_funds
+    },
+    constants,
+    order_query::iter_orders,
+    pool::Pool,
+    pool_tests::{setup_test, setup_pool_with_default_fees_and_reference_pool, place_limit_order}
 };
-use deepbook::constants;
-use deepbook::order_query::iter_orders;
-use deepbook::pool::Pool;
-use deepbook::pool_tests::{
-    setup_test,
-    setup_pool_with_default_fees_and_reference_pool,
-    place_limit_order
-};
-use sui::sui::SUI;
-use sui::test_scenario::{begin, end, return_shared};
-use sui::test_utils;
+use sui::{sui::SUI, test_scenario::{begin, end, return_shared}, test_utils};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -33,12 +29,12 @@ fun test_place_orders_ok() {
         1000000 * constants::float_scaling(),
         &mut test,
     );
-    let pool_id = setup_pool_with_default_fees_and_reference_pool<
-        SUI,
-        USDC,
-        SUI,
-        DEEP,
-    >(ALICE, registry_id, balance_manager_id_alice, &mut test);
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
     let mut client_order_id = 1;
     let order_type = constants::no_restriction();
     let price = 2 * constants::float_scaling();
