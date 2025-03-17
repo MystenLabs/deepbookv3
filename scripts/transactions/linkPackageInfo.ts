@@ -83,7 +83,18 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  // 3. Links testnet packageInfo
+  // 3. Set default metadata for mainnet
+
+  transaction.moveCall({
+    target: "@mvr/metadata::package_info::set_metadata",
+    arguments: [
+      transaction.object(packageInfoId),
+      transaction.pure.string("default"),
+      transaction.pure.string("@deepbook/core"),
+    ],
+  });
+
+  // 4. Links testnet packageInfo
   const appInfo = transaction.moveCall({
     target: `@mvr/core::app_info::new`,
     arguments: [
@@ -112,7 +123,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  // 4. Linked mainnet packageInfo with appCap
+  // 5. Linked mainnet packageInfo with appCap
   transaction.moveCall({
     target: `@mvr/core::move_registry::assign_package`,
     arguments: [
