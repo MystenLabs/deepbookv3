@@ -32,7 +32,58 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  // 2. Links testnet packageInfo
+  // 2. Set metadata for mainnet (description, icon_url, documentation_url, homepage_url)
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(appCapObjectId),
+      transaction.pure.string("description"), // key
+      transaction.pure.string(
+        "DeepBook V3 is a next-generation decentralized central limit order book (CLOB) built on Sui. DeepBook leverages Sui's parallel execution and low transaction fees to bring a highly performant, low-latency exchange on chain."
+      ), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(appCapObjectId),
+      transaction.pure.string("icon_url"), // key
+      transaction.pure.string("https://images.deepbook.tech/icon.svg"), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(appCapObjectId),
+      transaction.pure.string("documentation_url"), // key
+      transaction.pure.string("https://docs.sui.io/standards/deepbookv3"), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(appCapObjectId),
+      transaction.pure.string("homepage_url"), // key
+      transaction.pure.string("https://deepbook.tech/"), // value
+    ],
+  });
+
+  // 3. Links testnet packageInfo
   const appInfo = transaction.moveCall({
     target: `@mvr/core::app_info::new`,
     arguments: [
@@ -61,7 +112,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  // 3. Linked mainnet packageInfo with appCap
+  // 4. Linked mainnet packageInfo with appCap
   transaction.moveCall({
     target: `@mvr/core::move_registry::assign_package`,
     arguments: [
