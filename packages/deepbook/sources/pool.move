@@ -1074,9 +1074,23 @@ public fun pool_trade_params<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ): (u64, u64, u64) {
     let self = self.load_inner();
-    let taker_fee = self.state.governance().trade_params().taker_fee();
-    let maker_fee = self.state.governance().trade_params().maker_fee();
-    let stake_required = self.state.governance().trade_params().stake_required();
+    let trade_params = self.state.governance().trade_params();
+    let taker_fee = trade_params.taker_fee();
+    let maker_fee = trade_params.maker_fee();
+    let stake_required = trade_params.stake_required();
+
+    (taker_fee, maker_fee, stake_required)
+}
+
+/// Returns the currently leading trade params for the next epoch for the pool
+public fun pool_trade_params_next<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): (u64, u64, u64) {
+    let self = self.load_inner();
+    let trade_params = self.state.governance().next_trade_params();
+    let taker_fee = trade_params.taker_fee();
+    let maker_fee = trade_params.maker_fee();
+    let stake_required = trade_params.stake_required();
 
     (taker_fee, maker_fee, stake_required)
 }
