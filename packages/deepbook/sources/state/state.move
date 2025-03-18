@@ -415,8 +415,6 @@ public(package) fun history(self: &State): &History {
 // === Private Functions ===
 /// Process fills for all makers. Update maker accounts and history.
 fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
-    let whitelisted = self.governance.whitelisted();
-
     let mut i = 0;
     let num_fills = fills.length();
     while (i < num_fills) {
@@ -434,11 +432,7 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
             .maker_deep_price()
             .fee_quantity(base_volume, quote_volume, maker_is_bid);
 
-        if (whitelisted) {
-            fee_quantity.mul(0)
-        } else {
-            fee_quantity.mul(historic_maker_fee)
-        };
+        fee_quantity.mul(historic_maker_fee);
 
         if (!fill.expired()) {
             fill.set_fill_maker_fee(&fee_quantity);
