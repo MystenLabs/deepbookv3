@@ -117,11 +117,7 @@ public(package) fun get_quantity_out(
     pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
-    assert!(
-        (base_quantity > 0 || quote_quantity > 0) &&
-        !(base_quantity > 0 && quote_quantity > 0),
-        EInvalidAmountIn,
-    );
+    assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidAmountIn);
     let is_bid = quote_quantity > 0;
     let mut quantity_out = 0;
     let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
