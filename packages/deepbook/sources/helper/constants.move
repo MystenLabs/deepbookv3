@@ -1,7 +1,10 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 1; // Update version during upgrades
-const POOL_CREATION_FEE: u64 = 0 * 1_000_000; // 0 DEEP
+const CURRENT_VERSION: u64 = 2; // Update version during upgrades
+const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;
 const MAX_U64: u64 = ((1u128 << 64) - 1) as u64;
@@ -11,13 +14,16 @@ const MAX_PRICE: u64 = ((1u128 << 63) - 1) as u64;
 const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
+const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
 
 // Restrictions on limit orders.
 // No restriction on the order.
 const NO_RESTRICTION: u8 = 0;
-// Mandates that whatever amount of an order that can be executed in the current transaction, be filled and then the rest of the order canceled.
+// Mandates that whatever amount of an order that can be executed in the current
+// transaction, be filled and then the rest of the order canceled.
 const IMMEDIATE_OR_CANCEL: u8 = 1;
-// Mandates that the entire order size be filled in the current transaction. Otherwise, the order is canceled.
+// Mandates that the entire order size be filled in the current transaction.
+// Otherwise, the order is canceled.
 const FILL_OR_KILL: u8 = 2;
 // Mandates that the entire order be passive. Otherwise, cancel the order.
 const POST_ONLY: u8 = 3;
@@ -209,6 +215,10 @@ public fun max_slice_size(): u64 {
 
 public fun max_fan_out(): u64 {
     MAX_FAN_OUT
+}
+
+public fun fee_penalty_multiplier(): u64 {
+    FEE_PENALTY_MULTIPLIER
 }
 
 #[test_only]
