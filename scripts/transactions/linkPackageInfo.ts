@@ -12,7 +12,8 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   const transaction = newTransaction();
   const appCapObjectId =
     "0xae2d10803aa2f22e3756235d0f98da17e3aa3e4de8dd0062822e2e899e901a04";
-  const packageInfoId = ""; // TODO
+  const packageInfoId =
+    "0x4874e126c490e495ff7490523841bdba57e2a01ed36db7610f07d417c8b5a988";
 
   // 1. Sets git versioning for mainnet
   const git = transaction.moveCall({
