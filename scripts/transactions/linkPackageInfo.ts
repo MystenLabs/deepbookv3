@@ -10,7 +10,8 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   // Update constant for env
   const env = "mainnet";
   const transaction = newTransaction();
-  const appCapObjectId = ""; // TODO
+  const appCapObjectId =
+    "0xae2d10803aa2f22e3756235d0f98da17e3aa3e4de8dd0062822e2e899e901a04";
   const packageInfoId = ""; // TODO
 
   // 1. Sets git versioning for mainnet
