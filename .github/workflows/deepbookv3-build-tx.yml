@@ -15,6 +15,7 @@ on:
           - Unregister Pool and Create
           - Prep MVR
           - Package Info Creation
+          - Register Deepbook with MVR
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -139,6 +140,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/packageInfoCreation.ts
+
+      - name: Register Deepbook with MVR
+        if: ${{ inputs.transaction_type == 'Register Deepbook with MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/linkPackageInfo.ts
 
       - name: Show Transaction Data (To sign)
         run: |
