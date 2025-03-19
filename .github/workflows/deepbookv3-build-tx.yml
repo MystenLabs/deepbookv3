@@ -14,6 +14,7 @@ on:
           - Disable Version
           - Unregister Pool and Create
           - Prep MVR
+          - Prep Kiosk MVR
           - Package Info Creation
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -129,6 +130,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/mvrPrep.ts
+
+      - name: Prep Kiosk MVR
+        if: ${{ inputs.transaction_type == 'Prep Kiosk MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKiosk.ts
 
       - name: Package Info Creation
         if: ${{ inputs.transaction_type == 'Package Info Creation' }}
