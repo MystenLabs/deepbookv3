@@ -142,6 +142,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     env,
     "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e"
   ); // Deepbook Admin Account
+  // coin = "0x963fd41bec98d100d3575c551445f5ea7f924b507d9fb6857dd3a0867dfaa80e"
 
   console.dir(res, { depth: null });
 })();
