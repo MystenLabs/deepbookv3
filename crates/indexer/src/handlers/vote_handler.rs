@@ -1,11 +1,11 @@
-use crate::handlers::{convert_struct_tag, is_deepbook_tx, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
 use crate::models::deepbook::state::VoteEvent;
 use async_trait::async_trait;
 use deepbook_schema::models::Votes;
 use deepbook_schema::schema::votes;
 use diesel_async::RunQueryDsl;
+use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
-use move_types::MoveStruct;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -18,9 +18,9 @@ pub struct VotesHandler {
 }
 
 impl VotesHandler {
-    pub fn new() -> Self {
+    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
         Self {
-            event_type: convert_struct_tag(VoteEvent::struct_type()),
+            event_type: struct_tag::<VoteEvent>(package_id_override),
         }
     }
 }

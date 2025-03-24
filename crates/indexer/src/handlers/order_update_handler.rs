@@ -1,11 +1,11 @@
-use crate::handlers::{convert_struct_tag, is_deepbook_tx, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
 use deepbook_schema::models::OrderUpdate;
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
+use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
-use move_types::MoveStruct;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -23,12 +23,12 @@ pub struct OrderUpdateHandler {
 }
 
 impl OrderUpdateHandler {
-    pub fn new() -> Self {
+    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
         Self {
-            order_placed_type: convert_struct_tag(OrderPlaced::struct_type()),
-            order_modified_type: convert_struct_tag(OrderModified::struct_type()),
-            order_canceled_type: convert_struct_tag(OrderCanceled::struct_type()),
-            order_expired_type: convert_struct_tag(OrderExpired::struct_type()),
+            order_placed_type: struct_tag::<OrderPlaced>(package_id_override),
+            order_modified_type: struct_tag::<OrderModified>(package_id_override),
+            order_canceled_type: struct_tag::<OrderCanceled>(package_id_override),
+            order_expired_type: struct_tag::<OrderExpired>(package_id_override),
         }
     }
 }

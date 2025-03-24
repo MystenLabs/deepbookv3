@@ -12,6 +12,7 @@ use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHa
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
 use deepbook_indexer::MAINNET_REMOTE_STORE_URL;
 use deepbook_schema::MIGRATIONS;
+use move_core_types::account_address::AccountAddress;
 use prometheus::Registry;
 use std::net::SocketAddr;
 use sui_indexer_alt_framework::ingestion::ClientArgs;
@@ -30,10 +31,18 @@ struct Args {
     indexer_args: IndexerArgs,
     #[clap(env, long, default_value = "0.0.0.0:9184")]
     metrics_address: SocketAddr,
+    #[clap(
+        env,
+        long,
+        default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
+    )]
+    database_url: Url,
+    /// Checkpoint remote store URL, defaulted to Sui mainnet remote store.
     #[clap(env, long, default_value = MAINNET_REMOTE_STORE_URL)]
     remote_store_url: Url,
-    #[clap(env, long, default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook")]
-    database_url: Url,
+    /// Deepbook package id override, defaulted to the mainnet deepbook package id.
+    #[clap(env, long)]
+    package_id_override: Option<AccountAddress>,
 }
 
 #[tokio::main]
@@ -48,6 +57,7 @@ async fn main() -> Result<(), anyhow::Error> {
         metrics_address,
         remote_store_url,
         database_url,
+        package_id_override,
     } = Args::parse();
 
     let cancel = CancellationToken::new();
@@ -78,34 +88,55 @@ async fn main() -> Result<(), anyhow::Error> {
     .await?;
 
     indexer
-        .concurrent_pipeline(BalancesHandler::new(), Default::default())
+        .concurrent_pipeline(
+            BalancesHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(FlashLoanHandler::new(), Default::default())
+        .concurrent_pipeline(
+            FlashLoanHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OrderFillHandler::new(), Default::default())
+        .concurrent_pipeline(
+            OrderFillHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OrderUpdateHandler::new(), Default::default())
+        .concurrent_pipeline(
+            OrderUpdateHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(PoolPriceHandler::new(), Default::default())
+        .concurrent_pipeline(
+            PoolPriceHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(ProposalsHandler::new(), Default::default())
+        .concurrent_pipeline(
+            ProposalsHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(RebatesHandler::new(), Default::default())
+        .concurrent_pipeline(RebatesHandler::new(package_id_override), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(StakesHandler::new(), Default::default())
+        .concurrent_pipeline(StakesHandler::new(package_id_override), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(TradeParamsUpdateHandler::new(), Default::default())
+        .concurrent_pipeline(
+            TradeParamsUpdateHandler::new(package_id_override),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(VotesHandler::new(), Default::default())
+        .concurrent_pipeline(VotesHandler::new(package_id_override), Default::default())
         .await?;
 
     let h_indexer = indexer.run().await?;

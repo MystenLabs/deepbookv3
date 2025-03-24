@@ -1,11 +1,11 @@
-use crate::handlers::{convert_struct_tag, is_deepbook_tx, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
 use crate::models::deepbook::state::RebateEvent;
 use async_trait::async_trait;
 use deepbook_schema::models::Rebates;
 use deepbook_schema::schema::rebates;
 use diesel_async::RunQueryDsl;
+use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
-use move_types::MoveStruct;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -18,9 +18,9 @@ pub struct RebatesHandler {
 }
 
 impl RebatesHandler {
-    pub fn new() -> Self {
+    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
         Self {
-            event_type: convert_struct_tag(RebateEvent::struct_type()),
+            event_type: struct_tag::<RebateEvent>(package_id_override),
         }
     }
 }
