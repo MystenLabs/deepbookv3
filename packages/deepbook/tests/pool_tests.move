@@ -5184,7 +5184,7 @@ fun test_update_pool_book_params(error: u8) {
             OWNER,
             pool_id,
             1000,
-            5000,
+            10000,
             &mut test,
         );
     };
