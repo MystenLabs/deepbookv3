@@ -750,10 +750,12 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
 ) {
     let self = self.load_inner_mut();
     let lot_size = self.book.lot_size();
-    assert!(lot_size % new_lot_size == 0, EInvalidLotSize);
     assert!(new_lot_size > 0, EInvalidLotSize);
+    assert!(lot_size % new_lot_size == 0, EInvalidLotSize);
+    assert!(math::is_power_of_ten(new_lot_size), EInvalidLotSize);
     assert!(new_min_size > 0, EInvalidMinSize);
     assert!(new_min_size % new_lot_size == 0, EInvalidMinSize);
+    assert!(math::is_power_of_ten(new_min_size), EInvalidMinSize);
     self.book.set_lot_size(new_lot_size);
     self.book.set_min_size(new_min_size);
 
@@ -1134,9 +1136,11 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
 ): ID {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(math::is_power_of_ten(tick_size), EInvalidTickSize);
-    assert!(lot_size > 0, EInvalidLotSize);
+    assert!(lot_size >= 1000, EInvalidLotSize);
+    assert!(math::is_power_of_ten(lot_size), EInvalidLotSize);
     assert!(min_size > 0, EInvalidMinSize);
     assert!(min_size % lot_size == 0, EInvalidMinSize);
+    assert!(math::is_power_of_ten(min_size), EInvalidMinSize);
     assert!(!(whitelisted_pool && stable_pool), EPoolCannotBeBothWhitelistedAndStable);
     assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
