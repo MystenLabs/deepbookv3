@@ -123,6 +123,11 @@ fun test_update_pool_book_params_tick_e() {
     test_update_pool_book_params(3);
 }
 
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidLotSize)]
+fun test_update_pool_book_params_small_lot_e() {
+    test_update_pool_book_params(4);
+}
+
 #[test]
 fun test_place_order_ask() {
     place_order_ok(false);
@@ -5141,8 +5146,11 @@ fun test_update_pool_book_params(error: u8) {
         1000000 * constants::float_scaling(),
         &mut test,
     );
-    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+    let pool_id = setup_pool<SUI, USDC>(
         OWNER,
+        constants::tick_size(), // tick size
+        100_000,
+        1_000_000,
         registry_id,
         true,
         false,
@@ -5150,8 +5158,8 @@ fun test_update_pool_book_params(error: u8) {
     );
 
     let alice_client_order_id = 1;
-    let alice_quantity_1 = 10000;
-    let alice_quantity_2 = 10500;
+    let alice_quantity_1 = 1_000_000;
+    let alice_quantity_2 = 1_010_000;
     let alice_price = 2 * constants::float_scaling();
     let expire_timestamp = constants::max_u64();
     let pay_with_deep = true;
@@ -5171,6 +5179,26 @@ fun test_update_pool_book_params(error: u8) {
         &mut test,
     );
 
+    if (error == 0) {
+        adjust_min_lot_size_admin<SUI, USDC>(
+            OWNER,
+            pool_id,
+            1000,
+            5000,
+            &mut test,
+        );
+    };
+
+    if (error == 2) {
+        adjust_min_lot_size_admin<SUI, USDC>(
+            OWNER,
+            pool_id,
+            6000,
+            60000,
+            &mut test,
+        );
+    };
+
     if (error == 3) {
         adjust_tick_size_admin<SUI, USDC>(
             OWNER,
@@ -5180,22 +5208,12 @@ fun test_update_pool_book_params(error: u8) {
         );
     };
 
-    if (error == 0) {
+    if (error == 4) {
         adjust_min_lot_size_admin<SUI, USDC>(
             OWNER,
             pool_id,
             100,
             500,
-            &mut test,
-        );
-    };
-
-    if (error == 2) {
-        adjust_min_lot_size_admin<SUI, USDC>(
-            OWNER,
-            pool_id,
-            600,
-            6000,
             &mut test,
         );
     };
