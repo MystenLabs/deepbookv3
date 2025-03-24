@@ -5,15 +5,13 @@
 /// All order book operations are defined in this module.
 module deepbook::book;
 
-use deepbook::{
-    big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
-    constants,
-    deep_price::OrderDeepPrice,
-    math,
-    order::Order,
-    order_info::OrderInfo,
-    utils
-};
+use deepbook::big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut};
+use deepbook::constants;
+use deepbook::deep_price::OrderDeepPrice;
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::OrderInfo;
+use deepbook::utils;
 
 // === Errors ===
 const EInvalidAmountIn: u64 = 1;
@@ -129,8 +127,10 @@ public(package) fun get_quantity_out(
     let book_side = if (is_bid) &self.asks else &self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
     else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
 
-    while (!ref.is_null() && quantity_in_left > 0) {
+    while (!ref.is_null() && quantity_in_left > 0 && current_fills < max_fills) {
         let order = slice_borrow(book_side.borrow_slice(ref), offset);
         let cur_price = order.price();
         let cur_quantity = order.quantity() - order.filled_quantity();
@@ -181,6 +181,7 @@ public(package) fun get_quantity_out(
         (ref, offset) =
             if (is_bid) book_side.next_slice(ref, offset)
             else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
     };
 
     let deep_fee = if (!pay_with_deep) {

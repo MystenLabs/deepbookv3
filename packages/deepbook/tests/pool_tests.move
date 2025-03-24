@@ -4,32 +4,28 @@
 #[test_only]
 module deepbook::pool_tests;
 
-use deepbook::{
-    balance_manager::{BalanceManager, TradeCap},
-    balance_manager_tests::{
-        USDC,
-        USDT,
-        SPAM,
-        create_acct_and_share_with_funds,
-        create_acct_and_share_with_funds_typed
-    },
-    big_vector::BigVector,
-    constants,
-    fill::Fill,
-    math,
-    order::Order,
-    order_info::OrderInfo,
-    pool::{Self, Pool},
-    registry::{Self, Registry},
-    utils
+use deepbook::balance_manager::{BalanceManager, TradeCap};
+use deepbook::balance_manager_tests::{
+    USDC,
+    USDT,
+    SPAM,
+    create_acct_and_share_with_funds,
+    create_acct_and_share_with_funds_typed
 };
-use sui::{
-    clock::{Self, Clock},
-    coin::{Coin, mint_for_testing},
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
-};
+use deepbook::big_vector::BigVector;
+use deepbook::constants;
+use deepbook::fill::Fill;
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use deepbook::utils;
+use sui::clock::{Self, Clock};
+use sui::coin::{Coin, mint_for_testing};
+use sui::sui::SUI;
+use sui::test_scenario::{Scenario, begin, end, return_shared};
+use sui::test_utils;
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -1903,7 +1899,41 @@ fun test_order_limit(is_bid: bool) {
 
     let match_quantity = 1000 * constants::float_scaling();
 
-    // Place first order, should only match with 200 of the orders.
+    // let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
+    //     pool_id,
+    //     math::mul(match_quantity, price),
+    //     &mut test,
+    // );
+    // std::debug::print(&base);
+    // std::debug::print(&quote);
+    // std::debug::print(&deep);
+
+    if (is_bid) {
+        let (base, quote, deep) = get_quote_quantity_out<SUI, USDC>(
+            pool_id,
+            match_quantity,
+            &mut test,
+        );
+        assert!(base == 900 * constants::float_scaling(), 0);
+        assert!(quote == 200 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(100 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    } else {
+        let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
+            pool_id,
+            math::mul(match_quantity, price),
+            &mut test,
+        );
+        assert!(base == 100 * constants::float_scaling(), 0);
+        assert!(quote == 1800 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(100 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    };
+
     let order_info = place_limit_order<SUI, USDC>(
         ALICE,
         pool_id,
@@ -1938,7 +1968,33 @@ fun test_order_limit(is_bid: bool) {
         expire_timestamp,
     );
 
-    // Place second order, should match with 100 of the remaining orders.
+    if (is_bid) {
+        let (base, quote, deep) = get_quote_quantity_out<SUI, USDC>(
+            pool_id,
+            match_quantity,
+            &mut test,
+        );
+        assert!(base == 950 * constants::float_scaling(), 0);
+        assert!(quote == 100 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(50 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    } else {
+        let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
+            pool_id,
+            math::mul(match_quantity, price),
+            &mut test,
+        );
+        assert!(base == 50 * constants::float_scaling(), 0);
+        assert!(quote == 1900 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(50 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    };
+
+    // Place second order, should match with the 50 remaining orders.
     let order_info = place_limit_order<SUI, USDC>(
         ALICE,
         pool_id,
