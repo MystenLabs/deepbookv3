@@ -1903,15 +1903,6 @@ fun test_order_limit(is_bid: bool) {
 
     let match_quantity = 1000 * constants::float_scaling();
 
-    // let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
-    //     pool_id,
-    //     math::mul(match_quantity, price),
-    //     &mut test,
-    // );
-    // std::debug::print(&base);
-    // std::debug::print(&quote);
-    // std::debug::print(&deep);
-
     if (is_bid) {
         let (base, quote, deep) = get_quote_quantity_out<SUI, USDC>(
             pool_id,
