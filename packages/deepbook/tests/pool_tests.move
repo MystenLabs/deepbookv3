@@ -4,28 +4,32 @@
 #[test_only]
 module deepbook::pool_tests;
 
-use deepbook::balance_manager::{BalanceManager, TradeCap};
-use deepbook::balance_manager_tests::{
-    USDC,
-    USDT,
-    SPAM,
-    create_acct_and_share_with_funds,
-    create_acct_and_share_with_funds_typed
+use deepbook::{
+    balance_manager::{BalanceManager, TradeCap},
+    balance_manager_tests::{
+        USDC,
+        USDT,
+        SPAM,
+        create_acct_and_share_with_funds,
+        create_acct_and_share_with_funds_typed
+    },
+    big_vector::BigVector,
+    constants,
+    fill::Fill,
+    math,
+    order::Order,
+    order_info::OrderInfo,
+    pool::{Self, Pool},
+    registry::{Self, Registry},
+    utils
 };
-use deepbook::big_vector::BigVector;
-use deepbook::constants;
-use deepbook::fill::Fill;
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
-use deepbook::pool::{Self, Pool};
-use deepbook::registry::{Self, Registry};
-use deepbook::utils;
-use sui::clock::{Self, Clock};
-use sui::coin::{Coin, mint_for_testing};
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end, return_shared};
-use sui::test_utils;
+use sui::{
+    clock::{Self, Clock},
+    coin::{Coin, mint_for_testing},
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared},
+    test_utils
+};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;

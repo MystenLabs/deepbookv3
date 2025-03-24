@@ -5,13 +5,15 @@
 /// All order book operations are defined in this module.
 module deepbook::book;
 
-use deepbook::big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
-use deepbook::utils;
+use deepbook::{
+    big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
+    constants,
+    deep_price::OrderDeepPrice,
+    math,
+    order::Order,
+    order_info::OrderInfo,
+    utils
+};
 
 // === Errors ===
 const EInvalidAmountIn: u64 = 1;
