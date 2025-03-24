@@ -750,8 +750,8 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
 ) {
     let self = self.load_inner_mut();
     let lot_size = self.book.lot_size();
+    assert!(new_lot_size > 0, EInvalidLotSize);
     assert!(lot_size % new_lot_size == 0, EInvalidLotSize);
-    assert!(new_lot_size >= 1000, EInvalidLotSize);
     assert!(math::is_power_of_ten(new_lot_size), EInvalidLotSize);
     assert!(new_min_size > 0, EInvalidMinSize);
     assert!(new_min_size % new_lot_size == 0, EInvalidMinSize);

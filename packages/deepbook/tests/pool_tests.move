@@ -5212,7 +5212,7 @@ fun test_update_pool_book_params(error: u8) {
         adjust_min_lot_size_admin<SUI, USDC>(
             OWNER,
             pool_id,
-            100,
+            0,
             500,
             &mut test,
         );
