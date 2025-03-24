@@ -9,7 +9,11 @@
 module deepbook::balance_manager;
 
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, coin::Coin, event, vec_set::{Self, VecSet}};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
@@ -18,8 +22,6 @@ const EInvalidProof: u64 = 2;
 const EBalanceManagerBalanceTooLow: u64 = 3;
 const EMaxCapsReached: u64 = 4;
 const ECapNotInList: u64 = 5;
-const EDepositCapBalanceManagerMismatch: u64 = 6;
-const EWithdrawCapBalanceManagerMismatch: u64 = 8;
 
 // === Constants ===
 const MAX_TRADE_CAPS: u64 = 1000;
@@ -325,10 +327,7 @@ public(package) fun generate_proof_as_depositor(
     deposit_cap: &DepositCap,
     ctx: &TxContext,
 ): TradeProof {
-    assert!(
-        balance_manager.id() == deposit_cap.balance_manager_id,
-        EDepositCapBalanceManagerMismatch,
-    );
+    balance_manager.validate_deposit_cap(deposit_cap);
 
     TradeProof {
         balance_manager_id: object::id(balance_manager),
@@ -342,10 +341,7 @@ public(package) fun generate_proof_as_withdrawer(
     withdraw_cap: &WithdrawCap,
     ctx: &TxContext,
 ): TradeProof {
-    assert!(
-        balance_manager.id() == withdraw_cap.balance_manager_id,
-        EWithdrawCapBalanceManagerMismatch,
-    );
+    balance_manager.validate_withdraw_cap(withdraw_cap);
 
     TradeProof {
         balance_manager_id: object::id(balance_manager),
@@ -422,4 +418,12 @@ fun validate_owner(balance_manager: &BalanceManager, ctx: &TxContext) {
 
 fun validate_trader(balance_manager: &BalanceManager, trade_cap: &TradeCap) {
     assert!(balance_manager.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidTrader);
+}
+
+fun validate_deposit_cap(balance_manager: &BalanceManager, deposit_cap: &DepositCap) {
+    assert!(balance_manager.allow_listed.contains(object::borrow_id(deposit_cap)), EInvalidTrader);
+}
+
+fun validate_withdraw_cap(balance_manager: &BalanceManager, withdraw_cap: &WithdrawCap) {
+    assert!(balance_manager.allow_listed.contains(object::borrow_id(withdraw_cap)), EInvalidTrader);
 }
