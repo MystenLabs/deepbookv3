@@ -129,8 +129,10 @@ public(package) fun get_quantity_out(
     let book_side = if (is_bid) &self.asks else &self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
     else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
 
-    while (!ref.is_null() && quantity_in_left > 0) {
+    while (!ref.is_null() && quantity_in_left > 0 && current_fills < max_fills) {
         let order = slice_borrow(book_side.borrow_slice(ref), offset);
         let cur_price = order.price();
         let cur_quantity = order.quantity() - order.filled_quantity();
@@ -181,6 +183,7 @@ public(package) fun get_quantity_out(
         (ref, offset) =
             if (is_bid) book_side.next_slice(ref, offset)
             else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
     };
 
     let deep_fee = if (!pay_with_deep) {

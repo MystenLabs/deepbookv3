@@ -1903,7 +1903,32 @@ fun test_order_limit(is_bid: bool) {
 
     let match_quantity = 1000 * constants::float_scaling();
 
-    // Place first order, should only match with 200 of the orders.
+    if (is_bid) {
+        let (base, quote, deep) = get_quote_quantity_out<SUI, USDC>(
+            pool_id,
+            match_quantity,
+            &mut test,
+        );
+        assert!(base == 900 * constants::float_scaling(), 0);
+        assert!(quote == 200 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(100 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    } else {
+        let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
+            pool_id,
+            math::mul(match_quantity, price),
+            &mut test,
+        );
+        assert!(base == 100 * constants::float_scaling(), 0);
+        assert!(quote == 1800 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(100 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    };
+
     let order_info = place_limit_order<SUI, USDC>(
         ALICE,
         pool_id,
@@ -1938,7 +1963,33 @@ fun test_order_limit(is_bid: bool) {
         expire_timestamp,
     );
 
-    // Place second order, should match with 100 of the remaining orders.
+    if (is_bid) {
+        let (base, quote, deep) = get_quote_quantity_out<SUI, USDC>(
+            pool_id,
+            match_quantity,
+            &mut test,
+        );
+        assert!(base == 950 * constants::float_scaling(), 0);
+        assert!(quote == 100 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(50 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    } else {
+        let (base, quote, deep) = get_base_quantity_out<SUI, USDC>(
+            pool_id,
+            math::mul(match_quantity, price),
+            &mut test,
+        );
+        assert!(base == 50 * constants::float_scaling(), 0);
+        assert!(quote == 1900 * constants::float_scaling(), 0);
+        assert!(
+            deep == math::mul(constants::taker_fee(), math::mul(50 * constants::float_scaling(), constants::deep_multiplier())),
+            0,
+        );
+    };
+
+    // Place second order, should match with the 50 remaining orders.
     let order_info = place_limit_order<SUI, USDC>(
         ALICE,
         pool_id,
