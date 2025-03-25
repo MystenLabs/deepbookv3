@@ -4,14 +4,18 @@
 #[test_only]
 module deepbook::state_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::order_info_tests::{create_order_info_base, create_order_info};
-use deepbook::state;
-use deepbook::utils;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::{assert_eq, destroy};
+use deepbook::{
+    balances,
+    constants,
+    order_info_tests::{create_order_info_base, create_order_info},
+    state,
+    utils
+};
+use sui::{
+    object::id_from_address,
+    test_scenario::{next_tx, begin, end},
+    test_utils::{assert_eq, destroy}
+};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -45,7 +49,11 @@ fun process_create_ok() {
         true,
         test.ctx().epoch(),
     );
-    let (settled, owed) = state.process_create(&mut order_info1, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info1,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 1 * constants::usdc_unit(), 500_000));
     taker_order.match_maker(&mut order_info1.to_order(), 0);
@@ -60,7 +68,11 @@ fun process_create_ok() {
         true,
         test.ctx().epoch(),
     );
-    let (settled, owed) = state.process_create(&mut order_info2, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info2,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 1_002_002, 500_500)); // rounds down
     taker_order.match_maker(&mut order_info2.to_order(), 0);
@@ -75,19 +87,29 @@ fun process_create_ok() {
         false,
         test.ctx().epoch(),
     );
-    let (settled, owed) = state.process_create(&mut order_info3, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info3,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(1_999_000_000, 0, 999_500));
 
-    // the taker order has filled the first two maker orders and has some quantities remaining.
+    // the taker order has filled the first two maker orders and has some
+    // quantities remaining.
     // filled quantity = 1 + 1.001001 = 2.001001
-    // quote quantity = 1 * 1 + 1.001001 * 1.001 = 2.002002001 rounds down to 2.002002
+    // quote quantity = 1 * 1 + 1.001001 * 1.001 = 2.002002001 rounds down to
+    // 2.002002
     // remaining quantity = 10 - 2.001001 = 7.998999
     // taker gets reduced taker fees (no stake required)
     // taker fees = 2.001001 * 0.001 = 0.002001001
     // maker fees = 7.998999 * 0.0005 = 0.0039994995 rounds down to 0.003999499
     // total fees = 0.002001001 + 0.003999499 = 0.0060005 = 6000500
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 2_002_002, 0));
     assert_eq(owed, balances::new(10 * constants::sui_unit(), 0, 6_000_500));
 
@@ -113,7 +135,8 @@ fun process_create_ok() {
     test.end();
 }
 
-// Alice places a buy order of size 10. Bob fills 5 of it. The remaining 5 is expireed.
+// Alice places a buy order of size 10. Bob fills 5 of it. The remaining 5 is
+// expireed.
 #[test]
 fun process_create_expired_ok() {
     let mut test = begin(OWNER);
@@ -158,12 +181,20 @@ fun process_create_expired_ok() {
         fill_limit_reached,
         order_inserted,
     );
-    let (settled, owed) = state.process_create(&mut order_info1, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info1,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 10 * constants::usdc_unit(), 5_000_000));
     let mut order = order_info1.to_order();
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 5 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(5 * constants::sui_unit(), 0, 5_000_000));
 
@@ -175,7 +206,11 @@ fun process_create_expired_ok() {
         test.ctx().epoch(),
     );
     taker_order2.match_maker(&mut order, 10);
-    let (settled, owed) = state.process_create(&mut taker_order2, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order2,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(5 * constants::sui_unit(), 0, 2_500_000));
 
@@ -243,12 +278,20 @@ fun process_create_deep_price_ok() {
         true,
         test.ctx().epoch(),
     );
-    let (settled, owed) = state.process_create(&mut order_info, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 169 * constants::usdc_unit(), 6_500_000));
 
     taker_order.match_maker(&mut order_info.to_order(), 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     assert_eq(settled, balances::new(0, 130 * constants::usdc_unit(), 0));
     // taker fee 0.001, quantity 10, deep_per_base 21
@@ -260,7 +303,8 @@ fun process_create_deep_price_ok() {
 }
 
 #[test]
-// process create with maker in epoch 0, then gov to change fees, then taker in epoch 1
+// process create with maker in epoch 0, then gov to change fees, then taker in
+// epoch 1
 fun process_create_stake_req_ok() {
     let mut test = begin(OWNER);
 
@@ -297,7 +341,11 @@ fun process_create_stake_req_ok() {
         true,
         test.ctx().epoch(),
     );
-    state.process_create(&mut order_info, test.ctx());
+    state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     // place taker with new fee structure
     test.next_epoch(OWNER);
@@ -312,7 +360,11 @@ fun process_create_stake_req_ok() {
         test.ctx().epoch(),
     );
     taker_order.match_maker(&mut order_info.to_order(), 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 1 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(1 * constants::sui_unit(), 0, 500_000));
 
@@ -345,7 +397,8 @@ fun process_create_after_raising_steak_req_ok() {
     // to make stakes active
     test.next_epoch(OWNER);
 
-    // still in the current epoch, bob generates 100 volume then 100 volume again. His second order is exercised with lower taker fees.
+    // still in the current epoch, bob generates 100 volume then 100 volume
+    // again. His second order is exercised with lower taker fees.
     test.next_tx(ALICE);
     let price = 1 * constants::usdc_unit();
     let quantity = 1000 * constants::sui_unit();
@@ -356,7 +409,11 @@ fun process_create_after_raising_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
-    state.process_create(&mut order_info, test.ctx());
+    state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     let mut order = order_info.to_order();
 
     test.next_tx(BOB);
@@ -369,7 +426,11 @@ fun process_create_after_raising_steak_req_ok() {
         test.ctx().epoch(),
     );
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     // bob's first order
     // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
     assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
@@ -387,11 +448,16 @@ fun process_create_after_raising_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 2));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 100 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(100 * constants::sui_unit(), 0, 50_000_000));
 
-    // alice makes a proposal to raise the stake required to 200 and votes for it
+    // alice makes a proposal to raise the stake required to 200 and votes for
+    // it
     test.next_tx(ALICE);
     state.process_proposal(
         id_from_address(POOL_ID),
@@ -402,7 +468,8 @@ fun process_create_after_raising_steak_req_ok() {
         test.ctx(),
     );
 
-    // new proposal is active, bob can no longer get reduced fees after trading 200 volume
+    // new proposal is active, bob can no longer get reduced fees after trading
+    // 200 volume
     test.next_epoch(OWNER);
 
     test.next_tx(BOB);
@@ -416,11 +483,16 @@ fun process_create_after_raising_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 3));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
 
-    // even though bob has 200 volume, since he doesn't have 200 stake, he doesn't get reduced fees
+    // even though bob has 200 volume, since he doesn't have 200 stake, he
+    // doesn't get reduced fees
     test.next_tx(BOB);
     let taker_quantity = 200 * constants::sui_unit();
     let mut taker_order = create_order_info_base(
@@ -432,7 +504,11 @@ fun process_create_after_raising_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 4));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 200 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(200 * constants::sui_unit(), 0, 200_000_000));
 
@@ -477,7 +553,11 @@ fun process_create_after_lowering_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
-    state.process_create(&mut order_info, test.ctx());
+    state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     let mut order = order_info.to_order();
 
     test.next_tx(BOB);
@@ -490,7 +570,11 @@ fun process_create_after_lowering_steak_req_ok() {
         test.ctx().epoch(),
     );
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     // bob's first order
     // pays 1 SUI for the trade along with 0.001 DEEP in fees to receive 1 USDC
     assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
@@ -508,7 +592,11 @@ fun process_create_after_lowering_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 2));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
@@ -524,7 +612,11 @@ fun process_create_after_lowering_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 3));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
@@ -539,7 +631,8 @@ fun process_create_after_lowering_steak_req_ok() {
         test.ctx(),
     );
 
-    // new proposal is active, bob can no longer get reduced fees after trading 200 volume
+    // new proposal is active, bob can no longer get reduced fees after trading
+    // 200 volume
     test.next_epoch(OWNER);
 
     test.next_tx(BOB);
@@ -553,11 +646,16 @@ fun process_create_after_lowering_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 4));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 50_000_000));
 
-    // bob is now over 50 volume and has the necessary stake, his taker fee is reduced
+    // bob is now over 50 volume and has the necessary stake, his taker fee is
+    // reduced
     test.next_tx(BOB);
     let taker_quantity = 50 * constants::sui_unit();
     let mut taker_order = create_order_info_base(
@@ -569,7 +667,11 @@ fun process_create_after_lowering_steak_req_ok() {
     );
     taker_order.set_order_id(utils::encode_order_id(false, price, 5));
     taker_order.match_maker(&mut order, 0);
-    let (settled, owed) = state.process_create(&mut taker_order, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
     assert_eq(settled, balances::new(0, 50 * constants::usdc_unit(), 0));
     assert_eq(owed, balances::new(50 * constants::sui_unit(), 0, 25_000_000));
 
@@ -593,7 +695,11 @@ fun process_cancel_ok() {
     );
     let stable_pool = false;
     let mut state = state::empty(stable_pool, test.ctx());
-    let (settled, owed) = state.process_create(&mut order_info, test.ctx());
+    let (settled, owed) = state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     assert_eq(settled, balances::new(0, 0, 0));
     // 10 * 10 = 100
@@ -603,6 +709,7 @@ fun process_cancel_ok() {
     let (settled, owed) = state.process_cancel(
         &mut order_info.to_order(),
         id_from_address(ALICE),
+        object::id_from_address(@0x0),
         test.ctx(),
     );
     assert_eq(
@@ -632,7 +739,11 @@ fun process_cancel_after_partial_ok() {
     );
     let stable_pool = false;
     let mut state = state::empty(stable_pool, test.ctx());
-    state.process_create(&mut order_info, test.ctx());
+    state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     test.next_tx(ALICE);
     let price = 1 * constants::usdc_unit();
@@ -646,12 +757,17 @@ fun process_cancel_after_partial_ok() {
     );
     let mut order = order_info.to_order();
     taker_order.match_maker(&mut order, 0);
-    state.process_create(&mut taker_order, test.ctx());
+    state.process_create(
+        &mut taker_order,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     test.next_tx(ALICE);
     let (settled, owed) = state.process_cancel(
         &mut order,
         id_from_address(ALICE),
+        object::id_from_address(@0x0),
         test.ctx(),
     );
     // paid 100 USDC to buy 10 SUI. 1 SUI filled.
@@ -696,7 +812,11 @@ fun process_cancel_after_modify_epoch_change_ok() {
         true,
         test.ctx().epoch(),
     );
-    state.process_create(&mut order_info, test.ctx());
+    state.process_create(
+        &mut order_info,
+        object::id_from_address(@0x0),
+        test.ctx(),
+    );
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
@@ -720,6 +840,7 @@ fun process_cancel_after_modify_epoch_change_ok() {
         id_from_address(ALICE),
         5 * constants::sui_unit(),
         &order,
+        object::id_from_address(@0x0),
         test.ctx(),
     );
     // reduces quantity from 10 to 5. Get refund of 50 USDC and half of the fees
@@ -730,10 +851,12 @@ fun process_cancel_after_modify_epoch_change_ok() {
     assert_eq(owed, balances::new(0, 0, 0));
 
     test.next_tx(ALICE);
-    // regardless of the fee change, when canceling the remaining amount, get refund of 50 USDC and rest of the fees (other half)
+    // regardless of the fee change, when canceling the remaining amount, get
+    // refund of 50 USDC and rest of the fees (other half)
     let (settled, owed) = state.process_cancel(
         &mut order,
         id_from_address(ALICE),
+        object::id_from_address(@0x0),
         test.ctx(),
     );
     assert_eq(
@@ -944,14 +1067,13 @@ fun process_proposal_vote_ok() {
         100 * constants::deep_unit(),
         test.ctx(),
     );
-    // total voting power = 50 + (sqrt(100) - sqrt(50)) = 50 + 10 - 7.071067811 = 52.928932189 rounded down
-    // total voting power = 50 + (sqrt(250) - sqrt(50)) = 50 + 15.811388300 - 7.071067811 = 58.740320489 rounded down
+    // total voting power = 50 + (sqrt(100) - sqrt(50)) = 50 + 10 - 7.071067811
+    // = 52.928932189 rounded down
+    // total voting power = 50 + (sqrt(250) - sqrt(50)) = 50 + 15.811388300 -
+    // 7.071067811 = 58.740320489 rounded down
     // total = 52.928932189 + 58.740320489 = 111.669252678
     // quorum = 111.669252678 * 0.5 = 55.834626339 rouned down
-    assert!(
-        state.governance().voting_power() == 350 * constants::deep_unit(),
-        0,
-    );
+    assert!(state.governance().voting_power() == 350 * constants::deep_unit(), 0);
     assert!(state.governance().quorum() == 175 * constants::deep_unit(), 0);
     assert!(
         state.governance().proposals().get(&id_from_address(ALICE)).votes() ==
@@ -978,10 +1100,7 @@ fun process_proposal_vote_ok() {
         id_from_address(ALICE),
         test.ctx(),
     );
-    assert!(
-        state.governance().voting_power() == 250 * constants::deep_unit(),
-        0,
-    );
+    assert!(state.governance().voting_power() == 250 * constants::deep_unit(), 0);
     assert!(
         state.governance().proposals().get(&id_from_address(ALICE)).votes() ==
         250 * constants::deep_unit(),
