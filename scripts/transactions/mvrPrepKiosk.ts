@@ -19,9 +19,9 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
         "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
       ),
       transaction.object(
-        "0x798078c3d1357222a40ce64cc430270e095f5f39da1d7e5f7a381551661eda5b"
-      ), // kiosk domain ID
-      transaction.pure.string("core"), // name
+        "0x9dc2cd7decc92ec8a66ba32167fb7ec279b30bc36c3216096035db7d750aa89f"
+      ), // mysten domain ID
+      transaction.pure.string("extensions"), // name
       transaction.object.clock(),
     ],
   });
