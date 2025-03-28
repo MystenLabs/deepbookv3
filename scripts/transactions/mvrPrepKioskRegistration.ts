@@ -147,7 +147,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   transaction.moveCall({
     target: `@mvr/metadata::package_info::transfer`,
     arguments: [
-      transaction.object(packageInfo),
+      packageInfo,
       transaction.pure.address(
         "0xcb6a5c15cba57e5033cf3c2b8dc56eafa8a0564a1810f1f2f1341a663b575d54"
       ),
