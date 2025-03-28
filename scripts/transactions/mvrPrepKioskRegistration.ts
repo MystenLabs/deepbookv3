@@ -96,7 +96,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     arguments: [
       transaction.pure.option(
         "address",
-        "" // TODO: PackageInfo object on testnet
+        "0x0b96a1e1dbdfac8c2a27b0172eabd9f4b59ed2200a2c0c349aa903dba3a0bf7e" // PackageInfo object on testnet
       ),
       transaction.pure.option(
         "address",
