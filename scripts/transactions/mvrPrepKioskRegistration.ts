@@ -100,7 +100,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
       ),
       transaction.pure.option(
         "address",
-        "0x0717a13f43deaf5345682153e3633f76cdcf695405959697fcd63f63f289320b" // V3 of the package on testnet
+        "0xe308bb3ed5367cd11a9c7f7e7aa95b2f3c9a8f10fa1d2b3cff38240f7898555d" // V1 of the package on testnet
       ),
       transaction.pure.option("address", null),
     ],
