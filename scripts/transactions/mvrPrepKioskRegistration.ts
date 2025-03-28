@@ -102,34 +102,34 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  // // 4. Links testnet packageInfo
-  // const appInfo = transaction.moveCall({
-  //   target: `@mvr/core::app_info::new`,
-  //   arguments: [
-  //     transaction.pure.option(
-  //       "address",
-  //       "" // PackageInfo object on testnet
-  //     ),
-  //     transaction.pure.option(
-  //       "address",
-  //       "0x0717a13f43deaf5345682153e3633f76cdcf695405959697fcd63f63f289320b" // V3 of the package on testnet
-  //     ),
-  //     transaction.pure.option("address", null),
-  //   ],
-  // });
+  // 4. Links testnet packageInfo
+  const appInfo = transaction.moveCall({
+    target: `@mvr/core::app_info::new`,
+    arguments: [
+      transaction.pure.option(
+        "address",
+        "" // TODO: PackageInfo object on testnet
+      ),
+      transaction.pure.option(
+        "address",
+        "0x0717a13f43deaf5345682153e3633f76cdcf695405959697fcd63f63f289320b" // V3 of the package on testnet
+      ),
+      transaction.pure.option("address", null),
+    ],
+  });
 
-  // transaction.moveCall({
-  //   target: `@mvr/core::move_registry::set_network`,
-  //   arguments: [
-  //     // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
-  //     transaction.object(
-  //       "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
-  //     ),
-  //     transaction.object(appCapObjectId),
-  //     transaction.pure.string("4c78adac"), // testnet
-  //     appInfo,
-  //   ],
-  // });
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_network`,
+    arguments: [
+      // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
+      ),
+      transaction.object(appCapObjectId),
+      transaction.pure.string("4c78adac"), // testnet
+      appInfo,
+    ],
+  });
 
   // 5. Linked mainnet packageInfo with appCap
   transaction.moveCall({
