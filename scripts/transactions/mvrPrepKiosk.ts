@@ -21,7 +21,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
       transaction.object(
         "0x9dc2cd7decc92ec8a66ba32167fb7ec279b30bc36c3216096035db7d750aa89f"
       ), // mysten domain ID
-      transaction.pure.string("extensions"), // name
+      transaction.pure.string("kiosk"), // name
       transaction.object.clock(),
     ],
   });
