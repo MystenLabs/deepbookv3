@@ -79,18 +79,6 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     ],
   });
 
-  transaction.moveCall({
-    target: `@mvr/core::move_registry::set_metadata`,
-    arguments: [
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-      ),
-      transaction.object(appCapObjectId),
-      transaction.pure.string("homepage_url"), // key
-      transaction.pure.string("https://docs.sui.io/standards/kiosk"), // value
-    ],
-  });
-
   // 3. Set default metadata for mainnet
 
   transaction.moveCall({
