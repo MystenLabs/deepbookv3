@@ -52,6 +52,34 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     arguments: [packageInfo, transaction.pure.u64(`4`), git],
   });
 
+  const gitv1 = transaction.moveCall({
+    target: `@mvr/metadata::git::new`,
+    arguments: [
+      transaction.pure.string("https://github.com/MystenLabs/apps"),
+      transaction.pure.string("kiosk"),
+      transaction.pure.string("59bf087985bf854575d3d28ad843166711b0bc99"),
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/metadata::package_info::set_git_versioning`,
+    arguments: [packageInfo, transaction.pure.u64(`1`), gitv1],
+  });
+
+  const gitv3 = transaction.moveCall({
+    target: `@mvr/metadata::git::new`,
+    arguments: [
+      transaction.pure.string("https://github.com/MystenLabs/apps"),
+      transaction.pure.string("kiosk"),
+      transaction.pure.string("66ad6dc651d93adfd030bd09015d1fa5e8f5e55e"),
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/metadata::package_info::set_git_versioning`,
+    arguments: [packageInfo, transaction.pure.u64(`3`), gitv3],
+  });
+
   // 2. Set metadata for mainnet (description, icon_url, documentation_url, homepage_url)
   transaction.moveCall({
     target: `@mvr/core::move_registry::set_metadata`,
