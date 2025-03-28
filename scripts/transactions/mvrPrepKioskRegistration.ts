@@ -43,7 +43,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     arguments: [
       transaction.pure.string("https://github.com/MystenLabs/apps"),
       transaction.pure.string("kiosk"),
-      transaction.pure.string("24e3830e967d7bdde1fe1e45df83e3a1ee8f25c4"),
+      transaction.pure.string("e159ab3fc45a6f1ca46025c46c915988023af8b6"),
     ],
   });
 
