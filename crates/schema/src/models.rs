@@ -1,10 +1,15 @@
-use diesel::{Identifiable, Insertable, Queryable, QueryableByName, Selectable};
-
 use crate::schema::{
     balances, balances_summary, flashloans, order_fills, order_updates, pool_prices, pools,
     proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
 };
+use diesel::deserialize::FromSql;
+use diesel::pg::{Pg, PgValue};
+use diesel::serialize::{Output, ToSql};
+use diesel::sql_types::Text;
+use diesel::{AsExpression, Identifiable, Insertable, Queryable, QueryableByName, Selectable};
 use serde::Serialize;
+use std::str::FromStr;
+use strum_macros::{AsRefStr, EnumString};
 use sui_field_count::FieldCount;
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -16,7 +21,7 @@ pub struct OrderUpdate {
     pub checkpoint: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub status: String,
+    pub status: OrderUpdateStatus,
     pub pool_id: String,
     pub order_id: String, // u128
     pub client_order_id: i64,
@@ -28,6 +33,28 @@ pub struct OrderUpdate {
     pub onchain_timestamp: i64,
     pub trader: String,
     pub balance_manager_id: String,
+}
+
+#[derive(Debug, AsExpression, EnumString, AsRefStr)]
+#[diesel(sql_type = Text)]
+pub enum OrderUpdateStatus {
+    Placed,
+    Modified,
+    Canceled,
+    Expired,
+}
+
+impl FromSql<Text, Pg> for OrderUpdateStatus {
+    fn from_sql(bytes: PgValue<'_>) -> diesel::deserialize::Result<Self> {
+        let s = std::str::from_utf8(bytes.as_bytes())?;
+        Ok(OrderUpdateStatus::from_str(s)?)
+    }
+}
+
+impl ToSql<Text, Pg> for OrderUpdateStatus {
+    fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> diesel::serialize::Result {
+        <str as ToSql<Text, Pg>>::to_sql(self.as_ref(), out)
+    }
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]

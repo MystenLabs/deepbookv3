@@ -1,7 +1,7 @@
 use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
-use deepbook_schema::models::OrderUpdate;
+use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
 use move_core_types::account_address::AccountAddress;
@@ -108,7 +108,7 @@ fn process_order_placed(
         checkpoint: checkpoint as i64,
         checkpoint_timestamp_ms: checkpoint_timestamp_ms as i64,
         package,
-        status: "Placed".to_string(),
+        status: OrderUpdateStatus::Placed,
         pool_id: order_placed.pool_id.to_string(),
         order_id: order_placed.order_id.to_string(),
         client_order_id: order_placed.client_order_id as i64,
@@ -136,7 +136,7 @@ fn process_order_modified(
         checkpoint: checkpoint as i64,
         checkpoint_timestamp_ms: checkpoint_timestamp_ms as i64,
         package,
-        status: "Modified".to_string(),
+        status: OrderUpdateStatus::Modified,
         pool_id: order_modified.pool_id.to_string(),
         order_id: order_modified.order_id.to_string(),
         client_order_id: order_modified.client_order_id as i64,
@@ -164,7 +164,7 @@ fn process_order_canceled(
         checkpoint: checkpoint as i64,
         checkpoint_timestamp_ms: checkpoint_timestamp_ms as i64,
         package,
-        status: "Canceled".to_string(),
+        status: OrderUpdateStatus::Canceled,
         pool_id: order_canceled.pool_id.to_string(),
         order_id: order_canceled.order_id.to_string(),
         client_order_id: order_canceled.client_order_id as i64,
@@ -193,7 +193,7 @@ fn process_order_expired(
         checkpoint: checkpoint as i64,
         checkpoint_timestamp_ms: checkpoint_timestamp_ms as i64,
         package,
-        status: "Expired".to_string(),
+        status: OrderUpdateStatus::Expired,
         pool_id: order_expired.pool_id.to_string(),
         order_id: order_expired.order_id.to_string(),
         client_order_id: order_expired.client_order_id as i64,
