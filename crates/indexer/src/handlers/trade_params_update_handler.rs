@@ -45,6 +45,7 @@ impl Processor for TradeParamsUpdateHandler {
                 let package = try_extract_move_call_package(tx).unwrap_or_default();
                 let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
                 let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+                let digest = tx.transaction.digest();
 
                 let pool = tx
                     .input_objects
@@ -63,8 +64,8 @@ impl Processor for TradeParamsUpdateHandler {
                     .try_fold(result, |mut result, (index, ev)| {
                         let event: TradeParamsUpdateEvent = bcs::from_bytes(&ev.contents)?;
                         let data = TradeParamsUpdate {
-                            digest: tx.transaction.digest().to_string(),
-                            event_digest: format!("{}{index}", tx.transaction.digest()),
+                            digest: digest.to_string(),
+                            event_digest: format!("{digest}{index}"),
                             sender: tx.transaction.sender_address().to_string(),
                             checkpoint,
                             checkpoint_timestamp_ms,

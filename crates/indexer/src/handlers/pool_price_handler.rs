@@ -44,6 +44,7 @@ impl Processor for PoolPriceHandler {
                 let package = try_extract_move_call_package(tx).unwrap_or_default();
                 let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
                 let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+                let digest = tx.transaction.digest();
 
                 return events
                     .data
@@ -53,8 +54,8 @@ impl Processor for PoolPriceHandler {
                     .try_fold(result, |mut result, (index, ev)| {
                         let event: PriceAdded = bcs::from_bytes(&ev.contents)?;
                         let data = PoolPrice {
-                            digest: tx.transaction.digest().to_string(),
-                            event_digest: format!("{}{index}", tx.transaction.digest()),
+                            digest: digest.to_string(),
+                            event_digest: format!("{digest}{index}"),
                             sender: tx.transaction.sender_address().to_string(),
                             checkpoint,
                             checkpoint_timestamp_ms,
