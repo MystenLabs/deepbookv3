@@ -1,0 +1,19 @@
+[package]
+name = "deepbook-schema"
+version = "0.1.0"
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "Apache-2.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+sui-field-count = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d"}
+diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
+diesel_migrations.workspace = true
+dotenvy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+strum = "0.27.1"
+strum_macros = "0.27.1"

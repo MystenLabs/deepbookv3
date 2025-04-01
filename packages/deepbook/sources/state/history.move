@@ -2,15 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// History module tracks the volume data for the current epoch and past epochs.
-/// It also tracks past trade params. Past maker fees are used to calculate fills for
-/// old orders. The historic median is used to calculate rebates and burns.
+/// It also tracks past trade params. Past maker fees are used to calculate
+/// fills for old orders. The historic median is used to calculate rebates and
+/// burns.
 module deepbook::history;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::math;
-use deepbook::trade_params::TradeParams;
-use sui::table::{Self, Table};
+use deepbook::{balances::{Self, Balances}, constants, math, trade_params::TradeParams};
+use sui::{event, table::{Self, Table}};
 
 // === Errors ===
 const EHistoricVolumesNotFound: u64 = 0;
@@ -19,8 +17,9 @@ const EHistoricVolumesNotFound: u64 = 0;
 /// `Volumes` represents volume data for a single epoch.
 /// Using flashloans on a whitelisted pool, assuming 1_000_000 * 1_000_000_000
 /// in volume per trade, at 1 trade per millisecond, the total volume can reach
-/// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one epoch.
-public struct Volumes has store, copy, drop {
+/// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one
+/// epoch.
+public struct Volumes has copy, drop, store {
     total_volume: u128,
     total_staked_volume: u128,
     total_fees_collected: Balances,
@@ -37,9 +36,23 @@ public struct History has store {
     balance_to_burn: u64,
 }
 
+public struct EpochData has copy, drop, store {
+    epoch: u64,
+    pool_id: ID,
+    total_volume: u128,
+    total_staked_volume: u128,
+    base_fees_collected: u64,
+    quote_fees_collected: u64,
+    deep_fees_collected: u64,
+    historic_median: u128,
+    taker_fee: u64,
+    maker_fee: u64,
+    stake_required: u64,
+}
+
 // === Public-Package Functions ===
-/// Create a new `History` instance. Called once upon pool creation. A single blank
-/// `Volumes` instance is created and added to the historic_volumes table.
+/// Create a new `History` instance. Called once upon pool creation. A single
+/// blank `Volumes` instance is created and added to the historic_volumes table.
 public(package) fun empty(
     trade_params: TradeParams,
     epoch_created: u64,
@@ -69,6 +82,7 @@ public(package) fun empty(
 public(package) fun update(
     self: &mut History,
     trade_params: TradeParams,
+    pool_id: ID,
     ctx: &TxContext,
 ) {
     let epoch = ctx.epoch();
@@ -79,16 +93,28 @@ public(package) fun update(
     self.update_historic_median();
     self.historic_volumes.add(self.epoch, self.volumes);
 
+    event::emit(EpochData {
+        epoch: self.epoch,
+        pool_id,
+        total_volume: self.volumes.total_volume,
+        total_staked_volume: self.volumes.total_staked_volume,
+        base_fees_collected: self.volumes.total_fees_collected.base(),
+        quote_fees_collected: self.volumes.total_fees_collected.quote(),
+        deep_fees_collected: self.volumes.total_fees_collected.deep(),
+        historic_median: self.volumes.historic_median,
+        taker_fee: trade_params.taker_fee(),
+        maker_fee: trade_params.maker_fee(),
+        stake_required: trade_params.stake_required(),
+    });
+
     self.epoch = epoch;
     self.reset_volumes(trade_params);
     self.historic_volumes.add(self.epoch, self.volumes);
 }
 
 /// Reset the current epoch's volume data.
-public(package) fun reset_volumes(
-    self: &mut History,
-    trade_params: TradeParams,
-) {
+public(package) fun reset_volumes(self: &mut History, trade_params: TradeParams) {
+    event::emit(self.volumes);
     self.volumes =
         Volumes {
             total_volume: 0,
@@ -107,10 +133,7 @@ public(package) fun calculate_rebate_amount(
     maker_volume: u128,
     account_stake: u64,
 ): Balances {
-    assert!(
-        self.historic_volumes.contains(prev_epoch),
-        EHistoricVolumesNotFound,
-    );
+    assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
     let volumes = &mut self.historic_volumes[prev_epoch];
     if (volumes.trade_params.stake_required() > account_stake) {
         return balances::empty()
@@ -127,21 +150,20 @@ public(package) fun calculate_rebate_amount(
     };
     let maker_rebate_percentage = maker_rebate_percentage as u64;
     let maker_volume_proportion = if (volumes.total_staked_volume > 0) {
-        math::div_u128(maker_volume, volumes.total_staked_volume)
+        (math::div_u128(maker_volume, volumes.total_staked_volume)) as u64
     } else {
         0
     };
-    let maker_fee_proportion =
-        math::mul_u128(
-            maker_volume_proportion,
-            volumes.total_fees_collected.deep() as u128,
-        ) as u64;
-    let maker_rebate = math::mul(maker_rebate_percentage, maker_fee_proportion);
-    let maker_burn = maker_fee_proportion - maker_rebate;
+    let mut max_rebates = volumes.total_fees_collected;
+    max_rebates.mul(maker_volume_proportion); // Maximum rebates possible
+    let mut rebates = max_rebates;
+    rebates.mul(maker_rebate_percentage); // Actual rebates
+
+    let maker_burn = max_rebates.deep() - rebates.deep();
 
     self.balance_to_burn = self.balance_to_burn + maker_burn;
 
-    balances::new(0, 0, maker_rebate)
+    rebates
 }
 
 /// Updates the historic_median for past 28 epochs.
@@ -167,18 +189,13 @@ public(package) fun update_historic_median(self: &mut History) {
 
 /// Add volume to the current epoch's volume data.
 /// Increments the total volume and total staked volume.
-public(package) fun add_volume(
-    self: &mut History,
-    maker_volume: u64,
-    account_stake: u64,
-) {
+public(package) fun add_volume(self: &mut History, maker_volume: u64, account_stake: u64) {
     if (maker_volume == 0) return;
 
     let maker_volume = maker_volume as u128;
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
     if (account_stake >= self.volumes.trade_params.stake_required()) {
-        self.volumes.total_staked_volume =
-            self.volumes.total_staked_volume + maker_volume;
+        self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
     };
 }
 
@@ -199,10 +216,7 @@ public(package) fun historic_maker_fee(self: &History, epoch: u64): u64 {
     self.historic_volumes[epoch].trade_params.maker_fee()
 }
 
-public(package) fun add_total_fees_collected(
-    self: &mut History,
-    fees: Balances,
-) {
+public(package) fun add_total_fees_collected(self: &mut History, fees: Balances) {
     self.volumes.total_fees_collected.add_balances(fees);
 }
 
