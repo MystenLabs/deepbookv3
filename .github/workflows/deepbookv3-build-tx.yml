@@ -15,6 +15,7 @@ on:
           - Unregister Pool and Create
           - Prep MVR
           - Prep Kiosk MVR
+          - Prep Kiosk MVR Registration
           - Package Info Creation
           - Register Deepbook with MVR
       sui_tools_image:
@@ -141,6 +142,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKiosk.ts
+
+      - name: Prep Kiosk MVR Registration
+        if: ${{ inputs.transaction_type == 'Prep Kiosk MVR Registration' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKioskRegistration.ts
 
       - name: Package Info Creation
         if: ${{ inputs.transaction_type == 'Package Info Creation' }}
