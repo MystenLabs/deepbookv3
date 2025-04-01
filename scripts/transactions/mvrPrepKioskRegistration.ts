@@ -35,7 +35,8 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     arguments: [transaction.object(packageInfo), display],
   });
 
-  const appCapObjectId = ""; // TODO: Kiosk appcap ID
+  const appCapObjectId =
+    "0x476cbd1df24cf590d675ddde59de4ec535f8aff9eea22fd83fed57001cfc9426";
 
   // 1. Sets git versioning for mainnet
   const git = transaction.moveCall({
