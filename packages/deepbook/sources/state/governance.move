@@ -302,7 +302,7 @@ public fun proposals(self: &Governance): VecMap<ID, Proposal> {
     self.proposals
 }
 
-#[test_only]
+// #[test_only]
 public fun next_trade_params(self: &Governance): TradeParams {
     self.next_trade_params
 }
