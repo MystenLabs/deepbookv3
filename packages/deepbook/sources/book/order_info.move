@@ -5,12 +5,14 @@
 /// All order matching happens in this module.
 module deepbook::order_info;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::fill::Fill;
-use deepbook::math;
-use deepbook::order::{Self, Order};
+use deepbook::{
+    balances::{Self, Balances},
+    constants,
+    deep_price::OrderDeepPrice,
+    fill::Fill,
+    math,
+    order::{Self, Order}
+};
 use sui::event;
 
 // === Errors ===
@@ -29,7 +31,7 @@ const ESelfMatchingCancelTaker: u64 = 8;
 /// This objects gets created at the beginning of the order lifecycle and
 /// gets updated until it is completed or placed in the book.
 /// It is returned at the end of the order lifecycle.
-public struct OrderInfo has store, drop, copy {
+public struct OrderInfo has copy, drop, store {
     // ID of the pool
     pool_id: ID,
     // ID of the order within the pool
@@ -81,7 +83,7 @@ public struct OrderInfo has store, drop, copy {
 }
 
 /// Emitted when a maker order is filled.
-public struct OrderFilled has copy, store, drop {
+public struct OrderFilled has copy, drop, store {
     pool_id: ID,
     maker_order_id: u128,
     taker_order_id: u128,
@@ -101,7 +103,7 @@ public struct OrderFilled has copy, store, drop {
 }
 
 /// Emitted when a maker order is injected into the order book.
-public struct OrderPlaced has copy, store, drop {
+public struct OrderPlaced has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -115,7 +117,7 @@ public struct OrderPlaced has copy, store, drop {
 }
 
 /// Emitted when a maker order is expired.
-public struct OrderExpired has copy, store, drop {
+public struct OrderExpired has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -405,10 +407,7 @@ public(package) fun validate_inputs(
         EInvalidOrderType,
     );
     if (order_info.market_order) {
-        assert!(
-            order_info.order_type != constants::post_only(),
-            EMarketOrderCannotBePostOnly,
-        );
+        assert!(order_info.order_type != constants::post_only(), EMarketOrderCannotBePostOnly);
         return
     };
     assert!(
@@ -425,10 +424,7 @@ public(package) fun assert_execution(self: &mut OrderInfo): bool {
         assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook)
     };
     if (self.order_type == constants::fill_or_kill()) {
-        assert!(
-            self.executed_quantity == self.original_quantity,
-            EFOKOrderCannotBeFullyFilled,
-        )
+        assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled)
     };
     if (self.order_type == constants::immediate_or_cancel()) {
         if (self.remaining_quantity() > 0) {
@@ -473,18 +469,11 @@ public(package) fun can_match(self: &OrderInfo, order: &Order): bool {
 /// Matches an `OrderInfo` with an `Order` from the book. Appends a `Fill` to fills.
 /// If the book order is expired, the `Fill` will have the expired flag set to true.
 /// Funds for the match or an expired order are returned to the maker as settled.
-public(package) fun match_maker(
-    self: &mut OrderInfo,
-    maker: &mut Order,
-    timestamp: u64,
-): bool {
+public(package) fun match_maker(self: &mut OrderInfo, maker: &mut Order, timestamp: u64): bool {
     if (!self.can_match(maker)) return false;
 
     if (self.self_matching_option() == constants::cancel_taker()) {
-        assert!(
-            maker.balance_manager_id() != self.balance_manager_id(),
-            ESelfMatchingCancelTaker,
-        );
+        assert!(maker.balance_manager_id() != self.balance_manager_id(), ESelfMatchingCancelTaker);
     };
     let expire_maker =
         self.self_matching_option() == constants::cancel_maker() &&
@@ -500,8 +489,7 @@ public(package) fun match_maker(
     if (fill.expired()) return true;
 
     self.executed_quantity = self.executed_quantity + fill.base_quantity();
-    self.cumulative_quote_quantity =
-        self.cumulative_quote_quantity + fill.quote_quantity();
+    self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
     self.status = constants::partially_filled();
     if (self.remaining_quantity() == 0) self.status = constants::filled();
 
@@ -519,8 +507,7 @@ public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));
         } else {
-            let cancel_maker =
-                self.balance_manager_id() == fill.balance_manager_id();
+            let cancel_maker = self.balance_manager_id() == fill.balance_manager_id();
             if (cancel_maker) {
                 self.emit_order_canceled_maker_from_fill(fill, timestamp);
             } else {
@@ -559,11 +546,7 @@ public(package) fun set_order_inserted(self: &mut OrderInfo) {
 }
 
 // === Private Functions ===
-fun order_filled_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-): OrderFilled {
+fun order_filled_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64): OrderFilled {
     OrderFilled {
         pool_id: self.pool_id,
         maker_order_id: fill.maker_order_id(),
@@ -584,11 +567,7 @@ fun order_filled_from_fill(
     }
 }
 
-fun order_expired_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-): OrderExpired {
+fun order_expired_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64): OrderExpired {
     OrderExpired {
         balance_manager_id: fill.balance_manager_id(),
         pool_id: self.pool_id,
@@ -603,11 +582,7 @@ fun order_expired_from_fill(
     }
 }
 
-fun emit_order_canceled_maker_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-) {
+fun emit_order_canceled_maker_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64) {
     order::emit_cancel_maker(
         fill.balance_manager_id(),
         self.pool_id,

@@ -8,7 +8,7 @@ module deepbook::balances;
 use deepbook::math;
 
 // === Structs ===
-public struct Balances has store, copy, drop {
+public struct Balances has copy, drop, store {
     base: u64,
     quote: u64,
     deep: u64,

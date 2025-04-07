@@ -4,10 +4,7 @@
 /// This module defines the OrderPage struct and its methods to iterate over orders in a pool.
 module deepbook::order_query;
 
-use deepbook::big_vector::slice_borrow;
-use deepbook::constants;
-use deepbook::order::Order;
-use deepbook::pool::Pool;
+use deepbook::{big_vector::slice_borrow, constants, order::Order, pool::Pool};
 
 // === Structs ===
 public struct OrderPage has drop {

@@ -6,19 +6,20 @@
 /// the transactions and updates the state accordingly.
 module deepbook::state;
 
-use deepbook::account::{Self, Account};
-use deepbook::balance_manager::BalanceManager;
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::fill::Fill;
-use deepbook::governance::{Self, Governance};
-use deepbook::history::{Self, History};
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
+use deepbook::{
+    account::{Self, Account},
+    balance_manager::BalanceManager,
+    balances::{Self, Balances},
+    constants,
+    fill::Fill,
+    governance::{Self, Governance},
+    history::{Self, History},
+    math,
+    order::Order,
+    order_info::OrderInfo
+};
 use std::type_name;
-use sui::event;
-use sui::table::{Self, Table};
+use sui::{event, table::{Self, Table}};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -134,10 +135,7 @@ public(package) fun process_create(
     let maker_fee = self.governance.trade_params().maker_fee();
 
     if (order_info.order_inserted()) {
-        assert!(
-            account.open_orders().size() < constants::max_open_orders(),
-            EMaxOpenOrders,
-        );
+        assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
         account.add_order(order_info.order_id());
     };
     account.add_taker_volume(order_info.executed_quantity());
@@ -229,9 +227,7 @@ public(package) fun process_stake(
     self.history.update(self.governance.trade_params(), pool_id, ctx);
     self.update_account(balance_manager_id, ctx);
 
-    let (stake_before, stake_after) = self
-        .accounts[balance_manager_id]
-        .add_stake(new_stake);
+    let (stake_before, stake_after) = self.accounts[balance_manager_id].add_stake(new_stake);
     self.governance.adjust_voting_power(stake_before, stake_after);
     event::emit(StakeEvent {
         pool_id,
@@ -394,10 +390,7 @@ public(package) fun governance(self: &State): &Governance {
     &self.governance
 }
 
-public(package) fun governance_mut(
-    self: &mut State,
-    ctx: &TxContext,
-): &mut Governance {
+public(package) fun governance_mut(self: &mut State, ctx: &TxContext): &mut Governance {
     self.governance.update(ctx);
 
     &mut self.governance
@@ -422,8 +415,6 @@ public(package) fun history(self: &State): &History {
 // === Private Functions ===
 /// Process fills for all makers. Update maker accounts and history.
 fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
-    let whitelisted = self.governance.whitelisted();
-
     let mut i = 0;
     let num_fills = fills.length();
     while (i < num_fills) {
@@ -435,19 +426,13 @@ fun process_fills(self: &mut State, fills: &mut vector<Fill>, ctx: &TxContext) {
 
         let base_volume = fill.base_quantity();
         let quote_volume = fill.quote_quantity();
-        let historic_maker_fee = self
-            .history
-            .historic_maker_fee(fill.maker_epoch());
+        let historic_maker_fee = self.history.historic_maker_fee(fill.maker_epoch());
         let maker_is_bid = !fill.taker_is_bid();
         let mut fee_quantity = fill
             .maker_deep_price()
             .fee_quantity(base_volume, quote_volume, maker_is_bid);
 
-        if (whitelisted) {
-            fee_quantity.mul(0)
-        } else {
-            fee_quantity.mul(historic_maker_fee)
-        };
+        fee_quantity.mul(historic_maker_fee);
 
         if (!fill.expired()) {
             fill.set_fill_maker_fee(&fee_quantity);
@@ -470,9 +455,7 @@ fun update_account(self: &mut State, balance_manager_id: ID, ctx: &TxContext) {
     let account = &mut self.accounts[balance_manager_id];
     let (prev_epoch, maker_volume, active_stake) = account.update(ctx);
     if (prev_epoch > 0 && maker_volume > 0 && active_stake > 0) {
-        let rebates = self
-            .history
-            .calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
+        let rebates = self.history.calculate_rebate_amount(prev_epoch, maker_volume, active_stake);
         account.add_rebates(rebates);
     }
 }

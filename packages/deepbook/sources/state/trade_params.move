@@ -5,18 +5,14 @@
 module deepbook::trade_params;
 
 // === Structs ===
-public struct TradeParams has store, drop, copy {
+public struct TradeParams has copy, drop, store {
     taker_fee: u64,
     maker_fee: u64,
     stake_required: u64,
 }
 
 // === Public-Package Functions ===
-public(package) fun new(
-    taker_fee: u64,
-    maker_fee: u64,
-    stake_required: u64,
-): TradeParams {
+public(package) fun new(taker_fee: u64, maker_fee: u64, stake_required: u64): TradeParams {
     TradeParams { taker_fee, maker_fee, stake_required }
 }
 

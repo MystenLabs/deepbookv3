@@ -6,10 +6,7 @@ module deepbook::registry;
 
 use deepbook::constants;
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::dynamic_field;
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{bag::{Self, Bag}, dynamic_field, vec_set::{Self, VecSet}, versioned::{Self, Versioned}};
 
 // === Errors ===
 const EPoolAlreadyExists: u64 = 1;
@@ -45,7 +42,7 @@ public struct PoolKey has copy, drop, store {
     quote: TypeName,
 }
 
-public struct StableCoinKey has store, copy, drop {}
+public struct StableCoinKey has copy, drop, store {}
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
     let registry_inner = RegistryInner {
@@ -81,11 +78,7 @@ public fun set_treasury_address(
 /// Enables a package version
 /// Only Admin can enable a package version
 /// This function does not have version restrictions
-public fun enable_version(
-    self: &mut Registry,
-    version: u64,
-    _cap: &DeepbookAdminCap,
-) {
+public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
     let self: &mut RegistryInner = self.inner.load_value_mut();
     assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
     self.allowed_versions.insert(version);
@@ -94,26 +87,16 @@ public fun enable_version(
 /// Disables a package version
 /// Only Admin can disable a package version
 /// This function does not have version restrictions
-public fun disable_version(
-    self: &mut Registry,
-    version: u64,
-    _cap: &DeepbookAdminCap,
-) {
+public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
     let self: &mut RegistryInner = self.inner.load_value_mut();
-    assert!(
-        version != constants::current_version(),
-        ECannotDisableCurrentVersion,
-    );
+    assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
     assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
     self.allowed_versions.remove(&version);
 }
 
 /// Adds a stablecoin to the whitelist
 /// Only Admin can add stablecoin
-public fun add_stablecoin<StableCoin>(
-    self: &mut Registry,
-    _cap: &DeepbookAdminCap,
-) {
+public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
     let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::get<StableCoin>();
     if (
@@ -139,10 +122,7 @@ public fun add_stablecoin<StableCoin>(
 
 /// Removes a stablecoin from the whitelist
 /// Only Admin can remove stablecoin
-public fun remove_stablecoin<StableCoin>(
-    self: &mut Registry,
-    _cap: &DeepbookAdminCap,
-) {
+public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
     let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::get<StableCoin>();
     assert!(
@@ -184,10 +164,7 @@ public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
 public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
     let inner: &mut RegistryInner = self.inner.load_value_mut();
     let package_version = constants::current_version();
-    assert!(
-        inner.allowed_versions.contains(&package_version),
-        EPackageVersionNotEnabled,
-    );
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionNotEnabled);
 
     inner
 }
@@ -195,10 +172,7 @@ public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
 /// Register a new pool in the registry.
 /// Asserts if (Base, Quote) pool already exists or
 /// (Quote, Base) pool already exists.
-public(package) fun register_pool<BaseAsset, QuoteAsset>(
-    self: &mut Registry,
-    pool_id: ID,
-) {
+public(package) fun register_pool<BaseAsset, QuoteAsset>(self: &mut Registry, pool_id: ID) {
     let self = self.load_inner_mut();
     let key = PoolKey {
         base: type_name::get<QuoteAsset>(),
@@ -216,9 +190,7 @@ public(package) fun register_pool<BaseAsset, QuoteAsset>(
 }
 
 /// Only admin can call this function
-public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
-    self: &mut Registry,
-) {
+public(package) fun unregister_pool<BaseAsset, QuoteAsset>(self: &mut Registry) {
     let self = self.load_inner_mut();
     let key = PoolKey {
         base: type_name::get<BaseAsset>(),
@@ -231,10 +203,7 @@ public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
 public(package) fun load_inner(self: &Registry): &RegistryInner {
     let inner: &RegistryInner = self.inner.load_value();
     let package_version = constants::current_version();
-    assert!(
-        inner.allowed_versions.contains(&package_version),
-        EPackageVersionNotEnabled,
-    );
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionNotEnabled);
 
     inner
 }

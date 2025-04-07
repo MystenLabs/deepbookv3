@@ -4,13 +4,12 @@
 /// `Fill` struct represents the results of a match between two orders.
 module deepbook::fill;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::deep_price::OrderDeepPrice;
+use deepbook::{balances::{Self, Balances}, deep_price::OrderDeepPrice};
 
 // === Structs ===
 /// Fill struct represents the results of a match between two orders.
 /// It is used to update the state.
-public struct Fill has store, drop, copy {
+public struct Fill has copy, drop, store {
     // ID of the maker order
     maker_order_id: u128,
     // Client Order ID of the maker order

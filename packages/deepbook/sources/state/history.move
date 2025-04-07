@@ -7,12 +7,8 @@
 /// burns.
 module deepbook::history;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::math;
-use deepbook::trade_params::TradeParams;
-use sui::event;
-use sui::table::{Self, Table};
+use deepbook::{balances::{Self, Balances}, constants, math, trade_params::TradeParams};
+use sui::{event, table::{Self, Table}};
 
 // === Errors ===
 const EHistoricVolumesNotFound: u64 = 0;
@@ -23,7 +19,7 @@ const EHistoricVolumesNotFound: u64 = 0;
 /// in volume per trade, at 1 trade per millisecond, the total volume can reach
 /// 1_000_000 * 1_000_000_000 * 1000 * 60 * 60 * 24 * 365 = 8.64e22 in one
 /// epoch.
-public struct Volumes has store, copy, drop {
+public struct Volumes has copy, drop, store {
     total_volume: u128,
     total_staked_volume: u128,
     total_fees_collected: Balances,
@@ -40,7 +36,7 @@ public struct History has store {
     balance_to_burn: u64,
 }
 
-public struct EpochData has store, copy, drop {
+public struct EpochData has copy, drop, store {
     epoch: u64,
     pool_id: ID,
     total_volume: u128,
@@ -117,10 +113,7 @@ public(package) fun update(
 }
 
 /// Reset the current epoch's volume data.
-public(package) fun reset_volumes(
-    self: &mut History,
-    trade_params: TradeParams,
-) {
+public(package) fun reset_volumes(self: &mut History, trade_params: TradeParams) {
     event::emit(self.volumes);
     self.volumes =
         Volumes {
@@ -140,10 +133,7 @@ public(package) fun calculate_rebate_amount(
     maker_volume: u128,
     account_stake: u64,
 ): Balances {
-    assert!(
-        self.historic_volumes.contains(prev_epoch),
-        EHistoricVolumesNotFound,
-    );
+    assert!(self.historic_volumes.contains(prev_epoch), EHistoricVolumesNotFound);
     let volumes = &mut self.historic_volumes[prev_epoch];
     if (volumes.trade_params.stake_required() > account_stake) {
         return balances::empty()
@@ -199,18 +189,13 @@ public(package) fun update_historic_median(self: &mut History) {
 
 /// Add volume to the current epoch's volume data.
 /// Increments the total volume and total staked volume.
-public(package) fun add_volume(
-    self: &mut History,
-    maker_volume: u64,
-    account_stake: u64,
-) {
+public(package) fun add_volume(self: &mut History, maker_volume: u64, account_stake: u64) {
     if (maker_volume == 0) return;
 
     let maker_volume = maker_volume as u128;
     self.volumes.total_volume = self.volumes.total_volume + maker_volume;
     if (account_stake >= self.volumes.trade_params.stake_required()) {
-        self.volumes.total_staked_volume =
-            self.volumes.total_staked_volume + maker_volume;
+        self.volumes.total_staked_volume = self.volumes.total_staked_volume + maker_volume;
     };
 }
 
@@ -231,10 +216,7 @@ public(package) fun historic_maker_fee(self: &History, epoch: u64): u64 {
     self.historic_volumes[epoch].trade_params.maker_fee()
 }
 
-public(package) fun add_total_fees_collected(
-    self: &mut History,
-    fees: Balances,
-) {
+public(package) fun add_total_fees_collected(self: &mut History, fees: Balances) {
     self.volumes.total_fees_collected.add_balances(fees);
 }
 
