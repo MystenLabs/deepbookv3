@@ -2,6 +2,7 @@
 **/.history/
 **/.vscode/
 **/.idea/
+**/target/
 
 # OSX
 .DS_Store
