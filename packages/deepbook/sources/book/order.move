@@ -162,9 +162,8 @@ public(package) fun generate_fill(
         quote_quantity = math::mul(base_quantity, self.price());
     } else {
         self.filled_quantity = self.filled_quantity + base_quantity;
-        self.status =
-            if (self.quantity == self.filled_quantity) constants::filled()
-            else constants::partially_filled();
+        self.status = if (self.quantity == self.filled_quantity) constants::filled()
+        else constants::partially_filled();
     };
 
     fill::new(
