@@ -256,10 +256,10 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     let is_bid = quote_quantity > 0;
     if (is_bid) {
         (base_quantity, _, _) = if (pay_with_deep) {
-                self.get_quantity_out(0, quote_quantity, clock)
-            } else {
-                self.get_quantity_out_input_fee(0, quote_quantity, clock)
-            }
+            self.get_quantity_out(0, quote_quantity, clock)
+        } else {
+            self.get_quantity_out_input_fee(0, quote_quantity, clock)
+        }
     } else {
         if (!pay_with_deep) {
             base_quantity =

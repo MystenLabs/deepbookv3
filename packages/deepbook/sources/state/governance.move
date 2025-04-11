@@ -232,6 +232,10 @@ public(package) fun trade_params(self: &Governance): TradeParams {
     self.trade_params
 }
 
+public(package) fun next_trade_params(self: &Governance): TradeParams {
+    self.next_trade_params
+}
+
 // === Private Functions ===
 /// Convert stake to voting power.
 fun stake_to_voting_power(stake: u64): u64 {
@@ -300,11 +304,6 @@ public fun voting_power(self: &Governance): u64 {
 #[test_only]
 public fun proposals(self: &Governance): VecMap<ID, Proposal> {
     self.proposals
-}
-
-#[test_only]
-public fun next_trade_params(self: &Governance): TradeParams {
-    self.next_trade_params
 }
 
 #[test_only]

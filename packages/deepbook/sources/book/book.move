@@ -127,8 +127,7 @@ public(package) fun get_quantity_out(
     );
 
     let book_side = if (is_bid) &self.asks else &self.bids;
-    let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
-    else book_side.max_slice();
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
     let max_fills = constants::max_fills();
     let mut current_fills = 0;
 
@@ -180,9 +179,8 @@ public(package) fun get_quantity_out(
             if (matched_base_quantity == 0) break;
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
@@ -347,9 +345,8 @@ public(package) fun get_level2_range_and_ticks(
             };
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.prev_slice(ref, offset)
-            else book_side.next_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset)
+        else book_side.next_slice(ref, offset);
     };
 
     if (cur_price != 0 && ticks_left > 0) {
@@ -404,8 +401,7 @@ fun book_side(self: &Book, order_id: u128): &BigVector<Order> {
 fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
     let is_bid = order_info.is_bid();
     let book_side = if (is_bid) &mut self.asks else &mut self.bids;
-    let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
-    else book_side.max_slice();
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
     let max_fills = constants::max_fills();
     let mut current_fills = 0;
 
@@ -416,9 +412,8 @@ fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u
             offset,
         );
         if (!order_info.match_maker(maker_order, timestamp)) break;
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
