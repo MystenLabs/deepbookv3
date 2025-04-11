@@ -4,10 +4,8 @@
 #[test_only]
 module deepbook::balance_manager_tests;
 
-use deepbook::balance_manager::{Self, BalanceManager, TradeCap};
-use sui::coin::mint_for_testing;
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end};
+use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -149,6 +147,276 @@ fun test_deposit_with_removed_trader_e() {
     abort 0
 }
 
+#[test, expected_failure(abort_code = balance_manager::EInvalidTrader)]
+fun test_deposit_with_removed_deposit_cap_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id;
+    let deposit_cap_id;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        balance_manager_id = object::id(&balance_manager);
+        let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
+        deposit_cap_id = object::id(&deposit_cap);
+
+        balance_manager.deposit_with_cap<SUI>(
+            &deposit_cap,
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        transfer::public_transfer(deposit_cap, bob);
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 100, 0);
+
+        balance_manager.revoke_trade_cap(&deposit_cap_id, test.ctx());
+        transfer::public_share_object(balance_manager);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        balance_manager.deposit_with_cap<SUI>(
+            &deposit_cap,
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+    };
+
+    abort 0
+}
+
+#[test, expected_failure(abort_code = balance_manager::EInvalidTrader)]
+fun test_deposit_with_wrong_deposit_cap_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id_2;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        let balance_manager_2 = balance_manager::new(test.ctx());
+        balance_manager_id_2 = object::id(&balance_manager_2);
+        let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
+
+        transfer::public_transfer(deposit_cap, bob);
+        transfer::public_share_object(balance_manager);
+        transfer::public_share_object(balance_manager_2);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager_2 = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id_2,
+        );
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        balance_manager_2.deposit_with_cap<SUI>(
+            &deposit_cap,
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+    };
+
+    abort 0
+}
+
+#[test]
+fun test_deposit_with_deposit_cap_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        balance_manager_id = object::id(&balance_manager);
+        let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
+
+        balance_manager.deposit_with_cap<SUI>(
+            &deposit_cap,
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        transfer::public_transfer(deposit_cap, bob);
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 100, 0);
+
+        transfer::public_share_object(balance_manager);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        balance_manager.deposit_with_cap<SUI>(
+            &deposit_cap,
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 200, 0);
+
+        return_shared(balance_manager);
+        test.return_to_sender(deposit_cap);
+    };
+
+    end(test);
+}
+
+#[test, expected_failure(abort_code = balance_manager::EInvalidTrader)]
+fun test_withdraw_with_removed_withdraw_cap_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id;
+    let withdraw_cap_id;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        balance_manager_id = object::id(&balance_manager);
+        let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
+        withdraw_cap_id = object::id(&withdraw_cap);
+        balance_manager.deposit(
+            mint_for_testing<SUI>(1000, test.ctx()),
+            test.ctx(),
+        );
+
+        let sui = balance_manager.withdraw_with_cap<SUI>(
+            &withdraw_cap,
+            100,
+            test.ctx(),
+        );
+        assert!(sui.value() == 100, 0);
+        sui.burn_for_testing();
+        transfer::public_transfer(withdraw_cap, bob);
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 900, 0);
+
+        balance_manager.revoke_trade_cap(&withdraw_cap_id, test.ctx());
+        transfer::public_share_object(balance_manager);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+        let sui = balance_manager.withdraw_with_cap<SUI>(
+            &withdraw_cap,
+            100,
+            test.ctx(),
+        );
+        sui.burn_for_testing();
+    };
+
+    abort 0
+}
+
+#[test, expected_failure(abort_code = balance_manager::EInvalidTrader)]
+fun test_withdraw_with_wrong_withdraw_cap_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id_2;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        let mut balance_manager_2 = balance_manager::new(test.ctx());
+        balance_manager_id_2 = object::id(&balance_manager_2);
+        let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
+        balance_manager_2.deposit(
+            mint_for_testing<SUI>(1000, test.ctx()),
+            test.ctx(),
+        );
+
+        transfer::public_transfer(withdraw_cap, bob);
+
+        transfer::public_share_object(balance_manager);
+        transfer::public_share_object(balance_manager_2);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager_2 = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id_2,
+        );
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+        let sui = balance_manager_2.withdraw_with_cap<SUI>(
+            &withdraw_cap,
+            100,
+            test.ctx(),
+        );
+        sui.burn_for_testing();
+    };
+
+    abort 0
+}
+
+#[test]
+fun test_withdraw_with_withdraw_cap_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    let balance_manager_id;
+
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        balance_manager_id = object::id(&balance_manager);
+        let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
+        balance_manager.deposit(
+            mint_for_testing<SUI>(1000, test.ctx()),
+            test.ctx(),
+        );
+
+        let sui = balance_manager.withdraw_with_cap<SUI>(
+            &withdraw_cap,
+            100,
+            test.ctx(),
+        );
+        assert!(sui.value() == 100, 0);
+        sui.burn_for_testing();
+        transfer::public_transfer(withdraw_cap, bob);
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 900, 0);
+
+        transfer::public_share_object(balance_manager);
+    };
+
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+        let sui = balance_manager.withdraw_with_cap<SUI>(
+            &withdraw_cap,
+            100,
+            test.ctx(),
+        );
+        sui.burn_for_testing();
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 800, 0);
+
+        return_shared(balance_manager);
+        test.return_to_sender(withdraw_cap);
+    };
+
+    end(test);
+}
+
 #[test]
 fun test_withdraw_ok() {
     let mut test = begin(@0xF);
@@ -202,12 +470,7 @@ fun test_withdraw_all_ok() {
     end(test);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = balance_manager::EBalanceManagerBalanceTooLow,
-    ),
-]
+#[test, expected_failure(abort_code = balance_manager::EBalanceManagerBalanceTooLow)]
 fun test_withdraw_balance_too_low_e() {
     let mut test = begin(@0xF);
     let alice = @0xA;
@@ -278,8 +541,16 @@ public(package) fun create_acct_and_share_with_funds_typed<
         let mut balance_manager = balance_manager::new(test.ctx());
         deposit_into_account<BaseAsset>(&mut balance_manager, amount, test);
         deposit_into_account<QuoteAsset>(&mut balance_manager, amount, test);
-        deposit_into_account<ReferenceBaseAsset>(&mut balance_manager, amount, test);
-        deposit_into_account<ReferenceQuoteAsset>(&mut balance_manager, amount, test);
+        deposit_into_account<ReferenceBaseAsset>(
+            &mut balance_manager,
+            amount,
+            test,
+        );
+        deposit_into_account<ReferenceQuoteAsset>(
+            &mut balance_manager,
+            amount,
+            test,
+        );
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
         let id = object::id(&balance_manager);
