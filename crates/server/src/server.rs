@@ -1,12 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    error::DeepBookError,
-    models::{BalancesSummary, OrderFillSummary, Pools},
-    postgres_manager::PgPool,
-    schema::{self},
-};
+use crate::{error::DeepBookError, postgres_manager::PgPool};
 use axum::http::Method;
 use axum::{
     extract::{Path, Query, State},
@@ -14,6 +9,8 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use deepbook_schema::models::{BalancesSummary, OrderFillSummary, Pools};
+use deepbook_schema::*;
 use diesel::dsl::{count_star, sql};
 use diesel::dsl::{max, min};
 use diesel::BoolExpressionMethods;
@@ -25,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
+use url::Url;
 
 use futures::future::join_all;
 use std::str::FromStr;
@@ -67,20 +65,21 @@ pub const DEEP_SUPPLY_MODULE: &str = "deep";
 pub const DEEP_SUPPLY_FUNCTION: &str = "total_supply";
 pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
 
-pub fn run_server(socket_address: SocketAddr, state: PgPool) -> JoinHandle<()> {
+pub fn run_server(socket_address: SocketAddr, state: PgPool, rpc_url: Url) -> JoinHandle<()> {
     tokio::spawn(async move {
         let listener = TcpListener::bind(socket_address).await.unwrap();
-        axum::serve(listener, make_router(state)).await.unwrap();
+        axum::serve(listener, make_router(state, rpc_url))
+            .await
+            .unwrap();
     })
 }
-
-pub(crate) fn make_router(state: PgPool) -> Router {
+pub(crate) fn make_router(state: PgPool, rpc_url: Url) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
         .allow_headers(Any)
         .allow_origin(Any);
 
-    Router::new()
+    let db_routes = Router::new()
         .route("/", get(health_check))
         .route(GET_POOLS_PATH, get(get_pools))
         .route(HISTORICAL_VOLUME_PATH, get(historical_volume))
@@ -93,17 +92,21 @@ pub(crate) fn make_router(state: PgPool) -> Router {
             GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID,
             get(get_historical_volume_by_balance_manager_id),
         )
-        .route(LEVEL2_PATH, get(orderbook))
         .route(GET_NET_DEPOSITS, get(get_net_deposits))
         .route(TICKER_PATH, get(ticker))
         .route(TRADES_PATH, get(trades))
         .route(TRADE_COUNT_PATH, get(trade_count))
         .route(ORDER_UPDATES_PATH, get(order_updates))
         .route(ASSETS_PATH, get(assets))
-        .route(SUMMARY_PATH, get(summary))
+        .with_state(state.clone());
+
+    let rpc_routes = Router::new()
+        .route(LEVEL2_PATH, get(orderbook))
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
-        .layer(cors)
-        .with_state(state)
+        .route(SUMMARY_PATH, get(summary))
+        .with_state((state, rpc_url));
+
+    db_routes.merge(rpc_routes).layer(cors)
 }
 
 impl axum::response::IntoResponse for DeepBookError {
@@ -545,7 +548,7 @@ async fn fetch_historical_volume(
 
 #[allow(clippy::get_first)]
 async fn summary(
-    State(state): State<PgPool>,
+    State((state, rpc_url)): State<(PgPool, Url)>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch pools metadata first since it's required for other functions
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
@@ -588,7 +591,7 @@ async fn summary(
             orderbook(
                 Path(pool_name_clone),
                 Query(HashMap::from([("level".to_string(), "1".to_string())])),
-                State(state.clone()),
+                State((state.clone(), rpc_url.clone())),
             )
         })
         .collect();
@@ -1154,7 +1157,7 @@ pub async fn assets(
 async fn orderbook(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State((state, rpc_url)): State<(PgPool, Url)>,
 ) -> Result<Json<HashMap<String, Value>>, DeepBookError> {
     let depth = params
         .get("depth")
@@ -1218,7 +1221,7 @@ async fn orderbook(
 
     let pool_address = ObjectID::from_hex_literal(&pool_id)?;
 
-    let sui_client = SuiClientBuilder::default().build(SUI_MAINNET_URL).await?;
+    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let pool_object: SuiObjectResponse = sui_client
@@ -1391,8 +1394,10 @@ async fn orderbook(
 }
 
 /// DEEP total supply
-async fn deep_supply() -> Result<Json<u64>, DeepBookError> {
-    let sui_client = SuiClientBuilder::default().build(SUI_MAINNET_URL).await?;
+async fn deep_supply(
+    State((_, rpc_url)): State<(PgPool, Url)>,
+) -> Result<Json<u64>, DeepBookError> {
+    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let deep_treasury_object_id = ObjectID::from_hex_literal(DEEP_TREASURY_ID)?;

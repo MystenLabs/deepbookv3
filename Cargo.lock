@@ -1903,6 +1903,7 @@ dependencies = [
  "bcs",
  "chrono",
  "clap",
+ "deepbook-schema",
  "diesel",
  "diesel-async",
  "futures",
@@ -4393,7 +4394,7 @@ dependencies = [
 [[package]]
 name = "move-binding-derive"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4c07a7c#4c07a7cb36d0d287dc2f418b13fa2b84a79e8ebd"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=99f68a28c2f19be40a09e5f1281af748df9a8d3e#99f68a28c2f19be40a09e5f1281af748df9a8d3e"
 dependencies = [
  "bcs",
  "fastcrypto 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -4692,7 +4693,7 @@ dependencies = [
 [[package]]
 name = "move-types"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4c07a7c#4c07a7cb36d0d287dc2f418b13fa2b84a79e8ebd"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=99f68a28c2f19be40a09e5f1281af748df9a8d3e#99f68a28c2f19be40a09e5f1281af748df9a8d3e"
 dependencies = [
  "move-core-types 0.0.4 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
  "primitive-types",
