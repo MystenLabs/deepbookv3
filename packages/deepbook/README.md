@@ -1,4 +1,4 @@
-![image info](./DeepBook_Logo_White.png)
+![image info](../../DeepBook_Logo_White.png)
 
 # DeepBook V3
 
@@ -14,7 +14,7 @@ DeepBook V3 is a next generation decentralized central limit order book (CLOB) b
 
 ## DeepBook Architecture
 
-![image info](./DBv3Architecture.png)
+![image info](../../DBv3Architecture.png)
 
 ## Balance Manager
 
