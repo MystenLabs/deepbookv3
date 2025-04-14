@@ -15,7 +15,7 @@ struct Args {
     #[clap(
         env,
         long,
-        default_value = "postgres://postgres:46B6nJp_09not_cUZHw@34.105.11.255:5432/defaultdb"
+        default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
     #[clap(env, long, default_value = "https://fullnode.mainnet.sui.io:443")]
