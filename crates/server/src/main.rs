@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use deepbook_server::postgres_manager::get_connection_pool;
 use deepbook_server::server::run_server;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
 #[derive(Parser)]
@@ -30,8 +30,8 @@ async fn main() -> Result<(), anyhow::Error> {
         rpc_url,
     } = Args::parse();
     let server_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
-    let pg_pool = get_connection_pool(database_url).await;
-    run_server(server_address, pg_pool, rpc_url).await?;
+    let db = Db::for_read(database_url, DbArgs::default()).await?;
+    run_server(server_address, db, rpc_url).await?;
 
     Ok(())
 }

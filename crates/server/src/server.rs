@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{error::DeepBookError, postgres_manager::PgPool};
+use crate::error::DeepBookError;
 use axum::http::Method;
 use axum::{
     extract::{Path, Query, State},
@@ -20,6 +20,7 @@ use diesel_async::RunQueryDsl;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
+use sui_pg_db::Db;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
@@ -65,7 +66,7 @@ pub const DEEP_SUPPLY_MODULE: &str = "deep";
 pub const DEEP_SUPPLY_FUNCTION: &str = "total_supply";
 pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
 
-pub fn run_server(socket_address: SocketAddr, state: PgPool, rpc_url: Url) -> JoinHandle<()> {
+pub fn run_server(socket_address: SocketAddr, state: Db, rpc_url: Url) -> JoinHandle<()> {
     tokio::spawn(async move {
         let listener = TcpListener::bind(socket_address).await.unwrap();
         axum::serve(listener, make_router(state, rpc_url))
@@ -73,7 +74,7 @@ pub fn run_server(socket_address: SocketAddr, state: PgPool, rpc_url: Url) -> Jo
             .unwrap();
     })
 }
-pub(crate) fn make_router(state: PgPool, rpc_url: Url) -> Router {
+pub(crate) fn make_router(state: Db, rpc_url: Url) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
         .allow_headers(Any)
@@ -134,8 +135,8 @@ async fn health_check() -> StatusCode {
 }
 
 /// Get all pools stored in database
-async fn get_pools(State(state): State<PgPool>) -> Result<Json<Vec<Pools>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+async fn get_pools(State(state): State<Db>) -> Result<Json<Vec<Pools>>, DeepBookError> {
+    let connection = &mut state.connect().await?;
     let results = schema::pools::table
         .select(Pools::as_select())
         .load(connection)
@@ -147,7 +148,7 @@ async fn get_pools(State(state): State<PgPool>) -> Result<Json<Vec<Pools>>, Deep
 async fn historical_volume(
     Path(pool_names): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
     // Fetch all pools to map names to IDs
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
@@ -199,7 +200,7 @@ async fn historical_volume(
     };
 
     // Query the database for the historical volume
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let results: Vec<(String, i64)> = schema::order_fills::table
         .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
         .filter(schema::order_fills::pool_id.eq_any(pool_ids_list))
@@ -225,7 +226,7 @@ async fn historical_volume(
 /// Get all historical volume for all pools
 async fn all_historical_volume(
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
 
@@ -242,9 +243,9 @@ async fn all_historical_volume(
 async fn get_historical_volume_by_balance_manager_id(
     Path((pool_names, balance_manager_id)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, Vec<i64>>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
 
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
     let pool_name_to_id: HashMap<String, String> = pools
@@ -334,9 +335,9 @@ async fn get_historical_volume_by_balance_manager_id(
 async fn get_historical_volume_by_balance_manager_id_with_interval(
     Path((pool_names, balance_manager_id)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, HashMap<String, Vec<i64>>>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
 
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
     let pool_name_to_id: HashMap<String, String> = pools
@@ -455,7 +456,7 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
 
 async fn ticker(
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, HashMap<String, Value>>>, DeepBookError> {
     // Fetch base and quote historical volumes
     let base_volumes = fetch_historical_volume(&params, true, &state).await?;
@@ -478,7 +479,7 @@ async fn ticker(
     let start_time = end_time - (24 * 60 * 60 * 1000);
 
     // Fetch last prices for all pools in a single query. Only trades in the last 24 hours will count.
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let last_prices: Vec<(String, i64)> = schema::order_fills::table
         .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
         .select((schema::order_fills::pool_id, schema::order_fills::price))
@@ -536,7 +537,7 @@ async fn ticker(
 async fn fetch_historical_volume(
     params: &HashMap<String, String>,
     volume_in_base: bool,
-    state: &PgPool,
+    state: &Db,
 ) -> Result<HashMap<String, u64>, DeepBookError> {
     let mut params_with_volume = params.clone();
     params_with_volume.insert("volume_in_base".to_string(), volume_in_base.to_string());
@@ -548,7 +549,7 @@ async fn fetch_historical_volume(
 
 #[allow(clippy::get_first)]
 async fn summary(
-    State((state, rpc_url)): State<(PgPool, Url)>,
+    State((state, rpc_url)): State<(Db, Url)>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch pools metadata first since it's required for other functions
     let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
@@ -681,7 +682,7 @@ async fn summary(
 
 async fn high_low_prices_24h(
     pool_decimals: &HashMap<String, (i16, i16)>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<HashMap<String, (f64, f64)>, DeepBookError> {
     // Get the current timestamp in milliseconds
     let end_time = SystemTime::now()
@@ -692,7 +693,7 @@ async fn high_low_prices_24h(
     // Calculate the start time for 24 hours ago
     let start_time = end_time - (24 * 60 * 60 * 1000);
 
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
 
     // Query for trades within the last 24 hours for all pools
     let results: Vec<(String, Option<i64>, Option<i64>)> = schema::order_fills::table
@@ -725,9 +726,9 @@ async fn high_low_prices_24h(
 
 async fn price_change_24h(
     pool_metadata: &HashMap<String, (String, (i16, i16))>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<HashMap<String, f64>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
 
     // Calculate the timestamp for 24 hours ago
     let now = SystemTime::now()
@@ -787,9 +788,9 @@ async fn price_change_24h(
 async fn order_updates(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
 
     // Fetch pool data with proper error handling
     let (pool_id, base_decimals, quote_decimals) = schema::pools::table
@@ -915,10 +916,10 @@ async fn order_updates(
 async fn trades(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch all pools to map names to IDs and decimals
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let pool_data = schema::pools::table
         .filter(schema::pools::pool_name.eq(pool_name.clone()))
         .select((
@@ -1059,7 +1060,7 @@ async fn trades(
 
 async fn trade_count(
     Query(params): Query<HashMap<String, String>>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<i64>, DeepBookError> {
     // Parse start_time and end_time
     let end_time = params
@@ -1079,7 +1080,7 @@ async fn trade_count(
         .map(|t| t * 1000) // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let result: i64 = schema::order_fills::table
         .select(count_star())
         .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
@@ -1107,9 +1108,9 @@ fn calculate_trade_id(maker_id: &str, taker_id: &str) -> Result<u128, DeepBookEr
 }
 
 pub async fn assets(
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, HashMap<String, Value>>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let assets = schema::assets::table
         .select((
             schema::assets::symbol,
@@ -1157,7 +1158,7 @@ pub async fn assets(
 async fn orderbook(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State((state, rpc_url)): State<(PgPool, Url)>,
+    State((state, rpc_url)): State<(Db, Url)>,
 ) -> Result<Json<HashMap<String, Value>>, DeepBookError> {
     let depth = params
         .get("depth")
@@ -1202,7 +1203,7 @@ async fn orderbook(
     };
 
     // Fetch the pool data from the `pools` table
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let pool_data = schema::pools::table
         .filter(schema::pools::pool_name.eq(pool_name.clone()))
         .select((
@@ -1394,9 +1395,7 @@ async fn orderbook(
 }
 
 /// DEEP total supply
-async fn deep_supply(
-    State((_, rpc_url)): State<(PgPool, Url)>,
-) -> Result<Json<u64>, DeepBookError> {
+async fn deep_supply(State((_, rpc_url)): State<(Db, Url)>) -> Result<Json<u64>, DeepBookError> {
     let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -1472,9 +1471,9 @@ async fn deep_supply(
 
 async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
-    State(state): State<PgPool>,
+    State(state): State<Db>,
 ) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
-    let connection = &mut state.get().await?;
+    let connection = &mut state.connect().await?;
     let mut query =
       "SELECT asset, SUM(amount)::bigint AS amount, deposit FROM balances WHERE checkpoint_timestamp_ms < "
           .to_string();

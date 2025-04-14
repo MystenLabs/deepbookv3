@@ -1910,6 +1910,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sui-json-rpc-types",
+ "sui-pg-db",
  "sui-sdk",
  "sui-types",
  "tokio",
