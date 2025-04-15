@@ -35,6 +35,7 @@ const BOB: address = @0xBBBB;
 const NoError: u64 = 0;
 const NoErrorDeepAsBase: u64 = 1;
 const NoErrorPayWithInput: u64 = 2;
+const NoErrorHasDeepPrice: u64 = 3;
 
 const EDuplicatePool: u64 = 1;
 const ENotEnoughFunds: u64 = 2;
@@ -63,6 +64,11 @@ fun test_master_ok() {
 #[test]
 fun test_master_input_token_ok() {
     test_master_input_tokens(NoError)
+}
+
+#[test]
+fun test_master_input_token_with_deep_price_ok() {
+    test_master_input_tokens(NoErrorHasDeepPrice)
 }
 
 #[test, expected_failure(abort_code = ::deepbook::registry::EPoolAlreadyExists)]
@@ -1144,6 +1150,45 @@ fun test_master_input_tokens(error_code: u64) {
         false,
         &mut test,
     );
+
+    if (error_code == NoErrorHasDeepPrice) {
+        let owner_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
+            OWNER,
+            starting_balance,
+            &mut test,
+        );
+
+        // Create two pools, one with SUI as base asset and one with SPAM as base
+        // asset
+        let pool1_reference_id = pool_tests::setup_reference_pool<SUI, DEEP>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        );
+        let pool2_reference_id = pool_tests::setup_reference_pool<SPAM, DEEP>(
+            OWNER,
+            registry_id,
+            owner_balance_manager_id,
+            100 * constants::float_scaling(),
+            &mut test,
+        );
+
+        // Default price point of 100 deep per base will be added
+        pool_tests::add_deep_price_point<SUI, USDC, SUI, DEEP>(
+            OWNER,
+            pool1_id,
+            pool1_reference_id,
+            &mut test,
+        );
+        pool_tests::add_deep_price_point<SPAM, USDC, SPAM, DEEP>(
+            OWNER,
+            pool2_id,
+            pool2_reference_id,
+            &mut test,
+        );
+    };
 
     let alice_balance_manager_id = balance_manager_tests::create_acct_and_share_with_funds(
         ALICE,
