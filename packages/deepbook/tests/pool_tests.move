@@ -1280,7 +1280,7 @@ public(package) fun setup_default_permissionless_pool<BaseAsset, QuoteAsset>(
     registry_id: ID,
     test: &mut Scenario,
 ): ID {
-    setup_permissionsless_pool<BaseAsset, QuoteAsset>(
+    setup_permissionless_pool<BaseAsset, QuoteAsset>(
         sender,
         constants::tick_size(), // tick size
         constants::lot_size(), // lot size
@@ -4918,7 +4918,7 @@ fun setup_pool<BaseAsset, QuoteAsset>(
     pool_id
 }
 
-fun setup_permissionsless_pool<BaseAsset, QuoteAsset>(
+fun setup_permissionless_pool<BaseAsset, QuoteAsset>(
     sender: address,
     tick_size: u64,
     lot_size: u64,

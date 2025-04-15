@@ -99,7 +99,7 @@ public(package) fun fee_quantity(
         math::mul(quote_quantity, self.deep_per_asset)
     };
 
-    if (deep_quantity > 0) {
+    if (self.deep_per_asset > 0) {
         balances::new(0, 0, deep_quantity)
     } else if (is_bid) {
         balances::new(
