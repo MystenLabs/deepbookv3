@@ -224,7 +224,7 @@ pub struct Votes {
     pub stake: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = pools, primary_key(pool_id))]
 pub struct Pools {
     pub pool_id: String,
