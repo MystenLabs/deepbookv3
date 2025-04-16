@@ -18,6 +18,7 @@ on:
           - Prep Kiosk MVR Registration
           - Package Info Creation
           - Register Deepbook with MVR
+          - Add Stable Coins
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -172,6 +173,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/linkPackageInfo.ts
+
+      - name: Add Stable Coins
+        if: ${{ inputs.transaction_type == 'Add Stable Coins' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/addStablecoin.ts
 
       - name: Show Transaction Data (To sign)
         run: |
