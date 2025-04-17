@@ -82,17 +82,22 @@ const mainnetPlugin = namedPackagesPlugin({
   };
 
   // Transfer all app cap + package info objects
-  const allObjects: string[] = [];
+  const allAppCaps: string[] = [];
 
   for (const value of Object.values(MVRAppCaps)) {
-    allObjects.push(value);
+    allAppCaps.push(value);
   }
+  transaction.transferObjects(allAppCaps, holdingAddress);
 
-  for (const value of Object.values(packageInfos)) {
-    allObjects.push(value);
+  for (const packageInfoId of Object.values(packageInfos)) {
+    transaction.moveCall({
+      target: `@mvr/metadata::package_info::transfer`,
+      arguments: [
+        transaction.object(packageInfoId),
+        transaction.pure.address(holdingAddress),
+      ],
+    }); // PackageInfo transferred to Admincap Owner
   }
-
-  transaction.transferObjects(allObjects, holdingAddress);
 
   let res = await prepareMultisigTx(
     transaction,
