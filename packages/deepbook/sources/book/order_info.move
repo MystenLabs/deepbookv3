@@ -5,12 +5,14 @@
 /// All order matching happens in this module.
 module deepbook::order_info;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::fill::Fill;
-use deepbook::math;
-use deepbook::order::{Self, Order};
+use deepbook::{
+    balances::{Self, Balances},
+    constants,
+    deep_price::OrderDeepPrice,
+    fill::Fill,
+    math,
+    order::{Self, Order}
+};
 use sui::event;
 
 // === Errors ===
@@ -29,7 +31,7 @@ const ESelfMatchingCancelTaker: u64 = 8;
 /// This objects gets created at the beginning of the order lifecycle and
 /// gets updated until it is completed or placed in the book.
 /// It is returned at the end of the order lifecycle.
-public struct OrderInfo has store, drop, copy {
+public struct OrderInfo has copy, drop, store {
     // ID of the pool
     pool_id: ID,
     // ID of the order within the pool
@@ -81,7 +83,7 @@ public struct OrderInfo has store, drop, copy {
 }
 
 /// Emitted when a maker order is filled.
-public struct OrderFilled has copy, store, drop {
+public struct OrderFilled has copy, drop, store {
     pool_id: ID,
     maker_order_id: u128,
     taker_order_id: u128,
@@ -101,7 +103,7 @@ public struct OrderFilled has copy, store, drop {
 }
 
 /// Emitted when a maker order is injected into the order book.
-public struct OrderPlaced has copy, store, drop {
+public struct OrderPlaced has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -115,7 +117,7 @@ public struct OrderPlaced has copy, store, drop {
 }
 
 /// Emitted when a maker order is expired.
-public struct OrderExpired has copy, store, drop {
+public struct OrderExpired has copy, drop, store {
     balance_manager_id: ID,
     pool_id: ID,
     order_id: u128,
@@ -283,6 +285,16 @@ public(package) fun fills_ref(self: &mut OrderInfo): &mut vector<Fill> {
     &mut self.fills
 }
 
+public(package) fun paid_fees_balances(self: &OrderInfo): Balances {
+    if (self.fee_is_deep) {
+        balances::new(0, 0, self.paid_fees)
+    } else if (self.is_bid) {
+        balances::new(0, self.paid_fees, 0)
+    } else {
+        balances::new(self.paid_fees, 0, 0)
+    }
+}
+
 /// Given a partially filled `OrderInfo`, the taker fee and maker fee, for the user
 /// placing the order, calculate all of the balances that need to be settled and
 /// the balances that are owed. The executed quantity is multiplied by the taker_fee
@@ -292,36 +304,33 @@ public(package) fun calculate_partial_fill_balances(
     taker_fee: u64,
     maker_fee: u64,
 ): (Balances, Balances) {
-    let taker_deep_in = math::mul(
-        taker_fee,
-        self
-            .order_deep_price
-            .deep_quantity(
-                self.executed_quantity,
-                self.cumulative_quote_quantity,
-            ),
-    );
-    self.paid_fees = taker_deep_in;
-    let fills = &mut self.fills;
+    let mut taker_fee_quantity = self
+        .order_deep_price
+        .fee_quantity(
+            self.executed_quantity,
+            self.cumulative_quote_quantity,
+            self.is_bid,
+        );
+    taker_fee_quantity.mul(taker_fee);
+    self.paid_fees = taker_fee_quantity.non_zero_value();
 
+    let fills = &mut self.fills;
     let mut i = 0;
-    while (i < fills.length()) {
+    let num_fills = fills.length();
+    while (i < num_fills) {
         let fill = &mut fills[i];
         if (!fill.expired()) {
             let base_quantity = fill.base_quantity();
             let quote_quantity = fill.quote_quantity();
-            let fill_taker_fee = math::mul(
-                taker_fee,
-                self
-                    .order_deep_price
-                    .deep_quantity(
-                        base_quantity,
-                        quote_quantity,
-                    ),
-            );
-            if (fill_taker_fee > 0) {
-                fill.set_fill_taker_fee(fill_taker_fee);
-            };
+            let mut fill_taker_fee_quantity = self
+                .order_deep_price
+                .fee_quantity(
+                    base_quantity,
+                    quote_quantity,
+                    self.is_bid,
+                );
+            fill_taker_fee_quantity.mul(taker_fee);
+            fill.set_fill_taker_fee(&fill_taker_fee_quantity);
         };
 
         i = i + 1;
@@ -329,7 +338,7 @@ public(package) fun calculate_partial_fill_balances(
 
     let mut settled_balances = balances::new(0, 0, 0);
     let mut owed_balances = balances::new(0, 0, 0);
-    owed_balances.add_deep(taker_deep_in);
+    owed_balances.add_balances(taker_fee_quantity);
 
     if (self.is_bid) {
         settled_balances.add_base(self.executed_quantity);
@@ -341,17 +350,16 @@ public(package) fun calculate_partial_fill_balances(
 
     let remaining_quantity = self.remaining_quantity();
     if (self.order_inserted()) {
-        let maker_deep_in = math::mul(
-            maker_fee,
-            self
-                .order_deep_price
-                .deep_quantity(
-                    remaining_quantity,
-                    math::mul(remaining_quantity, self.price()),
-                ),
-        );
-        self.maker_fees = maker_deep_in;
-        owed_balances.add_deep(maker_deep_in);
+        let mut maker_fee_quantity = self
+            .order_deep_price
+            .fee_quantity(
+                remaining_quantity,
+                math::mul(remaining_quantity, self.price()),
+                self.is_bid,
+            );
+        maker_fee_quantity.mul(maker_fee);
+        self.maker_fees = maker_fee_quantity.non_zero_value();
+        owed_balances.add_balances(maker_fee_quantity);
         if (self.is_bid) {
             owed_balances.add_quote(
                 math::mul(remaining_quantity, self.price()),
@@ -399,10 +407,7 @@ public(package) fun validate_inputs(
         EInvalidOrderType,
     );
     if (order_info.market_order) {
-        assert!(
-            order_info.order_type != constants::post_only(),
-            EMarketOrderCannotBePostOnly,
-        );
+        assert!(order_info.order_type != constants::post_only(), EMarketOrderCannotBePostOnly);
         return
     };
     assert!(
@@ -419,10 +424,7 @@ public(package) fun assert_execution(self: &mut OrderInfo): bool {
         assert!(self.executed_quantity == 0, EPOSTOrderCrossesOrderbook)
     };
     if (self.order_type == constants::fill_or_kill()) {
-        assert!(
-            self.executed_quantity == self.original_quantity,
-            EFOKOrderCannotBeFullyFilled,
-        )
+        assert!(self.executed_quantity == self.original_quantity, EFOKOrderCannotBeFullyFilled)
     };
     if (self.order_type == constants::immediate_or_cancel()) {
         if (self.remaining_quantity() > 0) {
@@ -467,18 +469,11 @@ public(package) fun can_match(self: &OrderInfo, order: &Order): bool {
 /// Matches an `OrderInfo` with an `Order` from the book. Appends a `Fill` to fills.
 /// If the book order is expired, the `Fill` will have the expired flag set to true.
 /// Funds for the match or an expired order are returned to the maker as settled.
-public(package) fun match_maker(
-    self: &mut OrderInfo,
-    maker: &mut Order,
-    timestamp: u64,
-): bool {
+public(package) fun match_maker(self: &mut OrderInfo, maker: &mut Order, timestamp: u64): bool {
     if (!self.can_match(maker)) return false;
 
     if (self.self_matching_option() == constants::cancel_taker()) {
-        assert!(
-            maker.balance_manager_id() != self.balance_manager_id(),
-            ESelfMatchingCancelTaker,
-        );
+        assert!(maker.balance_manager_id() != self.balance_manager_id(), ESelfMatchingCancelTaker);
     };
     let expire_maker =
         self.self_matching_option() == constants::cancel_maker() &&
@@ -494,8 +489,7 @@ public(package) fun match_maker(
     if (fill.expired()) return true;
 
     self.executed_quantity = self.executed_quantity + fill.base_quantity();
-    self.cumulative_quote_quantity =
-        self.cumulative_quote_quantity + fill.quote_quantity();
+    self.cumulative_quote_quantity = self.cumulative_quote_quantity + fill.quote_quantity();
     self.status = constants::partially_filled();
     if (self.remaining_quantity() == 0) self.status = constants::filled();
 
@@ -507,7 +501,8 @@ public(package) fun match_maker(
 /// fills can be emitted in a single call.
 public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
     let mut i = 0;
-    while (i < self.fills.length()) {
+    let num_fills = self.fills.length();
+    while (i < num_fills) {
         let fill = &self.fills[i];
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));
@@ -551,11 +546,7 @@ public(package) fun set_order_inserted(self: &mut OrderInfo) {
 }
 
 // === Private Functions ===
-fun order_filled_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-): OrderFilled {
+fun order_filled_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64): OrderFilled {
     OrderFilled {
         pool_id: self.pool_id,
         maker_order_id: fill.maker_order_id(),
@@ -576,11 +567,7 @@ fun order_filled_from_fill(
     }
 }
 
-fun order_expired_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-): OrderExpired {
+fun order_expired_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64): OrderExpired {
     OrderExpired {
         balance_manager_id: fill.balance_manager_id(),
         pool_id: self.pool_id,
@@ -591,15 +578,11 @@ fun order_expired_from_fill(
         is_bid: !self.is_bid(),
         original_quantity: fill.original_maker_quantity(),
         base_asset_quantity_canceled: fill.base_quantity(),
-        timestamp
+        timestamp,
     }
 }
 
-fun emit_order_canceled_maker_from_fill(
-    self: &OrderInfo,
-    fill: &Fill,
-    timestamp: u64,
-) {
+fun emit_order_canceled_maker_from_fill(self: &OrderInfo, fill: &Fill, timestamp: u64) {
     order::emit_cancel_maker(
         fill.balance_manager_id(),
         self.pool_id,
@@ -610,6 +593,6 @@ fun emit_order_canceled_maker_from_fill(
         !self.is_bid(),
         fill.original_maker_quantity(),
         fill.base_quantity(),
-        timestamp
+        timestamp,
     )
 }

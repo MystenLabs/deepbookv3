@@ -2,6 +2,7 @@
 **/.history/
 **/.vscode/
 **/.idea/
+**/target/
 
 # OSX
 .DS_Store
@@ -17,3 +18,4 @@ package-lock.json
 .env
 **/benchmark_data/
 tx-data.txt
+example.ts

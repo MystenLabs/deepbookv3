@@ -4,10 +4,7 @@
 /// This module defines the OrderPage struct and its methods to iterate over orders in a pool.
 module deepbook::order_query;
 
-use deepbook::big_vector::slice_borrow;
-use deepbook::constants;
-use deepbook::order::Order;
-use deepbook::pool::Pool;
+use deepbook::{big_vector::slice_borrow, constants, order::Order, pool::Pool};
 
 // === Structs ===
 public struct OrderPage has drop {
@@ -35,13 +32,11 @@ public fun iter_orders<BaseAsset, QuoteAsset>(
     let ask_max_order_id = constants::max_u128();
 
     let start = start_order_id.get_with_default({
-        if (bids) bid_max_order_id
-        else ask_min_order_id
+        if (bids) bid_max_order_id else ask_min_order_id
     });
 
     let end = end_order_id.get_with_default({
-        if (bids) bid_min_order_id
-        else ask_max_order_id
+        if (bids) bid_min_order_id else ask_max_order_id
     });
 
     let min_expire = min_expire_timestamp.get_with_default(0);
@@ -61,9 +56,7 @@ public fun iter_orders<BaseAsset, QuoteAsset>(
             orders.push_back(order.copy_order());
         };
 
-        (ref, offset) =
-            if (bids) side.prev_slice(ref, offset)
-            else side.next_slice(ref, offset);
+        (ref, offset) = if (bids) side.prev_slice(ref, offset) else side.next_slice(ref, offset);
     };
 
     OrderPage {

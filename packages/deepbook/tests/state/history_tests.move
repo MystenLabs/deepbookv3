@@ -4,12 +4,8 @@
 #[test_only]
 module deepbook::history_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::history;
-use deepbook::trade_params;
-use sui::test_scenario::{begin, end};
-use sui::test_utils;
+use deepbook::{balances, constants, history, trade_params};
+use sui::{test_scenario::{begin, end}, test_utils};
 
 const EWrongRebateAmount: u64 = 0;
 
@@ -27,7 +23,7 @@ fun test_rebate_amount() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
@@ -38,23 +34,25 @@ fun test_rebate_amount() {
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
         5 * FLOAT_SCALING,
-        balances::new(0, 0, 1_000_000_000),
+        balances::new(500_000, 2_500_000, 1_000_000_000),
     );
 
     // epoch 30
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         29,
         (3 * FLOAT_SCALING) as u128,
         1_000_000,
     );
+    assert!(rebate.base() == 90_000, EWrongRebateAmount);
+    assert!(rebate.quote() == 450_000, EWrongRebateAmount);
     assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
     test_utils::destroy(history);
@@ -75,35 +73,37 @@ fun test_epoch_skipped() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
-            balances::new(0, 0, 500_000_000),
+            balances::new(500_000, 2_500_000, 500_000_000),
         );
         epochs_to_advance = epochs_to_advance - 1;
     };
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
         5 * FLOAT_SCALING,
-        balances::new(0, 0, 1_000_000_000),
+        balances::new(500_000, 2_500_000, 1_000_000_000),
     );
 
     // epoch 31
     test.next_epoch(owner);
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate_epoch_0_alice = history.calculate_rebate_amount(
         28,
         0,
         1_000_000,
     );
+    assert!(rebate_epoch_0_alice.base() == 0, EWrongRebateAmount);
+    assert!(rebate_epoch_0_alice.quote() == 0, EWrongRebateAmount);
     assert!(rebate_epoch_0_alice.deep() == 0, EWrongRebateAmount);
 
     let rebate_epoch_1_alice = history.calculate_rebate_amount(
@@ -111,6 +111,8 @@ fun test_epoch_skipped() {
         0,
         1_000_000,
     );
+    assert!(rebate_epoch_1_alice.base() == 0, EWrongRebateAmount);
+    assert!(rebate_epoch_1_alice.quote() == 0, EWrongRebateAmount);
     assert!(rebate_epoch_1_alice.deep() == 0, EWrongRebateAmount);
 
     let rebate_epoch_1_bob = history.calculate_rebate_amount(
@@ -118,6 +120,8 @@ fun test_epoch_skipped() {
         (3 * FLOAT_SCALING) as u128,
         1_000_000,
     );
+    assert!(rebate_epoch_1_bob.base() == 90_000, EWrongRebateAmount);
+    assert!(rebate_epoch_1_bob.quote() == 450_000, EWrongRebateAmount);
     assert!(rebate_epoch_1_bob.deep() == 180_000_000, EWrongRebateAmount);
 
     test_utils::destroy(history);
@@ -137,34 +141,36 @@ fun test_other_maker_volume_above_phase_out() {
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
-            balances::new(0, 0, 500_000_000),
+            balances::new(500_000, 2_500_000, 500_000_000),
         );
         epochs_to_advance = epochs_to_advance - 1;
     };
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         15 * FLOAT_SCALING,
         5 * FLOAT_SCALING,
-        balances::new(0, 0, 1_000_000_000),
+        balances::new(500_000, 2_500_000, 1_000_000_000),
     );
 
     // epoch 30
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         29,
         (3 * FLOAT_SCALING) as u128,
         1_000_000,
     );
+    assert!(rebate.base() == 0, EWrongRebateAmount);
+    assert!(rebate.quote() == 0, EWrongRebateAmount);
     assert!(rebate.deep() == 0, EWrongRebateAmount);
 
     test_utils::destroy(history);
@@ -172,7 +178,8 @@ fun test_other_maker_volume_above_phase_out() {
 }
 
 #[test]
-/// Pool is created on epoch 0, up till epoch 27 should still grant close to the maximum rebate.
+/// Pool is created on epoch 0,
+/// up till epoch 27 should still grant close to the maximum rebate.
 /// Epoch 28 should return the normal rebate.
 fun test_rebate_edge_epoch_ok() {
     let owner: address = @0x1;
@@ -185,46 +192,50 @@ fun test_rebate_edge_epoch_ok() {
     history.set_current_volumes(
         10 * FLOAT_SCALING,
         5 * FLOAT_SCALING,
-        balances::new(0, 0, 500_000_000),
+        balances::new(500_000, 2_500_000, 500_000_000),
     );
     let mut epochs_to_advance = constants::phase_out_epochs() - 1;
 
     while (epochs_to_advance > 0) {
         test.next_epoch(owner);
-        history.update(trade_params, test.ctx());
+        history.update(trade_params, object::id_from_address(@0x0), test.ctx());
         history.set_current_volumes(
             10 * FLOAT_SCALING,
             5 * FLOAT_SCALING,
-            balances::new(0, 0, 500_000_000),
+            balances::new(500_000, 2_500_000, 500_000_000),
         );
         let rebate = history.calculate_rebate_amount(
             0,
             (3 * FLOAT_SCALING) as u128,
             1_000_000,
         );
+        assert!(rebate.base() == 300_000, EWrongRebateAmount);
+        assert!(rebate.quote() == 1_500_000, EWrongRebateAmount);
         assert!(rebate.deep() == 300_000_000, EWrongRebateAmount);
         epochs_to_advance = epochs_to_advance - 1;
     };
 
     // epoch 28
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     history.set_current_volumes(
         10 * FLOAT_SCALING,
         5 * FLOAT_SCALING,
-        balances::new(0, 0, 1_000_000_000),
+        balances::new(500_000, 1_000_000, 1_000_000_000),
     );
 
     // epoch 29
     test.next_epoch(owner);
-    history.update(trade_params, test.ctx());
+    history.update(trade_params, object::id_from_address(@0x0), test.ctx());
 
     let rebate = history.calculate_rebate_amount(
         28,
         (3 * FLOAT_SCALING) as u128,
         1_000_000,
     );
+    assert!(rebate.base() == 90_000, EWrongRebateAmount);
+    assert!(rebate.quote() == 180_000, EWrongRebateAmount);
     assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
     test_utils::destroy(history);
