@@ -21,7 +21,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
     arguments: [
       transaction.pure.string("https://github.com/MystenLabs/deepbookv3"),
       transaction.pure.string("packages/deepbook"),
-      transaction.pure.string("22c784b87f811fb29697a73bf585e3f516a1f766"),
+      transaction.pure.string("v2.0.0"),
     ],
   });
 
