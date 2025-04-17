@@ -51,7 +51,7 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(packageInfo),
       transaction.pure.address(holdingAddress),
     ],
-  }); // PackageInfo transferred to Admincap Owner
+  }); // PackageInfo transferred to MVR account
 
   const MVRAppCaps = {
     core: "0xf30a07fc1fadc8bd33ed4a9af5129967008201387b979a9899e52fbd852b29a9",
@@ -96,7 +96,7 @@ const mainnetPlugin = namedPackagesPlugin({
         transaction.object(packageInfoId),
         transaction.pure.address(holdingAddress),
       ],
-    }); // PackageInfo transferred to Admincap Owner
+    }); // PackageInfo transferred to MVR account
   }
 
   let res = await prepareMultisigTx(

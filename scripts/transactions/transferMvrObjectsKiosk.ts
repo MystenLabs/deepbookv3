@@ -34,11 +34,14 @@ const mainnetPlugin = namedPackagesPlugin({
     allObjects.push(value);
   }
 
-  for (const value of Object.values(packageInfos)) {
-    allObjects.push(value);
-  }
-
   transaction.transferObjects(allObjects, holdingAddress);
+  transaction.moveCall({
+    target: `@mvr/metadata::package_info::transfer`,
+    arguments: [
+      transaction.object(packageInfos.kiosk),
+      transaction.pure.address(holdingAddress),
+    ],
+  });
 
   let res = await prepareMultisigTx(
     transaction,
