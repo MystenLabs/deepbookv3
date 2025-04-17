@@ -16,7 +16,8 @@ const mainnetPlugin = namedPackagesPlugin({
   const transaction = new Transaction();
   transaction.addSerializationPlugin(mainnetPlugin);
 
-  const holdingAddress = ""; // TODO: fill in
+  const holdingAddress =
+    "0x10a1fc2b9170c6bac858fdafc7d3cb1f4ea659fed748d18eff98d08debf82042";
 
   const MVRAppCaps = {
     core: "0xf30a07fc1fadc8bd33ed4a9af5129967008201387b979a9899e52fbd852b29a9",

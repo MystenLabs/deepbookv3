@@ -1,15 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { newTransaction } from "./transaction";
+import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
 import { prepareMultisigTx } from "../utils/utils";
 
 export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 
+const mainnetPlugin = namedPackagesPlugin({
+  url: "https://mainnet.mvr.mystenlabs.com",
+});
+
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const transaction = newTransaction();
+  const transaction = new Transaction();
+  transaction.addSerializationPlugin(mainnetPlugin);
 
   const appCap = transaction.moveCall({
     target: `@mvr/core::move_registry::register`,
