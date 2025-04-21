@@ -121,8 +121,6 @@ const mainnetPlugin = namedPackagesPlugin({
   for (const [name, { packageInfo, sha, version, path }] of Object.entries(
     data
   )) {
-    console.log(`Processing package: ${name}`);
-
     if (name != "denylist") {
       transaction.moveCall({
         target: `@mvr/metadata::package_info::unset_git_versioning`,
