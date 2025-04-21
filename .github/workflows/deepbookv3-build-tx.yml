@@ -20,6 +20,7 @@ on:
           - Register Deepbook with MVR
           - Add Stable Coins
           - Transfer Mvr Kiosk
+          - Finish MVR Setup
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -194,6 +195,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/transferMvrObjectsKiosk.ts
+
+      - name: Finish MVR Setup
+        if: ${{ inputs.transaction_type == 'Finish MVR Setup' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/allMvrSetup.ts
 
       - name: Show Transaction Data (To sign)
         run: |
