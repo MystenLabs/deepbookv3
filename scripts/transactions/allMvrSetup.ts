@@ -64,7 +64,7 @@ const mainnetPlugin = namedPackagesPlugin({
   });
 
   const repository = "https://github.com/MystenLabs/suins-contracts";
-  const latestSha = "releases/main";
+  const latestSha = "releases/core/4";
 
   const data = {
     core: {
