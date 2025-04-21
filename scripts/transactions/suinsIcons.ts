@@ -30,7 +30,8 @@ const mainnetPlugin = namedPackagesPlugin({
       "0x327702a5751c9582b152db81073e56c9201fad51ecbaf8bb522ae8df49f8dfd1",
     tempSubnameProxy:
       "0x3b2582036fe9aa17c059e7b3993b8dc97ae57d2ac9e1fe603884060c98385fb2",
-    denylist: "", // TODO: fill in with appcap
+    denylist:
+      "0x8816fd949b3191040855a77a834d98aa822eb63bd2e63de2aaa0064586200882",
   };
 
   for (const appCapObjectId of Object.values(MVRAppCaps)) {
@@ -111,7 +112,8 @@ const mainnetPlugin = namedPackagesPlugin({
       path: "packages/temp-subname-proxy",
     },
     denylist: {
-      packageInfo: "", // TODO: update with packageinfo
+      packageInfo:
+        "0x5007c0681ff36e9efcb5d655af758c5eeb4825b39ef4ec2ccacd195f4f65d4f5",
       sha: latestSha,
       version: "1",
       path: "packages/denylist",
@@ -202,11 +204,11 @@ const mainnetPlugin = namedPackagesPlugin({
     arguments: [
       transaction.pure.option(
         "address",
-        "" // TODO: PackageInfo object on testnet, fill in
+        "0xb82af529b54f90474e523467123c7e255903d0713ec8b7f0125794f94742c7bc" // PackageInfo object on testnet
       ),
       transaction.pure.option(
         "address",
-        "" // TODO: V1 of the package on testnet
+        "0xa86c05fbc6371788eb31260dc5085f4bfeab8b95c95d9092c9eb86e63fae3d49" // V1 of the denylist package on testnet
       ),
       transaction.pure.option("address", null),
     ],
