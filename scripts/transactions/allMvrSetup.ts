@@ -59,9 +59,7 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       transaction.object(kioskAppCap),
       transaction.pure.string("icon_url"), // key
-      transaction.pure.string(
-        "https://pbs.twimg.com/profile_images/1714053861076553728/71-kjh3f_400x400.png"
-      ), // TODO: fill in accurate mysten logo. Convert to svg?
+      transaction.pure.string("https://svg-host.vercel.app/mystenlogo.svg"),
     ],
   });
 
