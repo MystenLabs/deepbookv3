@@ -159,7 +159,7 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(MVRAppCaps.denylist),
       transaction.pure.string("description"), // key
       transaction.pure.string(
-        "The SuiNS denylist package. Used to manage a list of disallowed names including banned or reserved domain names."
+        "The SuiNS denylist package. Used to manage a list of disallowed names including banned names."
       ), // value
     ],
   });
