@@ -66,7 +66,7 @@ const mainnetPlugin = namedPackagesPlugin({
   });
 
   const repository = "https://github.com/MystenLabs/suins-contracts";
-  const latestSha = "releases/mainnet"; // TODO: fill in after README updates, using a tag if possible
+  const latestSha = "releases/main";
 
   const data = {
     core: {
@@ -125,13 +125,15 @@ const mainnetPlugin = namedPackagesPlugin({
   )) {
     console.log(`Processing package: ${name}`);
 
-    transaction.moveCall({
-      target: `@mvr/metadata::package_info::unset_git_versioning`,
-      arguments: [
-        transaction.object(packageInfo),
-        transaction.pure.u64(version),
-      ],
-    });
+    if (name != "denylist") {
+      transaction.moveCall({
+        target: `@mvr/metadata::package_info::unset_git_versioning`,
+        arguments: [
+          transaction.object(packageInfo),
+          transaction.pure.u64(version),
+        ],
+      });
+    }
 
     const git = transaction.moveCall({
       target: `@mvr/metadata::git::new`,
@@ -186,7 +188,7 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       transaction.object(MVRAppCaps.denylist),
       transaction.pure.string("homepage_url"), // key
-      transaction.pure.string("https://docs.suins.io/"), // value
+      transaction.pure.string("https://suins.io/"), // value
     ],
   });
 
@@ -196,6 +198,23 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(data.denylist.packageInfo),
       transaction.pure.string("default"),
       transaction.pure.string("@suins/denylist"),
+    ],
+  });
+
+  transaction.moveCall({
+    target: "@mvr/metadata::package_info::unset_metadata",
+    arguments: [
+      transaction.object(data.tempSubnameProxy.packageInfo),
+      transaction.pure.string("default"),
+    ],
+  });
+
+  transaction.moveCall({
+    target: "@mvr/metadata::package_info::set_metadata",
+    arguments: [
+      transaction.object(data.tempSubnameProxy.packageInfo),
+      transaction.pure.string("default"),
+      transaction.pure.string("@suins/temp-subnames-proxy"),
     ],
   });
 
