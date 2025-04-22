@@ -21,6 +21,7 @@ on:
           - Add Stable Coins
           - Transfer Mvr Kiosk
           - Finish MVR Setup
+          - MVR Package Reverse Resolution
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -205,6 +206,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/allMvrSetup.ts
+
+      - name: MVR Package Reverse Resolution
+        if: ${{ inputs.transaction_type == 'MVR Package Reverse Resolution' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageReverseResolution.ts
 
       - name: Show Transaction Data (To sign)
         run: |

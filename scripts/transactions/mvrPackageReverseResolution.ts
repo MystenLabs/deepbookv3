@@ -18,28 +18,17 @@ const mainnetPlugin = namedPackagesPlugin({
   const holdingAddress =
     "0x9a8859bbe68679bcc6dfd06ede1cce7309d59ef21bb0caf2e4c901320489a466";
 
-  const MVRAppCaps = {
-    core: "0x673bac45d749730e71c3ad2395c2942f7dd61167308752b564963228b147edc0",
-    "subnames-proxy":
-      "0xa24ad6dee0fa4b4a59839a78b638e3157638ac9774b6734af0250b372bf10881",
-    metadata:
-      "0x8e5af7f91bcdbcb637eb6774fbb4b23022db864d125f7e74ab17f64646ac73da",
-    "public-names":
-      "0x4e9264ba30222c1701457ed3d4745c74fd9d736c6609558aafd46ec734e60d78",
-  };
+  // const MVRAppCaps = {
+  //   core: "0x673bac45d749730e71c3ad2395c2942f7dd61167308752b564963228b147edc0",
+  //   "subnames-proxy":
+  //     "0xa24ad6dee0fa4b4a59839a78b638e3157638ac9774b6734af0250b372bf10881",
+  //   metadata:
+  //     "0x8e5af7f91bcdbcb637eb6774fbb4b23022db864d125f7e74ab17f64646ac73da",
+  //   "public-names":
+  //     "0x4e9264ba30222c1701457ed3d4745c74fd9d736c6609558aafd46ec734e60d78",
+  // };
 
-  for (const [name, appCapObjectId] of Object.entries(MVRAppCaps)) {
-    transaction.moveCall({
-      target: "@mvr/metadata::package_info::set_metadata",
-      arguments: [
-        transaction.object(appCapObjectId),
-        transaction.pure.string("default"),
-        transaction.pure.string(`@mvr/${name}`),
-      ],
-    });
-  }
-
-  const latestSha = ""; // TODO: fill in tag name
+  const latestSha = "releases/core/3";
   const repository = "https://github.com/mystenlabs/mvr";
 
   const data = {
@@ -76,6 +65,15 @@ const mainnetPlugin = namedPackagesPlugin({
   for (const [name, { packageInfo, sha, version, path }] of Object.entries(
     data
   )) {
+    transaction.moveCall({
+      target: "@mvr/metadata::package_info::set_metadata",
+      arguments: [
+        transaction.object(packageInfo),
+        transaction.pure.string("default"),
+        transaction.pure.string(`@mvr/${name}`),
+      ],
+    });
+
     transaction.moveCall({
       target: `@mvr/metadata::package_info::unset_git_versioning`,
       arguments: [
