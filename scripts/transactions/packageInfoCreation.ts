@@ -103,7 +103,7 @@ const mainnetPlugin = namedPackagesPlugin({
     transaction,
     env,
     "0x9b388a6da9dd4f73e0b13abc6100f1141782ef105f6f5e9d986fb6e00f0b2591"
-  ); // Owner of Suins UpgradeCap
+  ); // Owner of denylist UpgradeCap
 
   console.dir(res, { depth: null });
 })();

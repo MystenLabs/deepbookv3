@@ -30,7 +30,7 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(
         "0x13dfe584234ec615ce1b034b86965a8ca9c41d4ecb8d281a4de978727137c543"
       ), // suins domain ID
-      transaction.pure.string("denylist"), // name
+      transaction.pure.string("deny-list"), // name
       transaction.object.clock(),
     ],
   });
