@@ -30,7 +30,7 @@ const mainnetPlugin = namedPackagesPlugin({
       appCap:
         "0xa24ad6dee0fa4b4a59839a78b638e3157638ac9774b6734af0250b372bf10881",
       description:
-        "Enables registering applications using SubDomainRegistration from SuiNS.",
+        "Enables registering applications using SuiNS Subnames.",
       documentation_url: "https://docs.suins.io/move-registry",
     },
     metadata: {
