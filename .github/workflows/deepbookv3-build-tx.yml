@@ -23,6 +23,7 @@ on:
           - Finish MVR Setup
           - MVR Package Reverse Resolution
           - Setup Denylist
+          - MVR Package Metadata
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -227,6 +228,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/setupDenylist.ts
+
+      - name: MVR Package Metadata
+        if: ${{ inputs.transaction_type == 'MVR Package Metadata' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageMetadata.ts
 
       - name: Show Transaction Data (To sign)
         run: |
