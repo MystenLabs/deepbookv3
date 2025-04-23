@@ -29,22 +29,21 @@ const mainnetPlugin = namedPackagesPlugin({
     "subnames-proxy": {
       appCap:
         "0xa24ad6dee0fa4b4a59839a78b638e3157638ac9774b6734af0250b372bf10881",
-      description:
-        "Enables registering applications using SuiNS Subnames.",
+      description: "Enables registering applications using SuiNS Subnames.",
       documentation_url: "https://docs.suins.io/move-registry",
     },
     metadata: {
       appCap:
         "0x8e5af7f91bcdbcb637eb6774fbb4b23022db864d125f7e74ab17f64646ac73da",
       description:
-        "Defines the structure and behavior of PackageInfo objects, which are metadata containers associated with registered Move packages. These objects track upgrade capabilities, package addresses, Git versioning metadata, and on-chain display configuration.",
+        "Defines PackageInfo objects, which contain metadata associated with registered Move packages. These objects track upgrade caps, package addresses, Git versioning metadata, and on-chain display configuration.",
       documentation_url: "https://docs.suins.io/move-registry",
     },
     "public-names": {
       appCap:
         "0x4e9264ba30222c1701457ed3d4745c74fd9d736c6609558aafd46ec734e60d78",
       description:
-        "This package provides an open interface for creating and managing public names.",
+        "This package provides an open interface for creating and managing public names. Public names allow anyone to register apps under the namespace. The core use case for this is the global @pkg name supported on MVR.",
       documentation_url: "https://docs.suins.io/move-registry",
     },
   };
