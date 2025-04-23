@@ -22,6 +22,7 @@ on:
           - Transfer Mvr Kiosk
           - Finish MVR Setup
           - MVR Package Reverse Resolution
+          - Setup Denylist
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -216,6 +217,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageReverseResolution.ts
+
+      - name: Setup Denylist
+        if: ${{ inputs.transaction_type == 'Setup Denylist' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/setupDenylist.ts
 
       - name: Show Transaction Data (To sign)
         run: |
