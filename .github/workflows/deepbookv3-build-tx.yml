@@ -24,6 +24,7 @@ on:
           - MVR Package Reverse Resolution
           - Setup Denylist
           - MVR Package Metadata
+          - Adjust Tick Size
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -238,6 +239,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageMetadata.ts
+
+      - name: Adjust Tick Size
+        if: ${{ inputs.transaction_type == 'Adjust Tick Size' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/updatePoolTickSize.ts
 
       - name: Show Transaction Data (To sign)
         run: |
