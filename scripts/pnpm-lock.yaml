@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@mysten/deepbook-v3':
-        specifier: ^0.14.6
-        version: 0.14.6(typescript@5.6.2)
+        specifier: ^0.14.7
+        version: 0.14.7(typescript@5.6.2)
       '@mysten/sui':
         specifier: ^1.29.1
         version: 1.29.1(typescript@5.6.2)
@@ -373,8 +373,8 @@ packages:
   '@mysten/bcs@1.6.1':
     resolution: {integrity: sha512-pywsl2+jxbib5CbteAjMpmJpnj1pcUco2ff+lXCK3hfppPbkyWEMbZDQn1jNngV6ADQ3IFIvPs0FaS7fKWPOLA==}
 
-  '@mysten/deepbook-v3@0.14.6':
-    resolution: {integrity: sha512-kN2Ap6WWReGU19yjIc/VBru/HqP303eAxgzMowR7rJyM3EgF5sfD9RQCchsLgnNjoYS2QgKNAn/uhDNgrp+2oA==}
+  '@mysten/deepbook-v3@0.14.7':
+    resolution: {integrity: sha512-b02X1xiK+IrNSlKh8h9dnjDP8uTfJSaylGqpljqXs71CsGih7ofh5K4YpXUExzJ6qDgYpJ0EFYuraPumhCvAEw==}
     engines: {node: '>=18'}
 
   '@mysten/sui@1.29.1':
@@ -704,7 +704,7 @@ snapshots:
       '@mysten/utils': 0.0.0
       '@scure/base': 1.2.5
 
-  '@mysten/deepbook-v3@0.14.6(typescript@5.6.2)':
+  '@mysten/deepbook-v3@0.14.7(typescript@5.6.2)':
     dependencies:
       '@mysten/sui': 1.29.1(typescript@5.6.2)
     transitivePeerDependencies:
