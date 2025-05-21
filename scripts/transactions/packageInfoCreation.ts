@@ -25,8 +25,8 @@ const mainnetPlugin = namedPackagesPlugin({
     target: `@mvr/metadata::package_info::new`,
     arguments: [
       transaction.object(
-        "0x72a3c603d0218ab59ae81363e608d6c3c0c344890df40bd6ca7de575f28feb7d"
-      ), // Denylist Package UpgradeCap
+        "0x1cab3c76c48c023b60db0a56696d197569f006e406fb9627a8a8d1a119b1c23c"
+      ), // Walrus Sites Package UpgradeCap
     ],
   });
 
@@ -35,7 +35,7 @@ const mainnetPlugin = namedPackagesPlugin({
   // that allows customizing the colors of your metadata object!
   const display = transaction.moveCall({
     target: `@mvr/metadata::display::default`,
-    arguments: [transaction.pure.string("SuiNS - Denylist Metadata")],
+    arguments: [transaction.pure.string("Walrus - Site Metadata")],
   });
 
   // Set that display object to our info object.
@@ -102,8 +102,8 @@ const mainnetPlugin = namedPackagesPlugin({
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0x9b388a6da9dd4f73e0b13abc6100f1141782ef105f6f5e9d986fb6e00f0b2591"
-  ); // Owner of denylist UpgradeCap
+    "0x23eb7ccbbb4a21afea8b1256475e255b3cd84083ca79fa1f1a9435ab93d2b71b"
+  ); // Owner of walrus sites UpgradeCap
 
   console.dir(res, { depth: null });
 })();
