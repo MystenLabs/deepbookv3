@@ -28,9 +28,9 @@ const mainnetPlugin = namedPackagesPlugin({
         "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
       ),
       transaction.object(
-        "0x13dfe584234ec615ce1b034b86965a8ca9c41d4ecb8d281a4de978727137c543"
-      ), // suins domain ID
-      transaction.pure.string("deny-list"), // name
+        "0x6e670c14a6491cf35c3e33b0b20b77ad41871cc038042532e4aa894a2459fa6f"
+      ), // walrus domain ID
+      transaction.pure.string("site"), // name
       transaction.object.clock(),
     ],
   });
@@ -40,8 +40,8 @@ const mainnetPlugin = namedPackagesPlugin({
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0xa81a2328b7bbf70ab196d6aca400b5b0721dec7615bf272d95e0b0df04517e72"
-  ); // Owner of @suins
+    "0x633ae17b3d3eaaeed5fdcc7ef710d26a01bedd3a468e1e390e4c9e1111772ab2"
+  ); // Owner of @walrus
 
   console.dir(res, { depth: null });
 })();
