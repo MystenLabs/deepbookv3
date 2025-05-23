@@ -10,42 +10,23 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   // Update constant for env
   const env = "mainnet";
 
-  // Initialize with balance managers if needed
-  const balanceManagers = {
-    MANAGER_1: {
-      address: "",
-      tradeCap: "",
-    },
-  };
-
   const dbClient = new DeepBookClient({
     address: "0x0",
     env: env,
     client: new SuiClient({
       url: getFullnodeUrl(env),
     }),
-    balanceManagers: balanceManagers,
     adminCap: adminCapID[env],
   });
 
   const tx = new Transaction();
 
   dbClient.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "WAL",
-    quoteCoinKey: "USDC",
-    tickSize: 0.000001,
-    lotSize: 0.1,
-    minSize: 1,
-    whitelisted: false,
-    stablePool: false,
-  })(tx);
-
-  dbClient.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "WAL",
-    quoteCoinKey: "SUI",
-    tickSize: 0.000001,
-    lotSize: 0.1,
-    minSize: 1,
+    baseCoinKey: "XBTC", //8
+    quoteCoinKey: "USDC", //6
+    tickSize: 1,
+    lotSize: 0.00001,
+    minSize: 0.00001,
     whitelisted: false,
     stablePool: false,
   })(tx);
