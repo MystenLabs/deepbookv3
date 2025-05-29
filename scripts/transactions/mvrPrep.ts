@@ -40,7 +40,7 @@ const mainnetPlugin = namedPackagesPlugin({
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0x633ae17b3d3eaaeed5fdcc7ef710d26a01bedd3a468e1e390e4c9e1111772ab2"
+    "0x5ea1cef605a117892b7fbd328d1703d507a60477b222e9663efc148300b872cf"
   ); // Owner of @walrus
 
   console.dir(res, { depth: null });
