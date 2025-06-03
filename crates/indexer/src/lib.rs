@@ -1,6 +1,7 @@
 use crate::handlers::convert_struct_tag;
 use move_core_types::language_storage::StructTag;
 use move_types::MoveStruct;
+use url::Url;
 
 pub mod handlers;
 pub(crate) mod models;
@@ -67,6 +68,15 @@ macro_rules! event_type_fn {
 }
 
 impl DeepbookEnv {
+    pub fn remote_store_url(&self) -> Url {
+        let remote_store_url = match self {
+            DeepbookEnv::Mainnet => MAINNET_REMOTE_STORE_URL,
+            DeepbookEnv::Testnet => TESTNET_REMOTE_STORE_URL,
+        };
+        // Safe to unwrap on verified static URLs
+        Url::parse(remote_store_url).unwrap()
+    }
+
     event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
     event_type_fn!(flash_loan_borrowed_event_type, vault::FlashLoanBorrowed);
     event_type_fn!(order_filled_event_type, order_info::OrderFilled);
