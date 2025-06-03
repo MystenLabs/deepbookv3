@@ -26,7 +26,7 @@ impl BalancesHandler {
 }
 
 impl Processor for BalancesHandler {
-    const NAME: &'static str = "Balances";
+    const NAME: &'static str = "balances";
     type Value = Balances;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

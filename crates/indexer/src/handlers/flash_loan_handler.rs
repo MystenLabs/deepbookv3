@@ -26,7 +26,7 @@ impl FlashLoanHandler {
 }
 
 impl Processor for FlashLoanHandler {
-    const NAME: &'static str = "FlashLoan";
+    const NAME: &'static str = "flash_loan";
     type Value = Flashloan;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

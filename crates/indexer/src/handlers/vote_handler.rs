@@ -26,7 +26,7 @@ impl VotesHandler {
 }
 
 impl Processor for VotesHandler {
-    const NAME: &'static str = "Votes";
+    const NAME: &'static str = "votes";
     type Value = Votes;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

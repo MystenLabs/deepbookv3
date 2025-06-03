@@ -34,7 +34,7 @@ impl OrderUpdateHandler {
 }
 
 impl Processor for OrderUpdateHandler {
-    const NAME: &'static str = "OrderUpdate";
+    const NAME: &'static str = "order_update";
     type Value = OrderUpdate;
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         checkpoint

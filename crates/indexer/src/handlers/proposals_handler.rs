@@ -26,7 +26,7 @@ impl ProposalsHandler {
 }
 
 impl Processor for ProposalsHandler {
-    const NAME: &'static str = "Proposals";
+    const NAME: &'static str = "proposals";
     type Value = Proposals;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

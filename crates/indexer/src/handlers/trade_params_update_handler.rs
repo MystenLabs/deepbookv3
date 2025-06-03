@@ -28,7 +28,7 @@ impl TradeParamsUpdateHandler {
 }
 
 impl Processor for TradeParamsUpdateHandler {
-    const NAME: &'static str = "TradeParamsUpdate";
+    const NAME: &'static str = "trade_params_update";
     type Value = TradeParamsUpdate;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
