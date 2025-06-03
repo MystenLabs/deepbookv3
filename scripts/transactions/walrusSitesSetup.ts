@@ -19,41 +19,39 @@ const mainnetPlugin = namedPackagesPlugin({
     "0x10a1fc2b9170c6bac858fdafc7d3cb1f4ea659fed748d18eff98d08debf82042";
 
   const MVRAppCaps = {
-    site: "", // TODO
+    oldsite:
+      "0xac82d5c6d183087007b1101ff71c7982c6365c2cd1a36fc9a1b3ea8fe966f545",
+    site: "0x31bcfbe17957dae74f7a5dc7439f8e954870646317054ff880084c80d64f2390",
   };
 
-  // for (const appCapObjectId of Object.values(MVRAppCaps)) {
-  //   transaction.moveCall({
-  //     target: `@mvr/core::move_registry::set_metadata`,
-  //     arguments: [
-  //       transaction.object(
-  //         "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-  //       ),
-  //       transaction.object(appCapObjectId),
-  //       transaction.pure.string("icon_url"), // key
-  //       transaction.pure.string("https://docs.suins.io/logo.svg"), // value
-  //     ],
-  //   });
-  // }
-
-  // transaction.moveCall({
-  //   target: `@mvr/core::move_registry::set_metadata`,
-  //   arguments: [
-  //     transaction.object(
-  //       "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-  //     ),
-  //     transaction.object(kioskAppCap),
-  //     transaction.pure.string("icon_url"), // key
-  //     transaction.pure.string("https://svg-host.vercel.app/mystenlogo.svg"),
-  //   ],
-  // });
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.site),
+      transaction.pure.string("icon_url"), // key
+      transaction.pure.string(
+        "https://cdn.prod.website-files.com/67bf314c789da9e4d7c30c50/67e506a7980c586cba295748_67c20e44c97b05da454f35f3_walrus-site.svg"
+      ),
+    ],
+  });
 
   const repository = "https://github.com/MystenLabs/walrus-sites";
   const latestSha = "walrus_sites_v0.1.0_1748855538_main_ci";
 
   const data = {
+    oldsite: {
+      packageInfo:
+        "0xfbef7676167e234ac00e1da774285a2d1e33110b2d8768653a59ca836fb0ea26",
+      sha: latestSha,
+      version: "1",
+      path: "move/walrus_site",
+    },
     site: {
-      packageInfo: "", // TODO
+      packageInfo:
+        "0x78969731e1f29f996e24261a13dd78c6a0932bc099aa02e27965bbfb1a643d86",
       sha: latestSha,
       version: "1",
       path: "move/walrus_site",
@@ -63,23 +61,33 @@ const mainnetPlugin = namedPackagesPlugin({
   for (const [name, { packageInfo, sha, version, path }] of Object.entries(
     data
   )) {
-    const git = transaction.moveCall({
-      target: `@mvr/metadata::git::new`,
-      arguments: [
-        transaction.pure.string(repository),
-        transaction.pure.string(path),
-        transaction.pure.string(sha),
-      ],
-    });
+    if (name === "oldsite") {
+      transaction.moveCall({
+        target: `@mvr/metadata::package_info::unset_git_versioning`,
+        arguments: [
+          transaction.object(packageInfo),
+          transaction.pure.u64(version),
+        ],
+      });
+    } else {
+      const git = transaction.moveCall({
+        target: `@mvr/metadata::git::new`,
+        arguments: [
+          transaction.pure.string(repository),
+          transaction.pure.string(path),
+          transaction.pure.string(sha),
+        ],
+      });
 
-    transaction.moveCall({
-      target: `@mvr/metadata::package_info::set_git_versioning`,
-      arguments: [
-        transaction.object(packageInfo),
-        transaction.pure.u64(version),
-        git,
-      ],
-    });
+      transaction.moveCall({
+        target: `@mvr/metadata::package_info::set_git_versioning`,
+        arguments: [
+          transaction.object(packageInfo),
+          transaction.pure.u64(version),
+          git,
+        ],
+      });
+    }
   }
 
   transaction.moveCall({
@@ -117,6 +125,47 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(MVRAppCaps.site),
       transaction.pure.string("homepage_url"), // key
       transaction.pure.string("https://walrus.site/"), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("description"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("documentation_url"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("homepage_url"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: "@mvr/metadata::package_info::unset_metadata",
+    arguments: [
+      transaction.object(data.oldsite.packageInfo),
+      transaction.pure.string("default"),
     ],
   });
 
