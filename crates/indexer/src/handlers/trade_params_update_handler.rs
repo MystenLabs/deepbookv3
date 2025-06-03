@@ -1,6 +1,7 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::governance::TradeParamsUpdateEvent;
 use crate::models::deepbook::pool;
+use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::TradeParamsUpdate;
 use deepbook_schema::schema::trade_params_update;
@@ -19,9 +20,9 @@ pub struct TradeParamsUpdateHandler {
 }
 
 impl TradeParamsUpdateHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
+    pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            event_type: struct_tag::<TradeParamsUpdateEvent>(package_id_override),
+            event_type: env.trade_params_update_event_type(),
         }
     }
 }

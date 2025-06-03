@@ -1,10 +1,10 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::balance_manager::BalanceEvent;
+use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::Balances;
 use deepbook_schema::schema::balances;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
@@ -18,9 +18,9 @@ pub struct BalancesHandler {
 }
 
 impl BalancesHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
+    pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            event_type: struct_tag::<BalanceEvent>(package_id_override),
+            event_type: env.balance_event_type(),
         }
     }
 }
