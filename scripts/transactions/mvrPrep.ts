@@ -30,7 +30,7 @@ const mainnetPlugin = namedPackagesPlugin({
       transaction.object(
         "0x6e670c14a6491cf35c3e33b0b20b77ad41871cc038042532e4aa894a2459fa6f"
       ), // walrus domain ID
-      transaction.pure.string("site"), // name
+      transaction.pure.string("sites"), // name
       transaction.object.clock(),
     ],
   });
