@@ -29,7 +29,6 @@ use sui::{
 use token::deep::{DEEP, ProtectedTreasury};
 
 // === Errors ===
-const EInvalidFee: u64 = 1;
 const ESameBaseAndQuote: u64 = 2;
 const EInvalidTickSize: u64 = 3;
 const EInvalidLotSize: u64 = 4;
@@ -43,6 +42,8 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
+const EMarketInactive: u64 = 17;
+const EInvalidFeeCollector: u64 = 18;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -98,7 +99,6 @@ public fun create_permissionless_pool<BaseAsset, QuoteAsset>(
     creation_fee: Coin<DEEP>,
     ctx: &mut TxContext,
 ): ID {
-    assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
     let base_type = type_name::get<BaseAsset>();
     let quote_type = type_name::get<QuoteAsset>();
     let whitelisted_pool = false;
@@ -1282,3 +1282,77 @@ fun place_order_int<BaseAsset, QuoteAsset>(
 
     order_info
 }
+
+/// Updates the fee collector for the pool
+public fun update_fee_collector<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    new_fee_collector: ID,
+    ctx: &TxContext,
+) {
+    assert!(new_fee_collector != object::id_from_address(@0x0), EInvalidFeeCollector);
+    let self = self.load_inner_mut();
+    self.state.governance().trade_params().update_fee_collector(new_fee_collector);
+}
+
+/// Updates the fee parameters for the pool
+public fun update_fees<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    new_taker_fee: u64,
+    new_maker_fee: u64,
+    ctx: &TxContext,
+) {
+    let self = self.load_inner_mut();
+    self.state.governance().trade_params().update_fees(new_taker_fee, new_maker_fee);
+}
+
+/// Closes the market by canceling all orders and setting market status to inactive
+public fun close_market<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+) {
+    let self = self.load_inner_mut();
+    
+    // Set market as inactive
+    self.state.governance_mut(ctx).trade_params().set_active_status(false);
+    
+    // Clear all bid orders
+    while (!self.book.bids().is_empty()) {
+        let (ref, offset) = self.book.bids().max_slice();
+        let order_id = self.book.bids().borrow_slice(ref).key(offset);
+        let mut order = self.book.cancel_order(order_id);
+        let balance_manager_id = order.balance_manager_id();
+        
+        // Process cancel for each order
+        self.state.process_cancel(
+            &mut order,
+            balance_manager_id,
+            self.pool_id,
+            ctx
+        );
+    };
+    
+    // Clear all ask orders
+    while (!self.book.asks().is_empty()) {
+        let (ref, offset) = self.book.asks().min_slice();
+        let order_id = self.book.asks().borrow_slice(ref).key(offset);
+        let mut order = self.book.cancel_order(order_id);
+        let balance_manager_id = order.balance_manager_id();
+        
+        // Process cancel for each order
+        self.state.process_cancel(
+            &mut order,
+            balance_manager_id,
+            self.pool_id,
+            ctx
+        );
+    };
+}
+
+/// Checks if market is active before processing orders
+public(package) fun assert_market_active<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>) {
+    assert!(
+        self.load_inner().state.governance().trade_params().is_active(),
+        EMarketInactive
+    );
+}
+
