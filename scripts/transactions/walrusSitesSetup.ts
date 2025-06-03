@@ -129,6 +129,39 @@ const mainnetPlugin = namedPackagesPlugin({
   });
 
   transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("description"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("documentation_url"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.oldsite),
+      transaction.pure.string("homepage_url"), // key
+    ],
+  });
+
+  transaction.moveCall({
     target: "@mvr/metadata::package_info::unset_metadata",
     arguments: [
       transaction.object(data.oldsite.packageInfo),
