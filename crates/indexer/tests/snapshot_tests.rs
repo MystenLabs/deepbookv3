@@ -1,5 +1,7 @@
 use chrono::NaiveDateTime;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
+use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
+use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
@@ -19,11 +21,39 @@ use sui_pg_db::Db;
 use sui_pg_db::DbArgs;
 use sui_storage::blob::Blob;
 use sui_types::full_checkpoint_content::CheckpointData;
+use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 
+#[tokio::test]
+async fn balances_test() -> Result<(), anyhow::Error> {
+    let handler = BalancesHandler::new(DeepbookEnv::Mainnet);
+    data_test("balances", handler, ["balances"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn flash_loan_test() -> Result<(), anyhow::Error> {
+    let handler = FlashLoanHandler::new(DeepbookEnv::Mainnet);
+    data_test("flash_loans", handler, ["flashloans"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn order_fill_test() -> Result<(), anyhow::Error> {
+    let handler = OrderFillHandler::new(DeepbookEnv::Mainnet);
+    data_test("order_fill", handler, ["order_fills"]).await?;
+    Ok(())
+}
 #[tokio::test]
 async fn order_update_test() -> Result<(), anyhow::Error> {
     let handler = OrderUpdateHandler::new(DeepbookEnv::Mainnet);
     data_test("order_update", handler, ["order_updates"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn pool_price_test() -> Result<(), anyhow::Error> {
+    let handler = PoolPriceHandler::new(DeepbookEnv::Mainnet);
+    data_test("pool_price", handler, ["pool_prices"]).await?;
     Ok(())
 }
 
@@ -92,6 +122,12 @@ async fn read_table(table_name: &str, db_url: &str) -> Result<Vec<Value>, anyhow
 
             for column in row.columns() {
                 let column_name = column.name();
+
+                // timestamp is the insert time in deepbook DB, hardcoding it to a fix value.
+                if column_name == "timestamp" {
+                    obj.insert(column_name.to_string(), Value::String("1970-01-01 00:00:00.000000".to_string()));
+                    continue;
+                }
 
                 let value = if let Ok(v) = row.try_get::<String, _>(column_name) {
                     Value::String(v)
