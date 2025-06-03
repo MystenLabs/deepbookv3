@@ -1990,6 +1990,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bcs",
+ "chrono",
  "clap",
  "deepbook-schema",
  "diesel",
@@ -2001,6 +2002,7 @@ dependencies = [
  "move-types",
  "prometheus",
  "serde",
+ "serde_json",
  "sqlx",
  "sui-indexer-alt-framework",
  "sui-indexer-alt-metrics",
@@ -3899,14 +3901,12 @@ dependencies = [
 
 [[package]]
 name = "insta"
-version = "1.42.2"
+version = "1.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50259abbaa67d11d2bcafc7ba1d094ed7a0c70e3ce893f0d0997f73558cb3084"
+checksum = "154934ea70c58054b556dd430b99a98c2a7ff5309ac9891597e339b5c28f4371"
 dependencies = [
  "console",
- "linked-hash-map",
  "once_cell",
- "pin-project",
  "serde",
  "similar",
 ]
