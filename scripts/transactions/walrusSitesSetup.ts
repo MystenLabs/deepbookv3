@@ -19,7 +19,7 @@ const mainnetPlugin = namedPackagesPlugin({
     "0x10a1fc2b9170c6bac858fdafc7d3cb1f4ea659fed748d18eff98d08debf82042";
 
   const MVRAppCaps = {
-    site: "0xac82d5c6d183087007b1101ff71c7982c6365c2cd1a36fc9a1b3ea8fe966f545",
+    site: "", // TODO
   };
 
   // for (const appCapObjectId of Object.values(MVRAppCaps)) {
@@ -53,8 +53,7 @@ const mainnetPlugin = namedPackagesPlugin({
 
   const data = {
     site: {
-      packageInfo:
-        "0xfbef7676167e234ac00e1da774285a2d1e33110b2d8768653a59ca836fb0ea26",
+      packageInfo: "", // TODO
       sha: latestSha,
       version: "1",
       path: "move/walrus_site",
@@ -126,7 +125,7 @@ const mainnetPlugin = namedPackagesPlugin({
     arguments: [
       transaction.object(data.site.packageInfo),
       transaction.pure.string("default"),
-      transaction.pure.string("@walrus/site"),
+      transaction.pure.string("@walrus/sites"),
     ],
   });
 

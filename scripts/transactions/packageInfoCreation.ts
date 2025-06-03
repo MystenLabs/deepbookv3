@@ -35,7 +35,7 @@ const mainnetPlugin = namedPackagesPlugin({
   // that allows customizing the colors of your metadata object!
   const display = transaction.moveCall({
     target: `@mvr/metadata::display::default`,
-    arguments: [transaction.pure.string("Walrus - Site Metadata")],
+    arguments: [transaction.pure.string("Walrus - Sites Metadata")],
   });
 
   // Set that display object to our info object.
