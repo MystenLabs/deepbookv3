@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.dependencies]
-tokio = "1.38.0"
+tokio = "1.45.1"
 serde = "1.0.217"
 serde_json = "1.0.138"
 diesel = "2.2.7"

@@ -22,10 +22,10 @@ url.workspace = true
 sui-types.workspace = true
 
 axum = { version = "0.7", features = ["json"] }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "298d049" }
+sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "298d049" }
 tower-http = { version = "0.5", features = ["cors"] }
-sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "298d049" }
 
 [[bin]]
 name = "deepbook-server"
