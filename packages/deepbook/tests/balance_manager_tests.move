@@ -5,7 +5,9 @@
 module deepbook::balance_manager_tests;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
-use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
+use sui::coin::mint_for_testing;
+use sui::sui::SUI;
+use sui::test_scenario::{Scenario, begin, end, return_shared};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -35,6 +37,40 @@ fun test_deposit_ok() {
         assert!(balance == 200, 0);
 
         transfer::public_share_object(balance_manager);
+    };
+
+    end(test);
+}
+
+#[test]
+fun test_deposit_custom_manager_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    test.next_tx(alice);
+    {
+        let balance_manager = balance_manager::new_with_custom_owner(bob, test.ctx());
+        assert!(balance_manager.owner() == bob, 0);
+        transfer::public_share_object(balance_manager);
+    };
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared<BalanceManager>();
+        balance_manager.deposit(
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 100, 0);
+
+        balance_manager.deposit(
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 200, 0);
+
+        return_shared(balance_manager);
     };
 
     end(test);
