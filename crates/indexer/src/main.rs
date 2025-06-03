@@ -10,7 +10,7 @@ use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
-use deepbook_indexer::{DeepbookEnv, MAINNET_REMOTE_STORE_URL};
+use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
@@ -36,9 +36,6 @@ struct Args {
         default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
-    /// Checkpoint remote store URL, defaulted to Sui mainnet remote store.
-    #[clap(env, long, default_value = MAINNET_REMOTE_STORE_URL)]
-    remote_store_url: Url,
     /// Deepbook environment, defaulted to SUI mainnet.
     #[clap(env, long)]
     env: DeepbookEnv,
@@ -54,7 +51,6 @@ async fn main() -> Result<(), anyhow::Error> {
         db_args,
         indexer_args,
         metrics_address,
-        remote_store_url,
         database_url,
         env,
     } = Args::parse();
@@ -73,7 +69,7 @@ async fn main() -> Result<(), anyhow::Error> {
         db_args,
         indexer_args,
         ClientArgs {
-            remote_store_url: Some(remote_store_url),
+            remote_store_url: Some(env.remote_store_url()),
             local_ingestion_path: None,
             rpc_api_url: None,
             rpc_username: None,
