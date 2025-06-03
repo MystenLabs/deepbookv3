@@ -26,7 +26,7 @@ impl PoolPriceHandler {
 }
 
 impl Processor for PoolPriceHandler {
-    const NAME: &'static str = "PoolPrice";
+    const NAME: &'static str = "pool_price";
     type Value = PoolPrice;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

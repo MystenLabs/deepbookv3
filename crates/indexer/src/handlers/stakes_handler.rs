@@ -26,7 +26,7 @@ impl StakesHandler {
 }
 
 impl Processor for StakesHandler {
-    const NAME: &'static str = "Stakes";
+    const NAME: &'static str = "stakes";
     type Value = Stakes;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

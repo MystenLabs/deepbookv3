@@ -26,7 +26,7 @@ impl OrderFillHandler {
 }
 
 impl Processor for OrderFillHandler {
-    const NAME: &'static str = "OrderFill";
+    const NAME: &'static str = "order_fill";
     type Value = OrderFill;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {

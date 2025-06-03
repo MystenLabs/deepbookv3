@@ -26,7 +26,7 @@ impl RebatesHandler {
 }
 
 impl Processor for RebatesHandler {
-    const NAME: &'static str = "Rebates";
+    const NAME: &'static str = "rebates";
     type Value = Rebates;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
