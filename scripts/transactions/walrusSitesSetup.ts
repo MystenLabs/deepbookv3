@@ -137,30 +137,6 @@ const mainnetPlugin = namedPackagesPlugin({
   });
 
   transaction.moveCall({
-    target: "@mvr/metadata::package_info::unset_metadata",
-    arguments: [
-      transaction.object(data.oldsite.packageInfo),
-      transaction.pure.string("homepage_url"),
-    ],
-  });
-
-  transaction.moveCall({
-    target: "@mvr/metadata::package_info::unset_metadata",
-    arguments: [
-      transaction.object(data.oldsite.packageInfo),
-      transaction.pure.string("documentation_url"),
-    ],
-  });
-
-  transaction.moveCall({
-    target: "@mvr/metadata::package_info::unset_metadata",
-    arguments: [
-      transaction.object(data.oldsite.packageInfo),
-      transaction.pure.string("description"),
-    ],
-  });
-
-  transaction.moveCall({
     target: "@mvr/metadata::package_info::set_metadata",
     arguments: [
       transaction.object(data.site.packageInfo),
