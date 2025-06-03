@@ -50,7 +50,8 @@ const mainnetPlugin = namedPackagesPlugin({
       path: "move/walrus_site",
     },
     site: {
-      packageInfo: "", // TODO
+      packageInfo:
+        "0x78969731e1f29f996e24261a13dd78c6a0932bc099aa02e27965bbfb1a643d86",
       sha: latestSha,
       version: "1",
       path: "move/walrus_site",
