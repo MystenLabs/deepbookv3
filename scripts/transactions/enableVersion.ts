@@ -9,15 +9,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 (async () => {
     // Update constant for env
     const env = "mainnet";
-    const versionToEnable = 2;
-
-    // Initialize with balance managers if needed
-    const balanceManagers = {
-        MANAGER_1: {
-            address: "",
-            tradeCap: "",
-        },
-    };
+    const versionToEnable = 3;
 
     const dbClient = new DeepBookClient({
         address: "0x0",
@@ -25,7 +17,6 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
         client: new SuiClient({
             url: getFullnodeUrl(env),
         }),
-        balanceManagers: balanceManagers,
         adminCap: adminCapID[env],
     });
 
@@ -47,6 +38,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     dbClient.deepBookAdmin.updateAllowedVersions("SEND_USDC")(tx);
     dbClient.deepBookAdmin.updateAllowedVersions("WAL_USDC")(tx);
     dbClient.deepBookAdmin.updateAllowedVersions("WAL_SUI")(tx);
+    dbClient.deepBookAdmin.updateAllowedVersions("XBTC_USDC")(tx);
 
     let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
