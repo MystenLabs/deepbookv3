@@ -89,8 +89,13 @@ public fun new(ctx: &mut TxContext): BalanceManager {
     }
 }
 
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner` instead.")]
+public fun new_with_owner(_ctx: &mut TxContext, _owner: address): BalanceManager {
+    abort 1337
+}
+
 /// Create a new balance manager with an owner.
-public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
+public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceManager {
     let id = object::new(ctx);
     event::emit(BalanceManagerEvent {
         balance_manager_id: id.to_inner(),

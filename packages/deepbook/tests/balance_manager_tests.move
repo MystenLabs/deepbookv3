@@ -40,6 +40,40 @@ fun test_deposit_ok() {
     end(test);
 }
 
+#[test]
+fun test_deposit_custom_manager_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let bob = @0xB;
+    test.next_tx(alice);
+    {
+        let balance_manager = balance_manager::new_with_custom_owner(bob, test.ctx());
+        assert!(balance_manager.owner() == bob, 0);
+        transfer::public_share_object(balance_manager);
+    };
+    test.next_tx(bob);
+    {
+        let mut balance_manager = test.take_shared<BalanceManager>();
+        balance_manager.deposit(
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 100, 0);
+
+        balance_manager.deposit(
+            mint_for_testing<SUI>(100, test.ctx()),
+            test.ctx(),
+        );
+        let balance = balance_manager.balance<SUI>();
+        assert!(balance == 200, 0);
+
+        return_shared(balance_manager);
+    };
+
+    end(test);
+}
+
 #[test, expected_failure(abort_code = balance_manager::EInvalidOwner)]
 fun test_deposit_as_owner_e() {
     let mut test = begin(@0xF);
