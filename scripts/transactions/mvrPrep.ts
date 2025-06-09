@@ -28,20 +28,35 @@ const mainnetPlugin = namedPackagesPlugin({
         "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
       ),
       transaction.object(
-        "0x6e670c14a6491cf35c3e33b0b20b77ad41871cc038042532e4aa894a2459fa6f"
-      ), // walrus domain ID
-      transaction.pure.string("sites"), // name
+        "0x9dc2cd7decc92ec8a66ba32167fb7ec279b30bc36c3216096035db7d750aa89f"
+      ), // mysten domain ID
+      transaction.pure.string("nautilus"), // name
       transaction.object.clock(),
     ],
   });
 
-  transaction.transferObjects([appCap], holdingAddress);
+  const appCap2 = transaction.moveCall({
+    target: `@mvr/core::move_registry::register`,
+    arguments: [
+      // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
+      ),
+      transaction.object(
+        "0x9dc2cd7decc92ec8a66ba32167fb7ec279b30bc36c3216096035db7d750aa89f"
+      ), // mysten domain ID
+      transaction.pure.string("seal"), // name
+      transaction.object.clock(),
+    ],
+  });
+
+  transaction.transferObjects([appCap, appCap2], holdingAddress);
 
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0x5ea1cef605a117892b7fbd328d1703d507a60477b222e9663efc148300b872cf"
-  ); // Owner of @walrus
+    "0xa81a2328b7bbf70ab196d6aca400b5b0721dec7615bf272d95e0b0df04517e72"
+  ); // Owner of @mysten
 
   console.dir(res, { depth: null });
 })();
