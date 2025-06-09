@@ -55,7 +55,7 @@ const mainnetPlugin = namedPackagesPlugin({
     transaction,
     env,
     "0xfa469d15a399f7a000214f4630712c6e6207430499278e1c2e19a63d5dd821e5"
-  ); // Owner of walrus sites UpgradeCap
+  ); // Owner of nautilus UpgradeCap
 
   console.dir(res, { depth: null });
 })();
