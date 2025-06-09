@@ -27,7 +27,7 @@ jobs:
           echo "Installing Sui 1.45.3..."
           mkdir -p $HOME/sui-bin
 
-          SUI_URL="https://github.com/MystenLabs/sui/releases/download/mainnet-v1.45.3/sui-mainnet-v1.45.3-macos-x86_64.tgz"
+          SUI_URL="https://github.com/MystenLabs/sui/releases/download/mainnet-v1.49.2/sui-mainnet-v1.49.2-macos-x86_64.tgz"
           echo "Downloading Sui from $SUI_URL"
 
           # Use curl with fail flag and check response
