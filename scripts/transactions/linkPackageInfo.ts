@@ -26,7 +26,7 @@ const mainnetPlugin = namedPackagesPlugin({
     arguments: [
       transaction.pure.string("https://github.com/MystenLabs/deepbookv3"),
       transaction.pure.string("packages/deepbook"),
-      transaction.pure.string("v2.0.0"),
+      transaction.pure.string("v3.0.0"),
     ],
   });
 
@@ -34,7 +34,7 @@ const mainnetPlugin = namedPackagesPlugin({
     target: `@mvr/metadata::package_info::set_git_versioning`,
     arguments: [
       transaction.object(packageInfoId),
-      transaction.pure.u64(`2`),
+      transaction.pure.u64(`3`),
       git,
     ],
   });
