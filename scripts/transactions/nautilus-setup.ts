@@ -22,6 +22,7 @@ const mainnetPlugin = namedPackagesPlugin({
     nautilus:
       "0x8a159edc9ee8d809a980b3eb66510b6a6b608d8a79abb0576916430e4a7389b8",
     seal: "0x5c05d47053b0b3126dc99ee97264bf0d8b52e5789ca33917b88d83eb63f0e434",
+    sites: "0x31bcfbe17957dae74f7a5dc7439f8e954870646317054ff880084c80d64f2390",
   };
 
   transaction.moveCall({
@@ -217,6 +218,30 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       transaction.object(MVRAppCaps.nautilus),
       transaction.object(data.nautilus.packageInfo),
+    ],
+  });
+
+  // Sites changes
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::unset_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.sites),
+      transaction.pure.string("homepage_url"), // key
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      transaction.object(MVRAppCaps.sites),
+      transaction.pure.string("homepage_url"), // key
+      transaction.pure.string("https://wal.app/"), // value
     ],
   });
 
