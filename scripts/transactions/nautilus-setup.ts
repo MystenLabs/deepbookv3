@@ -68,6 +68,13 @@ const mainnetPlugin = namedPackagesPlugin({
     //   version: "1",
     //   path: "",
     // },
+    deepbook: {
+      repository: "https://github.com/MystenLabs/deepbookv3",
+      packageInfo: "", // TODO
+      sha: "", // TODO: add in sha
+      version: "3",
+      path: "packages/deepbook",
+    },
   };
 
   for (const [
