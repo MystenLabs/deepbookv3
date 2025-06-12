@@ -1,4 +1,4 @@
-FROM rust:1.82.0 AS builder
+FROM rust:1.87.0 AS builder
 
 ARG PROFILE=release
 ARG GIT_REVISION

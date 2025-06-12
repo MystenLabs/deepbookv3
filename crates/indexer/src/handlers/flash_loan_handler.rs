@@ -1,15 +1,15 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::vault::FlashLoanBorrowed;
+use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::Flashloan;
 use deepbook_schema::schema::flashloans;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::Connection;
+use sui_pg_db::{Connection, Db};
 use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
@@ -18,15 +18,15 @@ pub struct FlashLoanHandler {
 }
 
 impl FlashLoanHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
+    pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            event_type: struct_tag::<FlashLoanBorrowed>(package_id_override),
+            event_type: env.flash_loan_borrowed_event_type(),
         }
     }
 }
 
 impl Processor for FlashLoanHandler {
-    const NAME: &'static str = "FlashLoan";
+    const NAME: &'static str = "flash_loan";
     type Value = Flashloan;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
@@ -75,7 +75,12 @@ impl Processor for FlashLoanHandler {
 
 #[async_trait]
 impl Handler for FlashLoanHandler {
-    async fn commit(values: &[Self::Value], conn: &mut Connection<'_>) -> anyhow::Result<usize> {
+    type Store = Db;
+
+    async fn commit<'a>(
+        values: &[Self::Value],
+        conn: &mut Connection<'a>,
+    ) -> anyhow::Result<usize> {
         Ok(diesel::insert_into(flashloans::table)
             .values(values)
             .on_conflict_do_nothing()
