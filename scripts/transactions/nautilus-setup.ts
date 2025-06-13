@@ -56,7 +56,7 @@ const mainnetPlugin = namedPackagesPlugin({
       repository: "https://github.com/MystenLabs/nautilus",
       packageInfo:
         "0x427579e9f0f3200cc51a634b33088895879f38783655297f4ed2442351cd53d0",
-      sha: "182d3d554a6ed8557ea0aabb59ff189e6b4c28ff",
+      sha: "d919402aadf15e21b3cf31515b3a46d1ca6965e4",
       version: "1",
       path: "move/enclave",
     },
