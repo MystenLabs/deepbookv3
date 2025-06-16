@@ -26,9 +26,9 @@ pub enum DeepbookEnv {
 /// # Example
 ///
 /// ```rust
-/// impl DeepbookEnv {
-///     event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
-/// }
+/// //impl DeepbookEnv {
+/// //    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
+/// //}
 ///
 /// // Expands to:
 /// //
