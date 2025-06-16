@@ -22,16 +22,13 @@ use deepbook::balance_manager::{
 use deepbook::constants;
 use deepbook::pool::{Self, Pool};
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
 use sui::coin::Coin;
 use sui::event;
 use sui::vec_set::{Self, VecSet};
 use token::deep::DEEP;
 
 // === Errors ===
-const EInvalidOwner: u64 = 0;
-const EInvalidDeposit: u64 = 1;
+const EInvalidDeposit: u64 = 0;
 
 // === Constants ===
 // const MAX_TRADE_CAPS: u64 = 1000;
@@ -150,7 +147,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 public(package) fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     coin: Coin<DepositAsset>,
-    ctx: &mut TxContext,
+    ctx: &TxContext,
 ) {
     let balance_manager = &mut margin_manager.balance_manager;
 
