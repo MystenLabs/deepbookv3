@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Public-facing interface for the package.
-module margin_trading::main;
+module margin_trading::hello;
 
 use deepbook::account::Account;
 use deepbook::balance_manager::{Self, BalanceManager, TradeProof};

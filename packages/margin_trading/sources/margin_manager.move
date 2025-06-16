@@ -30,12 +30,11 @@ use sui::vec_set::{Self, VecSet};
 use token::deep::DEEP;
 
 // === Errors ===
-const EInvalidDeposit: u64 = 0;
+const EInvalidOwner: u64 = 0;
+const EInvalidDeposit: u64 = 1;
 
 // === Constants ===
 // const MAX_TRADE_CAPS: u64 = 1000;
-
-public struct MARGIN_MANAGER has drop {}
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -81,7 +80,7 @@ public fun new<BaseAsset, QuoteAsset>(ctx: &mut TxContext) {
         trade_cap,
     };
 
-    transfer::public_share_object(margin_manager)
+    transfer::share_object(margin_manager)
 }
 
 public fun liquidate<BaseAsset, QuoteAsset>(
@@ -89,6 +88,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
+    // TODO: Check the risk ratio to determine if liquidation is allowed
+
     let balance_manager = &mut margin_manager.balance_manager;
     let trade_proof = balance_manager.generate_proof_as_trader(
         &margin_manager.trade_cap,
@@ -96,7 +97,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     );
 
     let quote_amount_to_liquidate = 100_000_000; // 100 USDC, TODO: replace with actual logic
-    let price_to_liquidate = 1_000_000; // 1 USDC, TODO: replace with actual logic
     let client_order_id = 0; // TODO: Should this be customizable?
 
     // pool.place_market_order(
@@ -125,9 +125,11 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
 
     let balance_manager = &mut margin_manager.balance_manager;
 
-    balance_manager.deposit_with_cap<DepositAsset>(&margin_manager.deposit_cap, coin, ctx);
+    balance_manager.deposit<DepositAsset>(coin, ctx);
 }
 
+/// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
+/// The withdrawal is subject to the risk ratio limit, which will be checked before allowing the withdrawal.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
@@ -144,8 +146,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 
     let balance_manager = &mut margin_manager.balance_manager;
 
-    let coin = balance_manager.withdraw_with_cap<WithdrawAsset>(
-        &margin_manager.withdraw_cap,
+    let coin = balance_manager.withdraw<WithdrawAsset>(
         withdraw_amount,
         ctx,
     );
@@ -153,6 +154,30 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     // TODO: Check risk ratio to determine if withdrawal is allowed
 
     coin
+}
+
+public(package) fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<DepositAsset>,
+    ctx: &mut TxContext,
+) {
+    let balance_manager = &mut margin_manager.balance_manager;
+
+    balance_manager.deposit_with_cap<DepositAsset>(&margin_manager.deposit_cap, coin, ctx);
+}
+
+public(package) fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    withdraw_amount: u64,
+    ctx: &mut TxContext,
+): Coin<WithdrawAsset> {
+    let balance_manager = &mut margin_manager.balance_manager;
+
+    balance_manager.withdraw_with_cap<WithdrawAsset>(
+        &margin_manager.withdraw_cap,
+        withdraw_amount,
+        ctx,
+    )
 }
 
 public fun claim_rebates<BaseAsset, QuoteAsset>(
