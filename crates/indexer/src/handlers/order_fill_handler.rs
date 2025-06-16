@@ -1,15 +1,15 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order_info::OrderFilled;
+use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::OrderFill;
 use deepbook_schema::schema::order_fills;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::Connection;
+use sui_pg_db::{Connection, Db};
 use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
@@ -18,15 +18,15 @@ pub struct OrderFillHandler {
 }
 
 impl OrderFillHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
+    pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            event_type: struct_tag::<OrderFilled>(package_id_override),
+            event_type: env.order_filled_event_type(),
         }
     }
 }
 
 impl Processor for OrderFillHandler {
-    const NAME: &'static str = "OrderFill";
+    const NAME: &'static str = "order_fill";
     type Value = OrderFill;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
@@ -87,7 +87,12 @@ impl Processor for OrderFillHandler {
 
 #[async_trait]
 impl Handler for OrderFillHandler {
-    async fn commit(values: &[Self::Value], conn: &mut Connection<'_>) -> anyhow::Result<usize> {
+    type Store = Db;
+
+    async fn commit<'a>(
+        values: &[Self::Value],
+        conn: &mut Connection<'a>,
+    ) -> anyhow::Result<usize> {
         Ok(diesel::insert_into(order_fills::table)
             .values(values)
             .on_conflict_do_nothing()

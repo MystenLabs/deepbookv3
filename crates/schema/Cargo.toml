@@ -7,7 +7,7 @@ publish = false
 edition = "2021"
 
 [dependencies]
-sui-field-count = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d"}
+sui-field-count = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4"}
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel_migrations.workspace = true
 serde = { workspace = true }

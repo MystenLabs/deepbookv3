@@ -1,15 +1,15 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
+use crate::DeepbookEnv;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::Connection;
+use sui_pg_db::{Connection, Db};
 use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
@@ -23,18 +23,18 @@ pub struct OrderUpdateHandler {
 }
 
 impl OrderUpdateHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
+    pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            order_placed_type: struct_tag::<OrderPlaced>(package_id_override),
-            order_modified_type: struct_tag::<OrderModified>(package_id_override),
-            order_canceled_type: struct_tag::<OrderCanceled>(package_id_override),
-            order_expired_type: struct_tag::<OrderExpired>(package_id_override),
+            order_placed_type: env.order_placed_event_type(),
+            order_modified_type: env.order_modified_event_type(),
+            order_canceled_type: env.order_canceled_event_type(),
+            order_expired_type: env.order_expired_event_type(),
         }
     }
 }
 
 impl Processor for OrderUpdateHandler {
-    const NAME: &'static str = "OrderUpdate";
+    const NAME: &'static str = "order_update";
     type Value = OrderUpdate;
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         checkpoint
@@ -86,7 +86,12 @@ impl Processor for OrderUpdateHandler {
 
 #[async_trait::async_trait]
 impl Handler for OrderUpdateHandler {
-    async fn commit(values: &[Self::Value], conn: &mut Connection<'_>) -> anyhow::Result<usize> {
+    type Store = Db;
+
+    async fn commit<'a>(
+        values: &[Self::Value],
+        conn: &mut Connection<'a>,
+    ) -> anyhow::Result<usize> {
         Ok(diesel::insert_into(order_updates::table)
             .values(values)
             .on_conflict_do_nothing()
