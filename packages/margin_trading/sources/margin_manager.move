@@ -135,15 +135,6 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
-    let withdraw_asset_type = type_name::get<WithdrawAsset>();
-    let base_asset_type = type_name::get<BaseAsset>();
-    let quote_asset_type = type_name::get<QuoteAsset>();
-    let deep_asset_type = type_name::get<DEEP>();
-    assert!(
-        withdraw_asset_type == base_asset_type || withdraw_asset_type == quote_asset_type || withdraw_asset_type == deep_asset_type,
-        EInvalidDeposit,
-    );
-
     let balance_manager = &mut margin_manager.balance_manager;
 
     let coin = balance_manager.withdraw<WithdrawAsset>(
