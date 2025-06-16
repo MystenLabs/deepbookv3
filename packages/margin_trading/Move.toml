@@ -1,0 +1,11 @@
+[package]
+name = "margin_trading"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+token = { local = "../token" }
+deepbook = { local = "../deepbook" }
+
+[addresses]
+margin_trading = "0x0"
