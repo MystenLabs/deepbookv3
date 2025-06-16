@@ -22,6 +22,7 @@ use deepbook::balance_manager::{
 use deepbook::constants;
 use deepbook::pool::{Self, Pool};
 use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
 use sui::coin::Coin;
 use sui::event;
 use sui::vec_set::{Self, VecSet};
@@ -83,8 +84,11 @@ public fun new<BaseAsset, QuoteAsset>(ctx: &mut TxContext) {
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
     ctx: &TxContext,
 ) {
+    // TODO: Cancel all open orders, collect settled balances, then liquidate?
+    // TODO?: Call repay_same_assets first to ensure that the margin manager is in a state where it can liquidate.
     // TODO: Check the risk ratio to determine if liquidation is allowed
 
     let balance_manager = &mut margin_manager.balance_manager;
@@ -95,14 +99,34 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let quote_amount_to_liquidate = 100_000_000; // 100 USDC, TODO: replace with actual logic
     let client_order_id = 0; // TODO: Should this be customizable?
+    let is_bid = true; // TODO: Should this be customizable?
+    let pay_with_deep = false; // TODO: Should this be customizable?
+    // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
+    // Alternatively, we can utilize DEEP flash loan.
+    let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
+        quote_amount_to_liquidate,
+        clock,
+    );
 
-    // pool.place_market_order(
-    //     balance_manager,
-    //     &trade_proof,
-    //     client_order_id,
-    //     constants::self_matching_allowed(),
+    pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        constants::self_matching_allowed(),
+        base_out,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    );
+}
 
-    // );
+public fun repay_same_assets<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    abort 0x1
 }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
