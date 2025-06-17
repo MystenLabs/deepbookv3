@@ -174,6 +174,20 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     coin
 }
 
+public fun claim_rebates<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &mut TxContext,
+) {
+    let balance_manager = &mut margin_manager.balance_manager;
+    let trade_proof = balance_manager.generate_proof_as_trader(
+        &margin_manager.trade_cap,
+        ctx,
+    );
+
+    pool.claim_rebates(balance_manager, &trade_proof, ctx)
+}
+
 public(package) fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     coin: Coin<DepositAsset>,
@@ -198,16 +212,14 @@ public(package) fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     )
 }
 
-public fun claim_rebates<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-) {
-    let balance_manager = &mut margin_manager.balance_manager;
-    let trade_proof = balance_manager.generate_proof_as_trader(
-        &margin_manager.trade_cap,
-        ctx,
-    );
+public(package) fun balance_manager<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): &BalanceManager {
+    &margin_manager.balance_manager
+}
 
-    pool.claim_rebates(balance_manager, &trade_proof, ctx)
+public(package) fun id<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): ID {
+    object::id(margin_manager)
 }
