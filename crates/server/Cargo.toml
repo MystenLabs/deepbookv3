@@ -21,6 +21,7 @@ prometheus.workspace = true
 sui-types.workspace = true
 tokio-util.workspace = true
 sui-indexer-alt-metrics.workspace = true
+telemetry-subscribers.workspace = true
 axum = { version = "0.7", features = ["json"] }
 sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4" }
 sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4" }

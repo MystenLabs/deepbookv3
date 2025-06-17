@@ -2049,6 +2049,7 @@ dependencies = [
  "sui-pg-db",
  "sui-sdk",
  "sui-types",
+ "telemetry-subscribers",
  "tokio",
  "tokio-util 0.7.14",
  "tower-http",

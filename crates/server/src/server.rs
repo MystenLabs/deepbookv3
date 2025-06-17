@@ -18,7 +18,7 @@ use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::net::TcpListener;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -99,7 +99,7 @@ pub async fn run_server(
     rpc_url: Url,
     cancellation_token: CancellationToken,
     metrics_address: SocketAddr,
-) -> Result<JoinHandle<()>, anyhow::Error> {
+) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
 
@@ -111,12 +111,13 @@ pub async fn run_server(
 
     let state = AppState::new(database_url, db_arg, metrics.registry()).await?;
 
-    Ok(tokio::spawn(async move {
-        let listener = TcpListener::bind(socket_address).await.unwrap();
-        axum::serve(listener, make_router(Arc::new(state), rpc_url))
-            .await
-            .unwrap();
-    }))
+    let listener = TcpListener::bind(socket_address).await.unwrap();
+    axum::serve(listener, make_router(Arc::new(state), rpc_url))
+        .with_graceful_shutdown(async move {
+            cancellation_token.cancelled().await;
+        }).await?;
+    
+    Ok(())
 }
 pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
     let cors = CorsLayer::new()
