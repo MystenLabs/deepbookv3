@@ -55,3 +55,8 @@ public fun create_lending_pool<Asset>(
 
     transfer::share_object(lending_pool);
 }
+
+/// Get the ID of the pool given the asset types.
+public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
+    registry.get_lending_pool_id<Asset>()
+}

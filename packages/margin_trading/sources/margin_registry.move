@@ -18,7 +18,7 @@ use sui::versioned::{Self, Versioned};
 const EPairAlreadyAllowed: u64 = 1;
 const EPairNotAllowed: u64 = 2;
 const ELendingPoolAlreadyExists: u64 = 3;
-// const EVersionNotEnabled: u64 = 4;
+const ELendingPoolDoesNotExists: u64 = 4;
 // const EVersionAlreadyEnabled: u64 = 5;
 // const ECannotDisableCurrentVersion: u64 = 6;
 // const ECoinAlreadyWhitelisted: u64 = 7;
@@ -92,4 +92,12 @@ public(package) fun register_lending_pool<Asset>(self: &mut MarginRegistry, pool
     let key = type_name::get<Asset>();
     assert!(!self.lending_pools.contains(key), ELendingPoolAlreadyExists);
     self.lending_pools.add(key, pool_id);
+}
+
+// Get the lending pool id for the given asset.
+public(package) fun get_lending_pool_id<Asset>(self: &MarginRegistry): ID {
+    let key = type_name::get<Asset>();
+    assert!(self.lending_pools.contains(key), ELendingPoolDoesNotExists);
+
+    *self.lending_pools.borrow<TypeName, ID>(key)
 }
