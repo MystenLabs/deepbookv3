@@ -4,8 +4,8 @@
 /// Registry holds all lending pools.
 module margin_trading::lending_pool;
 
-use deepbook::math::{Self, mul, div};
 use margin_trading::constants;
+use margin_trading::margin_math;
 use margin_trading::margin_registry::{Self, LendingAdminCap, MarginRegistry};
 use std::type_name::{Self, TypeName};
 use sui::bag::{Self, Bag};
@@ -71,7 +71,7 @@ public(package) fun update_interest_index<Asset>(self: &mut LendingPool<Asset>, 
     let ms_elapsed = current_time - self.last_index_update_timestamp;
     let interest_rate = self.base_rate; // TODO: more complex interest rate model
     let new_index =
-        self.interest_index * (constants::float_scaling() + math::div(math::mul(ms_elapsed, interest_rate),YEAR_MS));
+        self.interest_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, interest_rate),YEAR_MS));
     self.interest_index = new_index;
     self.last_index_update_timestamp = current_time;
 }
