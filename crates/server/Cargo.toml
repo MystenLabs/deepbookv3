@@ -10,7 +10,6 @@ edition = "2021"
 deepbook-schema = { path = "../schema" }
 tokio.workspace = true
 futures = "0.3.31"
-
 clap = { workspace = true, features = ["env"] }
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
@@ -18,9 +17,10 @@ bcs.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 url.workspace = true
-
+prometheus.workspace = true
 sui-types.workspace = true
-
+tokio-util.workspace = true
+sui-indexer-alt-metrics.workspace = true
 axum = { version = "0.7", features = ["json"] }
 sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4" }
 sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4" }
