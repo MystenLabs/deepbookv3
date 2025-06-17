@@ -7,14 +7,9 @@ module margin_trading::lending_pool;
 use margin_trading::constants;
 use margin_trading::margin_math;
 use margin_trading::margin_registry::{Self, LendingAdminCap, MarginRegistry};
-use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::clock::Clock;
 use sui::coin::Coin;
-use sui::dynamic_field;
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -64,6 +59,28 @@ public fun create_lending_pool<Asset>(
     registry.register_lending_pool<Asset>(lending_pool_id);
 
     transfer::share_object(lending_pool);
+}
+
+// Only admin can fund lending pool for MVP
+// Should we just lock the funds in here?
+public fun fund_lending_pool<Asset>(
+    pool: &mut LendingPool<Asset>,
+    coin: Coin<Asset>,
+    _cap: &LendingAdminCap,
+) {
+    let balance = coin.into_balance();
+    pool.vault.join(balance);
+}
+
+// Only admin can withdraw from lending pool for MVP
+public fun withdraw_from_lending_pool<Asset>(
+    pool: &mut LendingPool<Asset>,
+    amount: u64,
+    _cap: &LendingAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    // TODO: perform checks to make sure withdrawal is possible without error
+    pool.vault.split(amount).into_coin(ctx)
 }
 
 public(package) fun update_interest_index<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
