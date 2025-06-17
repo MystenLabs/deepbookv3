@@ -301,9 +301,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 dependencies = [
  "backtrace",
 ]
@@ -4695,21 +4695,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "move-binding-derive"
+name = "move-binding"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=99f68a28c2f19be40a09e5f1281af748df9a8d3e#99f68a28c2f19be40a09e5f1281af748df9a8d3e"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
 dependencies = [
+ "anyhow",
  "bcs",
  "fastcrypto 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.14.0",
  "move-binary-format 0.0.3 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
  "move-core-types 0.0.4 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
- "move-types",
+ "once_cell",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "reqwest",
- "serde",
  "serde_json",
+ "sui-sdk-types 0.0.2",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "move-binding-derive"
+version = "0.1.0"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+dependencies = [
+ "bcs",
+ "move-binding",
+ "move-types",
+ "proc-macro2",
+ "quote",
+ "serde",
  "sui-sdk-types 0.0.2",
  "sui-transaction-builder 0.1.0",
  "syn 2.0.100",
@@ -4997,10 +5013,9 @@ dependencies = [
 [[package]]
 name = "move-types"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=99f68a28c2f19be40a09e5f1281af748df9a8d3e#99f68a28c2f19be40a09e5f1281af748df9a8d3e"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
 dependencies = [
  "move-core-types 0.0.4 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
- "primitive-types",
  "serde",
  "sui-sdk-types 0.0.2",
  "sui-transaction-builder 0.1.0",
@@ -6111,6 +6126,16 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "prettyplease"
+version = "0.2.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6837b9e10d61f45f987d50808f83d1ee3d206c66acf650c3e4ae2e1f6ddedf55"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "primeorder"
