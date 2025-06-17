@@ -9,24 +9,22 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use deepbook_schema::models::{BalancesSummary, OrderFillSummary, Pools};
+use deepbook_schema::models::{BalancesSummary, Pools};
 use deepbook_schema::*;
-use diesel::dsl::{count_star, sql};
+use diesel::dsl::count_star;
 use diesel::dsl::{max, min};
-use diesel::BoolExpressionMethods;
-use diesel::QueryDsl;
-use diesel::{ExpressionMethods, SelectableHelper};
-use diesel_async::RunQueryDsl;
+use diesel::{ExpressionMethods, QueryDsl};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
-use sui_pg_db::{Db, DbArgs};
+use sui_pg_db::DbArgs;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
+use crate::reader::Reader;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
 use prometheus::Registry;
@@ -75,7 +73,7 @@ pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
 
 #[derive(Clone)]
 pub struct AppState {
-    db: Db,
+    reader: Reader,
     metrics: Arc<RpcMetrics>,
 }
 
@@ -86,13 +84,8 @@ impl AppState {
         registry: &Registry,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
-        let db = Db::for_read(database_url, args).await?;
-
-        // Try to open a read connection to verify we can
-        // connect to the DB on startup.
-        let _ = db.connect().await?;
-
-        Ok(Self { db, metrics })
+        let reader = Reader::new(database_url, args, metrics.clone(), registry).await?;
+        Ok(Self { reader, metrics })
     }
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
@@ -190,13 +183,7 @@ async fn health_check() -> StatusCode {
 
 /// Get all pools stored in database
 async fn get_pools(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Pools>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-    let results = schema::pools::table
-        .select(Pools::as_select())
-        .load(connection)
-        .await?;
-
-    Ok(Json(results))
+    Ok(Json(state.reader.get_pools().await?))
 }
 
 async fn historical_volume(
@@ -205,61 +192,37 @@ async fn historical_volume(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
     // Fetch all pools to map names to IDs
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
-    let pool_name_to_id: HashMap<String, String> = pools
-        .0
+    let pools = state.reader.get_pools().await?;
+    let pool_name_to_id = pools
         .into_iter()
         .map(|pool| (pool.pool_name, pool.pool_id))
-        .collect();
+        .collect::<HashMap<_, _>>();
 
     // Map provided pool names to pool IDs
-    let pool_ids_list: Vec<String> = pool_names
+    let pool_ids: Vec<String> = pool_names
         .split(',')
         .filter_map(|name| pool_name_to_id.get(name).cloned())
         .collect();
 
-    if pool_ids_list.is_empty() {
+    if pool_ids.is_empty() {
         return Err(DeepBookError::InternalError(
             "No valid pool names provided".to_string(),
         ));
     }
 
     // Parse start_time and end_time from query parameters (in seconds) and convert to milliseconds
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
-
+    let end_time = params.end_time();
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time() // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
     // Determine whether to query volume in base or quote
-    let volume_in_base = params
-        .get("volume_in_base")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let column_to_query = if volume_in_base {
-        sql::<diesel::sql_types::BigInt>("base_quantity")
-    } else {
-        sql::<diesel::sql_types::BigInt>("quote_quantity")
-    };
+    let volume_in_base = params.volume_in_base();
 
     // Query the database for the historical volume
-    let connection = &mut state.db.connect().await?;
-    let results: Vec<(String, i64)> = schema::order_fills::table
-        .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
-        .filter(schema::order_fills::pool_id.eq_any(pool_ids_list))
-        .select((schema::order_fills::pool_id, column_to_query))
-        .load(connection)
+    let results = state
+        .reader
+        .get_historical_volume(start_time, end_time, &pool_ids, volume_in_base)
         .await?;
 
     // Aggregate volume by pool ID and map back to pool names
@@ -282,10 +245,9 @@ async fn all_historical_volume(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
+    let pools = state.reader.get_pools().await?;
 
     let pool_names: String = pools
-        .0
         .into_iter()
         .map(|pool| pool.pool_name)
         .collect::<Vec<String>>()
@@ -299,69 +261,40 @@ async fn get_historical_volume_by_balance_manager_id(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, Vec<i64>>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
-    let pool_name_to_id: HashMap<String, String> = pools
-        .0
+    let pools = state.reader.get_pools().await?;
+    let pool_name_to_id = pools
         .into_iter()
         .map(|pool| (pool.pool_name, pool.pool_id))
-        .collect();
+        .collect::<HashMap<_, _>>();
 
-    let pool_ids_list: Vec<String> = pool_names
+    let pool_ids: Vec<String> = pool_names
         .split(',')
         .filter_map(|name| pool_name_to_id.get(name).cloned())
         .collect();
 
-    if pool_ids_list.is_empty() {
+    if pool_ids.is_empty() {
         return Err(DeepBookError::InternalError(
             "No valid pool names provided".to_string(),
         ));
     }
 
     // Parse start_time and end_time
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
-
+    let end_time = params.end_time();
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time() // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
-    let volume_in_base = params
-        .get("volume_in_base")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let column_to_query = if volume_in_base {
-        sql::<diesel::sql_types::BigInt>("base_quantity")
-    } else {
-        sql::<diesel::sql_types::BigInt>("quote_quantity")
-    };
+    let volume_in_base = params.volume_in_base();
 
-    let results: Vec<OrderFillSummary> = schema::order_fills::table
-        .select((
-            schema::order_fills::pool_id,
-            schema::order_fills::maker_balance_manager_id,
-            schema::order_fills::taker_balance_manager_id,
-            column_to_query,
-        ))
-        .filter(schema::order_fills::pool_id.eq_any(&pool_ids_list))
-        .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
-        .filter(
-            schema::order_fills::maker_balance_manager_id
-                .eq(&balance_manager_id)
-                .or(schema::order_fills::taker_balance_manager_id.eq(&balance_manager_id)),
+    let results = state
+        .reader
+        .get_order_fill_summary(
+            start_time,
+            end_time,
+            &pool_ids,
+            &balance_manager_id,
+            volume_in_base,
         )
-        .load(connection)
         .await?;
 
     let mut volume_by_pool: HashMap<String, Vec<i64>> = HashMap::new();
@@ -391,21 +324,18 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, HashMap<String, Vec<i64>>>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
+    let pools = state.reader.get_pools().await?;
     let pool_name_to_id: HashMap<String, String> = pools
-        .0
         .into_iter()
         .map(|pool| (pool.pool_name, pool.pool_id))
         .collect();
 
-    let pool_ids_list: Vec<String> = pool_names
+    let pool_ids = pool_names
         .split(',')
         .filter_map(|name| pool_name_to_id.get(name).cloned())
-        .collect();
+        .collect::<Vec<_>>();
 
-    if pool_ids_list.is_empty() {
+    if pool_ids.is_empty() {
         return Err(DeepBookError::InternalError(
             "No valid pool names provided".to_string(),
         ));
@@ -424,23 +354,11 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
     }
 
     let interval_ms = interval * 1000;
-
     // Parse start_time and end_time
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
+    let end_time = params.end_time();
 
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time() // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
     let mut metrics_by_interval: HashMap<String, HashMap<String, Vec<i64>>> = HashMap::new();
@@ -449,33 +367,17 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
     while current_start + interval_ms <= end_time {
         let current_end = current_start + interval_ms;
 
-        let volume_in_base = params
-            .get("volume_in_base")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-        let column_to_query = if volume_in_base {
-            sql::<diesel::sql_types::BigInt>("base_quantity")
-        } else {
-            sql::<diesel::sql_types::BigInt>("quote_quantity")
-        };
+        let volume_in_base = params.volume_in_base();
 
-        let results: Vec<OrderFillSummary> = schema::order_fills::table
-            .select((
-                schema::order_fills::pool_id,
-                schema::order_fills::maker_balance_manager_id,
-                schema::order_fills::taker_balance_manager_id,
-                column_to_query,
-            ))
-            .filter(schema::order_fills::pool_id.eq_any(&pool_ids_list))
-            .filter(
-                schema::order_fills::checkpoint_timestamp_ms.between(current_start, current_end),
+        let results = state
+            .reader
+            .get_order_fill_summary(
+                start_time,
+                end_time,
+                &pool_ids,
+                &balance_manager_id,
+                volume_in_base,
             )
-            .filter(
-                schema::order_fills::maker_balance_manager_id
-                    .eq(&balance_manager_id)
-                    .or(schema::order_fills::taker_balance_manager_id.eq(&balance_manager_id)),
-            )
-            .load(connection)
             .await?;
 
         let mut volume_by_pool: HashMap<String, Vec<i64>> = HashMap::new();
@@ -517,9 +419,8 @@ async fn ticker(
     let quote_volumes = fetch_historical_volume(&params, false, &state).await?;
 
     // Fetch pools data for metadata
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
+    let pools = state.reader.get_pools().await?;
     let pool_map: HashMap<String, &Pools> = pools
-        .0
         .iter()
         .map(|pool| (pool.pool_id.clone(), pool))
         .collect();
@@ -533,18 +434,16 @@ async fn ticker(
     let start_time = end_time - (24 * 60 * 60 * 1000);
 
     // Fetch last prices for all pools in a single query. Only trades in the last 24 hours will count.
-    let connection = &mut state.db.connect().await?;
-    let last_prices: Vec<(String, i64)> = schema::order_fills::table
+    let query = schema::order_fills::table
         .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
         .select((schema::order_fills::pool_id, schema::order_fills::price))
         .order_by((
             schema::order_fills::pool_id.asc(),
             schema::order_fills::checkpoint_timestamp_ms.desc(),
         ))
-        .distinct_on(schema::order_fills::pool_id)
-        .load(connection)
-        .await?;
+        .distinct_on(schema::order_fills::pool_id);
 
+    let last_prices: Vec<(String, i64)> = state.reader.results(query).await?;
     let last_price_map: HashMap<String, i64> = last_prices.into_iter().collect();
 
     let mut response = HashMap::new();
@@ -606,9 +505,8 @@ async fn summary(
     State((state, rpc_url)): State<(Arc<AppState>, Url)>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch pools metadata first since it's required for other functions
-    let pools: Json<Vec<Pools>> = get_pools(State(state.clone())).await?;
+    let pools = state.reader.get_pools().await?;
     let pool_metadata: HashMap<String, (String, (i16, i16))> = pools
-        .0
         .iter()
         .map(|pool| {
             (
@@ -747,19 +645,16 @@ async fn high_low_prices_24h(
     // Calculate the start time for 24 hours ago
     let start_time = end_time - (24 * 60 * 60 * 1000);
 
-    let connection = &mut state.db.connect().await?;
-
     // Query for trades within the last 24 hours for all pools
-    let results: Vec<(String, Option<i64>, Option<i64>)> = schema::order_fills::table
+    let query = schema::order_fills::table
         .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
         .group_by(schema::order_fills::pool_id)
         .select((
             schema::order_fills::pool_id,
             max(schema::order_fills::price),
             min(schema::order_fills::price),
-        ))
-        .load(connection)
-        .await?;
+        ));
+    let results: Vec<(String, Option<i64>, Option<i64>)> = state.reader.results(query).await?;
 
     // Aggregate the highest and lowest prices for each pool
     let mut price_map: HashMap<String, (f64, f64)> = HashMap::new();
@@ -782,8 +677,6 @@ async fn price_change_24h(
     pool_metadata: &HashMap<String, (String, (i16, i16))>,
     State(state): State<Arc<AppState>>,
 ) -> Result<HashMap<String, f64>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-
     // Calculate the timestamp for 24 hours ago
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -791,30 +684,20 @@ async fn price_change_24h(
         .as_millis() as i64;
 
     let timestamp_24h_ago = now - (24 * 60 * 60 * 1000); // 24 hours in milliseconds
-    let timestamp_48h_ago = now - (48 * 60 * 60 * 1000); // 24 hours in milliseconds
+    let timestamp_48h_ago = now - (48 * 60 * 60 * 1000); // 48 hours in milliseconds
 
     let mut response = HashMap::new();
 
     for (pool_name, (pool_id, (base_decimals, quote_decimals))) in pool_metadata.iter() {
         // Get the latest price <= 24 hours ago. Only trades until 48 hours ago will count.
-        let earliest_trade_24h = schema::order_fills::table
-            .filter(
-                schema::order_fills::checkpoint_timestamp_ms
-                    .between(timestamp_48h_ago, timestamp_24h_ago),
-            )
-            .filter(schema::order_fills::pool_id.eq(pool_id))
-            .order_by(schema::order_fills::checkpoint_timestamp_ms.desc())
-            .select(schema::order_fills::price)
-            .first::<i64>(connection)
+        let earliest_trade_24h = state
+            .reader
+            .get_price(timestamp_48h_ago, timestamp_24h_ago, pool_id)
             .await;
-
         // Get the most recent price. Only trades until 24 hours ago will count.
-        let most_recent_trade = schema::order_fills::table
-            .filter(schema::order_fills::checkpoint_timestamp_ms.between(timestamp_24h_ago, now))
-            .filter(schema::order_fills::pool_id.eq(pool_id))
-            .order_by(schema::order_fills::checkpoint_timestamp_ms.desc())
-            .select(schema::order_fills::price)
-            .first::<i64>(connection)
+        let most_recent_trade = state
+            .reader
+            .get_price(timestamp_24h_ago, now, pool_id)
             .await;
 
         if let (Ok(earliest_price), Ok(most_recent_price)) = (earliest_trade_24h, most_recent_trade)
@@ -844,77 +727,34 @@ async fn order_updates(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-
     // Fetch pool data with proper error handling
-    let (pool_id, base_decimals, quote_decimals) = schema::pools::table
-        .filter(schema::pools::pool_name.eq(pool_name.clone()))
-        .select((
-            schema::pools::pool_id,
-            schema::pools::base_asset_decimals,
-            schema::pools::quote_asset_decimals,
-        ))
-        .first::<(String, i16, i16)>(connection)
-        .await
-        .map_err(|_| DeepBookError::InternalError(format!("Pool '{}' not found", pool_name)))?;
-
+    let (pool_id, base_decimals, quote_decimals) =
+        state.reader.get_pool_decimals(&pool_name).await?;
     let base_decimals = base_decimals as u8;
     let quote_decimals = quote_decimals as u8;
 
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
+    let end_time = params.end_time();
 
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time() // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(1);
-
-    let mut query = schema::order_updates::table
-        .filter(schema::order_updates::checkpoint_timestamp_ms.between(start_time, end_time))
-        .filter(schema::order_updates::pool_id.eq(pool_id))
-        .order_by(schema::order_updates::checkpoint_timestamp_ms.desc())
-        .select((
-            schema::order_updates::order_id,
-            schema::order_updates::price,
-            schema::order_updates::original_quantity,
-            schema::order_updates::quantity,
-            schema::order_updates::filled_quantity,
-            schema::order_updates::checkpoint_timestamp_ms,
-            schema::order_updates::is_bid,
-            schema::order_updates::balance_manager_id,
-            schema::order_updates::status,
-        ))
-        .limit(limit)
-        .into_boxed();
+    let limit = params.limit();
 
     let balance_manager_filter = params.get("balance_manager_id").cloned();
-    if let Some(manager_id) = balance_manager_filter {
-        query = query.filter(schema::order_updates::balance_manager_id.eq(manager_id));
-    }
-
     let status_filter = params.get("status").cloned();
-    if let Some(status) = status_filter {
-        query = query.filter(schema::order_updates::status.eq(status));
-    }
 
-    let trades = query
-        .load::<(String, i64, i64, i64, i64, i64, bool, String, String)>(connection)
-        .await
-        .map_err(|_| DeepBookError::InternalError("Error fetching trade details".to_string()))?;
+    let trades = state
+        .reader
+        .get_order_updates(
+            pool_id,
+            start_time,
+            end_time,
+            limit,
+            balance_manager_filter,
+            status_filter,
+        )
+        .await?;
 
     let base_factor = 10u64.pow(base_decimals as u32);
     let price_factor = 10u64.pow((9 - base_decimals + quote_decimals) as u32);
@@ -973,87 +813,36 @@ async fn trades(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch all pools to map names to IDs and decimals
-    let connection = &mut state.db.connect().await?;
-    let pool_data = schema::pools::table
-        .filter(schema::pools::pool_name.eq(pool_name.clone()))
-        .select((
-            schema::pools::pool_id,
-            schema::pools::base_asset_decimals,
-            schema::pools::quote_asset_decimals,
-        ))
-        .first::<(String, i16, i16)>(connection)
-        .await
-        .map_err(|_| DeepBookError::InternalError(format!("Pool '{}' not found", pool_name)))?;
-
+    let (pool_id, base_decimals, quote_decimals) =
+        state.reader.get_pool_decimals(&pool_name).await?;
     // Parse start_time and end_time
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
-
+    let end_time = params.end_time();
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
     // Parse limit (default to 1 if not provided)
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(1);
+    let limit = params.limit();
 
     // Parse optional filters for balance managers
     let maker_balance_manager_filter = params.get("maker_balance_manager_id").cloned();
     let taker_balance_manager_filter = params.get("taker_balance_manager_id").cloned();
 
-    let (pool_id, base_decimals, quote_decimals) = pool_data;
     let base_decimals = base_decimals as u8;
     let quote_decimals = quote_decimals as u8;
 
-    // Build the query dynamically
-    let mut query = schema::order_fills::table
-        .filter(schema::order_fills::pool_id.eq(pool_id))
-        .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
-        .into_boxed();
-
-    // Apply optional filters if parameters are provided
-    if let Some(maker_id) = maker_balance_manager_filter {
-        query = query.filter(schema::order_fills::maker_balance_manager_id.eq(maker_id));
-    }
-    if let Some(taker_id) = taker_balance_manager_filter {
-        query = query.filter(schema::order_fills::taker_balance_manager_id.eq(taker_id));
-    }
-
-    // Fetch latest trades (sorted by timestamp in descending order) within the time range, applying the limit
-    let trades = query
-        .order_by(schema::order_fills::checkpoint_timestamp_ms.desc()) // Ensures latest trades come first
-        .limit(limit) // Apply limit to get the most recent trades
-        .select((
-            schema::order_fills::maker_order_id,
-            schema::order_fills::taker_order_id,
-            schema::order_fills::price,
-            schema::order_fills::base_quantity,
-            schema::order_fills::quote_quantity,
-            schema::order_fills::checkpoint_timestamp_ms,
-            schema::order_fills::taker_is_bid,
-            schema::order_fills::maker_balance_manager_id,
-            schema::order_fills::taker_balance_manager_id,
-        ))
-        .load::<(String, String, i64, i64, i64, i64, bool, String, String)>(connection)
-        .await
-        .map_err(|_| {
-            DeepBookError::InternalError(format!(
-                "No trades found for pool '{}' in the specified time range",
-                pool_name
-            ))
-        })?;
+    let trades = state
+        .reader
+        .get_orders(
+            pool_name,
+            pool_id,
+            start_time,
+            end_time,
+            limit,
+            maker_balance_manager_filter,
+            taker_balance_manager_filter,
+        )
+        .await?;
 
     // Conversion factors for decimals
     let base_factor = 10u64.pow(base_decimals as u32);
@@ -1061,7 +850,7 @@ async fn trades(
     let price_factor = 10u64.pow((9 - base_decimals + quote_decimals) as u32);
 
     // Map trades to JSON format
-    let trade_data: Vec<HashMap<String, Value>> = trades
+    let trade_data = trades
         .into_iter()
         .map(
             |(
@@ -1117,30 +906,16 @@ async fn trade_count(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<i64>, DeepBookError> {
     // Parse start_time and end_time
-    let end_time = params
-        .get("end_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
-
+    let end_time = params.end_time();
     let start_time = params
-        .get("start_time")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|t| t * 1000) // Convert to milliseconds
+        .start_time() // Convert to milliseconds
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
 
-    let connection = &mut state.db.connect().await?;
-    let result: i64 = schema::order_fills::table
+    let query = schema::order_fills::table
         .select(count_star())
-        .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
-        .first(connection)
-        .await?;
+        .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time));
 
+    let result = state.reader.first(query).await?;
     Ok(Json(result))
 }
 
@@ -1164,19 +939,17 @@ fn calculate_trade_id(maker_id: &str, taker_id: &str) -> Result<u128, DeepBookEr
 pub async fn assets(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, HashMap<String, Value>>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
-    let assets = schema::assets::table
-        .select((
-            schema::assets::symbol,
-            schema::assets::name,
-            schema::assets::ucid,
-            schema::assets::package_address_url,
-            schema::assets::package_id,
-        ))
-        .load::<(String, String, Option<i32>, Option<String>, Option<String>)>(connection)
-        .await
-        .map_err(|err| DeepBookError::InternalError(format!("Failed to query assets: {}", err)))?;
-
+    let query = schema::assets::table.select((
+        schema::assets::symbol,
+        schema::assets::name,
+        schema::assets::ucid,
+        schema::assets::package_address_url,
+        schema::assets::package_id,
+    ));
+    let assets: Vec<(String, String, Option<i32>, Option<String>, Option<String>)> =
+        state.reader.results(query).await.map_err(|err| {
+            DeepBookError::InternalError(format!("Failed to query assets: {}", err))
+        })?;
     let mut response = HashMap::new();
 
     for (symbol, name, ucid, package_address_url, package_id) in assets {
@@ -1257,8 +1030,7 @@ async fn orderbook(
     };
 
     // Fetch the pool data from the `pools` table
-    let connection = &mut state.db.connect().await?;
-    let pool_data = schema::pools::table
+    let query = schema::pools::table
         .filter(schema::pools::pool_name.eq(pool_name.clone()))
         .select((
             schema::pools::pool_id,
@@ -1266,10 +1038,8 @@ async fn orderbook(
             schema::pools::base_asset_decimals,
             schema::pools::quote_asset_id,
             schema::pools::quote_asset_decimals,
-        ))
-        .first::<(String, String, i16, String, i16)>(connection)
-        .await?;
-
+        ));
+    let pool_data: (String, String, i16, String, i16) = state.reader.first(query).await?;
     let (pool_id, base_asset_id, base_decimals, quote_asset_id, quote_decimals) = pool_data;
     let base_decimals = base_decimals as u8;
     let quote_decimals = quote_decimals as u8;
@@ -1529,7 +1299,6 @@ async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
-    let connection = &mut state.db.connect().await?;
     let mut query =
       "SELECT asset, SUM(amount)::bigint AS amount, deposit FROM balances WHERE checkpoint_timestamp_ms < "
           .to_string();
@@ -1546,7 +1315,7 @@ async fn get_net_deposits(
     query.pop();
     query.push_str(") GROUP BY asset, deposit");
 
-    let results: Vec<BalancesSummary> = diesel::sql_query(query).load(connection).await?;
+    let results: Vec<BalancesSummary> = state.reader.results(diesel::sql_query(query)).await?;
     let mut net_deposits = HashMap::new();
     for result in results {
         let mut asset = result.asset;
@@ -1567,4 +1336,44 @@ async fn get_net_deposits(
 fn parse_type_input(type_str: &str) -> Result<TypeInput, DeepBookError> {
     let type_tag = TypeTag::from_str(type_str)?;
     Ok(TypeInput::from(type_tag))
+}
+
+trait ParameterUtil {
+    fn start_time(&self) -> Option<i64>;
+    fn end_time(&self) -> i64;
+    fn volume_in_base(&self) -> bool;
+
+    fn limit(&self) -> i64;
+}
+
+impl ParameterUtil for HashMap<String, String> {
+    fn start_time(&self) -> Option<i64> {
+        self.get("start_time")
+            .and_then(|v| v.parse::<i64>().ok())
+            .map(|t| t * 1000) // Convert
+    }
+
+    fn end_time(&self) -> i64 {
+        self.get("end_time")
+            .and_then(|v| v.parse::<i64>().ok())
+            .map(|t| t * 1000) // Convert to milliseconds
+            .unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64
+            })
+    }
+
+    fn volume_in_base(&self) -> bool {
+        self.get("volume_in_base")
+            .map(|v| v == "true")
+            .unwrap_or_default()
+    }
+
+    fn limit(&self) -> i64 {
+        self.get("limit")
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(1)
+    }
 }
