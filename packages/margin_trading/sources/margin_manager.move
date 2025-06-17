@@ -21,6 +21,7 @@ use deepbook::balance_manager::{
 };
 use deepbook::constants;
 use deepbook::pool::{Self, Pool};
+use margin_trading::margin_registry::{Self, MarginRegistry};
 use std::type_name::{Self, TypeName};
 use sui::clock::Clock;
 use sui::coin::Coin;
@@ -30,6 +31,7 @@ use token::deep::DEEP;
 
 // === Errors ===
 const EInvalidDeposit: u64 = 0;
+const EMarginPairNotAllowed: u64 = 1;
 
 // === Constants ===
 // const MAX_TRADE_CAPS: u64 = 1000;
@@ -53,8 +55,11 @@ public struct MarginManagerEvent has copy, drop {
 }
 
 // === Public-Mutative Functions ===
-public fun new<BaseAsset, QuoteAsset>(ctx: &mut TxContext) {
-    // TODO: add in logic to ensure only certain pairs of margin managers can be created. This can be a shared object
+public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
+    assert!(
+        margin_registry::is_margin_pair_allowed<BaseAsset, QuoteAsset>(margin_registry),
+        EMarginPairNotAllowed,
+    );
 
     let id = object::new(ctx);
 
@@ -81,6 +86,7 @@ public fun new<BaseAsset, QuoteAsset>(ctx: &mut TxContext) {
     transfer::share_object(margin_manager)
 }
 
+// TODO: liquidate based on whether base or quote needs to be liquidated
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -121,13 +127,13 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     );
 }
 
-public fun repay_same_assets<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    abort 0x1
-}
+// public fun repay_same_assets<BaseAsset, QuoteAsset>(
+//     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+//     clock: &Clock,
+//     ctx: &mut TxContext,
+// ) {
+//     abort 0x1
+// }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
