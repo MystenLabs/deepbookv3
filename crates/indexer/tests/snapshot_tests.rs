@@ -3,6 +3,7 @@ use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
+use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use fastcrypto::hash::{HashFunction, Sha256};
@@ -21,7 +22,6 @@ use sui_pg_db::Db;
 use sui_pg_db::DbArgs;
 use sui_storage::blob::Blob;
 use sui_types::full_checkpoint_content::CheckpointData;
-use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 
 #[tokio::test]
 async fn balances_test() -> Result<(), anyhow::Error> {
@@ -63,9 +63,9 @@ async fn data_test<H, I>(
     tables_to_check: I,
 ) -> Result<(), anyhow::Error>
 where
-    I: IntoIterator<Item=&'static str>,
+    I: IntoIterator<Item = &'static str>,
     H: Handler + Processor,
-    for<'a> H::Store: Store<Connection<'a>=Connection<'a>>,
+    for<'a> H::Store: Store<Connection<'a> = Connection<'a>>,
 {
     // Set up the temporary database
     let temp_db = TempDb::new()?;
@@ -97,7 +97,7 @@ async fn run_pipeline<'c, T: Handler + Processor, P: AsRef<Path>>(
     conn: &mut Connection<'c>,
 ) -> Result<(), anyhow::Error>
 where
-    T::Store: Store<Connection<'c>=Connection<'c>>,
+    T::Store: Store<Connection<'c> = Connection<'c>>,
 {
     let bytes = fs::read(path)?;
     let cp = Blob::from_bytes::<CheckpointData>(&bytes)?;
@@ -125,7 +125,10 @@ async fn read_table(table_name: &str, db_url: &str) -> Result<Vec<Value>, anyhow
 
                 // timestamp is the insert time in deepbook DB, hardcoding it to a fix value.
                 if column_name == "timestamp" {
-                    obj.insert(column_name.to_string(), Value::String("1970-01-01 00:00:00.000000".to_string()));
+                    obj.insert(
+                        column_name.to_string(),
+                        Value::String("1970-01-01 00:00:00.000000".to_string()),
+                    );
                     continue;
                 }
 

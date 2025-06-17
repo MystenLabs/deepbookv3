@@ -66,7 +66,7 @@ impl Reader {
     where
         Q: diesel::query_dsl::limit_dsl::LimitDsl,
         Q::Output: Query + QueryFragment<Pg> + QueryId + Send + 'q,
-        <Q::Output as Query>::SqlType: CompatibleType<U, Pg, SqlType=ST>,
+        <Q::Output as Query>::SqlType: CompatibleType<U, Pg, SqlType = ST>,
         U: Send + FromSqlRow<ST, Pg> + 'static,
         Pg: QueryMetadata<<Q::Output as Query>::SqlType>,
         ST: 'static,

@@ -1,0 +1,51 @@
+name: Rust
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - crates/**
+      - rust.yml
+      - Cargo.lock
+      - Cargo.toml
+  pull_request:
+    branches: ["main"]
+    paths:
+      - crates/**
+      - rust.yml
+      - Cargo.lock
+      - Cargo.toml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-crates:
+    name: test-indexer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Install postgres
+        shell: bash
+        run: |
+          sudo apt update && sudo apt install postgresql
+
+      - name: Add postgres to PATH
+        run: echo "/usr/lib/postgresql/16/bin" >> $GITHUB_PATH
+
+      - name: Run deepbook-indexer tests
+        run: |
+          cargo nextest run -E 'package(deepbook-indexer)'
+
+
+  rustfmt:
+    runs-on: [ ubuntu-latest ]
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # Pin v4.1.1
+      - run: rustup component add rustfmt
+      - run: cargo fmt --check
