@@ -3,7 +3,7 @@
 
 use clap::Parser;
 use deepbook_server::server::run_server;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use sui_pg_db::DbArgs;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -40,11 +40,10 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         rpc_url,
     } = Args::parse();
-    let server_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
     let cancel = CancellationToken::new();
 
     run_server(
-        server_address,
+        server_port,
         database_url,
         db_args,
         rpc_url,
