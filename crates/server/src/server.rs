@@ -17,6 +17,7 @@ use diesel::{ExpressionMethods, QueryDsl};
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
@@ -93,7 +94,7 @@ impl AppState {
 }
 
 pub async fn run_server(
-    socket_address: SocketAddr,
+    server_port: u16,
     database_url: Url,
     db_arg: DbArgs,
     rpc_url: Url,
@@ -110,8 +111,15 @@ pub async fn run_server(
     );
 
     let state = AppState::new(database_url, db_arg, metrics.registry()).await?;
+    let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
+    
+    println!("🚀 Server started successfully on port {}", server_port);
 
-    let listener = TcpListener::bind(socket_address).await.unwrap();
+    let _handle = tokio::spawn(async move {
+        let _ = metrics.run().await;
+    });
+    
+    let listener = TcpListener::bind(socket_address).await?;
     axum::serve(listener, make_router(Arc::new(state), rpc_url))
         .with_graceful_shutdown(async move {
             cancellation_token.cancelled().await;
