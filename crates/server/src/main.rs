@@ -32,7 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let _guard = telemetry_subscribers::TelemetryConfig::new()
         .with_env()
         .init();
-    
+
     let Args {
         db_args,
         server_port,

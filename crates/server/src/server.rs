@@ -115,8 +115,9 @@ pub async fn run_server(
     axum::serve(listener, make_router(Arc::new(state), rpc_url))
         .with_graceful_shutdown(async move {
             cancellation_token.cancelled().await;
-        }).await?;
-    
+        })
+        .await?;
+
     Ok(())
 }
 pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
