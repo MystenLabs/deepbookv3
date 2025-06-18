@@ -10,9 +10,15 @@ use std::type_name::{Self, TypeName};
 use sui::bag::{Self, Bag};
 use sui::balance::{Self, Balance};
 use sui::coin::Coin;
-use sui::dynamic_field;
+use sui::dynamic_field as df;
 use sui::vec_set::{Self, VecSet};
 use sui::versioned::{Self, Versioned};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
 
 // === Errors ===
 const EPairAlreadyAllowed: u64 = 1;
@@ -41,6 +47,8 @@ public struct MarginPair has copy, drop, store {
     base: TypeName,
     quote: TypeName,
 }
+
+public struct ConfigKey<phantom Config> has copy, drop, store {}
 
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let registry = MarginRegistry {
@@ -100,4 +108,23 @@ public(package) fun get_lending_pool_id<Asset>(self: &MarginRegistry): ID {
     assert!(self.lending_pools.contains(key), ELendingPoolDoesNotExists);
 
     *self.lending_pools.borrow<TypeName, ID>(key)
+}
+
+public fun add_config<Config: store + drop>(
+    _cap: &LendingAdminCap,
+    self: &mut MarginRegistry,
+    config: Config,
+) {
+    self.id.add(ConfigKey<Config> {}, config);
+}
+
+public fun remove_config<Config: store + drop>(
+    _cap: &LendingAdminCap,
+    self: &mut MarginRegistry,
+): Config {
+    self.id.remove(ConfigKey<Config> {})
+}
+
+public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
+    self.id.borrow(ConfigKey<Config> {})
 }
