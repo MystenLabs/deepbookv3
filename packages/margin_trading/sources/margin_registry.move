@@ -4,20 +4,11 @@
 /// Registry holds all lending pools.
 module margin_trading::margin_registry;
 
-use deepbook::constants;
-use margin_trading::lending_pool;
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::dynamic_field as df;
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{bag::{Self, Bag}, dynamic_field as df, vec_set::{Self, VecSet}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
-use fun df::borrow_mut as UID.borrow_mut;
-use fun df::exists_ as UID.exists_;
 use fun df::remove as UID.remove;
 
 // === Errors ===

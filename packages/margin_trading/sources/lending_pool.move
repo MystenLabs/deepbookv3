@@ -4,16 +4,14 @@
 /// Registry holds all lending pools.
 module margin_trading::lending_pool;
 
-use deepbook::balance_manager;
-use deepbook::pool::{Self, Pool};
-use margin_trading::constants;
-use margin_trading::margin_manager::{Self, MarginManager};
-use margin_trading::margin_math;
-use margin_trading::margin_registry::{Self, LendingAdminCap, MarginRegistry};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::table::{Self, Table};
+use deepbook::pool::Pool;
+use margin_trading::{
+    constants,
+    margin_manager::MarginManager,
+    margin_math,
+    margin_registry::{LendingAdminCap, MarginRegistry}
+};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -22,7 +20,7 @@ const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 const ENotEnoughAssetInPool: u64 = 1;
 
 // === Structs ===
-public struct Loan has store, drop {
+public struct Loan has drop, store {
     loan_amount: u64, // total loan, including interest
     last_interest_index: u64, // 9 decimals
 }
@@ -231,8 +229,6 @@ public fun margin_manager_debt<BaseAsset, QuoteAsset>(
     (base_debt, quote_debt)
 }
 
-/// Only base and quote assets in the margin manager are considered for risk ratio calculation.
-/// Even though user can deposit DEEP into the manager, it is not considered for risk ratio calculation, unless DEEP is the base or quote asset.
 // public fun risk_ratio<BaseAsset, QuoteAsset, Asset>(
 //     pool: &LendingPool<Asset>,
 //     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,

@@ -10,23 +10,14 @@
 /// TODO: update comments
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    BalanceKey,
-    TradeCap,
-    TradeProof,
-    DepositCap,
-    WithdrawCap
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap},
+    constants,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::pool::{Self, Pool};
 use margin_trading::margin_registry::{Self, MarginRegistry};
-use std::type_name::{Self, TypeName};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::vec_set::{Self, VecSet};
+use std::type_name;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
