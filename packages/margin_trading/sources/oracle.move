@@ -26,6 +26,7 @@ public struct PythConfig has drop, store {
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
 }
 
+/// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
 public struct CoinTypeData has copy, drop, store {
     decimals: u8,
     price_feed_id: vector<u8>, // Make sure to omit the `0x` prefix.
