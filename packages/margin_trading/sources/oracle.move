@@ -32,10 +32,11 @@ public struct CoinTypeData has copy, drop, store {
 
 public(package) fun calculate_usd_price<T>(
     registry: &MarginRegistry,
-    base_amount: u64,
+    base_debt: u64,
+    base_asset: u64,
     clock: &Clock,
     price_info_object: &PriceInfoObject,
-): u64 {
+): (u64, u64) {
     let config = registry.get_config<PythConfig>();
     let type_config = registry.get_config_for_type<T>();
 
@@ -57,12 +58,21 @@ public(package) fun calculate_usd_price<T>(
     let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
     let pyth_price = price.get_price().get_magnitude_if_positive();
 
-    calculate_target_currency_amount(
-        base_amount,
-        target_decimals,
-        base_decimals,
-        pyth_price,
-        pyth_decimals,
+    (
+        calculate_target_currency_amount(
+            base_debt,
+            target_decimals,
+            base_decimals,
+            pyth_price,
+            pyth_decimals,
+        ),
+        calculate_target_currency_amount(
+            base_asset,
+            target_decimals,
+            base_decimals,
+            pyth_price,
+            pyth_decimals,
+        ),
     )
 }
 

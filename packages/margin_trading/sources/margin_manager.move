@@ -1,17 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The MarginManager is a shared object that holds all of the balances for different assets. A combination of `BalanceManager` and
-/// `TradeProof` are passed into a pool to perform trades. A `TradeProof` can be generated in two ways: by the
-/// owner directly, or by any `TradeCap` owner. The owner can generate a `TradeProof` without the risk of
-/// equivocation. The `TradeCap` owner, due to it being an owned object, risks equivocation when generating
-/// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
-///
 /// TODO: update comments
 module margin_trading::margin_manager;
 
 use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap},
+    balance_manager::{
+        Self,
+        mint_deposit_cap,
+        mint_trade_cap,
+        mint_withdraw_cap,
+        BalanceManager,
+        TradeCap,
+        DepositCap,
+        WithdrawCap
+    },
     constants,
     pool::Pool
 };
@@ -55,9 +58,9 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
     let id = object::new(ctx);
 
     let mut balance_manager = balance_manager::new(ctx);
-    let deposit_cap = balance_manager::mint_deposit_cap(&mut balance_manager, ctx);
-    let withdraw_cap = balance_manager::mint_withdraw_cap(&mut balance_manager, ctx);
-    let trade_cap = balance_manager::mint_trade_cap(&mut balance_manager, ctx);
+    let deposit_cap = mint_deposit_cap(&mut balance_manager, ctx);
+    let withdraw_cap = mint_withdraw_cap(&mut balance_manager, ctx);
+    let trade_cap = mint_trade_cap(&mut balance_manager, ctx);
 
     event::emit(MarginManagerEvent {
         margin_manager_id: id.to_inner(),

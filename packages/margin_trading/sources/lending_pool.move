@@ -1,16 +1,17 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry holds all lending pools.
 module margin_trading::lending_pool;
 
 use deepbook::pool::Pool;
 use margin_trading::{
     constants,
     margin_manager::MarginManager,
-    margin_math,
-    margin_registry::{LendingAdminCap, MarginRegistry}
+    margin_math::{Self, div as div},
+    margin_registry::{LendingAdminCap, MarginRegistry},
+    oracle::calculate_usd_price
 };
+use pyth::price_info::PriceInfoObject;
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
@@ -229,13 +230,51 @@ public fun margin_manager_debt<BaseAsset, QuoteAsset>(
     (base_debt, quote_debt)
 }
 
-// public fun risk_ratio<BaseAsset, QuoteAsset, Asset>(
-//     pool: &LendingPool<Asset>,
-//     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-//     clock: &Clock,
-// ): u64 {
-//     abort 0x1
-// }
+public fun risk_ratio<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+): u64 {
+    let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
+        base_lending_pool,
+        quote_lending_pool,
+        margin_manager,
+        clock,
+    );
+    let (base_asset, quote_asset) = margin_manager_asset<BaseAsset, QuoteAsset>(
+        pool,
+        margin_manager,
+    );
+
+    let (base_usd_debt, base_usd_asset) = calculate_usd_price<BaseAsset>(
+        registry,
+        base_debt,
+        base_asset,
+        clock,
+        base_price_info_object,
+    );
+    let (quote_usd_debt, quote_usd_asset) = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_debt,
+        quote_asset,
+        clock,
+        quote_price_info_object,
+    );
+    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
+    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
+
+    if (total_usd_debt == 0) {
+        return constants::max_u64() // infinite risk ratio if no debt
+    };
+
+    // TODO: Think about the edge cases here. Set debt ratio as maximumm if asset > some_number * debt?
+    margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
+}
 
 public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     lending_pool: &mut LendingPool<Asset>,
@@ -243,6 +282,8 @@ public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     clock: &Clock,
 ): u64 {
     update_interest_index<Asset>(lending_pool, clock);
+
+    // TODO: need to refresh loan value to include interest
 
     lending_pool.loans.borrow(margin_manager.id()).loan_amount
 }

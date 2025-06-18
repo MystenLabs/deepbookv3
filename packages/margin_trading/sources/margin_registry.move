@@ -16,10 +16,6 @@ const EPairAlreadyAllowed: u64 = 1;
 const EPairNotAllowed: u64 = 2;
 const ELendingPoolAlreadyExists: u64 = 3;
 const ELendingPoolDoesNotExists: u64 = 4;
-// const EVersionAlreadyEnabled: u64 = 5;
-// const ECannotDisableCurrentVersion: u64 = 6;
-// const ECoinAlreadyWhitelisted: u64 = 7;
-// const ECoinNotWhitelisted: u64 = 8;
 
 public struct MARGIN_REGISTRY has drop {}
 
