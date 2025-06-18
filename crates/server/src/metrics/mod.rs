@@ -51,7 +51,7 @@ impl RpcMetrics {
             request_latency: register_histogram_vec_with_registry!(
                 "deepbook_api_request_latency",
                 "Time taken to respond to Deepbook API requests, by method",
-                &["method", "source"],
+                &["method"],
                 LATENCY_SEC_BUCKETS.to_vec(),
                 registry
             )
@@ -60,7 +60,7 @@ impl RpcMetrics {
             requests_received: register_int_counter_vec_with_registry!(
                 "deepbook_api_requests_received",
                 "Number of requests initiated for each Deepbook API method",
-                &["method", "source"],
+                &["method"],
                 registry
             )
                 .unwrap(),
@@ -68,7 +68,7 @@ impl RpcMetrics {
             requests_succeeded: register_int_counter_vec_with_registry!(
                 "deepbook_api_requests_succeeded",
                 "Number of requests that completed successfully for each Deepbook API method",
-                &["method", "source"],
+                &["method"],
                 registry
             )
                 .unwrap(),
@@ -76,7 +76,7 @@ impl RpcMetrics {
             requests_failed: register_int_counter_vec_with_registry!(
                 "deepbook_api_requests_failed",
                 "Number of requests that completed with an error for each Deepbook API method, by error code",
-                &["method", "source", "code"],
+                &["method", "code"],
                 registry
             )
                 .unwrap(),
