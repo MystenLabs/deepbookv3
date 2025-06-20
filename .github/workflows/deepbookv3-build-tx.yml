@@ -17,6 +17,7 @@ on:
           - Prep Kiosk MVR
           - Prep Kiosk MVR Registration
           - Package Info Creation
+          - Package Info Testnet
           - Register Deepbook with MVR
           - Add Stable Coins
           - Transfer Mvr Kiosk
@@ -172,6 +173,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/packageInfoCreation.ts
+
+      - name: Package Info Testnet
+        if: ${{ inputs.transaction_type == 'Package Info Testnet' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/packageInfoCreationTestnet.ts
 
       - name: Register Deepbook with MVR
         if: ${{ inputs.transaction_type == 'Register Deepbook with MVR' }}
