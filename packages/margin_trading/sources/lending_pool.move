@@ -7,7 +7,7 @@ use deepbook::pool::Pool;
 use margin_trading::{
     constants,
     margin_manager::MarginManager,
-    margin_math::{Self, div as div},
+    margin_math,
     margin_registry::{LendingAdminCap, MarginRegistry},
     oracle::calculate_usd_price
 };
@@ -187,13 +187,21 @@ public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     let manager_id = margin_manager.id();
     if (lending_pool.loans.contains(manager_id)) {
         let mut loan = lending_pool.loans.remove(manager_id);
-        let mut repay_amount = repay_amount;
-        if (repay_amount > loan.loan_amount) {
-            // if user tries to repay more than owed, just repay the full amount
-            repay_amount = loan.loan_amount;
+        let interest_multiplier = margin_math::div(
+            lending_pool.interest_index,
+            loan.last_interest_index,
+        );
+        loan.loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        loan.last_interest_index = lending_pool.interest_index;
+
+        // if user tries to repay more than owed, just repay the full amount
+        let repayment = if (repay_amount >= loan.loan_amount) {
+            repay_amount
+        } else {
+            loan.loan_amount
         };
 
-        let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repay_amount, ctx);
+        let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repayment, ctx);
         let balance = coin.into_balance();
         lending_pool.vault.join(balance);
 
