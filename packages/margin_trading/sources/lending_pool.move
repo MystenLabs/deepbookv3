@@ -22,9 +22,16 @@ const ENotEnoughAssetInPool: u64 = 1;
 
 // === Structs ===
 public struct Loan has drop, store {
-    loan_amount: u64, // total loan, including interest
+    principle_loan_amount: u64, // total loan amount without interest
+    total_repayments: u64, // total repaid amount
+    loan_amount: u64, // total loan remaining, including interest
     last_interest_index: u64, // 9 decimals
 }
+
+// public struct LoanRepayed has drop, store {
+//     balance_manager: ID, // ID of the loan
+//     repaid_amount: u64, // amount repaid in this transaction
+// }
 
 // TODO: update interest params as needed
 public struct InterestParams has store {
@@ -145,6 +152,8 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
         lending_pool.loans.add(manager_id, loan);
     } else {
         let loan = Loan {
+            principle_loan_amount: loan_amount,
+            total_repayments: 0,
             loan_amount,
             last_interest_index: lending_pool.interest_index,
         };
