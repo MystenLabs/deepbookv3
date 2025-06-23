@@ -37,6 +37,7 @@ public struct Loan has drop, store {
 public struct InterestParams has store {
     base_rate: u64, // 9 decimals
     multiplier: u64, // 9 decimals
+    // Add more params if needed, like max interest rate, etc.
 }
 
 public struct LendingPool<phantom Asset> has key, store {
@@ -90,6 +91,8 @@ public fun update_interest_params<Asset>(
 
 // Only admin can fund lending pool for MVP
 // Should we just lock the funds in here?
+// TODO: allow everyone to fund lending pool
+// TODO: they can withdraw at any point if there's liquidity available
 public fun fund_lending_pool<Asset>(
     pool: &mut LendingPool<Asset>,
     coin: Coin<Asset>,

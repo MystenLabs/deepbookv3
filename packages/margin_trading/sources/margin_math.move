@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// TODO: make deepbook:math functions public, remove this module
 module margin_trading::margin_math;
 
 /// scaling setting for float
