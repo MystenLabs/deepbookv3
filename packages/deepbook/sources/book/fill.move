@@ -4,13 +4,12 @@
 /// `Fill` struct represents the results of a match between two orders.
 module deepbook::fill;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::deep_price::OrderDeepPrice;
+use deepbook::{balances::{Self, Balances}, deep_price::OrderDeepPrice};
 
 // === Structs ===
 /// Fill struct represents the results of a match between two orders.
 /// It is used to update the state.
-public struct Fill has store, drop, copy {
+public struct Fill has copy, drop, store {
     // ID of the maker order
     maker_order_id: u128,
     // Client Order ID of the maker order
@@ -166,10 +165,22 @@ public(package) fun get_settled_maker_quantities(self: &Fill): Balances {
     balances::new(base, quote, 0)
 }
 
-public(package) fun set_fill_maker_fee(self: &mut Fill, fee: u64) {
-    self.maker_fee = fee;
+public(package) fun set_fill_maker_fee(self: &mut Fill, fee: &Balances) {
+    if (fee.deep() > 0) {
+        self.maker_fee_is_deep = true;
+    } else {
+        self.maker_fee_is_deep = false;
+    };
+
+    self.maker_fee = fee.non_zero_value();
 }
 
-public(package) fun set_fill_taker_fee(self: &mut Fill, fee: u64) {
-    self.taker_fee = fee;
+public(package) fun set_fill_taker_fee(self: &mut Fill, fee: &Balances) {
+    if (fee.deep() > 0) {
+        self.taker_fee_is_deep = true;
+    } else {
+        self.taker_fee_is_deep = false;
+    };
+
+    self.taker_fee = fee.non_zero_value();
 }

@@ -4,14 +4,13 @@
 /// Account module manages the account data for each user.
 module deepbook::account;
 
-use deepbook::balances::{Self, Balances};
-use deepbook::fill::Fill;
+use deepbook::{balances::{Self, Balances}, fill::Fill};
 use sui::vec_set::{Self, VecSet};
 
 // === Structs ===
 /// Account data that is updated every epoch.
 /// One Account struct per BalanceManager object.
-public struct Account has store, copy, drop {
+public struct Account has copy, drop, store {
     epoch: u64,
     open_orders: VecSet<u128>,
     taker_volume: u128,
@@ -81,10 +80,7 @@ public(package) fun empty(ctx: &TxContext): Account {
 
 /// Update the account data for the new epoch.
 /// Returns the previous epoch, maker volume, and active stake.
-public(package) fun update(
-    self: &mut Account,
-    ctx: &TxContext,
-): (u64, u128, u64) {
+public(package) fun update(self: &mut Account, ctx: &TxContext): (u64, u128, u64) {
     if (self.epoch == ctx.epoch()) return (0, 0, 0);
 
     let prev_epoch = self.epoch;
@@ -120,10 +116,7 @@ public(package) fun add_taker_volume(self: &mut Account, volume: u64) {
 
 /// Set the voted proposal for the account and return the
 /// previous proposal.
-public(package) fun set_voted_proposal(
-    self: &mut Account,
-    proposal: Option<ID>,
-): Option<ID> {
+public(package) fun set_voted_proposal(self: &mut Account, proposal: Option<ID>): Option<ID> {
     let prev_proposal = self.voted_proposal;
     self.voted_proposal = proposal;
 
@@ -134,10 +127,7 @@ public(package) fun set_created_proposal(self: &mut Account, created: bool) {
     self.created_proposal = created;
 }
 
-public(package) fun add_settled_balances(
-    self: &mut Account,
-    balances: Balances,
-) {
+public(package) fun add_settled_balances(self: &mut Account, balances: Balances) {
     self.settled_balances.add_balances(balances);
 }
 
@@ -159,8 +149,8 @@ public(package) fun add_rebates(self: &mut Account, rebates: Balances) {
     self.unclaimed_rebates.add_balances(rebates);
 }
 
-public(package) fun claim_rebates(self: &mut Account): u64 {
-    let rebate_amount = self.unclaimed_rebates.deep();
+public(package) fun claim_rebates(self: &mut Account): Balances {
+    let rebate_amount = self.unclaimed_rebates;
     self.settled_balances.add_balances(self.unclaimed_rebates);
     self.unclaimed_rebates.reset();
 

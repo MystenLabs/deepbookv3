@@ -4,12 +4,7 @@
 #[test_only]
 module deepbook::big_vector_tests;
 
-use deepbook::big_vector::{
-    Self as bv,
-    BigVector,
-    borrow as borrow,
-    borrow_mut as borrow_mut
-};
+use deepbook::big_vector::{Self as bv, BigVector, borrow as borrow, borrow_mut as borrow_mut};
 
 #[test]
 fun test_destroy_empty() {
@@ -284,10 +279,7 @@ fun test_remove_redistribute_left() {
         0,
     );
 
-    assert!(
-        bv.inorder_values() == vector[vector[1], vector[2]],
-        0,
-    );
+    assert!(bv.inorder_values() == vector[vector[1], vector[2]], 0);
 
     bv.drop()
 }
@@ -314,10 +306,7 @@ fun test_remove_redistribute_right() {
         0,
     );
 
-    assert!(
-        bv.inorder_values() == vector[vector[3], vector[4]],
-        0,
-    );
+    assert!(bv.inorder_values() == vector[vector[3], vector[4]], 0);
 
     bv.drop()
 }
@@ -406,15 +395,9 @@ fun test_remove_merge_right() {
     assert!(bv.length() == 3, 0);
     assert!(bv.depth() == 0, 0);
 
-    assert!(
-        bv.preorder_keys() == vector[vector[1, 2, 4]],
-        0,
-    );
+    assert!(bv.preorder_keys() == vector[vector[1, 2, 4]], 0);
 
-    assert!(
-        bv.inorder_values() == vector[vector[1, 2, 4]],
-        0,
-    );
+    assert!(bv.inorder_values() == vector[vector[1, 2, 4]], 0);
 
     bv.drop()
 }

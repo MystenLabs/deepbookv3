@@ -4,14 +4,8 @@
 #[test_only]
 module deepbook::order_info_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::order_info::{Self, OrderInfo};
-use deepbook::utils;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::assert_eq;
+use deepbook::{balances, constants, deep_price, order_info::{Self, OrderInfo}, utils};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -163,10 +157,7 @@ fun match_maker_partial_fill_bid_ok() {
     assert!(has_next, 0);
     assert!(order_info.fills_ref().length() == 1, 0);
     assert!(order_info.executed_quantity() == 5 * constants::sui_unit(), 0);
-    assert!(
-        order_info.cumulative_quote_quantity() == 25 * constants::usdc_unit(),
-        0,
-    );
+    assert!(order_info.cumulative_quote_quantity() == 25 * constants::usdc_unit(), 0);
     assert!(order_info.status() == constants::partially_filled(), 0);
     assert!(order_info.remaining_quantity() == 5 * constants::sui_unit(), 0);
 
@@ -288,10 +279,7 @@ fun match_maker_full_fill_ok() {
     assert!(has_next, 0);
     assert!(order_info.fills_ref().length() == 1, 0);
     assert!(order_info.executed_quantity() == 10 * constants::sui_unit(), 0);
-    assert!(
-        order_info.cumulative_quote_quantity() == 50 * constants::usdc_unit(),
-        0,
-    );
+    assert!(order_info.cumulative_quote_quantity() == 50 * constants::usdc_unit(), 0);
     assert!(order_info.status() == constants::filled(), 0);
     assert!(order_info.remaining_quantity() == 0, 0);
 

@@ -4,14 +4,8 @@
 #[test_only]
 module deepbook::account_tests;
 
-use deepbook::account;
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::fill;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::assert_eq;
+use deepbook::{account, balances, constants, deep_price, fill};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -56,7 +50,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -81,7 +75,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -107,7 +101,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -134,7 +128,7 @@ fun process_maker_fill_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
@@ -196,11 +190,7 @@ fun update_ok() {
 
     test.next_tx(ALICE);
     let mut account = account::empty(test.ctx());
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
@@ -220,27 +210,19 @@ fun update_ok() {
         0,
         deep_price::new_order_deep_price(true, constants::deep_multiplier()),
         true,
-        true
+        true,
     );
     account.process_maker_fill(&fill);
 
     // update doesn't do anything until next epoch
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 100, 0);
     assert!(prev_active_stake == 0, 0);
@@ -252,22 +234,14 @@ fun update_ok() {
     assert!(account.inactive_stake() == 100, 0);
 
     // already reset earlier, new stake not counted yet
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 0, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 1, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 0, 0);
@@ -281,11 +255,7 @@ fun update_ok() {
 
     test.next_epoch(OWNER);
     test.next_tx(ALICE);
-    let (
-        prev_epoch,
-        prev_maker_volume,
-        prev_active_stake,
-    ) = account.update(test.ctx());
+    let (prev_epoch, prev_maker_volume, prev_active_stake) = account.update(test.ctx());
     assert!(prev_epoch == 2, 0);
     assert!(prev_maker_volume == 0, 0);
     assert!(prev_active_stake == 100, 0);
@@ -306,19 +276,19 @@ fun claim_rebates_ok() {
     assert_eq(settled, balances::new(0, 0, 0));
     assert_eq(owed, balances::new(0, 0, 0));
 
-    account.add_rebates(balances::new(0, 0, 100));
+    account.add_rebates(balances::new(50, 150, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 100));
+    assert_eq(settled, balances::new(50, 150, 100));
     assert_eq(owed, balances::new(0, 0, 0));
 
     // user owes 100 DEEP for staking
     account.add_stake(100);
-    // user receives 100 DEEP from rebates
-    account.add_rebates(balances::new(0, 0, 100));
+    // user receives 150 base, 50 quote, 100 DEEP from rebates
+    account.add_rebates(balances::new(150, 50, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 100));
+    assert_eq(settled, balances::new(150, 50, 100));
     assert_eq(owed, balances::new(0, 0, 100));
 
     test.end();

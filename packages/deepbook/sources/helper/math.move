@@ -73,8 +73,10 @@ public(package) fun median(v: vector<u128>): u128 {
     }
 }
 
-/// Computes the integer square root of a scaled u64 value, assuming the original value
-/// is scaled by precision. The result will be in the same floating-point representation.
+/// Computes the integer square root of a scaled u64 value, assuming the
+/// original value
+/// is scaled by precision. The result will be in the same floating-point
+/// representation.
 public(package) fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
     let multiplier = (FLOAT_SCALING / precision) as u128;
@@ -82,6 +84,20 @@ public(package) fun sqrt(x: u64, precision: u64): u64 {
     let sqrt_scaled_x: u128 = std::u128::sqrt(scaled_x);
 
     (sqrt_scaled_x / multiplier) as u64
+}
+
+public(package) fun is_power_of_ten(n: u64): bool {
+    let mut num = n;
+
+    if (num < 1) {
+        false
+    } else {
+        while (num % 10 == 0) {
+            num = num / 10;
+        };
+
+        num == 1
+    }
 }
 
 fun quick_sort(data: vector<u128>): vector<u128> {
@@ -200,4 +216,20 @@ fun test_sqrt() {
     assert!(sqrt(100_000_000 * scaling, precision_9) == 316_227_766_016, 0);
     assert!(sqrt(300_000_000 * scaling, precision_9) == 547_722_557_505, 0);
     assert!(sqrt(100_000_000_000, precision_9) == 10_000_000_000, 0);
+}
+
+#[test]
+/// Test is_power_of_ten function
+fun test_is_power_of_ten() {
+    assert!(is_power_of_ten(1), 0);
+    assert!(is_power_of_ten(10), 0);
+    assert!(is_power_of_ten(100), 0);
+    assert!(is_power_of_ten(1000), 0);
+    assert!(is_power_of_ten(10000), 0);
+    assert!(is_power_of_ten(100000), 0);
+    assert!(!is_power_of_ten(0), 0);
+    assert!(!is_power_of_ten(2), 0);
+    assert!(!is_power_of_ten(3), 0);
+    assert!(!is_power_of_ten(20), 0);
+    assert!(!is_power_of_ten(1001), 0);
 }

@@ -1,96 +1,294 @@
 ---
-  name: Build Deepbook TX
+name: Build Deepbook TX
 
-  on:
-    workflow_dispatch:
-      inputs:
-        transaction_type:
-          description: 'select transaction type to create'
-          type: choice
-          options:
-            - Create Pool
-            - Upgrade Protocol
-        sui_tools_image:
-          description: 'image reference of sui_tools'
-          default: 'mysten/sui-tools:mainnet'
-        rpc:
-          description: 'RPC url'
-          required: true
-          default: 'https://suins-rpc.mainnet.sui.io:443'
-          type: string
-        gas_object_id:
-          description: 'object id to get gas from for multisig transaction'
-          required: true
-          type: string
-          default: '0xb76abcaefff13813adfa61768fac06a13a9bdbe7c86fb75118885364452286cb'
+on:
+  workflow_dispatch:
+    inputs:
+      transaction_type:
+        description: "select transaction type to create"
+        type: choice
+        options:
+          - Create Pool
+          - Upgrade Protocol
+          - Enable Version
+          - Disable Version
+          - Unregister Pool and Create
+          - Prep MVR
+          - Prep Kiosk MVR
+          - Prep Kiosk MVR Registration
+          - Package Info Creation
+          - Register Deepbook with MVR
+          - Add Stable Coins
+          - Transfer Mvr Kiosk
+          - Finish MVR Setup
+          - MVR Package Reverse Resolution
+          - Setup Denylist
+          - MVR Package Metadata
+          - Adjust Tick Size
+          - Fix MVR Path
+          - Setup Walrus Site
+          - Nautilus Setup
+      sui_tools_image:
+        description: "image reference of sui_tools"
+        default: "mysten/sui-tools:mainnet"
+      rpc:
+        description: "RPC url"
+        required: true
+        default: "https://suins-rpc.mainnet.sui.io:443"
+        type: string
+      gas_object_id:
+        description: "object id to get gas from for multisig transaction"
+        required: true
+        type: string
+        default: "0x4850650e3566b000ea159a4ae7d13c93803ceabf1f483a7f796c7cc0b2f5ce4b"
 
-  jobs:
-    deepbook:
-      name: deepbook create tx
-      runs-on: ubuntu-latest
+jobs:
+  deepbook:
+    name: deepbook create tx
+    runs-on: ubuntu-latest
 
-      steps:
-        - name: Selected transaction type
-          run: |
-            echo ${{ inputs.transaction_type }}
+    steps:
+      - name: Selected transaction type
+        run: |
+          echo ${{ inputs.transaction_type }}
 
-        - uses: actions/checkout@v4
-          with:
-            fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-        - name: Install Homebrew
-          run: |
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+      - name: Install Homebrew
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
 
-        - name: Install Sui using Homebrew
-          run: brew install sui
+      - name: Install Sui using Homebrew
+        run: brew install sui
 
-        - name: YAML Setup
-          run: |
-            sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
-            sui client switch --env mainnet
+      - name: YAML Setup
+        run: |
+          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
+          sui client switch --env mainnet
 
-        - name: NPM BUILD TX Environment
-          uses: actions/setup-node@v4
-          with:
-            node-version: 18
+      - name: NPM BUILD TX Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
 
-        - name: Do a global PNPM install
-          run: |
-            npm install -g pnpm
+      - name: Do a global PNPM install
+        run: |
+          npm install -g pnpm
 
-        - name: Set up working directory and install dependencies
-          run: |
-            pnpm install
+      - name: Set up working directory and install dependencies
+        run: |
+          pnpm install
 
-        - name: Upgrade Protocol
-          if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
-          env:
-            NODE_ENV: production
-            GAS_OBJECT: ${{ inputs.gas_object_id }}
-            NETWORK: mainnet
-            ORIGIN: gh_action
-            RPC_URL: ${{ inputs.rpc }}
-          run: |
-            cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
+      - name: Upgrade Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
 
-        - name: Create Pool
-          if: ${{ inputs.transaction_type == 'Create Pool' }}
-          env:
-            NODE_ENV: production
-            GAS_OBJECT: ${{ inputs.gas_object_id }}
-            NETWORK: mainnet
-            ORIGIN: gh_action
-          run: |
-            cd scripts && pnpm install && pnpm ts-node transactions/createPool.ts
+      - name: Create Pool
+        if: ${{ inputs.transaction_type == 'Create Pool' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/createPool.ts
 
-        - name: Show Transaction Data (To sign)
-          run: |
-            cat scripts/tx/tx-data.txt
+      - name: Unregister Pool and Create
+        if: ${{ inputs.transaction_type == 'Unregister Pool and Create' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/unregisterPoolAndCreate.ts
 
-        - name: Upload Transaction Artifact
-          uses: actions/upload-artifact@v3
-          with:
-            name: transaction-data
-            path: scripts/tx
+      - name: Enable Version
+        if: ${{ inputs.transaction_type == 'Enable Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/enableVersion.ts
+
+      - name: Disable Version
+        if: ${{ inputs.transaction_type == 'Disable Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/disableVersion.ts
+
+      - name: Prep MVR
+        if: ${{ inputs.transaction_type == 'Prep MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrep.ts
+
+      - name: Prep Kiosk MVR
+        if: ${{ inputs.transaction_type == 'Prep Kiosk MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKiosk.ts
+
+      - name: Prep Kiosk MVR Registration
+        if: ${{ inputs.transaction_type == 'Prep Kiosk MVR Registration' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKioskRegistration.ts
+
+      - name: Package Info Creation
+        if: ${{ inputs.transaction_type == 'Package Info Creation' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/packageInfoCreation.ts
+
+      - name: Register Deepbook with MVR
+        if: ${{ inputs.transaction_type == 'Register Deepbook with MVR' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/linkPackageInfo.ts
+
+      - name: Add Stable Coins
+        if: ${{ inputs.transaction_type == 'Add Stable Coins' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/addStablecoin.ts
+
+      - name: Transfer Mvr Kiosk
+        if: ${{ inputs.transaction_type == 'Transfer Mvr Kiosk' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/transferMvrObjectsKiosk.ts
+
+      - name: Finish MVR Setup
+        if: ${{ inputs.transaction_type == 'Finish MVR Setup' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/allMvrSetup.ts
+
+      - name: MVR Package Reverse Resolution
+        if: ${{ inputs.transaction_type == 'MVR Package Reverse Resolution' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageReverseResolution.ts
+
+      - name: Setup Denylist
+        if: ${{ inputs.transaction_type == 'Setup Denylist' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/setupDenylist.ts
+
+      - name: MVR Package Metadata
+        if: ${{ inputs.transaction_type == 'MVR Package Metadata' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageMetadata.ts
+
+      - name: Adjust Tick Size
+        if: ${{ inputs.transaction_type == 'Adjust Tick Size' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/updatePoolTickSize.ts
+
+      - name: Fix MVR Path
+        if: ${{ inputs.transaction_type == 'Fix MVR Path' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/mvrFix.ts
+
+      - name: Setup Walrus Site
+        if: ${{ inputs.transaction_type == 'Setup Walrus Site' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/walrusSitesSetup.ts
+
+      - name: Nautilus Setup
+        if: ${{ inputs.transaction_type == 'Nautilus Setup' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/nautilus-setup.ts
+
+      - name: Show Transaction Data (To sign)
+        run: |
+          cat scripts/tx/tx-data.txt
+
+      - name: Upload Transaction Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transaction-data
+          path: scripts/tx

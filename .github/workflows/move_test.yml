@@ -2,41 +2,59 @@ name: Move Test CI
 
 on:
   pull_request:
-      paths:
-        - '.github/workflows/**'
-        - 'packages/**'
+    paths:
+      - ".github/workflows/**"
+      - "packages/**"
   push:
     branches:
       - main
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-    cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Install Homebrew
-      run: |
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+      - name: Install Sui 1.45.3
+        run: |
+          echo "Installing Sui 1.45.3..."
+          mkdir -p $HOME/sui-bin
 
-    - name: Install Sui using Homebrew
-      run: brew install sui
+          SUI_URL="https://github.com/MystenLabs/sui/releases/download/mainnet-v1.49.2/sui-mainnet-v1.49.2-macos-x86_64.tgz"
+          echo "Downloading Sui from $SUI_URL"
 
-    - name: Run move tests in all package subdirectories, with optional exclusions
-      run: |
-        exclude_dirs=() # Add excluded directories to this array
-        for dir in packages/*; do
-          dir_name=$(basename "$dir")
-          if [[ ! " ${exclude_dirs[@]} " =~ " ${dir_name} " ]] && [ -d "$dir" ]; then
-            echo "Running sui move test in $dir"
-            (cd "$dir" && sui move test -i 100000000)
+          # Use curl with fail flag and check response
+          HTTP_STATUS=$(curl -o sui.tar.gz -w "%{http_code}" -L $SUI_URL)
+
+          if [[ "$HTTP_STATUS" -ne 200 ]]; then
+            echo "Error: Failed to download Sui. HTTP Status: $HTTP_STATUS"
+            exit 1
           fi
-        done
+
+          if ! file sui.tar.gz | grep -q "gzip compressed"; then
+            echo "Error: Downloaded file is not a valid tar.gz archive."
+            exit 1
+          fi
+
+          tar -xvzf sui.tar.gz -C $HOME/sui-bin
+          chmod +x $HOME/sui-bin/sui
+          echo "$HOME/sui-bin" >> $GITHUB_PATH
+          export PATH="$HOME/sui-bin:$PATH"
+
+          # Verify installation
+          sui --version
+
+      - name: Run Move tests in all package subdirectories, with exclusions
+        run: |
+          for dir in packages/*; do
+            dir_name=$(basename "$dir")
+            echo "Running sui move test in $dir"
+            sui move test -i 100000000 --path "$dir"
+          done

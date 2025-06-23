@@ -1,12 +1,16 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 #[test_only]
 module deepbook::governance_tests;
 
-use deepbook::constants;
-use deepbook::governance;
-use sui::address;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::{destroy, assert_eq};
+use deepbook::{constants, governance};
+use sui::{
+    address,
+    object::id_from_address,
+    test_scenario::{next_tx, begin, end},
+    test_utils::{destroy, assert_eq}
+};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -56,7 +60,7 @@ fun add_proposal_volatile_low_taker_e() {
     test.next_tx(alice);
     let stable_pool = false;
     let mut gov = governance::empty(stable_pool, test.ctx());
-    gov.add_proposal(490000, 200000, 10000, 1000, id_from_address(alice));
+    gov.add_proposal(99000, 200000, 10000, 1000, id_from_address(alice));
     abort 0
 }
 
@@ -69,18 +73,6 @@ fun add_proposal_volatile_high_taker_e() {
     let stable_pool = false;
     let mut gov = governance::empty(stable_pool, test.ctx());
     gov.add_proposal(1010000, 200000, 10000, 1000, id_from_address(alice));
-    abort 0
-}
-
-#[test, expected_failure(abort_code = governance::EInvalidMakerFee)]
-fun add_proposal_volatile_low_maker_e() {
-    let mut test = begin(OWNER);
-    let alice = ALICE;
-
-    test.next_tx(alice);
-    let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
-    gov.add_proposal(500000, 190000, 10000, 1000, id_from_address(alice));
     abort 0
 }
 
@@ -124,6 +116,34 @@ fun add_proposal_stable_taker_e() {
 
     test.next_tx(alice);
     gov.add_proposal(500000, 20000, 10000, 1000, id_from_address(alice));
+    abort 0
+}
+
+#[test, expected_failure(abort_code = governance::EInvalidTakerFee)]
+fun add_proposal_stable_low_taker_e() {
+    let mut test = begin(OWNER);
+    let alice = ALICE;
+
+    test.next_tx(OWNER);
+    let stable_pool = true;
+    let mut gov = governance::empty(stable_pool, test.ctx());
+
+    test.next_tx(alice);
+    gov.add_proposal(9000, 20000, 10000, 10000, id_from_address(alice));
+    abort 0
+}
+
+#[test, expected_failure(abort_code = governance::EInvalidTakerFee)]
+fun add_proposal_stable_high_taker_e() {
+    let mut test = begin(OWNER);
+    let alice = ALICE;
+
+    test.next_tx(OWNER);
+    let stable_pool = true;
+    let mut gov = governance::empty(stable_pool, test.ctx());
+
+    test.next_tx(alice);
+    gov.add_proposal(110000, 20000, 10000, 10000, id_from_address(alice));
     abort 0
 }
 
@@ -261,10 +281,7 @@ fun update_ok() {
     let trade_params = gov.trade_params();
     assert!(trade_params.taker_fee() == 1000000, 0);
     assert!(trade_params.maker_fee() == 500000, 0);
-    assert!(
-        trade_params.stake_required() == constants::default_stake_required(),
-        0,
-    );
+    assert!(trade_params.stake_required() == constants::default_stake_required(), 0);
     let next_trade_params = gov.next_trade_params();
     assert!(next_trade_params.taker_fee() == 500000, 0);
     assert!(next_trade_params.maker_fee() == 200000, 0);
@@ -352,7 +369,8 @@ fun adjust_vote_ok() {
     assert!(gov.next_trade_params().taker_fee() == 500000, 0);
     assert!(gov.next_trade_params().maker_fee() == 200000, 0);
 
-    // bob removes his votes completely, making the default trade params the next trade params
+    // bob removes his votes completely, making the default trade params the
+    // next trade params
     test.next_tx(bob);
     gov.adjust_vote(option::some(id_from_address(alice)), option::none(), 300);
     assert!(gov.proposals().get(&id_from_address(alice)).votes() == 0, 0);
@@ -421,7 +439,8 @@ fun adjust_vote_from_removed_proposal_ok() {
 /// A with less voting power than B (A had 100000, B had 200000, C had 150000)
 /// C votes on A's proposal and pushes it over quorum
 /// C then makes a new proposal. The proposal that's removed should be A
-/// Check to make sure A's removed by voting on proposal A, which will error (EProposalDoesNotExist)
+/// Check to make sure A's removed by voting on proposal A, which will error
+/// (EProposalDoesNotExist)
 fun remove_proposal_vote_e() {
     let mut test = begin(OWNER);
     let alice = ALICE;
@@ -453,7 +472,8 @@ fun remove_proposal_vote_e() {
         i = i + 1;
     };
 
-    // Alice proposes and votes with 100000 stake, not enough to push proposal ALICE over quorum
+    // Alice proposes and votes with 100000 stake, not enough to push proposal
+    // ALICE over quorum
     gov.add_proposal(500000, 200000, 10000, 100000, id_from_address(alice));
     gov.adjust_vote(
         option::none(),
@@ -461,12 +481,14 @@ fun remove_proposal_vote_e() {
         100000,
     );
     assert_eq(gov.trade_params(), gov.next_trade_params());
-    // Bob proposes and votes with 200000 stake, not enough to push proposal Bob over quorum
+    // Bob proposes and votes with 200000 stake, not enough to push proposal Bob
+    // over quorum
     gov.add_proposal(600000, 300000, 20000, 200000, id_from_address(bob));
     gov.adjust_vote(option::none(), option::some(id_from_address(bob)), 200000);
     assert_eq(gov.trade_params(), gov.next_trade_params());
 
-    // Charlie votes with 150000 stake, enough to push proposal ALICE over quorum
+    // Charlie votes with 150000 stake, enough to push proposal ALICE over
+    // quorum
     gov.adjust_vote(
         option::none(),
         option::some(id_from_address(alice)),
@@ -502,12 +524,7 @@ fun remove_proposal_vote_e() {
     end(test);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = governance::EMaxProposalsReachedNotEnoughVotes,
-    ),
-]
+#[test, expected_failure(abort_code = governance::EMaxProposalsReachedNotEnoughVotes)]
 fun remove_proposal_stake_too_low_e() {
     let mut test = begin(OWNER);
     let alice = ALICE;
@@ -594,11 +611,13 @@ fun adjust_voting_power_over_threshold_ok() {
     );
     test.next_epoch(OWNER);
     gov.update(test.ctx());
-    // The additional power is calculated as sqrt(total_stake = 150k) - sqrt(threshold = 100k)
+    // The additional power is calculated as sqrt(total_stake = 150k) -
+    // sqrt(threshold = 100k)
     // 387.298334620 - 316.227766016 = 71.070568604
     // total voting power = 100000 + 71.070568604 = 100071.070568604
     // quorum = 50035.535284302
-    // The total voting power is therefore 52.928, with quorum being half of that = 26.464.
+    // The total voting power is therefore 52.928, with quorum being half of
+    // that = 26.464.
     assert!(gov.voting_power() == 100_071_070_568, 0);
 
     assert!(gov.quorum() == 50_035_535_284, 0);
@@ -608,7 +627,8 @@ fun adjust_voting_power_over_threshold_ok() {
     );
     test.next_epoch(OWNER);
     gov.update(test.ctx());
-    // The additional power is calculated as sqrt(total_stake = 200k) - sqrt(threshold = 100k)
+    // The additional power is calculated as sqrt(total_stake = 200k) -
+    // sqrt(threshold = 100k)
     // 447.213595499 - 316.227766016 = 130.985829483
     // total voting power = 100000 + 130.985829484 = 100130.985829483
     // quorum = 50065.492914741

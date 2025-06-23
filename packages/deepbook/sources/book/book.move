@@ -5,13 +5,15 @@
 /// All order book operations are defined in this module.
 module deepbook::book;
 
-use deepbook::big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
-use deepbook::utils;
+use deepbook::{
+    big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
+    constants,
+    deep_price::OrderDeepPrice,
+    math,
+    order::Order,
+    order_info::OrderInfo,
+    utils
+};
 
 // === Errors ===
 const EInvalidAmountIn: u64 = 1;
@@ -58,12 +60,7 @@ public(package) fun min_size(self: &Book): u64 {
     self.min_size
 }
 
-public(package) fun empty(
-    tick_size: u64,
-    lot_size: u64,
-    min_size: u64,
-    ctx: &mut TxContext,
-): Book {
+public(package) fun empty(tick_size: u64, lot_size: u64, min_size: u64, ctx: &mut TxContext): Book {
     Book {
         tick_size,
         lot_size,
@@ -86,11 +83,7 @@ public(package) fun empty(
 /// Creates a new order.
 /// Order is matched against the book and injected into the book if necessary.
 /// If order is IOC or fully executed, it will not be injected.
-public(package) fun create_order(
-    self: &mut Book,
-    order_info: &mut OrderInfo,
-    timestamp: u64,
-) {
+public(package) fun create_order(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
     order_info.validate_inputs(
         self.tick_size,
         self.min_size,
@@ -110,8 +103,10 @@ public(package) fun create_order(
     order_info.emit_order_placed();
 }
 
-/// Given base_quantity and quote_quantity, calculate the base_quantity_out and quote_quantity_out.
-/// Will return (base_quantity_out, quote_quantity_out, deep_quantity_required) if base_amount > 0 or quote_amount > 0.
+/// Given base_quantity and quote_quantity, calculate the base_quantity_out and
+/// quote_quantity_out.
+/// Will return (base_quantity_out, quote_quantity_out, deep_quantity_required)
+/// if base_amount > 0 or quote_amount > 0.
 public(package) fun get_quantity_out(
     self: &Book,
     base_quantity: u64,
@@ -119,65 +114,95 @@ public(package) fun get_quantity_out(
     taker_fee: u64,
     deep_price: OrderDeepPrice,
     lot_size: u64,
+    pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
-    assert!(
-        (base_quantity > 0 || quote_quantity > 0) &&
-        !(base_quantity > 0 && quote_quantity > 0),
-        EInvalidAmountIn,
-    );
+    assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidAmountIn);
     let is_bid = quote_quantity > 0;
     let mut quantity_out = 0;
     let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
+    let input_fee_rate = math::mul(
+        constants::fee_penalty_multiplier(),
+        taker_fee,
+    );
 
     let book_side = if (is_bid) &self.asks else &self.bids;
-    let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
-    else book_side.max_slice();
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
 
-    while (!ref.is_null() && quantity_in_left > 0) {
+    while (!ref.is_null() && quantity_in_left > 0 && current_fills < max_fills) {
         let order = slice_borrow(book_side.borrow_slice(ref), offset);
         let cur_price = order.price();
         let cur_quantity = order.quantity() - order.filled_quantity();
 
         if (current_timestamp <= order.expire_timestamp()) {
             let mut matched_base_quantity;
+            let quantity_to_match = if (pay_with_deep) {
+                quantity_in_left
+            } else {
+                math::div(
+                    quantity_in_left,
+                    constants::float_scaling() + input_fee_rate,
+                )
+            };
             if (is_bid) {
-                matched_base_quantity =
-                    math::div(quantity_in_left, cur_price).min(cur_quantity);
+                matched_base_quantity = math::div(quantity_to_match, cur_price).min(cur_quantity);
                 matched_base_quantity =
                     matched_base_quantity -
                     matched_base_quantity % lot_size;
                 quantity_out = quantity_out + matched_base_quantity;
-                quantity_in_left =
-                    quantity_in_left -
-                    math::mul(matched_base_quantity, cur_price);
+                let matched_quote_quantity = math::mul(
+                    matched_base_quantity,
+                    cur_price,
+                );
+                quantity_in_left = quantity_in_left - matched_quote_quantity;
+                if (!pay_with_deep) {
+                    quantity_in_left =
+                        quantity_in_left -
+                        math::mul(matched_quote_quantity, input_fee_rate);
+                };
             } else {
-                matched_base_quantity = quantity_in_left.min(cur_quantity);
+                matched_base_quantity = quantity_to_match.min(cur_quantity);
                 matched_base_quantity =
                     matched_base_quantity -
                     matched_base_quantity % lot_size;
-                quantity_out =
-                    quantity_out + math::mul(matched_base_quantity, cur_price);
+                quantity_out = quantity_out + math::mul(matched_base_quantity, cur_price);
                 quantity_in_left = quantity_in_left - matched_base_quantity;
+                if (!pay_with_deep) {
+                    quantity_in_left =
+                        quantity_in_left -
+                        math::mul(matched_base_quantity, input_fee_rate);
+                };
             };
 
             if (matched_base_quantity == 0) break;
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
     };
 
-    let quantity_in_deep = if (is_bid) {
-        deep_price.deep_quantity(
-            quantity_out,
-            quote_quantity - quantity_in_left,
-        )
+    let deep_fee = if (!pay_with_deep) {
+        0
     } else {
-        deep_price.deep_quantity(base_quantity - quantity_in_left, quantity_out)
+        let fee_quantity = if (is_bid) {
+            deep_price.fee_quantity(
+                quantity_out,
+                quote_quantity - quantity_in_left,
+                is_bid,
+            )
+        } else {
+            deep_price.fee_quantity(
+                base_quantity - quantity_in_left,
+                quantity_out,
+                is_bid,
+            )
+        };
+
+        math::mul(taker_fee, fee_quantity.deep())
     };
-    let deep_fee = math::mul(taker_fee, quantity_in_deep);
 
     if (is_bid) {
         (quantity_out, quantity_in_left, deep_fee)
@@ -204,10 +229,7 @@ public(package) fun modify_order(
     assert!(new_quantity % self.lot_size == 0, EOrderInvalidLotSize);
 
     let order = self.book_side_mut(order_id).borrow_mut(order_id);
-    assert!(
-        new_quantity < order.quantity(),
-        ENewQuantityMustBeLessThanOriginal,
-    );
+    assert!(new_quantity < order.quantity(), ENewQuantityMustBeLessThanOriginal);
     let cancel_quantity = order.quantity() - new_quantity;
     order.modify(new_quantity, timestamp);
 
@@ -280,8 +302,7 @@ public(package) fun get_level2_range_and_ticks(
         (1 as u128) << 127
     };
     let key_low = ((price_low as u128) << 64) + msb;
-    let key_high =
-        ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128) + msb;
+    let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128) + msb;
     let book_side = if (is_bid) &self.bids else &self.asks;
     let (mut ref, mut offset) = if (is_bid) {
         book_side.slice_before(key_high)
@@ -317,19 +338,18 @@ public(package) fun get_level2_range_and_ticks(
                 cur_price = order_price;
                 cur_quantity = 0;
                 ticks_left = ticks_left - 1;
+                if (ticks_left == 0) break;
             };
             if (cur_price != 0) {
-                cur_quantity =
-                    cur_quantity + order.quantity() - order.filled_quantity();
+                cur_quantity = cur_quantity + order.quantity() - order.filled_quantity();
             };
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.prev_slice(ref, offset)
-            else book_side.next_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset)
+        else book_side.next_slice(ref, offset);
     };
 
-    if (cur_price != 0) {
+    if (cur_price != 0 && ticks_left > 0) {
         price_vec.push_back(cur_price);
         quantity_vec.push_back(cur_quantity);
     };
@@ -341,6 +361,18 @@ public(package) fun get_order(self: &Book, order_id: u128): Order {
     let order = self.book_side(order_id).borrow(order_id);
 
     order.copy_order()
+}
+
+public(package) fun set_tick_size(self: &mut Book, new_tick_size: u64) {
+    self.tick_size = new_tick_size;
+}
+
+public(package) fun set_lot_size(self: &mut Book, new_lot_size: u64) {
+    self.lot_size = new_lot_size;
+}
+
+public(package) fun set_min_size(self: &mut Book, new_min_size: u64) {
+    self.min_size = new_min_size;
 }
 
 // === Private Functions ===
@@ -366,28 +398,23 @@ fun book_side(self: &Book, order_id: u128): &BigVector<Order> {
 /// Matches the given order and quantity against the order book.
 /// If is_bid, it will match against asks, otherwise against bids.
 /// Mutates the order and the maker order as necessary.
-fun match_against_book(
-    self: &mut Book,
-    order_info: &mut OrderInfo,
-    timestamp: u64,
-) {
+fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u64) {
     let is_bid = order_info.is_bid();
     let book_side = if (is_bid) &mut self.asks else &mut self.bids;
-    let (mut ref, mut offset) = if (is_bid) book_side.min_slice()
-    else book_side.max_slice();
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
 
-    while (
-        !ref.is_null() &&
-        order_info.fills_ref().length() < constants::max_fills()
-    ) {
+    while (!ref.is_null() &&
+        current_fills < max_fills) {
         let maker_order = slice_borrow_mut(
             book_side.borrow_slice_mut(ref),
             offset,
         );
         if (!order_info.match_maker(maker_order, timestamp)) break;
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
     };
 
     order_info.fills_ref().do_ref!(|fill| {
@@ -396,7 +423,7 @@ fun match_against_book(
         };
     });
 
-    if (order_info.fills_ref().length() == constants::max_fills()) {
+    if (current_fills == max_fills) {
         order_info.set_fill_limit_reached();
     }
 }
