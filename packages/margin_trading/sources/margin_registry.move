@@ -82,15 +82,15 @@ public fun update_risk_params(
     registry.risk_params = risk_params;
 }
 
-public fun can_transfer(self: &MarginRegistry, risk_ratio: u64): bool {
+public(package) fun can_transfer(self: &MarginRegistry, risk_ratio: u64): bool {
     risk_ratio >= self.risk_params.min_transfer_risk_ratio
 }
 
-public fun can_borrow(self: &MarginRegistry, risk_ratio: u64): bool {
+public(package) fun can_borrow(self: &MarginRegistry, risk_ratio: u64): bool {
     risk_ratio >= self.risk_params.min_borrow_risk_ratio
 }
 
-public fun can_liquidate(self: &MarginRegistry, risk_ratio: u64): bool {
+public(package) fun can_liquidate(self: &MarginRegistry, risk_ratio: u64): bool {
     risk_ratio < self.risk_params.liquidation_risk_ratio
 }
 

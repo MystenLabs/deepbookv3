@@ -18,11 +18,7 @@ use deepbook::{
     constants,
     pool::Pool
 };
-use margin_trading::{
-    margin_math,
-    margin_registry::{Self, MarginRegistry},
-    oracle::calculate_usd_price
-};
+use margin_trading::margin_registry::{Self, MarginRegistry};
 use std::type_name;
 use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;

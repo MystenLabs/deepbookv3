@@ -5,9 +5,8 @@
 /// Must be owner in order to trade.
 module margin_trading::pool_proxy;
 
-use deepbook::{balance_manager::{BalanceManager, TradeProof}, order_info::OrderInfo, pool::Pool};
+use deepbook::{order_info::OrderInfo, pool::Pool};
 use margin_trading::margin_manager::MarginManager;
-use std::type_name::{Self, TypeName};
 use sui::clock::Clock;
 
 // const EInvalidPythPrice: u64 = 1;
