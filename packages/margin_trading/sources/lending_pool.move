@@ -35,17 +35,11 @@ public struct Supply has drop, store {
     last_supply_index: u64, // 9 decimals
 }
 
-// public struct LoanRepayed has drop, store {
-//     balance_manager: ID, // ID of the loan
-//     repaid_amount: u64, // amount repaid in this transaction
-// }
-
-/// TODO: update interest params as needed
+/// TODO: update interest params as needed, like max interest rate, etc.
 /// Represents all the interest parameters for the lending pool. Can be updated on chain.
-public struct InterestParams has store {
+public struct InterestParams has drop, store {
     base_rate: u64, // 9 decimals
     multiplier: u64, // 9 decimals
-    // Add more params if needed, like max interest rate, etc.
 }
 
 public struct LendingPool<phantom Asset> has key, store {
@@ -65,21 +59,23 @@ public struct LendingPool<phantom Asset> has key, store {
 }
 
 // === Public-Mutative Functions * ADMIN * ===
+public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams {
+    InterestParams {
+        base_rate,
+        multiplier,
+    }
+}
+
 /// Creates a lending pool as the admin.
 public fun create_lending_pool<Asset>(
     registry: &mut MarginRegistry,
     supply_cap: u64,
     max_borrow_percentage: u64,
-    base_rate: u64,
-    multiplier: u64,
+    interest_params: InterestParams,
     _cap: &LendingAdminCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let interest_params = InterestParams {
-        base_rate,
-        multiplier,
-    };
     let lending_pool = LendingPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
@@ -102,16 +98,13 @@ public fun create_lending_pool<Asset>(
     transfer::share_object(lending_pool);
 }
 
-/// TODO: actual interest params as needed
 /// Updates interest params for the lending pool as the admin.
 public fun update_interest_params<Asset>(
     pool: &mut LendingPool<Asset>,
-    base_rate: u64,
-    multiplier: u64,
+    interest_params: InterestParams,
     _cap: &LendingAdminCap,
 ) {
-    pool.interest_params.base_rate = base_rate;
-    pool.interest_params.multiplier = multiplier;
+    pool.interest_params = interest_params;
 }
 
 /// Updates the supply cap for the lending pool as the admin.
@@ -261,32 +254,12 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
 }
 
-/// Returns (base_asset, quote_asset) for margin manager.
-public fun margin_manager_asset<BaseAsset, QuoteAsset>(
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-): (u64, u64) {
-    let balance_manager = margin_manager.balance_manager();
-    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
-    base = base + balance_manager.balance<BaseAsset>();
-    quote = quote + balance_manager.balance<QuoteAsset>();
-
-    (base, quote)
-}
-
-// Returns the (base_debt, quote_debt) for the margin manager
-public fun margin_manager_debt<BaseAsset, QuoteAsset>(
-    base_lending_pool: &mut LendingPool<BaseAsset>,
-    quote_lending_pool: &mut LendingPool<QuoteAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    clock: &Clock,
-): (u64, u64) {
-    let base_debt = base_lending_pool.manager_debt(margin_manager, clock);
-    let quote_debt = quote_lending_pool.manager_debt(margin_manager, clock);
-
-    (base_debt, quote_debt)
-}
-
+/// Risk ratio = total asset in USD / (total debt and interest in USD)
+/// Risk ratio above 2.0 allows for withdrawal from balance manager, borrowing, and trading
+/// Risk ratio between 1.25 and 2.0 allows for borrowing and trading
+/// Risk ratio between 1.1 and 1.25 allows for trading only
+/// Risk ratio below 1.1 allows for liquidation
+/// These numbers can be updated by the admin
 public fun risk_ratio<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -325,12 +298,24 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
 
-    if (total_usd_debt == 0) {
-        return constants::max_u64() // infinite risk ratio if no debt
-    };
+    if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
+        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
+    } else {
+        margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
+    }
+}
 
-    // TODO: Think about the edge cases here. Set debt ratio as maximumm if asset > some_number * debt?
-    margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
+/// Returns (base_asset, quote_asset) for margin manager.
+public fun margin_manager_asset<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): (u64, u64) {
+    let balance_manager = margin_manager.balance_manager();
+    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
+    base = base + balance_manager.balance<BaseAsset>();
+    quote = quote + balance_manager.balance<QuoteAsset>();
+
+    (base, quote)
 }
 
 public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
@@ -344,6 +329,25 @@ public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     // Use borrow?
 
     lending_pool.loans.borrow(margin_manager.id()).loan_amount
+}
+
+// Returns the (base_debt, quote_debt) for the margin manager
+public fun margin_manager_debt<BaseAsset, QuoteAsset>(
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+): (u64, u64) {
+    let base_debt = base_lending_pool.manager_debt(margin_manager, clock);
+    let quote_debt = quote_lending_pool.manager_debt(margin_manager, clock);
+
+    (base_debt, quote_debt)
+}
+
+// === Public-Helper Functions ===
+/// Get the ID of the pool given the asset types.
+public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
+    registry.get_lending_pool_id<Asset>()
 }
 
 /// Updates the borrow and supply indices for the lending pool.
@@ -462,9 +466,4 @@ fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     } else {
         margin_math::div(self.total_loan, self.total_supply) // 9 decimals
     }
-}
-
-/// Get the ID of the pool given the asset types.
-public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
-    registry.get_lending_pool_id<Asset>()
 }

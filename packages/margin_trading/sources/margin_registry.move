@@ -24,10 +24,17 @@ public struct LendingAdminCap has key, store {
     id: UID,
 }
 
+public struct RiskParams has drop, store {
+    min_transfer_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow transfer
+    min_borrow_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow borrow
+    liquidation_risk_ratio: u64, // 9 decimals, risk ratio below which liquidation is allowed
+}
+
 public struct MarginRegistry has key, store {
     id: UID,
     allowed_margin_pairs: VecSet<MarginPair>,
     lending_pools: Bag,
+    risk_params: RiskParams, // determines when transfer, borrow, and trade are allowed
 }
 
 public struct MarginPair has copy, drop, store {
@@ -42,10 +49,49 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         id: object::new(ctx),
         allowed_margin_pairs: vec_set::empty(),
         lending_pools: bag::new(ctx),
+        risk_params: new_risk_params(
+            2_000_000_000,
+            1_250_000_000,
+            1_100_000_000,
+        ), // Default risk params
     };
     transfer::share_object(registry);
     let lending_admin_cap = LendingAdminCap { id: object::new(ctx) };
     transfer::public_transfer(lending_admin_cap, ctx.sender())
+}
+
+public fun new_risk_params(
+    min_transfer_risk_ratio: u64,
+    min_borrow_risk_ratio: u64,
+    liquidation_risk_ratio: u64,
+): RiskParams {
+    RiskParams {
+        min_transfer_risk_ratio,
+        min_borrow_risk_ratio,
+        liquidation_risk_ratio,
+    }
+}
+
+/// Updates risk params for the lending pool as the admin.
+/// TODO: maybe liquidation risk ratio shouldn't be updated?
+public fun update_risk_params(
+    registry: &mut MarginRegistry,
+    risk_params: RiskParams,
+    _cap: &LendingAdminCap,
+) {
+    registry.risk_params = risk_params;
+}
+
+public fun can_transfer(self: &MarginRegistry, risk_ratio: u64): bool {
+    risk_ratio >= self.risk_params.min_transfer_risk_ratio
+}
+
+public fun can_borrow(self: &MarginRegistry, risk_ratio: u64): bool {
+    risk_ratio >= self.risk_params.min_borrow_risk_ratio
+}
+
+public fun can_liquidate(self: &MarginRegistry, risk_ratio: u64): bool {
+    risk_ratio < self.risk_params.liquidation_risk_ratio
 }
 
 // Allow a margin trading pair
