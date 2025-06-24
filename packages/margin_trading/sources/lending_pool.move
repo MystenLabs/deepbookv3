@@ -24,6 +24,8 @@ const ENoSupplyFound: u64 = 3;
 const ECannotWithdrawMoreThanSupply: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
+const EInvalidMarginManager: u64 = 7;
+const EBorrowRiskRatioExceeded: u64 = 8;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -43,9 +45,13 @@ public struct InterestParams has drop, store {
     multiplier: u64, // 9 decimals
 }
 
-public struct WithdrawalRequest {}
+public struct WithdrawalRequest {
+    margin_manager_id: ID,
+}
 
-public struct BorrowRequest {}
+public struct BorrowRequest {
+    margin_manager_id: ID,
+}
 
 public struct LendingPool<phantom Asset> has key, store {
     id: UID,
@@ -210,29 +216,29 @@ public fun withdraw_from_lending_pool<Asset>(
 }
 
 /// Borrow the base asset using the margin manager.
-/// TODO: need to check risk ratio before allowing the borrow
 public fun borrow_base<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<BaseAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): BorrowRequest {
     update_indices<BaseAsset>(lending_pool, clock);
-    lending_pool.borrow<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, loan_amount, ctx);
+
+    lending_pool.borrow<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, loan_amount, ctx)
 }
 
 /// Borrow the quote asset using the margin manager.
-/// TODO: need to check risk ratio before allowing the borrow
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<QuoteAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): BorrowRequest {
     update_indices<QuoteAsset>(lending_pool, clock);
-    lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx);
+
+    lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx)
 }
 
 /// Repay the base asset loan using the margin manager.
@@ -257,6 +263,36 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 ) {
     update_indices<QuoteAsset>(lending_pool, clock);
     lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
+}
+
+public fun borrow_risk_ratio_proof<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    request: BorrowRequest,
+) {
+    assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
+
+    let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        base_lending_pool,
+        quote_lending_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+    assert!(registry.can_borrow(risk_ratio), EBorrowRiskRatioExceeded);
+
+    let BorrowRequest {
+        margin_manager_id: _,
+    } = request;
 }
 
 /// Risk ratio = total asset in USD / (total debt and interest in USD)
@@ -310,8 +346,15 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
+// === Public-Helper Functions ===
+/// Get the ID of the pool given the asset types.
+public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
+    registry.get_lending_pool_id<Asset>()
+}
+
+// === Internal Functions ===
 /// Returns (base_asset, quote_asset) for margin manager.
-public(package) fun margin_manager_asset<BaseAsset, QuoteAsset>(
+fun margin_manager_asset<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
 ): (u64, u64) {
@@ -324,7 +367,7 @@ public(package) fun margin_manager_asset<BaseAsset, QuoteAsset>(
 }
 
 // Returns the (base_debt, quote_debt) for the margin manager
-public(package) fun margin_manager_debt<BaseAsset, QuoteAsset>(
+fun margin_manager_debt<BaseAsset, QuoteAsset>(
     base_lending_pool: &mut LendingPool<BaseAsset>,
     quote_lending_pool: &mut LendingPool<QuoteAsset>,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -336,15 +379,9 @@ public(package) fun margin_manager_debt<BaseAsset, QuoteAsset>(
     (base_debt, quote_debt)
 }
 
-// === Public-Helper Functions ===
-/// Get the ID of the pool given the asset types.
-public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
-    registry.get_lending_pool_id<Asset>()
-}
-
 /// Updates the borrow and supply indices for the lending pool.
 /// This will be called before any borrow or supply operation.
-public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
+fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
     let ms_elapsed = current_time - self.last_index_update_timestamp;
     let (borrow_interest_rate, supply_interest_rate) = self.interest_rates();
@@ -362,7 +399,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     loan_amount: u64,
     ctx: &mut TxContext,
-) {
+): BorrowRequest {
     assert!(loan_amount > 0, EInvalidLoanQuantity);
     assert!(lending_pool.vault.value() >= loan_amount, ENotEnoughAssetInPool);
     let manager_id = margin_manager.id();
@@ -398,7 +435,9 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     let deposit = lending_pool.vault.split(loan_amount).into_coin(ctx);
     margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(deposit, ctx);
 
-    // TODO: check margin_manager risk level. If too low (<1.25), abort. Complete after oracle integration
+    BorrowRequest {
+        margin_manager_id: manager_id,
+    }
 }
 
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
