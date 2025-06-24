@@ -282,7 +282,7 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 public fun repay_base<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<BaseAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -293,7 +293,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
 public fun repay_quote<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<QuoteAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -304,7 +304,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     lending_pool: &mut LendingPool<RepayAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>,
     ctx: &mut TxContext,
 ) {
     let manager_id = margin_manager.id();
@@ -314,21 +314,26 @@ public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
             lending_pool.borrow_index,
             loan.last_borrow_index,
         );
-        loan.loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
+        loan.loan_amount = new_loan_amount;
         loan.last_borrow_index = lending_pool.borrow_index;
+
+        let repay_amount = repay_amount.get_with_default(loan.loan_amount);
 
         // if user tries to repay more than owed, just repay the full amount
         let repayment = if (repay_amount >= loan.loan_amount) {
-            repay_amount
-        } else {
             loan.loan_amount
+        } else {
+            repay_amount
         };
+        lending_pool.total_loan = lending_pool.total_loan + interest - repayment;
 
         let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repayment, ctx);
         let balance = coin.into_balance();
         lending_pool.vault.join(balance);
 
-        loan.loan_amount = loan.loan_amount - repay_amount;
+        loan.loan_amount = loan.loan_amount - repayment;
         if (loan.loan_amount > 0) {
             lending_pool.loans.add(manager_id, loan);
         };
