@@ -45,10 +45,6 @@ public struct InterestParams has drop, store {
     multiplier: u64, // 9 decimals
 }
 
-public struct WithdrawalRequest {
-    margin_manager_id: ID,
-}
-
 public struct BorrowRequest {
     margin_manager_id: ID,
 }

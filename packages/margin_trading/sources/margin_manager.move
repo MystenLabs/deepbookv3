@@ -48,6 +48,10 @@ public struct MarginManagerEvent has copy, drop {
     owner: address,
 }
 
+public struct WithdrawalRequest {
+    margin_manager_id: ID,
+}
+
 // === Public-Mutative Functions ===
 public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
     assert!(
@@ -121,6 +125,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     );
 }
 
+/// TODO: Add some function to automatically repay same assets?
 // public fun repay_same_assets<BaseAsset, QuoteAsset>(
 //     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
 //     clock: &Clock,
@@ -150,12 +155,12 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
 }
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
-/// The withdrawal is subject to the risk ratio limit, which will be checked before allowing the withdrawal.
+/// The withdrawal is subject to the risk ratio limit. This is restricted through the WithdrawalRequest.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
     ctx: &mut TxContext,
-): Coin<WithdrawAsset> {
+): (Coin<WithdrawAsset>, WithdrawalRequest) {
     let balance_manager = &mut margin_manager.balance_manager;
 
     let coin = balance_manager.withdraw<WithdrawAsset>(
@@ -163,9 +168,11 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         ctx,
     );
 
-    // TODO: Check risk ratio to determine if withdrawal is allowed
+    let withdrawal_request = WithdrawalRequest {
+        margin_manager_id: margin_manager.id(),
+    };
 
-    coin
+    (coin, withdrawal_request)
 }
 
 public(package) fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
