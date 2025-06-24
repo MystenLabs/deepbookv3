@@ -25,7 +25,7 @@ public struct Loan has drop, store {
     principle_loan_amount: u64, // total loan amount without interest
     total_repayments: u64, // total repaid amount
     loan_amount: u64, // total loan remaining, including interest
-    last_interest_index: u64, // 9 decimals
+    last_borrow_index: u64, // 9 decimals
 }
 
 // public struct LoanRepayed has drop, store {
@@ -33,7 +33,8 @@ public struct Loan has drop, store {
 //     repaid_amount: u64, // amount repaid in this transaction
 // }
 
-// TODO: update interest params as needed
+/// TODO: update interest params as needed
+/// Represents all the interest parameters for the lending pool. Can be updated on chain.
 public struct InterestParams has store {
     base_rate: u64, // 9 decimals
     multiplier: u64, // 9 decimals
@@ -44,12 +45,18 @@ public struct LendingPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
-    interest_index: u64, // 9 decimals
+    total_loan: u64, // total amount of loans in the pool, excluding interest
+    total_supply: u64, // total amount of assets in the pool
+    // deposits: Table<address, Balance<Asset>>, // maps address id to deposits
+    borrow_index: u64, // 9 decimals
+    supply_index: u64, // 9 decimals
     last_index_update_timestamp: u64,
     interest_params: InterestParams,
     utilization_rate: u64, // 9 decimals
 }
 
+// === Public-Mutative Functions * ADMIN * ===
+/// Creates a lending pool as the admin.
 public fun create_lending_pool<Asset>(
     registry: &mut MarginRegistry,
     base_rate: u64,
@@ -66,7 +73,10 @@ public fun create_lending_pool<Asset>(
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
-        interest_index: 1_000_000_000, // start at 1.0
+        total_loan: 0,
+        total_supply: 0,
+        borrow_index: 1_000_000_000, // start at 1.0
+        supply_index: 1_000_000_000, // start at 1.0
         last_index_update_timestamp: clock.timestamp_ms(),
         interest_params,
         utilization_rate: 0,
@@ -78,7 +88,8 @@ public fun create_lending_pool<Asset>(
     transfer::share_object(lending_pool);
 }
 
-// TODO: update interest params as needed
+/// TODO: actual interest params as needed
+/// Updates interest params for the lending pool as the admin.
 public fun update_interest_params<Asset>(
     pool: &mut LendingPool<Asset>,
     base_rate: u64,
@@ -89,10 +100,9 @@ public fun update_interest_params<Asset>(
     pool.interest_params.multiplier = multiplier;
 }
 
-// Only admin can fund lending pool for MVP
-// Should we just lock the funds in here?
-// TODO: allow everyone to fund lending pool
-// TODO: they can withdraw at any point if there's liquidity available
+// === Public-Mutative Functions * LENDING * ===
+/// Allows anyone to fund the lending pool.
+/// TODO: Let anyone deposit into the lending pool?
 public fun fund_lending_pool<Asset>(
     pool: &mut LendingPool<Asset>,
     coin: Coin<Asset>,
@@ -102,7 +112,8 @@ public fun fund_lending_pool<Asset>(
     pool.vault.join(balance);
 }
 
-// Only admin can withdraw from lending pool for MVP
+/// Allows withdrawal from the lending pool.
+/// TODO: Let anyone deposit into the lending pool?
 public fun withdraw_from_lending_pool<Asset>(
     pool: &mut LendingPool<Asset>,
     amount: u64,
@@ -120,7 +131,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    update_interest_index<BaseAsset>(lending_pool, clock);
+    update_indices<BaseAsset>(lending_pool, clock);
     lending_pool.borrow<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, loan_amount, ctx);
 }
 
@@ -131,7 +142,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    update_interest_index<QuoteAsset>(lending_pool, clock);
+    update_indices<QuoteAsset>(lending_pool, clock);
     lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx);
 }
 
@@ -146,19 +157,19 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     if (lending_pool.loans.contains(manager_id)) {
         let mut loan = lending_pool.loans.remove(manager_id);
         let interest_multiplier = margin_math::div(
-            lending_pool.interest_index,
-            loan.last_interest_index,
+            lending_pool.borrow_index,
+            loan.last_borrow_index,
         );
         loan.loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
         loan.loan_amount = loan.loan_amount + loan_amount; // new loan
-        loan.last_interest_index = lending_pool.interest_index;
+        loan.last_borrow_index = lending_pool.borrow_index;
         lending_pool.loans.add(manager_id, loan);
     } else {
         let loan = Loan {
             principle_loan_amount: loan_amount,
             total_repayments: 0,
             loan_amount,
-            last_interest_index: lending_pool.interest_index,
+            last_borrow_index: lending_pool.borrow_index,
         };
         lending_pool.loans.add(manager_id, loan);
     };
@@ -175,7 +186,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    update_interest_index<BaseAsset>(lending_pool, clock);
+    update_indices<BaseAsset>(lending_pool, clock);
     lending_pool.repay<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, repay_amount, ctx);
 }
 
@@ -186,7 +197,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    update_interest_index<QuoteAsset>(lending_pool, clock);
+    update_indices<QuoteAsset>(lending_pool, clock);
     lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
 }
 
@@ -200,11 +211,11 @@ public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     if (lending_pool.loans.contains(manager_id)) {
         let mut loan = lending_pool.loans.remove(manager_id);
         let interest_multiplier = margin_math::div(
-            lending_pool.interest_index,
-            loan.last_interest_index,
+            lending_pool.borrow_index,
+            loan.last_borrow_index,
         );
         loan.loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-        loan.last_interest_index = lending_pool.interest_index;
+        loan.last_borrow_index = lending_pool.borrow_index;
 
         // if user tries to repay more than owed, just repay the full amount
         let repayment = if (repay_amount >= loan.loan_amount) {
@@ -301,21 +312,43 @@ public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     clock: &Clock,
 ): u64 {
-    update_interest_index<Asset>(lending_pool, clock);
+    update_indices<Asset>(lending_pool, clock);
 
     // TODO: need to refresh loan value to include interest
 
     lending_pool.loans.borrow(margin_manager.id()).loan_amount
 }
 
-public(package) fun update_interest_index<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
+/// Updates the borrow and supply indices for the lending pool.
+/// This will be called before any borrow or supply operation.
+public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
     let ms_elapsed = current_time - self.last_index_update_timestamp;
-    let interest_rate = self.interest_params.base_rate; // TODO: more complex interest rate model, can update params on chain as needed
-    let new_index =
-        self.interest_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, interest_rate),YEAR_MS));
-    self.interest_index = new_index;
+    let new_borrow_index =
+        self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, self.borrow_interest_rate()),YEAR_MS));
+    let new_supply_index =
+        self.supply_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, self.supply_interest_rate()), YEAR_MS));
+    self.borrow_index = new_borrow_index;
+    self.supply_index = new_supply_index;
     self.last_index_update_timestamp = current_time;
+}
+
+/// TODO: more complex interest rate model, can update params on chain as needed
+fun borrow_interest_rate<Asset>(self: &LendingPool<Asset>): u64 {
+    self.interest_params.base_rate
+}
+
+fun supply_interest_rate<Asset>(self: &mut LendingPool<Asset>): u64 {
+    self.update_utilization_rate<Asset>();
+    margin_math::mul(self.borrow_interest_rate(), self.utilization_rate) // 9 decimals
+}
+
+fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
+    self.utilization_rate = if (self.total_supply == 0) {
+        0
+    } else {
+        margin_math::div(self.total_loan, self.total_supply) // 9 decimals
+    }
 }
 
 /// Get the ID of the pool given the asset types.
