@@ -197,6 +197,7 @@ public fun withdraw_from_lending_pool<Asset>(
     let withdrawal_amount = amount.get_with_default(new_supply_amount);
 
     assert!(withdrawal_amount <= new_supply_amount, ECannotWithdrawMoreThanSupply);
+    assert!(withdrawal_amount <= lending_pool.vault.value(), ENotEnoughAssetInPool);
     lending_pool.total_supply = lending_pool.total_supply + interest_earned - withdrawal_amount;
 
     supply.supplied_amount = new_supply_amount; // previous supply with interest
@@ -236,6 +237,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx);
 }
 
+/// Repay the base asset loan using the margin manager.
 public fun repay_base<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<BaseAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -247,6 +249,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     lending_pool.repay<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, repay_amount, ctx);
 }
 
+/// Repay the quote asset loan using the margin manager.
 public fun repay_quote<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<QuoteAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -258,7 +261,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
 }
 
-/// Returns (base_amount, quote_amount) for balance manager
+/// Returns (base_asset, quote_asset) for margin manager.
 public fun margin_manager_asset<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -271,7 +274,7 @@ public fun margin_manager_asset<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
-// Returns the base and quote debt of the margin manager
+// Returns the (base_debt, quote_debt) for the margin manager
 public fun margin_manager_debt<BaseAsset, QuoteAsset>(
     base_lending_pool: &mut LendingPool<BaseAsset>,
     quote_lending_pool: &mut LendingPool<QuoteAsset>,
@@ -338,6 +341,7 @@ public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     update_indices<Asset>(lending_pool, clock);
 
     // TODO: need to refresh loan value to include interest
+    // Use borrow?
 
     lending_pool.loans.borrow(margin_manager.id()).loan_amount
 }
