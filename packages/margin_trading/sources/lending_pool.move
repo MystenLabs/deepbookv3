@@ -12,7 +12,7 @@ use margin_trading::{
     oracle::calculate_usd_price
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{balance::{Self, Balance}, borrow, clock::Clock, coin::Coin, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -26,14 +26,11 @@ const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 
 // === Structs ===
 public struct Loan has drop, store {
-    principle_loan_amount: u64, // total loan amount without interest
-    total_repayments: u64, // total repaid amount
     loan_amount: u64, // total loan remaining, including interest
     last_borrow_index: u64, // 9 decimals
 }
 
 public struct Supply has drop, store {
-    user: address, // address of the user who supplied
     supplied_amount: u64, // amount supplied in this transaction
     last_supply_index: u64, // 9 decimals
 }
@@ -170,7 +167,6 @@ public fun supply_lending_pool<Asset>(
         lending_pool.supplies.add(supplier, supply);
     } else {
         let supply = Supply {
-            user: supplier,
             supplied_amount: supply_amount,
             last_supply_index: lending_pool.supply_index,
         };
@@ -214,6 +210,8 @@ public fun withdraw_from_lending_pool<Asset>(
     lending_pool.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
+/// Borrow the base asset using the margin manager.
+/// TODO: need to check risk ratio before allowing the borrow
 public fun borrow_base<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<BaseAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -225,6 +223,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     lending_pool.borrow<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, loan_amount, ctx);
 }
 
+/// Borrow the quote asset using the margin manager.
+/// TODO: need to check risk ratio before allowing the borrow
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<QuoteAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -260,8 +260,6 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
         lending_pool.loans.add(manager_id, loan);
     } else {
         let loan = Loan {
-            principle_loan_amount: loan_amount,
-            total_repayments: 0,
             loan_amount,
             last_borrow_index: lending_pool.borrow_index,
         };
