@@ -236,49 +236,6 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx);
 }
 
-public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
-    lending_pool: &mut LendingPool<BorrowAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    ctx: &mut TxContext,
-) {
-    assert!(lending_pool.vault.value() >= loan_amount, ENotEnoughAssetInPool);
-    let manager_id = margin_manager.id();
-    if (lending_pool.loans.contains(manager_id)) {
-        let mut loan = lending_pool.loans.remove(manager_id);
-        let interest_multiplier = margin_math::div(
-            lending_pool.borrow_index,
-            loan.last_borrow_index,
-        );
-        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
-        loan.loan_amount = new_loan_amount; // previous loan with interest
-        loan.loan_amount = loan.loan_amount + loan_amount; // new loan
-        loan.last_borrow_index = lending_pool.borrow_index;
-
-        lending_pool.total_loan = lending_pool.total_loan + interest + loan_amount;
-        lending_pool.loans.add(manager_id, loan);
-    } else {
-        let loan = Loan {
-            loan_amount,
-            last_borrow_index: lending_pool.borrow_index,
-        };
-        lending_pool.loans.add(manager_id, loan);
-        lending_pool.total_loan = lending_pool.total_loan + loan_amount;
-    };
-
-    let borrow_percentage = margin_math::div(lending_pool.total_loan, lending_pool.total_supply);
-    assert!(
-        borrow_percentage <= lending_pool.max_borrow_percentage,
-        EMaxPoolBorrowPercentageExceeded,
-    );
-
-    let deposit = lending_pool.vault.split(loan_amount).into_coin(ctx);
-    margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(deposit, ctx);
-
-    // TODO: check margin_manager risk level. If too low (<1.25), abort. Complete after oracle integration
-}
-
 public fun repay_base<BaseAsset, QuoteAsset>(
     lending_pool: &mut LendingPool<BaseAsset>,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -299,45 +256,6 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 ) {
     update_indices<QuoteAsset>(lending_pool, clock);
     lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
-}
-
-public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
-    lending_pool: &mut LendingPool<RepayAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>,
-    ctx: &mut TxContext,
-) {
-    let manager_id = margin_manager.id();
-    if (lending_pool.loans.contains(manager_id)) {
-        let mut loan = lending_pool.loans.remove(manager_id);
-        let interest_multiplier = margin_math::div(
-            lending_pool.borrow_index,
-            loan.last_borrow_index,
-        );
-        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
-        loan.loan_amount = new_loan_amount;
-        loan.last_borrow_index = lending_pool.borrow_index;
-
-        let repay_amount = repay_amount.get_with_default(loan.loan_amount);
-
-        // if user tries to repay more than owed, just repay the full amount
-        let repayment = if (repay_amount >= loan.loan_amount) {
-            loan.loan_amount
-        } else {
-            repay_amount
-        };
-        lending_pool.total_loan = lending_pool.total_loan + interest - repayment;
-
-        let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repayment, ctx);
-        let balance = coin.into_balance();
-        lending_pool.vault.join(balance);
-
-        loan.loan_amount = loan.loan_amount - repayment;
-        if (loan.loan_amount > 0) {
-            lending_pool.loans.add(manager_id, loan);
-        };
-    }
 }
 
 /// Returns (base_amount, quote_amount) for balance manager
@@ -437,6 +355,88 @@ public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: 
     self.borrow_index = new_borrow_index;
     self.supply_index = new_supply_index;
     self.last_index_update_timestamp = current_time;
+}
+
+public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
+    lending_pool: &mut LendingPool<BorrowAsset>,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    loan_amount: u64,
+    ctx: &mut TxContext,
+) {
+    assert!(lending_pool.vault.value() >= loan_amount, ENotEnoughAssetInPool);
+    let manager_id = margin_manager.id();
+    if (lending_pool.loans.contains(manager_id)) {
+        let mut loan = lending_pool.loans.remove(manager_id);
+        let interest_multiplier = margin_math::div(
+            lending_pool.borrow_index,
+            loan.last_borrow_index,
+        );
+        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
+        loan.loan_amount = new_loan_amount; // previous loan with interest
+        loan.loan_amount = loan.loan_amount + loan_amount; // new loan
+        loan.last_borrow_index = lending_pool.borrow_index;
+
+        lending_pool.total_loan = lending_pool.total_loan + interest + loan_amount;
+        lending_pool.loans.add(manager_id, loan);
+    } else {
+        let loan = Loan {
+            loan_amount,
+            last_borrow_index: lending_pool.borrow_index,
+        };
+        lending_pool.loans.add(manager_id, loan);
+        lending_pool.total_loan = lending_pool.total_loan + loan_amount;
+    };
+
+    let borrow_percentage = margin_math::div(lending_pool.total_loan, lending_pool.total_supply);
+    assert!(
+        borrow_percentage <= lending_pool.max_borrow_percentage,
+        EMaxPoolBorrowPercentageExceeded,
+    );
+
+    let deposit = lending_pool.vault.split(loan_amount).into_coin(ctx);
+    margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(deposit, ctx);
+
+    // TODO: check margin_manager risk level. If too low (<1.25), abort. Complete after oracle integration
+}
+
+public(package) fun repay<BaseAsset, QuoteAsset, RepayAsset>(
+    lending_pool: &mut LendingPool<RepayAsset>,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    repay_amount: Option<u64>,
+    ctx: &mut TxContext,
+) {
+    let manager_id = margin_manager.id();
+    if (lending_pool.loans.contains(manager_id)) {
+        let mut loan = lending_pool.loans.remove(manager_id);
+        let interest_multiplier = margin_math::div(
+            lending_pool.borrow_index,
+            loan.last_borrow_index,
+        );
+        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
+        loan.loan_amount = new_loan_amount;
+        loan.last_borrow_index = lending_pool.borrow_index;
+
+        let repay_amount = repay_amount.get_with_default(loan.loan_amount);
+
+        // if user tries to repay more than owed, just repay the full amount
+        let repayment = if (repay_amount >= loan.loan_amount) {
+            loan.loan_amount
+        } else {
+            repay_amount
+        };
+        lending_pool.total_loan = lending_pool.total_loan + interest - repayment;
+
+        let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repayment, ctx);
+        let balance = coin.into_balance();
+        lending_pool.vault.join(balance);
+
+        loan.loan_amount = loan.loan_amount - repayment;
+        if (loan.loan_amount > 0) {
+            lending_pool.loans.add(manager_id, loan);
+        };
+    }
 }
 
 /// TODO: more complex interest rate model, can update params on chain as needed
