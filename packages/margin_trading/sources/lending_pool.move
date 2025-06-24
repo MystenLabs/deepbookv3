@@ -12,13 +12,17 @@ use margin_trading::{
     oracle::calculate_usd_price
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, borrow, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
+const ESupplyCapExceeded: u64 = 2;
+const ENoSupplyFound: u64 = 3;
+const ECannotWithdrawMoreThanSupply: u64 = 4;
+const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -26,6 +30,12 @@ public struct Loan has drop, store {
     total_repayments: u64, // total repaid amount
     loan_amount: u64, // total loan remaining, including interest
     last_borrow_index: u64, // 9 decimals
+}
+
+public struct Supply has drop, store {
+    user: address, // address of the user who supplied
+    supplied_amount: u64, // amount supplied in this transaction
+    last_supply_index: u64, // 9 decimals
 }
 
 // public struct LoanRepayed has drop, store {
@@ -45,9 +55,11 @@ public struct LendingPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
+    supplies: Table<address, Supply>, // maps address id to deposits
+    supply_cap: u64, // maximum amount of assets that can be supplied to the pool
+    max_borrow_percentage: u64, // maximum percentage of the total supply that can be borrowed. 9 decimals.
     total_loan: u64, // total amount of loans in the pool, excluding interest
     total_supply: u64, // total amount of assets in the pool
-    // deposits: Table<address, Balance<Asset>>, // maps address id to deposits
     borrow_index: u64, // 9 decimals
     supply_index: u64, // 9 decimals
     last_index_update_timestamp: u64,
@@ -59,6 +71,8 @@ public struct LendingPool<phantom Asset> has key, store {
 /// Creates a lending pool as the admin.
 public fun create_lending_pool<Asset>(
     registry: &mut MarginRegistry,
+    supply_cap: u64,
+    max_borrow_percentage: u64,
     base_rate: u64,
     multiplier: u64,
     _cap: &LendingAdminCap,
@@ -73,6 +87,9 @@ public fun create_lending_pool<Asset>(
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
+        supplies: table::new(ctx),
+        supply_cap,
+        max_borrow_percentage,
         total_loan: 0,
         total_supply: 0,
         borrow_index: 1_000_000_000, // start at 1.0
@@ -100,28 +117,101 @@ public fun update_interest_params<Asset>(
     pool.interest_params.multiplier = multiplier;
 }
 
-// === Public-Mutative Functions * LENDING * ===
-/// Allows anyone to fund the lending pool.
-/// TODO: Let anyone deposit into the lending pool?
-public fun fund_lending_pool<Asset>(
+/// Updates the supply cap for the lending pool as the admin.
+public fun update_supply_cap<Asset>(
     pool: &mut LendingPool<Asset>,
-    coin: Coin<Asset>,
+    supply_cap: u64,
     _cap: &LendingAdminCap,
 ) {
+    pool.supply_cap = supply_cap;
+}
+
+/// Updates the maximum borrow percentage for the lending pool as the admin.
+public fun update_max_borrow_percentage<Asset>(
+    pool: &mut LendingPool<Asset>,
+    max_borrow_percentage: u64,
+    _cap: &LendingAdminCap,
+) {
+    pool.max_borrow_percentage = max_borrow_percentage;
+}
+
+// === Public-Mutative Functions * LENDING * ===
+/// Allows anyone to supply the lending pool.
+public fun supply_lending_pool<Asset>(
+    lending_pool: &mut LendingPool<Asset>,
+    coin: Coin<Asset>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    update_indices<Asset>(lending_pool, clock);
+
+    let supply_amount = coin.value();
+    assert!(
+        lending_pool.total_supply + supply_amount <= lending_pool.supply_cap,
+        ESupplyCapExceeded,
+    );
     let balance = coin.into_balance();
-    pool.vault.join(balance);
+    lending_pool.vault.join(balance);
+
+    let supplier = ctx.sender();
+    if (lending_pool.supplies.contains(supplier)) {
+        let mut supply = lending_pool.supplies.remove(supplier);
+        let interest_multiplier = margin_math::div(
+            lending_pool.supply_index,
+            supply.last_supply_index,
+        );
+        let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier); // previous supply with interest
+        let interest_earned = new_supply_amount - supply.supplied_amount; // TODO: event for interest earned?
+        lending_pool.total_supply = lending_pool.total_supply + interest_earned + supply_amount;
+
+        supply.supplied_amount = new_supply_amount; // previous supply with interest
+        supply.supplied_amount = supply.supplied_amount + supply_amount; // new supply
+        supply.last_supply_index = lending_pool.supply_index;
+        lending_pool.supplies.add(supplier, supply);
+    } else {
+        let supply = Supply {
+            user: supplier,
+            supplied_amount: supply_amount,
+            last_supply_index: lending_pool.supply_index,
+        };
+        lending_pool.supplies.add(supplier, supply);
+        lending_pool.total_supply = lending_pool.total_supply + supply_amount;
+    };
 }
 
 /// Allows withdrawal from the lending pool.
-/// TODO: Let anyone deposit into the lending pool?
 public fun withdraw_from_lending_pool<Asset>(
-    pool: &mut LendingPool<Asset>,
-    amount: u64,
-    _cap: &LendingAdminCap,
+    lending_pool: &mut LendingPool<Asset>,
+    amount: Option<u64>, // if None, withdraw all
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    // TODO: perform checks to make sure withdrawal is possible without error
-    pool.vault.split(amount).into_coin(ctx)
+    update_indices<Asset>(lending_pool, clock);
+
+    let supplier = ctx.sender();
+    assert!(lending_pool.supplies.contains(supplier), ENoSupplyFound);
+
+    let mut supply = lending_pool.supplies.remove(supplier);
+    let interest_multiplier = margin_math::div(
+        lending_pool.supply_index,
+        supply.last_supply_index,
+    );
+    let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier); // previous supply with interest
+    let interest_earned = new_supply_amount - supply.supplied_amount; // TODO: event for interest earned?
+    let withdrawal_amount = amount.get_with_default(new_supply_amount);
+
+    assert!(withdrawal_amount <= new_supply_amount, ECannotWithdrawMoreThanSupply);
+    lending_pool.total_supply = lending_pool.total_supply + interest_earned - withdrawal_amount;
+
+    supply.supplied_amount = new_supply_amount; // previous supply with interest
+    supply.supplied_amount = supply.supplied_amount - withdrawal_amount; // new supply
+    supply.last_supply_index = lending_pool.supply_index;
+
+    if (supply.supplied_amount > 0) {
+        lending_pool.supplies.add(supplier, supply); // update supply
+    };
+
+    lending_pool.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
 public fun borrow_base<BaseAsset, QuoteAsset>(
@@ -160,9 +250,13 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
             lending_pool.borrow_index,
             loan.last_borrow_index,
         );
-        loan.loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
+        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
+        loan.loan_amount = new_loan_amount; // previous loan with interest
         loan.loan_amount = loan.loan_amount + loan_amount; // new loan
         loan.last_borrow_index = lending_pool.borrow_index;
+
+        lending_pool.total_loan = lending_pool.total_loan + interest + loan_amount;
         lending_pool.loans.add(manager_id, loan);
     } else {
         let loan = Loan {
@@ -172,7 +266,15 @@ public(package) fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
             last_borrow_index: lending_pool.borrow_index,
         };
         lending_pool.loans.add(manager_id, loan);
+        lending_pool.total_loan = lending_pool.total_loan + loan_amount;
     };
+
+    let borrow_percentage = margin_math::div(lending_pool.total_loan, lending_pool.total_supply);
+    assert!(
+        borrow_percentage <= lending_pool.max_borrow_percentage,
+        EMaxPoolBorrowPercentageExceeded,
+    );
+
     let deposit = lending_pool.vault.split(loan_amount).into_coin(ctx);
     margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(deposit, ctx);
 
@@ -324,25 +426,29 @@ public(package) fun manager_debt<BaseAsset, QuoteAsset, Asset>(
 public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
     let ms_elapsed = current_time - self.last_index_update_timestamp;
+    let (borrow_interest_rate, supply_interest_rate) = self.interest_rates();
     let new_borrow_index =
-        self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, self.borrow_interest_rate()),YEAR_MS));
+        self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, borrow_interest_rate),YEAR_MS));
     let new_supply_index =
-        self.supply_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, self.supply_interest_rate()), YEAR_MS));
+        self.supply_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, supply_interest_rate), YEAR_MS));
     self.borrow_index = new_borrow_index;
     self.supply_index = new_supply_index;
     self.last_index_update_timestamp = current_time;
 }
 
 /// TODO: more complex interest rate model, can update params on chain as needed
-fun borrow_interest_rate<Asset>(self: &LendingPool<Asset>): u64 {
-    self.interest_params.base_rate
-}
-
-fun supply_interest_rate<Asset>(self: &mut LendingPool<Asset>): u64 {
+fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
     self.update_utilization_rate<Asset>();
-    margin_math::mul(self.borrow_interest_rate(), self.utilization_rate) // 9 decimals
+    let borrow_interest_rate = self.interest_params.base_rate;
+    let supply_interest_rate = margin_math::mul(
+        borrow_interest_rate,
+        self.utilization_rate,
+    );
+
+    (borrow_interest_rate, supply_interest_rate)
 }
 
+/// Updates the utilization rate of the lending pool.
 fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
         0
