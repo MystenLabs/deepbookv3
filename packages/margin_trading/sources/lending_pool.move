@@ -3,15 +3,7 @@
 
 module margin_trading::lending_pool;
 
-use deepbook::pool::Pool;
-use margin_trading::{
-    constants,
-    margin_manager::MarginManager,
-    margin_math,
-    margin_registry::{LendingAdminCap, MarginRegistry},
-    oracle::calculate_usd_price
-};
-use pyth::price_info::PriceInfoObject;
+use margin_trading::{constants, margin_math, margin_registry::{LendingAdminCap, MarginRegistry}};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
@@ -22,10 +14,6 @@ const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
 const ENoSupplyFound: u64 = 3;
 const ECannotWithdrawMoreThanSupply: u64 = 4;
-const EMaxPoolBorrowPercentageExceeded: u64 = 5;
-const EInvalidLoanQuantity: u64 = 6;
-const EInvalidMarginManager: u64 = 7;
-const EBorrowRiskRatioExceeded: u64 = 8;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -43,10 +31,6 @@ public struct Supply has drop, store {
 public struct InterestParams has drop, store {
     base_rate: u64, // 9 decimals
     multiplier: u64, // 9 decimals
-}
-
-public struct BorrowRequest {
-    margin_manager_id: ID,
 }
 
 public struct LendingPool<phantom Asset> has key, store {
@@ -211,137 +195,6 @@ public fun withdraw_from_lending_pool<Asset>(
     lending_pool.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
-/// Borrow the base asset using the margin manager.
-public fun borrow_base<BaseAsset, QuoteAsset>(
-    lending_pool: &mut LendingPool<BaseAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): BorrowRequest {
-    update_indices<BaseAsset>(lending_pool, clock);
-
-    lending_pool.borrow<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, loan_amount, ctx)
-}
-
-/// Borrow the quote asset using the margin manager.
-public fun borrow_quote<BaseAsset, QuoteAsset>(
-    lending_pool: &mut LendingPool<QuoteAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): BorrowRequest {
-    update_indices<QuoteAsset>(lending_pool, clock);
-
-    lending_pool.borrow<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, loan_amount, ctx)
-}
-
-/// Repay the base asset loan using the margin manager.
-public fun repay_base<BaseAsset, QuoteAsset>(
-    lending_pool: &mut LendingPool<BaseAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>, // if None, repay all
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    update_indices<BaseAsset>(lending_pool, clock);
-    lending_pool.repay<BaseAsset, QuoteAsset, BaseAsset>(margin_manager, repay_amount, ctx);
-}
-
-/// Repay the quote asset loan using the margin manager.
-public fun repay_quote<BaseAsset, QuoteAsset>(
-    lending_pool: &mut LendingPool<QuoteAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>, // if None, repay all
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    update_indices<QuoteAsset>(lending_pool, clock);
-    lending_pool.repay<BaseAsset, QuoteAsset, QuoteAsset>(margin_manager, repay_amount, ctx);
-}
-
-public fun borrow_risk_ratio_proof<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    base_lending_pool: &mut LendingPool<BaseAsset>,
-    quote_lending_pool: &mut LendingPool<QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    clock: &Clock,
-    request: BorrowRequest,
-) {
-    assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-
-    let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
-        registry,
-        margin_manager,
-        base_lending_pool,
-        quote_lending_pool,
-        pool,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
-    );
-    assert!(registry.can_borrow(risk_ratio), EBorrowRiskRatioExceeded);
-
-    let BorrowRequest {
-        margin_manager_id: _,
-    } = request;
-}
-
-/// Risk ratio = total asset in USD / (total debt and interest in USD)
-/// Risk ratio above 2.0 allows for withdrawal from balance manager, borrowing, and trading
-/// Risk ratio between 1.25 and 2.0 allows for borrowing and trading
-/// Risk ratio between 1.1 and 1.25 allows for trading only
-/// Risk ratio below 1.1 allows for liquidation
-/// These numbers can be updated by the admin
-public fun risk_ratio<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    base_lending_pool: &mut LendingPool<BaseAsset>,
-    quote_lending_pool: &mut LendingPool<QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    clock: &Clock,
-): u64 {
-    let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
-        base_lending_pool,
-        quote_lending_pool,
-        margin_manager,
-        clock,
-    );
-    let (base_asset, quote_asset) = margin_manager_asset<BaseAsset, QuoteAsset>(
-        pool,
-        margin_manager,
-    );
-
-    let (base_usd_debt, base_usd_asset) = calculate_usd_price<BaseAsset>(
-        registry,
-        base_debt,
-        base_asset,
-        clock,
-        base_price_info_object,
-    );
-    let (quote_usd_debt, quote_usd_asset) = calculate_usd_price<QuoteAsset>(
-        registry,
-        quote_debt,
-        quote_asset,
-        clock,
-        quote_price_info_object,
-    );
-    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
-    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
-
-    if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
-        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
-    } else {
-        margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
-    }
-}
-
 // === Public-Helper Functions ===
 /// Get the ID of the pool given the asset types.
 public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
@@ -349,35 +202,10 @@ public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
 }
 
 // === Internal Functions ===
-/// Returns (base_asset, quote_asset) for margin manager.
-fun margin_manager_asset<BaseAsset, QuoteAsset>(
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-): (u64, u64) {
-    let balance_manager = margin_manager.balance_manager();
-    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
-    base = base + balance_manager.balance<BaseAsset>();
-    quote = quote + balance_manager.balance<QuoteAsset>();
-
-    (base, quote)
-}
-
-// Returns the (base_debt, quote_debt) for the margin manager
-fun margin_manager_debt<BaseAsset, QuoteAsset>(
-    base_lending_pool: &mut LendingPool<BaseAsset>,
-    quote_lending_pool: &mut LendingPool<QuoteAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    clock: &Clock,
-): (u64, u64) {
-    let base_debt = base_lending_pool.manager_debt(margin_manager, clock);
-    let quote_debt = quote_lending_pool.manager_debt(margin_manager, clock);
-
-    (base_debt, quote_debt)
-}
 
 /// Updates the borrow and supply indices for the lending pool.
 /// This will be called before any borrow or supply operation.
-fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
+public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
     let ms_elapsed = current_time - self.last_index_update_timestamp;
     let (borrow_interest_rate, supply_interest_rate) = self.interest_rates();
@@ -390,89 +218,51 @@ fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
     self.last_index_update_timestamp = current_time;
 }
 
-fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
-    lending_pool: &mut LendingPool<BorrowAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    loan_amount: u64,
-    ctx: &mut TxContext,
-): BorrowRequest {
-    assert!(loan_amount > 0, EInvalidLoanQuantity);
-    assert!(lending_pool.vault.value() >= loan_amount, ENotEnoughAssetInPool);
-    let manager_id = margin_manager.id();
-    if (lending_pool.loans.contains(manager_id)) {
-        let mut loan = lending_pool.loans.remove(manager_id);
-        let interest_multiplier = margin_math::div(
-            lending_pool.borrow_index,
-            loan.last_borrow_index,
-        );
-        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
-        loan.loan_amount = new_loan_amount; // previous loan with interest
-        loan.loan_amount = loan.loan_amount + loan_amount; // new loan
-        loan.last_borrow_index = lending_pool.borrow_index;
+public(package) fun loans<Asset>(self: &mut LendingPool<Asset>): &mut Table<ID, Loan> {
+    &mut self.loans
+}
 
-        lending_pool.total_loan = lending_pool.total_loan + interest + loan_amount;
-        lending_pool.loans.add(manager_id, loan);
-    } else {
-        let loan = Loan {
-            loan_amount,
-            last_borrow_index: lending_pool.borrow_index,
-        };
-        lending_pool.loans.add(manager_id, loan);
-        lending_pool.total_loan = lending_pool.total_loan + loan_amount;
-    };
+public(package) fun borrow_index<Asset>(self: &LendingPool<Asset>): u64 {
+    self.borrow_index
+}
 
-    let borrow_percentage = margin_math::div(lending_pool.total_loan, lending_pool.total_supply);
-    assert!(
-        borrow_percentage <= lending_pool.max_borrow_percentage,
-        EMaxPoolBorrowPercentageExceeded,
-    );
+public(package) fun total_loan<Asset>(self: &LendingPool<Asset>): u64 {
+    self.total_loan
+}
 
-    let deposit = lending_pool.vault.split(loan_amount).into_coin(ctx);
-    margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(deposit, ctx);
+public(package) fun total_supply<Asset>(self: &LendingPool<Asset>): u64 {
+    self.total_supply
+}
 
-    BorrowRequest {
-        margin_manager_id: manager_id,
+public(package) fun vault<Asset>(self: &mut LendingPool<Asset>): &mut Balance<Asset> {
+    &mut self.vault
+}
+
+public(package) fun set_total_loan<Asset>(self: &mut LendingPool<Asset>, amount: u64) {
+    self.total_loan = amount;
+}
+
+public(package) fun max_borrow_percentage<Asset>(self: &LendingPool<Asset>): u64 {
+    self.max_borrow_percentage
+}
+
+public(package) fun new_loan(loan_amount: u64, borrow_index: u64): Loan {
+    Loan {
+        loan_amount,
+        last_borrow_index: borrow_index,
     }
 }
 
-fun repay<BaseAsset, QuoteAsset, RepayAsset>(
-    lending_pool: &mut LendingPool<RepayAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    repay_amount: Option<u64>,
-    ctx: &mut TxContext,
-) {
-    let manager_id = margin_manager.id();
-    if (lending_pool.loans.contains(manager_id)) {
-        let mut loan = lending_pool.loans.remove(manager_id);
-        let interest_multiplier = margin_math::div(
-            lending_pool.borrow_index,
-            loan.last_borrow_index,
-        );
-        let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
-        loan.loan_amount = new_loan_amount;
-        loan.last_borrow_index = lending_pool.borrow_index;
+public(package) fun loan_amount(self: &Loan): u64 { self.loan_amount }
 
-        let repay_amount = repay_amount.get_with_default(loan.loan_amount);
+public(package) fun last_borrow_index(self: &Loan): u64 { self.last_borrow_index }
 
-        // if user tries to repay more than owed, just repay the full amount
-        let repayment = if (repay_amount >= loan.loan_amount) {
-            loan.loan_amount
-        } else {
-            repay_amount
-        };
-        lending_pool.total_loan = lending_pool.total_loan + interest - repayment;
+public(package) fun set_loan_amount(self: &mut Loan, amount: u64) {
+    self.loan_amount = amount;
+}
 
-        let coin = margin_manager.withdraw<BaseAsset, QuoteAsset, RepayAsset>(repayment, ctx);
-        let balance = coin.into_balance();
-        lending_pool.vault.join(balance);
-
-        loan.loan_amount = loan.loan_amount - repayment;
-        if (loan.loan_amount > 0) {
-            lending_pool.loans.add(manager_id, loan);
-        };
-    }
+public(package) fun set_last_borrow_index(self: &mut Loan, index: u64) {
+    self.last_borrow_index = index;
 }
 
 /// TODO: more complex interest rate model, can update params on chain as needed
@@ -494,39 +284,4 @@ fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     } else {
         margin_math::div(self.total_loan, self.total_supply) // 9 decimals
     }
-}
-
-fun manager_debt<BaseAsset, QuoteAsset, Asset>(
-    lending_pool: &mut LendingPool<Asset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    clock: &Clock,
-): u64 {
-    update_indices<Asset>(lending_pool, clock);
-    if (lending_pool.loans.contains(margin_manager.id())) {
-        lending_pool.update_loan_interest<BaseAsset, QuoteAsset, Asset>(margin_manager);
-
-        lending_pool.loans.borrow(margin_manager.id()).loan_amount
-    } else {
-        0 // no loan found for this margin manager
-    }
-}
-
-/// Updates the loan interest for the margin manager if it has an active loan in the lending pool.
-fun update_loan_interest<BaseAsset, QuoteAsset, RepayAsset>(
-    lending_pool: &mut LendingPool<RepayAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-) {
-    let manager_id = margin_manager.id();
-    let mut loan = lending_pool.loans.remove(manager_id);
-    let interest_multiplier = margin_math::div(
-        lending_pool.borrow_index,
-        loan.last_borrow_index,
-    );
-    let new_loan_amount = margin_math::mul(loan.loan_amount, interest_multiplier); // previous loan with interest
-    let interest = new_loan_amount - loan.loan_amount; // TODO: event for interest earned?
-    loan.loan_amount = new_loan_amount;
-    loan.last_borrow_index = lending_pool.borrow_index;
-
-    lending_pool.total_loan = lending_pool.total_loan + interest;
-    lending_pool.loans.add(manager_id, loan);
 }

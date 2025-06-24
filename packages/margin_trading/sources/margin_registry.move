@@ -25,7 +25,7 @@ public struct LendingAdminCap has key, store {
 }
 
 public struct RiskParams has drop, store {
-    min_transfer_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow transfer
+    min_withdraw_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow transfer
     min_borrow_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow borrow
     liquidation_risk_ratio: u64, // 9 decimals, risk ratio below which liquidation is allowed
 }
@@ -61,12 +61,12 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 }
 
 public fun new_risk_params(
-    min_transfer_risk_ratio: u64,
+    min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
 ): RiskParams {
     RiskParams {
-        min_transfer_risk_ratio,
+        min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
     }
@@ -82,8 +82,8 @@ public fun update_risk_params(
     registry.risk_params = risk_params;
 }
 
-public(package) fun can_transfer(self: &MarginRegistry, risk_ratio: u64): bool {
-    risk_ratio >= self.risk_params.min_transfer_risk_ratio
+public(package) fun can_withdraw(self: &MarginRegistry, risk_ratio: u64): bool {
+    risk_ratio >= self.risk_params.min_withdraw_risk_ratio
 }
 
 public(package) fun can_borrow(self: &MarginRegistry, risk_ratio: u64): bool {
