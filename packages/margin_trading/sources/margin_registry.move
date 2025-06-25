@@ -62,6 +62,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     transfer::public_transfer(lending_admin_cap, ctx.sender())
 }
 
+// === Public Functions * ADMIN * ===
 public fun new_risk_params(
     min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
@@ -112,6 +113,24 @@ public fun remove_margin_pair<BaseAsset, QuoteAsset>(
     self.allowed_margin_pairs.remove(&pair);
 }
 
+/// Add Pyth Config to the MarginRegistry.
+public fun add_config<Config: store + drop>(
+    self: &mut MarginRegistry,
+    _cap: &LendingAdminCap,
+    config: Config,
+) {
+    self.id.add(ConfigKey<Config> {}, config);
+}
+
+/// Remove Pyth Config from the MarginRegistry.
+public fun remove_config<Config: store + drop>(
+    self: &mut MarginRegistry,
+    _cap: &LendingAdminCap,
+): Config {
+    self.id.remove(ConfigKey<Config> {})
+}
+
+// === Public Helper Functions ===
 /// Check if a margin trading pair is allowed
 public fun is_margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry): bool {
     let pair = MarginPair {
@@ -121,23 +140,7 @@ public fun is_margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry):
     self.allowed_margin_pairs.contains(&pair)
 }
 
-/// Add Pyth Config to the MarginRegistry.
-public fun add_config<Config: store + drop>(
-    _cap: &LendingAdminCap,
-    self: &mut MarginRegistry,
-    config: Config,
-) {
-    self.id.add(ConfigKey<Config> {}, config);
-}
-
-/// Remove Pyth Config from the MarginRegistry.
-public fun remove_config<Config: store + drop>(
-    _cap: &LendingAdminCap,
-    self: &mut MarginRegistry,
-): Config {
-    self.id.remove(ConfigKey<Config> {})
-}
-
+// === Public-Package Functions ===
 /// Register a new lending pool. If a same asset pool already exists, abort.
 public(package) fun register_lending_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
     let key = type_name::get<Asset>();

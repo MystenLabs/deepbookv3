@@ -108,7 +108,7 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
     transfer::share_object(margin_manager)
 }
 
-/// TODO: liquidate based on whether base or quote needs to be liquidated
+/// TODO: this is a WIP
 /// amount_to_liquidate = (asset_value - target_ratio × debt_value) / (target_ratio - 1)
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -242,6 +242,9 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(lending_pool, repay_amount, ctx);
 }
 
+/// Destroys the request to borrow or withdraw if risk ratio conditions are met.
+/// This function is called after the borrow or withdraw request is created.
+/// TODO: liquidation check to be added for target risk_ratio
 public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -283,7 +286,7 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
 /// Risk ratio between 1.25 and 2.0 allows for borrowing and trading
 /// Risk ratio between 1.1 and 1.25 allows for trading only
 /// Risk ratio below 1.1 allows for liquidation
-/// These numbers can be updated by the admin
+/// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -329,7 +332,8 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Returns (usd_asset, usd_debt) for the margin manager
+/// Returns LiquidationProof for the margin manager?
+/// TODO: This is a WIP
 public fun liquidation_prep<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -366,8 +370,8 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
         quote_price_info_object,
     );
 
-    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
-    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
+    let total_usd_asset = base_usd_asset + quote_usd_asset; // 9 decimals
+    let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
 
     let risk_ratio = if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
         1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
@@ -375,9 +379,14 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
         margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
     };
 
-    // assert!(registry.can_liquidate(risk_ratio), ECannotLiquidate);
+    assert!(registry.can_liquidate(risk_ratio), ECannotLiquidate);
     // let target_ratio = registry.target_liquidation_risk_ratio();
-    // let amount_to_liquidate = (total_usd_asset * 1000 - margin_math::mul(total_usd_debt, target_ratio));
+
+    // Amount in USD (9 decimals) to liquidate to bring risk_ratio to target_ratio
+    // let amount_to_liquidate = margin_math::div(
+    //     (total_usd_asset - margin_math::mul(total_usd_debt, target_ratio)),
+    //     (target_ratio - constants::float_scaling()),
+    // );
 
     let proof = LiquidationProof {
         margin_manager_id: margin_manager.id(),

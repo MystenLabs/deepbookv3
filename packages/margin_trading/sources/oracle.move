@@ -30,6 +30,37 @@ public struct CoinTypeData has copy, drop, store {
     type_name: TypeName,
 }
 
+/// Creates a new CoinTypeData struct of type T.
+/// Uses CoinMetadata to avoid any errors in decimals.
+public fun new_coin_type_data<T>(
+    coin_metadata: &CoinMetadata<T>,
+    price_feed_id: vector<u8>,
+): CoinTypeData {
+    let type_name = type_name::get<T>();
+    CoinTypeData {
+        decimals: coin_metadata.get_decimals(),
+        price_feed_id,
+        type_name,
+    }
+}
+
+/// Creates a new PythConfig struct.
+/// Can be attached by the Admin to MarginRegistry to allow oracle to work.
+public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
+    let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
+
+    setups.do!(|coin_type| {
+        currencies.insert(coin_type.type_name, coin_type);
+    });
+
+    PythConfig {
+        currencies,
+        max_age_secs,
+    }
+}
+
+/// Calculates the USD price of a given asset or debt amount.
+/// 9 decimals are used for USD representation.
 public(package) fun calculate_usd_price<T>(
     registry: &MarginRegistry,
     base_debt: u64,
@@ -97,35 +128,6 @@ public(package) fun calculate_target_currency_amount(
         )) as u64;
 
     target_currency_amount
-}
-
-/// Creates a new CoinTypeData struct of type T.
-/// Uses CoinMetadata to avoid any errors in decimals.
-public fun new_coin_type_data<T>(
-    coin_metadata: &CoinMetadata<T>,
-    price_feed_id: vector<u8>,
-): CoinTypeData {
-    let type_name = type_name::get<T>();
-    CoinTypeData {
-        decimals: coin_metadata.get_decimals(),
-        price_feed_id,
-        type_name,
-    }
-}
-
-/// Creates a new PythConfig struct.
-/// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
-    let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
-
-    setups.do!(|coin_type| {
-        currencies.insert(coin_type.type_name, coin_type);
-    });
-
-    PythConfig {
-        currencies,
-        max_age_secs,
-    }
 }
 
 /// Gets the configuration for a given currency type.

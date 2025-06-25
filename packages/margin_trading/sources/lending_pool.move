@@ -49,7 +49,7 @@ public struct LendingPool<phantom Asset> has key, store {
     utilization_rate: u64, // 9 decimals
 }
 
-// === Public-Mutative Functions * ADMIN * ===
+// === Public Functions * ADMIN * ===
 public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams {
     InterestParams {
         base_rate,
@@ -116,7 +116,7 @@ public fun update_max_borrow_percentage<Asset>(
     pool.max_borrow_percentage = max_borrow_percentage;
 }
 
-// === Public-Mutative Functions * LENDING * ===
+// === Public Functions * LENDING * ===
 /// Allows anyone to supply the lending pool.
 public fun supply_lending_pool<Asset>(
     lending_pool: &mut LendingPool<Asset>,
@@ -201,8 +201,7 @@ public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
     registry.get_lending_pool_id<Asset>()
 }
 
-// === Internal Functions ===
-
+// === Public-Package Functions ===
 /// Updates the borrow and supply indices for the lending pool.
 /// This will be called before any borrow or supply operation.
 public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
@@ -265,6 +264,7 @@ public(package) fun set_last_borrow_index(self: &mut Loan, index: u64) {
     self.last_borrow_index = index;
 }
 
+// === Internal Functions ===
 /// TODO: more complex interest rate model, can update params on chain as needed
 fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
     self.update_utilization_rate<Asset>();
