@@ -16,6 +16,7 @@ use deepbook::{
         WithdrawCap
     },
     constants,
+    order_info::OrderInfo,
     pool::Pool
 };
 use margin_trading::{
@@ -36,7 +37,10 @@ const EMaxPoolBorrowPercentageExceeded: u64 = 2;
 const EInvalidLoanQuantity: u64 = 3;
 const EInvalidMarginManager: u64 = 4;
 const EBorrowRiskRatioExceeded: u64 = 5;
-const ENotEnoughAssetInPool: u64 = 6;
+const EWithdrawRiskRatioExceeded: u64 = 6;
+const ENotEnoughAssetInPool: u64 = 7;
+const ELiquidationCheckBeforeRequest: u64 = 8;
+const ECannotLiquidate: u64 = 9;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -67,7 +71,12 @@ public struct Request {
     request_type: u8,
 }
 
-// === Public-Mutative Functions ===
+public struct LiquidationProof {
+    margin_manager_id: ID,
+    amount: u64,
+}
+
+// === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
     assert!(
         margin_registry::is_margin_pair_allowed<BaseAsset, QuoteAsset>(margin_registry),
@@ -99,15 +108,16 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
     transfer::share_object(margin_manager)
 }
 
-// TODO: liquidate based on whether base or quote needs to be liquidated
+/// TODO: liquidate based on whether base or quote needs to be liquidated
+/// amount_to_liquidate = (asset_value - target_ratio × debt_value) / (target_ratio - 1)
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    // TODO: Cancel all open orders, collect settled balances, then liquidate?
-    // TODO?: Call repay_same_assets first to ensure that the margin manager is in a state where it can liquidate.
+    margin_manager.cancel_all_orders(pool, clock, ctx);
+    margin_manager.withdraw_settled_amounts(pool, ctx);
     // TODO: Check the risk ratio to determine if liquidation is allowed
 
     let balance_manager = &mut margin_manager.balance_manager;
@@ -139,15 +149,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         ctx,
     );
 }
-
-/// TODO: Add some function to automatically repay same assets?
-// public fun repay_same_assets<BaseAsset, QuoteAsset>(
-//     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-//     clock: &Clock,
-//     ctx: &mut TxContext,
-// ) {
-//     abort 0x1
-// }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
@@ -189,21 +190,6 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     };
 
     (coin, withdrawal_request)
-}
-
-public(package) fun repay_withdrawal<BaseAsset, QuoteAsset, WithdrawAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    withdraw_amount: u64,
-    ctx: &mut TxContext,
-): Coin<WithdrawAsset> {
-    let balance_manager = &mut margin_manager.balance_manager;
-
-    let coin = balance_manager.withdraw<WithdrawAsset>(
-        withdraw_amount,
-        ctx,
-    );
-
-    coin
 }
 
 /// Borrow the base asset using the margin manager.
@@ -268,6 +254,7 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
     request: Request,
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
+    assert!(request.request_type != LIQUIDATE, ELiquidationCheckBeforeRequest);
 
     let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
         registry,
@@ -282,9 +269,7 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
-        assert!(registry.can_withdraw(risk_ratio), EBorrowRiskRatioExceeded);
-    } else if (request.request_type == LIQUIDATE) {
-        assert!(registry.can_liquidate(risk_ratio), EBorrowRiskRatioExceeded);
+        assert!(registry.can_withdraw(risk_ratio), EWithdrawRiskRatioExceeded);
     };
 
     let Request {
@@ -344,6 +329,310 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
+/// Returns (usd_asset, usd_debt) for the margin manager
+public fun liquidation_prep<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+): (LiquidationProof, u64, u64) {
+    let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
+        base_lending_pool,
+        quote_lending_pool,
+        margin_manager,
+        clock,
+    );
+    let (base_asset, quote_asset) = margin_manager_asset<BaseAsset, QuoteAsset>(
+        pool,
+        margin_manager,
+    );
+
+    let (base_usd_debt, base_usd_asset) = calculate_usd_price<BaseAsset>(
+        registry,
+        base_debt,
+        base_asset,
+        clock,
+        base_price_info_object,
+    );
+    let (quote_usd_debt, quote_usd_asset) = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_debt,
+        quote_asset,
+        clock,
+        quote_price_info_object,
+    );
+
+    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
+    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
+
+    let risk_ratio = if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
+        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
+    } else {
+        margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
+    };
+
+    // assert!(registry.can_liquidate(risk_ratio), ECannotLiquidate);
+    // let target_ratio = registry.target_liquidation_risk_ratio();
+    // let amount_to_liquidate = (total_usd_asset * 1000 - margin_math::mul(total_usd_debt, target_ratio));
+
+    let proof = LiquidationProof {
+        margin_manager_id: margin_manager.id(),
+        amount: 0,
+    };
+
+    // amount_to_liquidate = (asset_value - target_ratio × debt_value) / (target_ratio - 1)
+
+    (proof, total_usd_asset, total_usd_debt)
+}
+
+// === Public Proxy Functions - Trading ===
+/// Places a limit order in the pool.
+public fun place_limit_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+/// Places a market order in the pool.
+public fun place_market_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
+}
+
+/// Modifies an order
+public fun modify_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    order_id: u128,
+    new_quantity: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.modify_order(
+        balance_manager,
+        &trade_proof,
+        order_id,
+        new_quantity,
+        clock,
+        ctx,
+    )
+}
+
+/// Cancels an order
+public fun cancel_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    order_id: u128,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.cancel_order(
+        balance_manager,
+        &trade_proof,
+        order_id,
+        clock,
+        ctx,
+    );
+}
+
+/// Cancel multiple orders within a vector.
+public fun cancel_orders<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    order_ids: vector<u128>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.cancel_orders(
+        balance_manager,
+        &trade_proof,
+        order_ids,
+        clock,
+        ctx,
+    );
+}
+
+/// Cancels all orders for the given account.
+public fun cancel_all_orders<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.cancel_all_orders(
+        balance_manager,
+        &trade_proof,
+        clock,
+        ctx,
+    );
+}
+
+/// Withdraw settled amounts to balance_manager.
+public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.withdraw_settled_amounts(
+        balance_manager,
+        &trade_proof,
+    );
+}
+
+/// Stake DEEP tokens to the pool.
+public fun stake<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    amount: u64,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.stake(
+        balance_manager,
+        &trade_proof,
+        amount,
+        ctx,
+    );
+}
+
+/// Unstake DEEP tokens from the pool.
+public fun unstake<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.unstake(
+        balance_manager,
+        &trade_proof,
+        ctx,
+    );
+}
+
+/// Submit proposal using the margin manager.
+public fun submit_proposal<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    taker_fee: u64,
+    maker_fee: u64,
+    stake_required: u64,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.submit_proposal(
+        balance_manager,
+        &trade_proof,
+        taker_fee,
+        maker_fee,
+        stake_required,
+        ctx,
+    );
+}
+
+/// Vote on a proposal using the margin manager.
+public fun vote<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    proposal_id: ID,
+    ctx: &TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.vote(
+        balance_manager,
+        &trade_proof,
+        proposal_id,
+        ctx,
+    );
+}
+
+public fun claim_rebates<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &mut TxContext,
+) {
+    let balance_manager = margin_manager.balance_manager_mut();
+    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+
+    pool.claim_rebates(balance_manager, &trade_proof, ctx)
+}
+
+// === Public-Package Functions ===
 public(package) fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     coin: Coin<DepositAsset>,
@@ -386,6 +675,7 @@ public(package) fun id<BaseAsset, QuoteAsset>(
     object::id(margin_manager)
 }
 
+// === Private Functions ===
 fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     lending_pool: &mut LendingPool<Asset>,
@@ -414,7 +704,7 @@ fun update_loan_interest<BaseAsset, QuoteAsset, RepayAsset>(
         loan.last_borrow_index(),
     );
     let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-    let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest earned?
+    let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
     loan.set_loan_amount(new_loan_amount);
     loan.set_last_borrow_index(lending_pool.borrow_index());
 
@@ -437,7 +727,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
             loan.last_borrow_index(),
         );
         let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest earned?
+        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
         loan.set_loan_amount(new_loan_amount);
         loan.set_last_borrow_index(lending_pool.borrow_index());
 
@@ -466,6 +756,21 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     }
 }
 
+fun repay_withdrawal<BaseAsset, QuoteAsset, WithdrawAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    withdraw_amount: u64,
+    ctx: &mut TxContext,
+): Coin<WithdrawAsset> {
+    let balance_manager = &mut margin_manager.balance_manager;
+
+    let coin = balance_manager.withdraw<WithdrawAsset>(
+        withdraw_amount,
+        ctx,
+    );
+
+    coin
+}
+
 fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     lending_pool: &mut LendingPool<BorrowAsset>,
@@ -483,7 +788,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
             loan.last_borrow_index(),
         );
         let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest earned?
+        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
         loan.set_loan_amount(new_loan_amount + loan_amount); // previous loan with interest and new loan
         loan.set_last_borrow_index(lending_pool.borrow_index());
 

@@ -7,7 +7,7 @@ use margin_trading::oracle::calculate_target_currency_amount;
 
 #[test]
 fun test_calculate_target_currency() {
-    let target_decimals: u8 = 6;
+    let target_decimals: u8 = 9;
     let base_decimals: u8 = 9;
     let pyth_decimals: u8 = 8;
     let pyth_price = 380000000; // SUI price 3.8
@@ -21,12 +21,12 @@ fun test_calculate_target_currency() {
         pyth_decimals,
     );
 
-    assert!(target_currency_amount == 380 * 1_000_000, 0); // 380 USDC
+    assert!(target_currency_amount == 380 * 1_000_000_000, 0); // 380 USDC
 }
 
 #[test]
 fun test_calculate_target_currency_usdc() {
-    let target_decimals: u8 = 6;
+    let target_decimals: u8 = 9;
     let base_decimals: u8 = 6;
     let pyth_decimals: u8 = 8;
     let pyth_price = 100000000;
@@ -40,12 +40,12 @@ fun test_calculate_target_currency_usdc() {
         pyth_decimals,
     );
 
-    assert!(target_currency_amount == 100 * 1_000_000, 0); // 100 USDC
+    assert!(target_currency_amount == 100 * 1_000_000_000, 0); // 100 USDC
 }
 
 #[test]
 fun test_calculate_target_currency_2() {
-    let target_decimals: u8 = 6;
+    let target_decimals: u8 = 9;
     let base_decimals: u8 = 0; // TOKEN has no decimals
     let pyth_decimals: u8 = 3;
     let pyth_price = 3800; // TOKEN price 3.8
@@ -59,12 +59,12 @@ fun test_calculate_target_currency_2() {
         pyth_decimals,
     );
 
-    assert!(target_currency_amount == 380 * 1_000_000, 0); // 380 USDC
+    assert!(target_currency_amount == 380 * 1_000_000_000, 0); // 380 USDC
 }
 
 #[test, expected_failure(abort_code = ::margin_trading::oracle::EInvalidPythPrice)]
 fun test_calculate_target_currency_invalid_pyth_price() {
-    let target_decimals: u8 = 6;
+    let target_decimals: u8 = 9;
     let base_decimals: u8 = 6;
     let pyth_decimals: u8 = 8;
     let pyth_price = 0; // Price 0

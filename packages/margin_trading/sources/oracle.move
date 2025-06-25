@@ -53,7 +53,7 @@ public(package) fun calculate_usd_price<T>(
         EPriceFeedIdMismatch,
     );
 
-    let target_decimals = 6; // We're representing USD in 6 decimals. Can update this
+    let target_decimals = 9; // We're representing USD in 9 decimals
     let base_decimals = type_config.decimals; // number of decimals for the asset we're converting from
     let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
     let pyth_price = price.get_price().get_magnitude_if_positive();
