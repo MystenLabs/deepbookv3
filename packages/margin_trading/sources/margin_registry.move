@@ -31,6 +31,7 @@ public struct RiskParams has drop, store {
     target_liquidation_risk_ratio: u64, // 9 decimals, target risk ratio after liquidation
 }
 
+/// TODO: instead of having a global RiskParams, we can have a RiskParams per MarginPair.
 public struct MarginRegistry has key, store {
     id: UID,
     allowed_margin_pairs: VecSet<MarginPair>,
