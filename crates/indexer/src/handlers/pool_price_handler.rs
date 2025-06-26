@@ -30,45 +30,41 @@ impl Processor for PoolPriceHandler {
     type Value = PoolPrice;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
-        checkpoint
-            .transactions
-            .iter()
-            .try_fold(vec![], |result, tx| {
-                if !is_deepbook_tx(tx) {
-                    return Ok(result);
+        let mut results = Vec::new();
+        for tx in &checkpoint.transactions {
+            if !is_deepbook_tx(tx) {
+                continue;
+            }
+            let Some(events) = &tx.events else {
+                continue;
+            };
+
+            let package = try_extract_move_call_package(tx).unwrap_or_default();
+            let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
+            let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+            let digest = tx.transaction.digest();
+
+            for (index, ev) in events.data.iter().enumerate() {
+                if ev.type_ != self.event_type {
+                    continue;
                 }
-                let Some(events) = &tx.events else {
-                    return Ok(result);
+                let event: PriceAdded = bcs::from_bytes(&ev.contents)?;
+                let data = PoolPrice {
+                    digest: digest.to_string(),
+                    event_digest: format!("{digest}{index}"),
+                    sender: tx.transaction.sender_address().to_string(),
+                    checkpoint,
+                    checkpoint_timestamp_ms,
+                    package: package.clone(),
+                    target_pool: event.target_pool.to_string(),
+                    conversion_rate: event.conversion_rate as i64,
+                    reference_pool: event.reference_pool.to_string(),
                 };
-
-                let package = try_extract_move_call_package(tx).unwrap_or_default();
-                let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
-                let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
-                let digest = tx.transaction.digest();
-
-                return events
-                    .data
-                    .iter()
-                    .filter(|ev| ev.type_ == self.event_type)
-                    .enumerate()
-                    .try_fold(result, |mut result, (index, ev)| {
-                        let event: PriceAdded = bcs::from_bytes(&ev.contents)?;
-                        let data = PoolPrice {
-                            digest: digest.to_string(),
-                            event_digest: format!("{digest}{index}"),
-                            sender: tx.transaction.sender_address().to_string(),
-                            checkpoint,
-                            checkpoint_timestamp_ms,
-                            package: package.clone(),
-                            target_pool: event.target_pool.to_string(),
-                            conversion_rate: event.conversion_rate as i64,
-                            reference_pool: event.reference_pool.to_string(),
-                        };
-                        debug!("Observed Deepbook Price Addition {:?}", data);
-                        result.push(data);
-                        Ok(result)
-                    });
-            })
+                debug!("Observed Deepbook Price Addition {:?}", data);
+                results.push(data);
+            }
+        }
+        Ok(results)
     }
 }
 

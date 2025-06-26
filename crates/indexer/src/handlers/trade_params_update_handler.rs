@@ -32,55 +32,51 @@ impl Processor for TradeParamsUpdateHandler {
     type Value = TradeParamsUpdate;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
-        checkpoint
-            .transactions
-            .iter()
-            .try_fold(vec![], |result, tx| {
-                if !is_deepbook_tx(tx) {
-                    return Ok(result);
-                }
-                let Some(events) = &tx.events else {
-                    return Ok(result);
-                };
+        let mut results = vec![];
+        for tx in &checkpoint.transactions {
+            if !is_deepbook_tx(tx) {
+                continue;
+            }
+            let Some(events) = &tx.events else {
+                continue;
+            };
 
-                let package = try_extract_move_call_package(tx).unwrap_or_default();
-                let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
-                let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
-                let digest = tx.transaction.digest();
+            let package = try_extract_move_call_package(tx).unwrap_or_default();
+            let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
+            let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+            let digest = tx.transaction.digest();
 
-                let pool = tx
-                    .input_objects
-                    .iter()
-                    .find(|o| matches!(o.data.struct_tag(), Some(struct_tag)
+            let pool = tx
+                .input_objects
+                .iter()
+                .find(|o| matches!(o.data.struct_tag(), Some(struct_tag)
                         if struct_tag.address == AccountAddress::new(*pool::PACKAGE_ID.inner()) && struct_tag.name.as_str() == "Pool"));
-                let pool_id = pool
-                    .map(|o| o.id().to_hex_uncompressed())
-                    .unwrap_or("0x0".to_string());
+            let pool_id = pool
+                .map(|o| o.id().to_hex_uncompressed())
+                .unwrap_or("0x0".to_string());
 
-                return events
-                    .data
-                    .iter()
-                    .filter(|ev| ev.type_ == self.event_type)
-                    .enumerate()
-                    .try_fold(result, |mut result, (index, ev)| {
-                        let event: TradeParamsUpdateEvent = bcs::from_bytes(&ev.contents)?;
-                        let data = TradeParamsUpdate {
-                            digest: digest.to_string(),
-                            event_digest: format!("{digest}{index}"),
-                            sender: tx.transaction.sender_address().to_string(),
-                            checkpoint,
-                            checkpoint_timestamp_ms,
-                            package: package.clone(),
-                            pool_id: pool_id.clone(),
-                            taker_fee: event.taker_fee as i64,
-                            maker_fee: event.maker_fee as i64,
-                            stake_required: event.stake_required as i64,
-                        };
-                        debug!("Observed Deepbook Trade Params Update Event {:?}", data);
-                        result.push(data);
-                        Ok(result)
-                    });
-            })
+            for (index, ev) in events.data.iter().enumerate() {
+                if ev.type_ != self.event_type {
+                    continue;
+                }
+                let event: TradeParamsUpdateEvent = bcs::from_bytes(&ev.contents)?;
+                let data = TradeParamsUpdate {
+                    digest: digest.to_string(),
+                    event_digest: format!("{digest}{index}"),
+                    sender: tx.transaction.sender_address().to_string(),
+                    checkpoint,
+                    checkpoint_timestamp_ms,
+                    package: package.clone(),
+                    pool_id: pool_id.clone(),
+                    taker_fee: event.taker_fee as i64,
+                    maker_fee: event.maker_fee as i64,
+                    stake_required: event.stake_required as i64,
+                };
+                debug!("Observed Deepbook Trade Params Update Event {:?}", data);
+                results.push(data);   
+            }
+        }
+        Ok(results)
     }
 }
 

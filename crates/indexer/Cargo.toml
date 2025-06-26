@@ -9,8 +9,8 @@ edition = "2021"
 [dependencies]
 tokio.workspace = true
 sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "822bae4" }
-move-binding-derive = { git = "https://github.com/MystenLabs/move-binding.git", rev = "4570303" }
-move-types = { git = "https://github.com/MystenLabs/move-binding.git", rev = "4570303" }
+move-binding-derive = { git = "https://github.com/MystenLabs/move-binding.git", rev = "4f4ecc22608a4e428fea6f833beb1398d9edeb79" }
+move-types = { git = "https://github.com/MystenLabs/move-binding.git", rev = "4f4ecc22608a4e428fea6f833beb1398d9edeb79" }
 sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "86a9e06" }
 sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "86a9e06" }
 clap = { workspace = true, features = ["env"] }

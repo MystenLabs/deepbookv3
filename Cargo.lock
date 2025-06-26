@@ -4698,7 +4698,7 @@ dependencies = [
 [[package]]
 name = "move-binding"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4f4ecc22608a4e428fea6f833beb1398d9edeb79#4f4ecc22608a4e428fea6f833beb1398d9edeb79"
 dependencies = [
  "anyhow",
  "bcs",
@@ -4719,7 +4719,7 @@ dependencies = [
 [[package]]
 name = "move-binding-derive"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4f4ecc22608a4e428fea6f833beb1398d9edeb79#4f4ecc22608a4e428fea6f833beb1398d9edeb79"
 dependencies = [
  "bcs",
  "move-binding",
@@ -5014,7 +5014,7 @@ dependencies = [
 [[package]]
 name = "move-types"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=4f4ecc22608a4e428fea6f833beb1398d9edeb79#4f4ecc22608a4e428fea6f833beb1398d9edeb79"
 dependencies = [
  "move-core-types 0.0.4 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
  "serde",
