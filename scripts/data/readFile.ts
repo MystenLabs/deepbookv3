@@ -24,4 +24,4 @@ async function readParquetFile(filePath: string) {
 }
 
 // Call the function
-readParquetFile("data/SUI_USDC/SUI_USDC_1743015304930.parquet"); // Replace with actual file name
+readParquetFile("data/deepbook_ob_1750905430679.parquet"); // Replace with actual file name
