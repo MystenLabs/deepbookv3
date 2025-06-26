@@ -73,7 +73,7 @@ impl Processor for TradeParamsUpdateHandler {
                     stake_required: event.stake_required as i64,
                 };
                 debug!("Observed Deepbook Trade Params Update Event {:?}", data);
-                results.push(data);   
+                results.push(data);
             }
         }
         Ok(results)
