@@ -111,16 +111,19 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
 }
 
 /// TODO: this is a WIP
-/// amount_to_liquidate = (asset_value - target_ratio × debt_value) / (target_ratio - 1)
+/// amount_to_liquidate = (target_ratio × debt_value - asset_value) / (target_ratio - 1)
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    liquidation_proof: LiquidationProof,
     clock: &Clock,
-    ctx: &TxContext,
+    ctx: &mut TxContext,
 ) {
+    assert!(liquidation_proof.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
     margin_manager.cancel_all_orders(pool, clock, ctx);
     margin_manager.withdraw_settled_amounts(pool, ctx);
-    // TODO: Check the risk ratio to determine if liquidation is allowed
 
     let balance_manager = &mut margin_manager.balance_manager;
     let trade_proof = balance_manager.generate_proof_as_trader(
@@ -128,28 +131,62 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    let quote_amount_to_liquidate = 100_000_000; // 100 USDC, TODO: replace with actual logic
-    let client_order_id = 0; // TODO: Should this be customizable?
-    let is_bid = true; // TODO: Should this be customizable?
-    let pay_with_deep = false; // TODO: Should this be customizable?
-    // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
-    // Alternatively, we can utilize DEEP flash loan.
-    let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
-        quote_amount_to_liquidate,
-        clock,
-    );
+    if (liquidation_proof.base_amount > 0) {
+        let client_order_id = 0;
+        let is_bid = false;
+        let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
+        // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
+        // Alternatively, we can utilize DEEP flash loan.
 
-    pool.place_market_order(
-        balance_manager,
-        &trade_proof,
-        client_order_id,
-        constants::self_matching_allowed(),
-        base_out,
-        is_bid,
-        pay_with_deep,
-        clock,
-        ctx,
-    );
+        let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
+        let base_quantity =
+            liquidation_proof.base_amount - liquidation_proof.base_amount % lot_size;
+
+        pool.place_market_order(
+            balance_manager,
+            &trade_proof,
+            client_order_id,
+            constants::self_matching_allowed(),
+            base_quantity,
+            is_bid,
+            pay_with_deep,
+            clock,
+            ctx,
+        );
+    };
+
+    if (liquidation_proof.quote_amount > 0) {
+        let client_order_id = 0;
+        let is_bid = true;
+        let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
+        // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
+        // Alternatively, we can utilize DEEP flash loan.
+        let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
+            liquidation_proof.quote_amount,
+            clock,
+        );
+
+        pool.place_market_order(
+            balance_manager,
+            &trade_proof,
+            client_order_id,
+            constants::self_matching_allowed(),
+            base_out,
+            is_bid,
+            pay_with_deep,
+            clock,
+            ctx,
+        );
+    };
+
+    // We repay the same loans using the same assets.
+    margin_manager.repay_all_liquidation(base_lending_pool, quote_lending_pool, clock, ctx);
+
+    let LiquidationProof {
+        margin_manager_id: _,
+        base_amount: _,
+        quote_amount: _,
+    } = liquidation_proof;
 }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
@@ -344,8 +381,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Returns LiquidationProof for the margin manager?
-/// TODO: This is a WIP
+/// Returns LiquidationProof that allows the liquidation of certain amount of assets
 public fun liquidation_prep<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -402,9 +438,6 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
     };
 
     assert!(registry.can_liquidate(risk_ratio), ECannotLiquidate);
-
-    // Now we've established the manager can be liquidated. We first repay the same loans using the same assets.
-    // margin_manager.repay_all_liquidation(base_lending_pool, quote_lending_pool, clock, ctx);
 
     let target_ratio = registry.target_liquidation_risk_ratio();
 
@@ -476,43 +509,6 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
     };
 
     proof
-}
-
-fun repay_all_liquidation<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    base_lending_pool: &mut LendingPool<BaseAsset>,
-    quote_lending_pool: &mut LendingPool<QuoteAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    repay_base_liquidate(margin_manager, base_lending_pool, clock, ctx);
-    repay_quote_liquidate(margin_manager, quote_lending_pool, clock, ctx);
-}
-
-fun repay_base_liquidate<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    lending_pool: &mut LendingPool<BaseAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    lending_pool.update_indices<BaseAsset>(clock);
-    margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(lending_pool, option::none(), true, ctx);
-}
-
-/// Repay the quote asset loan using the margin manager.
-fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    lending_pool: &mut LendingPool<QuoteAsset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    lending_pool.update_indices<QuoteAsset>(clock);
-    margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
-        lending_pool,
-        option::none(),
-        true,
-        ctx,
-    );
 }
 
 // === Public Proxy Functions - Trading ===
@@ -877,16 +873,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     }
 }
 
-fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    coin: Coin<DepositAsset>,
-    ctx: &TxContext,
-) {
-    let balance_manager = &mut margin_manager.balance_manager;
-
-    balance_manager.deposit_with_cap<DepositAsset>(&margin_manager.deposit_cap, coin, ctx);
-}
-
 fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
@@ -988,4 +974,41 @@ fun margin_manager_debt<BaseAsset, QuoteAsset>(
     let quote_debt = margin_manager.manager_debt(quote_lending_pool, clock);
 
     (base_debt, quote_debt)
+}
+
+fun repay_all_liquidation<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    base_lending_pool: &mut LendingPool<BaseAsset>,
+    quote_lending_pool: &mut LendingPool<QuoteAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    repay_base_liquidate(margin_manager, base_lending_pool, clock, ctx);
+    repay_quote_liquidate(margin_manager, quote_lending_pool, clock, ctx);
+}
+
+fun repay_base_liquidate<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    lending_pool: &mut LendingPool<BaseAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    lending_pool.update_indices<BaseAsset>(clock);
+    margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(lending_pool, option::none(), true, ctx);
+}
+
+/// Repay the quote asset loan using the margin manager.
+fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    lending_pool: &mut LendingPool<QuoteAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    lending_pool.update_indices<QuoteAsset>(clock);
+    margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
+        lending_pool,
+        option::none(),
+        true,
+        ctx,
+    );
 }
