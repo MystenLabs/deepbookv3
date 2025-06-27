@@ -209,7 +209,7 @@ public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: 
     let ms_elapsed = current_time - self.last_index_update_timestamp;
     let (borrow_interest_rate, supply_interest_rate) = self.interest_rates();
     let new_borrow_index =
-        self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, borrow_interest_rate),YEAR_MS));
+        self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, borrow_interest_rate), YEAR_MS));
     let new_supply_index =
         self.supply_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, supply_interest_rate), YEAR_MS));
     self.borrow_index = new_borrow_index;
