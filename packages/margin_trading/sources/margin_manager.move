@@ -16,7 +16,6 @@ use deepbook::{
         WithdrawCap
     },
     constants,
-    order_info::OrderInfo,
     pool::Pool
 };
 use margin_trading::{
@@ -41,6 +40,7 @@ const EWithdrawRiskRatioExceeded: u64 = 6;
 const ENotEnoughAssetInPool: u64 = 7;
 const ELiquidationCheckBeforeRequest: u64 = 8;
 const ECannotLiquidate: u64 = 9;
+const EInvalidMarginManagerOwner: u64 = 10;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -65,6 +65,14 @@ public struct MarginManagerEvent has copy, drop {
     owner: address,
 }
 
+/// Event emitted when a new margin_manager is created.
+public struct LiquidationEvent has copy, drop {
+    margin_manager_id: ID,
+    base_amount: u64,
+    quote_amount: u64,
+    liquidator: address,
+}
+
 /// Request_type: 0 for withdraw, 1 for borrow, 2 for liquidate
 public struct Request {
     margin_manager_id: ID,
@@ -87,7 +95,7 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
 
     let id = object::new(ctx);
 
-    let mut balance_manager = balance_manager::new(ctx);
+    let mut balance_manager = balance_manager::new_with_custom_owner(id.to_address(), ctx);
     let deposit_cap = mint_deposit_cap(&mut balance_manager, ctx);
     let withdraw_cap = mint_withdraw_cap(&mut balance_manager, ctx);
     let trade_cap = mint_trade_cap(&mut balance_manager, ctx);
@@ -110,7 +118,6 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
     transfer::share_object(margin_manager)
 }
 
-/// TODO: this is a WIP
 /// amount_to_liquidate = (target_ratio × debt_value - asset_value) / (target_ratio - 1)
 public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -122,14 +129,14 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     assert!(liquidation_proof.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-    margin_manager.cancel_all_orders(pool, clock, ctx);
-    margin_manager.withdraw_settled_amounts(pool, ctx);
 
-    let balance_manager = &mut margin_manager.balance_manager;
-    let trade_proof = balance_manager.generate_proof_as_trader(
-        &margin_manager.trade_cap,
-        ctx,
-    );
+    let trade_proof = margin_manager
+        .balance_manager
+        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+
+    let balance_manager = margin_manager.balance_manager_mut();
+    pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
+    pool.withdraw_settled_amounts(balance_manager, &trade_proof);
 
     if (liquidation_proof.base_amount > 0) {
         let client_order_id = 0;
@@ -143,7 +150,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             liquidation_proof.base_amount - liquidation_proof.base_amount % lot_size;
 
         pool.place_market_order(
-            balance_manager,
+            margin_manager.balance_manager_mut(),
             &trade_proof,
             client_order_id,
             constants::self_matching_allowed(),
@@ -167,7 +174,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         );
 
         pool.place_market_order(
-            balance_manager,
+            margin_manager.balance_manager_mut(),
             &trade_proof,
             client_order_id,
             constants::self_matching_allowed(),
@@ -178,6 +185,13 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             ctx,
         );
     };
+
+    event::emit(LiquidationEvent {
+        margin_manager_id: margin_manager.id(),
+        base_amount: liquidation_proof.base_amount,
+        quote_amount: liquidation_proof.quote_amount,
+        liquidator: ctx.sender(),
+    });
 
     // We repay the same loans using the same assets.
     margin_manager.repay_all_liquidation(base_lending_pool, quote_lending_pool, clock, ctx);
@@ -195,6 +209,8 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     coin: Coin<DepositAsset>,
     ctx: &mut TxContext,
 ) {
+    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
+
     let deposit_asset_type = type_name::get<DepositAsset>();
     let base_asset_type = type_name::get<BaseAsset>();
     let quote_asset_type = type_name::get<QuoteAsset>();
@@ -205,8 +221,9 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     );
 
     let balance_manager = &mut margin_manager.balance_manager;
+    let deposit_cap = &margin_manager.deposit_cap;
 
-    balance_manager.deposit<DepositAsset>(coin, ctx);
+    balance_manager.deposit_with_cap<DepositAsset>(deposit_cap, coin, ctx);
 }
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
@@ -216,9 +233,12 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): (Coin<WithdrawAsset>, Request) {
+    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
     let balance_manager = &mut margin_manager.balance_manager;
+    let withdraw_cap = &margin_manager.withdraw_cap;
 
-    let coin = balance_manager.withdraw<WithdrawAsset>(
+    let coin = balance_manager.withdraw_with_cap<WithdrawAsset>(
+        withdraw_cap,
         withdraw_amount,
         ctx,
     );
@@ -511,247 +531,13 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
     proof
 }
 
-// === Public Proxy Functions - Trading ===
-/// Places a limit order in the pool.
-public fun place_limit_order<BaseAsset, QuoteAsset>(
+public fun balance_manager_unwrapped_mut<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    client_order_id: u64,
-    order_type: u8,
-    self_matching_option: u8,
-    price: u64,
-    quantity: u64,
-    is_bid: bool,
-    pay_with_deep: bool,
-    expire_timestamp: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.place_limit_order(
-        balance_manager,
-        &trade_proof,
-        client_order_id,
-        order_type,
-        self_matching_option,
-        price,
-        quantity,
-        is_bid,
-        pay_with_deep,
-        expire_timestamp,
-        clock,
-        ctx,
-    )
-}
-
-/// Places a market order in the pool.
-public fun place_market_order<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    client_order_id: u64,
-    self_matching_option: u8,
-    quantity: u64,
-    is_bid: bool,
-    pay_with_deep: bool,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.place_market_order(
-        balance_manager,
-        &trade_proof,
-        client_order_id,
-        self_matching_option,
-        quantity,
-        is_bid,
-        pay_with_deep,
-        clock,
-        ctx,
-    )
-}
-
-/// Modifies an order
-public fun modify_order<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    order_id: u128,
-    new_quantity: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.modify_order(
-        balance_manager,
-        &trade_proof,
-        order_id,
-        new_quantity,
-        clock,
-        ctx,
-    )
-}
-
-/// Cancels an order
-public fun cancel_order<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    order_id: u128,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.cancel_order(
-        balance_manager,
-        &trade_proof,
-        order_id,
-        clock,
-        ctx,
-    );
-}
-
-/// Cancel multiple orders within a vector.
-public fun cancel_orders<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    order_ids: vector<u128>,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.cancel_orders(
-        balance_manager,
-        &trade_proof,
-        order_ids,
-        clock,
-        ctx,
-    );
-}
-
-/// Cancels all orders for the given account.
-public fun cancel_all_orders<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.cancel_all_orders(
-        balance_manager,
-        &trade_proof,
-        clock,
-        ctx,
-    );
-}
-
-/// Withdraw settled amounts to balance_manager.
-public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.withdraw_settled_amounts(
-        balance_manager,
-        &trade_proof,
-    );
-}
-
-/// Stake DEEP tokens to the pool.
-public fun stake<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    amount: u64,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.stake(
-        balance_manager,
-        &trade_proof,
-        amount,
-        ctx,
-    );
-}
-
-/// Unstake DEEP tokens from the pool.
-public fun unstake<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.unstake(
-        balance_manager,
-        &trade_proof,
-        ctx,
-    );
-}
-
-/// Submit proposal using the margin manager.
-public fun submit_proposal<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    taker_fee: u64,
-    maker_fee: u64,
-    stake_required: u64,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.submit_proposal(
-        balance_manager,
-        &trade_proof,
-        taker_fee,
-        maker_fee,
-        stake_required,
-        ctx,
-    );
-}
-
-/// Vote on a proposal using the margin manager.
-public fun vote<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    proposal_id: ID,
-    ctx: &TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
-
-    pool.vote(
-        balance_manager,
-        &trade_proof,
-        proposal_id,
-        ctx,
-    );
-}
-
-public fun claim_rebates<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &mut TxContext,
-) {
-    let balance_manager = margin_manager.balance_manager_mut();
-    let trade_proof = balance_manager.generate_proof_as_owner(ctx);
+): &mut BalanceManager {
+    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManager);
 
-    pool.claim_rebates(balance_manager, &trade_proof, ctx)
+    &mut margin_manager.balance_manager
 }
 
 // === Public-Package Functions ===

@@ -50,13 +50,6 @@ public struct LendingPool<phantom Asset> has key, store {
 }
 
 // === Public Functions * ADMIN * ===
-public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams {
-    InterestParams {
-        base_rate,
-        multiplier,
-    }
-}
-
 /// Creates a lending pool as the admin.
 public fun create_lending_pool<Asset>(
     registry: &mut MarginRegistry,
@@ -87,6 +80,13 @@ public fun create_lending_pool<Asset>(
     registry.register_lending_pool<Asset>(lending_pool_id);
 
     transfer::share_object(lending_pool);
+}
+
+public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams {
+    InterestParams {
+        base_rate,
+        multiplier,
+    }
 }
 
 /// Updates interest params for the lending pool as the admin.

@@ -37,6 +37,7 @@ public struct MarginRegistry has key, store {
     allowed_margin_pairs: VecSet<MarginPair>,
     lending_pools: Bag,
     risk_params: RiskParams, // determines when transfer, borrow, and trade are allowed
+    liquidation_reward_perc: u64, // reward for liquidating a position, in 9 decimals
 }
 
 public struct MarginPair has copy, drop, store {
@@ -57,6 +58,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
             1_100_000_000,
             1_250_000_000,
         ), // Default risk params
+        liquidation_reward_perc: 10_000_000, // 9 decimals, default is 1%
     };
     transfer::share_object(registry);
     let lending_admin_cap = LendingAdminCap { id: object::new(ctx) };
@@ -86,6 +88,15 @@ public fun update_risk_params(
     _cap: &LendingAdminCap,
 ) {
     registry.risk_params = risk_params;
+}
+
+/// Updates liquidation reward for the lending pool as the admin.
+public fun update_liquidation_reward(
+    registry: &mut MarginRegistry,
+    liquidation_reward_perc: u64,
+    _cap: &LendingAdminCap,
+) {
+    registry.liquidation_reward_perc = liquidation_reward_perc;
 }
 
 /// Allow a margin trading pair
@@ -139,6 +150,10 @@ public fun is_margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry):
         quote: type_name::get<QuoteAsset>(),
     };
     self.allowed_margin_pairs.contains(&pair)
+}
+
+public fun liquidation_reward_perc(self: &MarginRegistry): u64 {
+    self.liquidation_reward_perc
 }
 
 // === Public-Package Functions ===
