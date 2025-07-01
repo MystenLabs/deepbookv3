@@ -5,9 +5,7 @@
 module margin_trading::margin_registry;
 
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::dynamic_field as df;
-use sui::vec_set::{Self, VecSet};
+use sui::{bag::{Self, Bag}, dynamic_field as df, vec_set::{Self, VecSet}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -156,6 +154,11 @@ public fun is_margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry):
 
 public fun liquidation_reward_perc(self: &MarginRegistry): u64 {
     self.liquidation_reward_perc
+}
+
+/// Get the ID of the pool given the asset types.
+public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
+    registry.get_margin_pool_id<Asset>()
 }
 
 // === Public-Package Functions ===

@@ -4,27 +4,29 @@
 /// TODO: update comments
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    mint_deposit_cap,
-    mint_trade_cap,
-    mint_withdraw_cap,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap
+use deepbook::{
+    balance_manager::{
+        Self,
+        mint_deposit_cap,
+        mint_trade_cap,
+        mint_withdraw_cap,
+        BalanceManager,
+        TradeCap,
+        DepositCap,
+        WithdrawCap
+    },
+    constants,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::pool::Pool;
-use margin_trading::margin_math;
-use margin_trading::margin_pool::{LendingPool, new_loan};
-use margin_trading::margin_registry::{Self, MarginRegistry};
-use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
+use margin_trading::{
+    margin_math,
+    margin_pool::{LendingPool, new_loan},
+    margin_registry::{Self, MarginRegistry},
+    oracle::{calculate_usd_price, calculate_target_amount}
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===

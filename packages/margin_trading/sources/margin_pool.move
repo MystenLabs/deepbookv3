@@ -3,13 +3,8 @@
 
 module margin_trading::margin_pool;
 
-use margin_trading::constants;
-use margin_trading::margin_math;
-use margin_trading::margin_registry::{LendingAdminCap, MarginRegistry};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::table::{Self, Table};
+use margin_trading::{constants, margin_math, margin_registry::{LendingAdminCap, MarginRegistry}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -182,12 +177,6 @@ public fun withdraw_from_margin_pool<Asset>(
     (margin_pool.vault.split(withdrawal_amount).into_coin(ctx), new_user_supply)
 }
 
-// === Public-Helper Functions ===
-/// Get the ID of the pool given the asset types.
-public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
-    registry.get_margin_pool_id<Asset>()
-}
-
 // === Public-Package Functions ===
 /// Updates the borrow and supply indices for the lending pool.
 /// This will be called before any borrow or supply operation.
@@ -267,10 +256,10 @@ fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
 /// Updates the utilization rate of the lending pool.
 fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
-            0
-        } else {
-            margin_math::div(self.total_loan, self.total_supply) // 9 decimals
-        }
+        0
+    } else {
+        margin_math::div(self.total_loan, self.total_supply) // 9 decimals
+    }
 }
 
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
