@@ -1,10 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::lending_pool;
+module margin_trading::margin_pool;
 
-use margin_trading::{constants, margin_math, margin_registry::{LendingAdminCap, MarginRegistry}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use margin_trading::constants;
+use margin_trading::margin_math;
+use margin_trading::margin_registry::{LendingAdminCap, MarginRegistry};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::table::{Self, Table};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -51,7 +56,7 @@ public struct LendingPool<phantom Asset> has key, store {
 
 // === Public Functions * ADMIN * ===
 /// Creates a lending pool as the admin.
-public fun create_lending_pool<Asset>(
+public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
     supply_cap: u64,
     max_borrow_percentage: u64,
@@ -60,7 +65,7 @@ public fun create_lending_pool<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let lending_pool = LendingPool<Asset> {
+    let margin_pool = LendingPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
@@ -76,10 +81,10 @@ public fun create_lending_pool<Asset>(
         utilization_rate: 0,
     };
 
-    let lending_pool_id = object::id(&lending_pool);
-    registry.register_lending_pool<Asset>(lending_pool_id);
+    let margin_pool_id = object::id(&margin_pool);
+    registry.register_margin_pool<Asset>(margin_pool_id);
 
-    transfer::share_object(lending_pool);
+    transfer::share_object(margin_pool);
 }
 
 public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams {
@@ -118,69 +123,69 @@ public fun update_max_borrow_percentage<Asset>(
 
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the lending pool. Returns the new user supply amount.
-public fun supply_lending_pool<Asset>(
-    lending_pool: &mut LendingPool<Asset>,
+public fun supply_margin_pool<Asset>(
+    margin_pool: &mut LendingPool<Asset>,
     coin: Coin<Asset>,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     let supplier = ctx.sender();
     // if no entry, add an empty entry
-    if (!lending_pool.supplies.contains(supplier)) {
+    if (!margin_pool.supplies.contains(supplier)) {
         let supply = Supply {
             supplied_amount: 0,
-            last_supply_index: lending_pool.supply_index,
+            last_supply_index: margin_pool.supply_index,
         };
-        lending_pool.supplies.add(supplier, supply);
+        margin_pool.supplies.add(supplier, supply);
     };
 
-    let mut supply = update_user_supply<Asset>(lending_pool, clock, ctx);
+    let mut supply = update_user_supply<Asset>(margin_pool, clock, ctx);
 
     let supply_amount = coin.value();
     let balance = coin.into_balance();
-    lending_pool.vault.join(balance);
+    margin_pool.vault.join(balance);
 
     // remove entry and modify it
     let new_user_supply = supply.supplied_amount + supply_amount;
     supply.supplied_amount = new_user_supply;
 
-    lending_pool.supplies.add(supplier, supply);
-    lending_pool.total_supply = lending_pool.total_supply + supply_amount;
+    margin_pool.supplies.add(supplier, supply);
+    margin_pool.total_supply = margin_pool.total_supply + supply_amount;
 
-    assert!(lending_pool.total_supply <= lending_pool.supply_cap, ESupplyCapExceeded);
+    assert!(margin_pool.total_supply <= margin_pool.supply_cap, ESupplyCapExceeded);
 
     new_user_supply
 }
 
 /// Allows withdrawal from the lending pool. Returns the withdrawn coin and the new user supply amount.
-public fun withdraw_from_lending_pool<Asset>(
-    lending_pool: &mut LendingPool<Asset>,
+public fun withdraw_from_margin_pool<Asset>(
+    margin_pool: &mut LendingPool<Asset>,
     amount: Option<u64>, // if None, withdraw all
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<Asset>, u64) {
-    let mut supply = update_user_supply<Asset>(lending_pool, clock, ctx);
+    let mut supply = update_user_supply<Asset>(margin_pool, clock, ctx);
     let new_supply_amount = supply.supplied_amount;
     let withdrawal_amount = amount.get_with_default(new_supply_amount);
 
     assert!(withdrawal_amount <= new_supply_amount, ECannotWithdrawMoreThanSupply);
-    assert!(withdrawal_amount <= lending_pool.vault.value(), ENotEnoughAssetInPool);
-    lending_pool.total_supply = lending_pool.total_supply - withdrawal_amount;
+    assert!(withdrawal_amount <= margin_pool.vault.value(), ENotEnoughAssetInPool);
+    margin_pool.total_supply = margin_pool.total_supply - withdrawal_amount;
 
     let new_user_supply = supply.supplied_amount - withdrawal_amount;
     supply.supplied_amount = new_user_supply; // new supply
 
     if (supply.supplied_amount > 0) {
-        lending_pool.supplies.add(ctx.sender(), supply); // update supply
+        margin_pool.supplies.add(ctx.sender(), supply); // update supply
     };
 
-    (lending_pool.vault.split(withdrawal_amount).into_coin(ctx), new_user_supply)
+    (margin_pool.vault.split(withdrawal_amount).into_coin(ctx), new_user_supply)
 }
 
 // === Public-Helper Functions ===
 /// Get the ID of the pool given the asset types.
-public fun get_lending_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
-    registry.get_lending_pool_id<Asset>()
+public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
+    registry.get_margin_pool_id<Asset>()
 }
 
 // === Public-Package Functions ===
@@ -262,35 +267,35 @@ fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
 /// Updates the utilization rate of the lending pool.
 fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
-        0
-    } else {
-        margin_math::div(self.total_loan, self.total_supply) // 9 decimals
-    }
+            0
+        } else {
+            margin_math::div(self.total_loan, self.total_supply) // 9 decimals
+        }
 }
 
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
 fun update_user_supply<Asset>(
-    lending_pool: &mut LendingPool<Asset>,
+    margin_pool: &mut LendingPool<Asset>,
     clock: &Clock,
     ctx: &TxContext,
 ): Supply {
-    update_indices<Asset>(lending_pool, clock);
+    update_indices<Asset>(margin_pool, clock);
 
     let supplier = ctx.sender();
-    assert!(lending_pool.supplies.contains(supplier), ENoSupplyFound);
+    assert!(margin_pool.supplies.contains(supplier), ENoSupplyFound);
 
-    let mut supply = lending_pool.supplies.remove(supplier);
+    let mut supply = margin_pool.supplies.remove(supplier);
     let interest_multiplier = margin_math::div(
-        lending_pool.supply_index,
+        margin_pool.supply_index,
         supply.last_supply_index,
     );
     let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier);
     let interest_earned = new_supply_amount - supply.supplied_amount;
 
     supply.supplied_amount = new_supply_amount;
-    supply.last_supply_index = lending_pool.supply_index;
+    supply.last_supply_index = margin_pool.supply_index;
 
-    lending_pool.total_supply = lending_pool.total_supply + interest_earned;
+    margin_pool.total_supply = margin_pool.total_supply + interest_earned;
 
     supply
 }

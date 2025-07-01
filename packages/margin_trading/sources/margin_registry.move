@@ -5,7 +5,9 @@
 module margin_trading::margin_registry;
 
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, dynamic_field as df, vec_set::{Self, VecSet}};
+use sui::bag::{Self, Bag};
+use sui::dynamic_field as df;
+use sui::vec_set::{Self, VecSet};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -35,7 +37,7 @@ public struct RiskParams has drop, store {
 public struct MarginRegistry has key, store {
     id: UID,
     allowed_margin_pairs: VecSet<MarginPair>,
-    lending_pools: Bag,
+    margin_pools: Bag,
     risk_params: RiskParams, // determines when transfer, borrow, and trade are allowed
     liquidation_reward_perc: u64, // reward for liquidating a position, in 9 decimals
 }
@@ -51,7 +53,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let registry = MarginRegistry {
         id: object::new(ctx),
         allowed_margin_pairs: vec_set::empty(),
-        lending_pools: bag::new(ctx),
+        margin_pools: bag::new(ctx),
         risk_params: new_risk_params(
             2_000_000_000,
             1_250_000_000,
@@ -158,18 +160,18 @@ public fun liquidation_reward_perc(self: &MarginRegistry): u64 {
 
 // === Public-Package Functions ===
 /// Register a new lending pool. If a same asset pool already exists, abort.
-public(package) fun register_lending_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
+public(package) fun register_margin_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
     let key = type_name::get<Asset>();
-    assert!(!self.lending_pools.contains(key), ELendingPoolAlreadyExists);
-    self.lending_pools.add(key, pool_id);
+    assert!(!self.margin_pools.contains(key), ELendingPoolAlreadyExists);
+    self.margin_pools.add(key, pool_id);
 }
 
 /// Get the lending pool id for the given asset.
-public(package) fun get_lending_pool_id<Asset>(self: &MarginRegistry): ID {
+public(package) fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
     let key = type_name::get<Asset>();
-    assert!(self.lending_pools.contains(key), ELendingPoolDoesNotExists);
+    assert!(self.margin_pools.contains(key), ELendingPoolDoesNotExists);
 
-    *self.lending_pools.borrow<TypeName, ID>(key)
+    *self.margin_pools.borrow<TypeName, ID>(key)
 }
 
 public(package) fun can_withdraw(self: &MarginRegistry, risk_ratio: u64): bool {
