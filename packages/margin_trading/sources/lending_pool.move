@@ -117,82 +117,64 @@ public fun update_max_borrow_percentage<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Allows anyone to supply the lending pool.
+/// Allows anyone to supply the lending pool. Returns the new user supply amount.
 public fun supply_lending_pool<Asset>(
     lending_pool: &mut LendingPool<Asset>,
     coin: Coin<Asset>,
     clock: &Clock,
     ctx: &TxContext,
-) {
-    update_indices<Asset>(lending_pool, clock);
-
-    let supply_amount = coin.value();
-    assert!(
-        lending_pool.total_supply + supply_amount <= lending_pool.supply_cap,
-        ESupplyCapExceeded,
-    );
-    let balance = coin.into_balance();
-    lending_pool.vault.join(balance);
-
+): u64 {
     let supplier = ctx.sender();
-    if (lending_pool.supplies.contains(supplier)) {
-        let mut supply = lending_pool.supplies.remove(supplier);
-        let interest_multiplier = margin_math::div(
-            lending_pool.supply_index,
-            supply.last_supply_index,
-        );
-        let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier); // previous supply with interest
-        let interest_earned = new_supply_amount - supply.supplied_amount; // TODO: event for interest earned?
-        lending_pool.total_supply = lending_pool.total_supply + interest_earned + supply_amount;
-
-        supply.supplied_amount = new_supply_amount; // previous supply with interest
-        supply.supplied_amount = supply.supplied_amount + supply_amount; // new supply
-        supply.last_supply_index = lending_pool.supply_index;
-        lending_pool.supplies.add(supplier, supply);
-    } else {
+    // if no entry, add an empty entry
+    if (!lending_pool.supplies.contains(supplier)) {
         let supply = Supply {
-            supplied_amount: supply_amount,
+            supplied_amount: 0,
             last_supply_index: lending_pool.supply_index,
         };
         lending_pool.supplies.add(supplier, supply);
-        lending_pool.total_supply = lending_pool.total_supply + supply_amount;
     };
+
+    let mut supply = update_user_supply<Asset>(lending_pool, clock, ctx);
+
+    let supply_amount = coin.value();
+    let balance = coin.into_balance();
+    lending_pool.vault.join(balance);
+
+    // remove entry and modify it
+    let new_user_supply = supply.supplied_amount + supply_amount;
+    supply.supplied_amount = new_user_supply;
+
+    lending_pool.supplies.add(supplier, supply);
+    lending_pool.total_supply = lending_pool.total_supply + supply_amount;
+
+    assert!(lending_pool.total_supply <= lending_pool.supply_cap, ESupplyCapExceeded);
+
+    new_user_supply
 }
 
-/// Allows withdrawal from the lending pool.
+/// Allows withdrawal from the lending pool. Returns the withdrawn coin and the new user supply amount.
 public fun withdraw_from_lending_pool<Asset>(
     lending_pool: &mut LendingPool<Asset>,
     amount: Option<u64>, // if None, withdraw all
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Asset> {
-    update_indices<Asset>(lending_pool, clock);
-
-    let supplier = ctx.sender();
-    assert!(lending_pool.supplies.contains(supplier), ENoSupplyFound);
-
-    let mut supply = lending_pool.supplies.remove(supplier);
-    let interest_multiplier = margin_math::div(
-        lending_pool.supply_index,
-        supply.last_supply_index,
-    );
-    let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier); // previous supply with interest
-    let interest_earned = new_supply_amount - supply.supplied_amount; // TODO: event for interest earned?
+): (Coin<Asset>, u64) {
+    let mut supply = update_user_supply<Asset>(lending_pool, clock, ctx);
+    let new_supply_amount = supply.supplied_amount;
     let withdrawal_amount = amount.get_with_default(new_supply_amount);
 
     assert!(withdrawal_amount <= new_supply_amount, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= lending_pool.vault.value(), ENotEnoughAssetInPool);
-    lending_pool.total_supply = lending_pool.total_supply + interest_earned - withdrawal_amount;
+    lending_pool.total_supply = lending_pool.total_supply - withdrawal_amount;
 
-    supply.supplied_amount = new_supply_amount; // previous supply with interest
-    supply.supplied_amount = supply.supplied_amount - withdrawal_amount; // new supply
-    supply.last_supply_index = lending_pool.supply_index;
+    let new_user_supply = supply.supplied_amount - withdrawal_amount;
+    supply.supplied_amount = new_user_supply; // new supply
 
     if (supply.supplied_amount > 0) {
-        lending_pool.supplies.add(supplier, supply); // update supply
+        lending_pool.supplies.add(ctx.sender(), supply); // update supply
     };
 
-    lending_pool.vault.split(withdrawal_amount).into_coin(ctx)
+    (lending_pool.vault.split(withdrawal_amount).into_coin(ctx), new_user_supply)
 }
 
 // === Public-Helper Functions ===
@@ -284,4 +266,31 @@ fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
     } else {
         margin_math::div(self.total_loan, self.total_supply) // 9 decimals
     }
+}
+
+/// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
+fun update_user_supply<Asset>(
+    lending_pool: &mut LendingPool<Asset>,
+    clock: &Clock,
+    ctx: &TxContext,
+): Supply {
+    update_indices<Asset>(lending_pool, clock);
+
+    let supplier = ctx.sender();
+    assert!(lending_pool.supplies.contains(supplier), ENoSupplyFound);
+
+    let mut supply = lending_pool.supplies.remove(supplier);
+    let interest_multiplier = margin_math::div(
+        lending_pool.supply_index,
+        supply.last_supply_index,
+    );
+    let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier);
+    let interest_earned = new_supply_amount - supply.supplied_amount;
+
+    supply.supplied_amount = new_supply_amount;
+    supply.last_supply_index = lending_pool.supply_index;
+
+    lending_pool.total_supply = lending_pool.total_supply + interest_earned;
+
+    supply
 }
