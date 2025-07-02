@@ -308,7 +308,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Returns LiquidationProof that allows the liquidation of certain amount of assets
+/// Liquidates a margin manager
 public fun liquidate<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
