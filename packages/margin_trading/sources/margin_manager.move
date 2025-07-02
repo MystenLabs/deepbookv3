@@ -38,14 +38,12 @@ const EInvalidMarginManager: u64 = 4;
 const EBorrowRiskRatioExceeded: u64 = 5;
 const EWithdrawRiskRatioExceeded: u64 = 6;
 const ENotEnoughAssetInPool: u64 = 7;
-const ELiquidationCheckBeforeRequest: u64 = 8;
-const ECannotLiquidate: u64 = 9;
-const EInvalidMarginManagerOwner: u64 = 10;
+const ECannotLiquidate: u64 = 8;
+const EInvalidMarginManagerOwner: u64 = 9;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
 const BORROW: u8 = 1;
-const LIQUIDATE: u8 = 2;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -73,17 +71,10 @@ public struct LiquidationEvent has copy, drop {
     liquidator: address,
 }
 
-/// Request_type: 0 for withdraw, 1 for borrow, 2 for liquidate
+/// Request_type: 0 for withdraw, 1 for borrow
 public struct Request {
     margin_manager_id: ID,
     request_type: u8,
-}
-
-/// Allows the market order sell of the given amount of base or quote asset
-public struct LiquidationProof {
-    margin_manager_id: ID,
-    base_amount: u64,
-    quote_amount: u64,
 }
 
 // === Public Functions - Margin Manager ===
@@ -116,91 +107,6 @@ public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mu
     };
 
     transfer::share_object(margin_manager)
-}
-
-/// amount_to_liquidate = (target_ratio × debt_value - asset_value) / (target_ratio - 1)
-public fun liquidate<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    liquidation_proof: LiquidationProof,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(liquidation_proof.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-
-    let trade_proof = margin_manager
-        .balance_manager
-        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-
-    let balance_manager = margin_manager.balance_manager_mut();
-    pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
-    pool.withdraw_settled_amounts(balance_manager, &trade_proof);
-
-    if (liquidation_proof.base_amount > 0) {
-        let client_order_id = 0;
-        let is_bid = false;
-        let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
-        // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
-        // Alternatively, we can utilize DEEP flash loan.
-
-        let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
-        let base_quantity =
-            liquidation_proof.base_amount - liquidation_proof.base_amount % lot_size;
-
-        pool.place_market_order(
-            margin_manager.balance_manager_mut(),
-            &trade_proof,
-            client_order_id,
-            constants::self_matching_allowed(),
-            base_quantity,
-            is_bid,
-            pay_with_deep,
-            clock,
-            ctx,
-        );
-    };
-
-    if (liquidation_proof.quote_amount > 0) {
-        let client_order_id = 0;
-        let is_bid = true;
-        let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
-        // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
-        // Alternatively, we can utilize DEEP flash loan.
-        let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
-            liquidation_proof.quote_amount,
-            clock,
-        );
-
-        pool.place_market_order(
-            margin_manager.balance_manager_mut(),
-            &trade_proof,
-            client_order_id,
-            constants::self_matching_allowed(),
-            base_out,
-            is_bid,
-            pay_with_deep,
-            clock,
-            ctx,
-        );
-    };
-
-    event::emit(LiquidationEvent {
-        margin_manager_id: margin_manager.id(),
-        base_amount: liquidation_proof.base_amount,
-        quote_amount: liquidation_proof.quote_amount,
-        liquidator: ctx.sender(),
-    });
-
-    // We repay the same loans using the same assets.
-    margin_manager.repay_all_liquidation(base_margin_pool, quote_margin_pool, clock, ctx);
-
-    let LiquidationProof {
-        margin_manager_id: _,
-        base_amount: _,
-        quote_amount: _,
-    } = liquidation_proof;
 }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
@@ -303,7 +209,6 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 
 /// Destroys the request to borrow or withdraw if risk ratio conditions are met.
 /// This function is called after the borrow or withdraw request is created.
-/// TODO: liquidation check to be added for target risk_ratio
 public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -316,7 +221,6 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
     request: Request,
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-    assert!(request.request_type != LIQUIDATE, ELiquidationCheckBeforeRequest);
 
     let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
         registry,
@@ -405,16 +309,17 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 }
 
 /// Returns LiquidationProof that allows the liquidation of certain amount of assets
-public fun liquidation_prep<BaseAsset, QuoteAsset>(
+public fun liquidate<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
-): LiquidationProof {
+    ctx: &mut TxContext,
+) {
     let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -494,44 +399,102 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
 
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
-    if (same_asset_usd_repay >= usd_amount_to_repay) {
-        return LiquidationProof {
+    if (same_asset_usd_repay < usd_amount_to_repay) {
+        let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
+
+        let quote_amount_liquidate = if (net_debt_is_base) {
+            calculate_target_amount<QuoteAsset>(
+                registry,
+                remaining_usd_repay,
+                clock,
+                quote_price_info_object,
+            )
+        } else {
+            0
+        };
+        let base_amount_liquidate = if (net_debt_is_quote) {
+            calculate_target_amount<BaseAsset>(
+                registry,
+                remaining_usd_repay,
+                clock,
+                base_price_info_object,
+            )
+        } else {
+            0
+        };
+
+        let trade_proof = margin_manager
+            .balance_manager
+            .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+
+        let balance_manager = margin_manager.balance_manager_mut();
+        pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
+        pool.withdraw_settled_amounts(balance_manager, &trade_proof);
+
+        if (base_amount_liquidate > 0) {
+            let client_order_id = 0;
+            let is_bid = false;
+            let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
+            // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
+            // Alternatively, we can utilize DEEP flash loan.
+
+            let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
+            let base_quantity = base_amount_liquidate - base_amount_liquidate % lot_size;
+
+            pool.place_market_order(
+                margin_manager.balance_manager_mut(),
+                &trade_proof,
+                client_order_id,
+                constants::self_matching_allowed(),
+                base_quantity,
+                is_bid,
+                pay_with_deep,
+                clock,
+                ctx,
+            );
+        };
+
+        if (quote_amount_liquidate > 0) {
+            let client_order_id = 0;
+            let is_bid = true;
+            let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
+            // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
+            // Alternatively, we can utilize DEEP flash loan.
+            let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
+                quote_amount_liquidate,
+                clock,
+            );
+
+            pool.place_market_order(
+                margin_manager.balance_manager_mut(),
+                &trade_proof,
+                client_order_id,
+                constants::self_matching_allowed(),
+                base_out,
+                is_bid,
+                pay_with_deep,
+                clock,
+                ctx,
+            );
+        };
+
+        event::emit(LiquidationEvent {
+            margin_manager_id: margin_manager.id(),
+            base_amount: base_amount_liquidate,
+            quote_amount: quote_amount_liquidate,
+            liquidator: ctx.sender(),
+        });
+    } else {
+        event::emit(LiquidationEvent {
             margin_manager_id: margin_manager.id(),
             base_amount: 0,
             quote_amount: 0,
-        }
+            liquidator: ctx.sender(),
+        });
     };
 
-    let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
-
-    let quote_amount = if (net_debt_is_base) {
-        calculate_target_amount<QuoteAsset>(
-            registry,
-            remaining_usd_repay,
-            clock,
-            quote_price_info_object,
-        )
-    } else {
-        0
-    };
-    let base_amount = if (net_debt_is_quote) {
-        calculate_target_amount<BaseAsset>(
-            registry,
-            remaining_usd_repay,
-            clock,
-            base_price_info_object,
-        )
-    } else {
-        0
-    };
-
-    let proof = LiquidationProof {
-        margin_manager_id: margin_manager.id(),
-        base_amount,
-        quote_amount,
-    };
-
-    proof
+    // We repay the same loans using the same assets.
+    margin_manager.repay_all_liquidation(base_margin_pool, quote_margin_pool, clock, ctx);
 }
 
 /// Unwraps balance manager for trading in deepbook.
