@@ -3,8 +3,13 @@
 
 module margin_trading::margin_pool;
 
-use margin_trading::{constants, margin_math, margin_registry::{LendingAdminCap, MarginRegistry}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use margin_trading::constants;
+use margin_trading::margin_math;
+use margin_trading::margin_registry::{LendingAdminCap, MarginRegistry};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::table::{Self, Table};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -33,7 +38,7 @@ public struct InterestParams has drop, store {
     multiplier: u64, // 9 decimals
 }
 
-public struct LendingPool<phantom Asset> has key, store {
+public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
@@ -60,7 +65,7 @@ public fun create_margin_pool<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let margin_pool = LendingPool<Asset> {
+    let margin_pool = MarginPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
@@ -91,7 +96,7 @@ public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams 
 
 /// Updates interest params for the lending pool as the admin.
 public fun update_interest_params<Asset>(
-    pool: &mut LendingPool<Asset>,
+    pool: &mut MarginPool<Asset>,
     interest_params: InterestParams,
     _cap: &LendingAdminCap,
 ) {
@@ -100,7 +105,7 @@ public fun update_interest_params<Asset>(
 
 /// Updates the supply cap for the lending pool as the admin.
 public fun update_supply_cap<Asset>(
-    pool: &mut LendingPool<Asset>,
+    pool: &mut MarginPool<Asset>,
     supply_cap: u64,
     _cap: &LendingAdminCap,
 ) {
@@ -109,7 +114,7 @@ public fun update_supply_cap<Asset>(
 
 /// Updates the maximum borrow percentage for the lending pool as the admin.
 public fun update_max_borrow_percentage<Asset>(
-    pool: &mut LendingPool<Asset>,
+    pool: &mut MarginPool<Asset>,
     max_borrow_percentage: u64,
     _cap: &LendingAdminCap,
 ) {
@@ -119,7 +124,7 @@ public fun update_max_borrow_percentage<Asset>(
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the lending pool. Returns the new user supply amount.
 public fun supply_margin_pool<Asset>(
-    margin_pool: &mut LendingPool<Asset>,
+    margin_pool: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
     clock: &Clock,
     ctx: &TxContext,
@@ -154,7 +159,7 @@ public fun supply_margin_pool<Asset>(
 
 /// Allows withdrawal from the lending pool. Returns the withdrawn coin and the new user supply amount.
 public fun withdraw_from_margin_pool<Asset>(
-    margin_pool: &mut LendingPool<Asset>,
+    margin_pool: &mut MarginPool<Asset>,
     amount: Option<u64>, // if None, withdraw all
     clock: &Clock,
     ctx: &mut TxContext,
@@ -180,7 +185,7 @@ public fun withdraw_from_margin_pool<Asset>(
 // === Public-Package Functions ===
 /// Updates the borrow and supply indices for the lending pool.
 /// This will be called before any borrow or supply operation.
-public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: &Clock) {
+public(package) fun update_indices<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
     let ms_elapsed = current_time - self.last_index_update_timestamp;
     let (borrow_interest_rate, supply_interest_rate) = self.interest_rates();
@@ -193,31 +198,31 @@ public(package) fun update_indices<Asset>(self: &mut LendingPool<Asset>, clock: 
     self.last_index_update_timestamp = current_time;
 }
 
-public(package) fun loans<Asset>(self: &mut LendingPool<Asset>): &mut Table<ID, Loan> {
+public(package) fun loans<Asset>(self: &mut MarginPool<Asset>): &mut Table<ID, Loan> {
     &mut self.loans
 }
 
-public(package) fun borrow_index<Asset>(self: &LendingPool<Asset>): u64 {
+public(package) fun borrow_index<Asset>(self: &MarginPool<Asset>): u64 {
     self.borrow_index
 }
 
-public(package) fun total_loan<Asset>(self: &LendingPool<Asset>): u64 {
+public(package) fun total_loan<Asset>(self: &MarginPool<Asset>): u64 {
     self.total_loan
 }
 
-public(package) fun total_supply<Asset>(self: &LendingPool<Asset>): u64 {
+public(package) fun total_supply<Asset>(self: &MarginPool<Asset>): u64 {
     self.total_supply
 }
 
-public(package) fun vault<Asset>(self: &mut LendingPool<Asset>): &mut Balance<Asset> {
+public(package) fun vault<Asset>(self: &mut MarginPool<Asset>): &mut Balance<Asset> {
     &mut self.vault
 }
 
-public(package) fun set_total_loan<Asset>(self: &mut LendingPool<Asset>, amount: u64) {
+public(package) fun set_total_loan<Asset>(self: &mut MarginPool<Asset>, amount: u64) {
     self.total_loan = amount;
 }
 
-public(package) fun max_borrow_percentage<Asset>(self: &LendingPool<Asset>): u64 {
+public(package) fun max_borrow_percentage<Asset>(self: &MarginPool<Asset>): u64 {
     self.max_borrow_percentage
 }
 
@@ -242,7 +247,7 @@ public(package) fun set_last_borrow_index(self: &mut Loan, index: u64) {
 
 // === Internal Functions ===
 /// TODO: more complex interest rate model, can update params on chain as needed
-fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
+fun interest_rates<Asset>(self: &mut MarginPool<Asset>): (u64, u64) {
     self.update_utilization_rate<Asset>();
     let borrow_interest_rate = self.interest_params.base_rate;
     let supply_interest_rate = margin_math::mul(
@@ -254,17 +259,17 @@ fun interest_rates<Asset>(self: &mut LendingPool<Asset>): (u64, u64) {
 }
 
 /// Updates the utilization rate of the lending pool.
-fun update_utilization_rate<Asset>(self: &mut LendingPool<Asset>) {
+fun update_utilization_rate<Asset>(self: &mut MarginPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
-        0
-    } else {
-        margin_math::div(self.total_loan, self.total_supply) // 9 decimals
-    }
+            0
+        } else {
+            margin_math::div(self.total_loan, self.total_supply) // 9 decimals
+        }
 }
 
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
 fun update_user_supply<Asset>(
-    margin_pool: &mut LendingPool<Asset>,
+    margin_pool: &mut MarginPool<Asset>,
     clock: &Clock,
     ctx: &TxContext,
 ): Supply {

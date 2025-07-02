@@ -5,7 +5,9 @@
 module margin_trading::margin_registry;
 
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, dynamic_field as df, vec_set::{Self, VecSet}};
+use sui::bag::{Self, Bag};
+use sui::dynamic_field as df;
+use sui::vec_set::{Self, VecSet};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -14,8 +16,8 @@ use fun df::remove as UID.remove;
 // === Errors ===
 const EPairAlreadyAllowed: u64 = 1;
 const EPairNotAllowed: u64 = 2;
-const ELendingPoolAlreadyExists: u64 = 3;
-const ELendingPoolDoesNotExists: u64 = 4;
+const EMarginPoolAlreadyExists: u64 = 3;
+const EMarginPoolDoesNotExists: u64 = 4;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -165,14 +167,14 @@ public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
 /// Register a new lending pool. If a same asset pool already exists, abort.
 public(package) fun register_margin_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
     let key = type_name::get<Asset>();
-    assert!(!self.margin_pools.contains(key), ELendingPoolAlreadyExists);
+    assert!(!self.margin_pools.contains(key), EMarginPoolAlreadyExists);
     self.margin_pools.add(key, pool_id);
 }
 
 /// Get the lending pool id for the given asset.
 public(package) fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
     let key = type_name::get<Asset>();
-    assert!(self.margin_pools.contains(key), ELendingPoolDoesNotExists);
+    assert!(self.margin_pools.contains(key), EMarginPoolDoesNotExists);
 
     *self.margin_pools.borrow<TypeName, ID>(key)
 }
