@@ -22,7 +22,7 @@ const EMarginPoolDoesNotExists: u64 = 4;
 public struct MARGIN_REGISTRY has drop {}
 
 // === Structs ===
-public struct LendingAdminCap has key, store {
+public struct MarginAdminCap has key, store {
     id: UID,
 }
 
@@ -63,7 +63,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         liquidation_reward_perc: 10_000_000, // 9 decimals, default is 1%
     };
     transfer::share_object(registry);
-    let lending_admin_cap = LendingAdminCap { id: object::new(ctx) };
+    let lending_admin_cap = MarginAdminCap { id: object::new(ctx) };
     transfer::public_transfer(lending_admin_cap, ctx.sender())
 }
 
@@ -87,7 +87,7 @@ public fun new_risk_params(
 public fun update_risk_params(
     registry: &mut MarginRegistry,
     risk_params: RiskParams,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     registry.risk_params = risk_params;
 }
@@ -96,7 +96,7 @@ public fun update_risk_params(
 public fun update_liquidation_reward(
     registry: &mut MarginRegistry,
     liquidation_reward_perc: u64,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     registry.liquidation_reward_perc = liquidation_reward_perc;
 }
@@ -104,7 +104,7 @@ public fun update_liquidation_reward(
 /// Allow a margin trading pair
 public fun add_margin_pair<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     let pair = MarginPair {
         base: type_name::get<BaseAsset>(),
@@ -117,7 +117,7 @@ public fun add_margin_pair<BaseAsset, QuoteAsset>(
 /// Disallow a margin trading pair
 public fun remove_margin_pair<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     let pair = MarginPair {
         base: type_name::get<BaseAsset>(),
@@ -130,7 +130,7 @@ public fun remove_margin_pair<BaseAsset, QuoteAsset>(
 /// Add Pyth Config to the MarginRegistry.
 public fun add_config<Config: store + drop>(
     self: &mut MarginRegistry,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
     config: Config,
 ) {
     self.id.add(ConfigKey<Config> {}, config);
@@ -139,7 +139,7 @@ public fun add_config<Config: store + drop>(
 /// Remove Pyth Config from the MarginRegistry.
 public fun remove_config<Config: store + drop>(
     self: &mut MarginRegistry,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ): Config {
     self.id.remove(ConfigKey<Config> {})
 }

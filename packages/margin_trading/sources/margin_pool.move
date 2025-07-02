@@ -5,7 +5,7 @@ module margin_trading::margin_pool;
 
 use margin_trading::constants;
 use margin_trading::margin_math;
-use margin_trading::margin_registry::{LendingAdminCap, MarginRegistry};
+use margin_trading::margin_registry::{MarginAdminCap, MarginRegistry};
 use sui::balance::{Self, Balance};
 use sui::clock::Clock;
 use sui::coin::Coin;
@@ -61,7 +61,7 @@ public fun create_margin_pool<Asset>(
     supply_cap: u64,
     max_borrow_percentage: u64,
     interest_params: InterestParams,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -98,7 +98,7 @@ public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams 
 public fun update_interest_params<Asset>(
     pool: &mut MarginPool<Asset>,
     interest_params: InterestParams,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     pool.interest_params = interest_params;
 }
@@ -107,7 +107,7 @@ public fun update_interest_params<Asset>(
 public fun update_supply_cap<Asset>(
     pool: &mut MarginPool<Asset>,
     supply_cap: u64,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     pool.supply_cap = supply_cap;
 }
@@ -116,7 +116,7 @@ public fun update_supply_cap<Asset>(
 public fun update_max_borrow_percentage<Asset>(
     pool: &mut MarginPool<Asset>,
     max_borrow_percentage: u64,
-    _cap: &LendingAdminCap,
+    _cap: &MarginAdminCap,
 ) {
     pool.max_borrow_percentage = max_borrow_percentage;
 }
