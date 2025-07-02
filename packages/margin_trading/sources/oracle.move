@@ -121,7 +121,7 @@ public(package) fun calculate_usd_currency_amount(
 }
 
 /// Calculates the amount in target currency based on usd amount
-public fun calculate_target_amount<T>(
+public(package) fun calculate_target_amount<T>(
     registry: &MarginRegistry,
     usd_amount: u64,
     clock: &Clock,
