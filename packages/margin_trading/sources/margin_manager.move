@@ -4,27 +4,29 @@
 /// TODO: update comments
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    mint_deposit_cap,
-    mint_trade_cap,
-    mint_withdraw_cap,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap
+use deepbook::{
+    balance_manager::{
+        Self,
+        mint_deposit_cap,
+        mint_trade_cap,
+        mint_withdraw_cap,
+        BalanceManager,
+        TradeCap,
+        DepositCap,
+        WithdrawCap
+    },
+    constants,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::pool::Pool;
-use margin_trading::margin_math;
-use margin_trading::margin_pool::{MarginPool, new_loan};
-use margin_trading::margin_registry::{Self, MarginRegistry};
-use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
+use margin_trading::{
+    margin_math,
+    margin_pool::{MarginPool, new_loan},
+    margin_registry::{Self, MarginRegistry},
+    oracle::{calculate_usd_price, calculate_target_amount}
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -87,7 +89,7 @@ public struct LiquidationProof {
 // === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
     assert!(
-        margin_registry::is_margin_pair_allowed<BaseAsset, QuoteAsset>(margin_registry),
+        margin_registry::margin_pair_allowed<BaseAsset, QuoteAsset>(margin_registry),
         EMarginPairNotAllowed,
     );
 
@@ -327,9 +329,12 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
         clock,
     );
     if (request.request_type == BORROW) {
-        assert!(registry.can_borrow(risk_ratio), EBorrowRiskRatioExceeded);
+        assert!(registry.can_borrow<BaseAsset, QuoteAsset>(risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
-        assert!(registry.can_withdraw(risk_ratio), EWithdrawRiskRatioExceeded);
+        assert!(
+            registry.can_withdraw<BaseAsset, QuoteAsset>(risk_ratio),
+            EWithdrawRiskRatioExceeded,
+        );
     };
 
     let Request {
@@ -455,9 +460,9 @@ public fun liquidation_prep<BaseAsset, QuoteAsset>(
         margin_math::div(total_usd_asset, total_usd_debt) // 9 decimals
     };
 
-    assert!(registry.can_liquidate(risk_ratio), ECannotLiquidate);
+    assert!(registry.can_liquidate<BaseAsset, QuoteAsset>(risk_ratio), ECannotLiquidate);
 
-    let target_ratio = registry.target_liquidation_risk_ratio();
+    let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
 
     // Now we check whether we have base or quote loan that needs to be covered. Only one of them can be net negative.
     // TODO: some edge cases here?

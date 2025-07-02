@@ -3,13 +3,8 @@
 
 module margin_trading::margin_pool;
 
-use margin_trading::constants;
-use margin_trading::margin_math;
-use margin_trading::margin_registry::{MarginAdminCap, MarginRegistry};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::table::{Self, Table};
+use margin_trading::{constants, margin_math, margin_registry::{MarginAdminCap, MarginRegistry}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Constants ===
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -48,10 +43,10 @@ public struct MarginPool<phantom Asset> has key, store {
     borrow_index: u64, // 9 decimals
     supply_index: u64, // 9 decimals
     last_index_update_timestamp: u64,
+    utilization_rate: u64, // 9 decimals
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of the total supply that can be borrowed. 9 decimals.
     interest_params: InterestParams,
-    utilization_rate: u64, // 9 decimals
 }
 
 // === Public Functions * ADMIN * ===
@@ -75,10 +70,10 @@ public fun create_margin_pool<Asset>(
         borrow_index: 1_000_000_000, // start at 1.0
         supply_index: 1_000_000_000, // start at 1.0
         last_index_update_timestamp: clock.timestamp_ms(),
+        utilization_rate: 0,
         supply_cap,
         max_borrow_percentage,
         interest_params,
-        utilization_rate: 0,
     };
 
     let margin_pool_id = object::id(&margin_pool);
@@ -261,10 +256,10 @@ fun interest_rates<Asset>(self: &mut MarginPool<Asset>): (u64, u64) {
 /// Updates the utilization rate of the margin pool.
 fun update_utilization_rate<Asset>(self: &mut MarginPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
-            0
-        } else {
-            margin_math::div(self.total_loan, self.total_supply) // 9 decimals
-        }
+        0
+    } else {
+        margin_math::div(self.total_loan, self.total_supply) // 9 decimals
+    }
 }
 
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
