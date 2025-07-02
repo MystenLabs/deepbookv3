@@ -558,18 +558,15 @@ fun update_loan_interest<BaseAsset, QuoteAsset, RepayAsset>(
     margin_pool: &mut MarginPool<RepayAsset>,
 ) {
     let manager_id = margin_manager.id();
-    let margin_pool_total_loan = margin_pool.total_loan();
     let mut loan = margin_pool.loans().remove(manager_id);
     let interest_multiplier = margin_math::div(
         margin_pool.borrow_index(),
         loan.last_borrow_index(),
     );
     let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-    let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
     loan.set_loan_amount(new_loan_amount);
     loan.set_last_borrow_index(margin_pool.borrow_index());
 
-    margin_pool.set_total_loan(margin_pool_total_loan + interest);
     margin_pool.loans().add(manager_id, loan);
 }
 
@@ -589,7 +586,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
             loan.last_borrow_index(),
         );
         let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
         loan.set_loan_amount(new_loan_amount);
         loan.set_last_borrow_index(margin_pool.borrow_index());
 
@@ -610,7 +606,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
             repayment
         };
 
-        margin_pool.set_total_loan(margin_pool_total_loan + interest - repayment);
+        margin_pool.set_total_loan(margin_pool_total_loan - repayment);
 
         // Owner check is skipped if this is liquidation
         let coin = if (is_liquidation) {
@@ -683,11 +679,10 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
             loan.last_borrow_index(),
         );
         let new_loan_amount = margin_math::mul(loan.loan_amount(), interest_multiplier); // previous loan with interest
-        let interest = new_loan_amount - loan.loan_amount(); // TODO: event for interest accured?
         loan.set_loan_amount(new_loan_amount + loan_amount); // previous loan with interest and new loan
         loan.set_last_borrow_index(margin_pool.borrow_index());
 
-        margin_pool.set_total_loan(margin_pool_total_loan + interest + loan_amount);
+        margin_pool.set_total_loan(margin_pool_total_loan + loan_amount);
         margin_pool.loans().add(manager_id, loan);
     } else {
         let loan = new_loan(loan_amount, margin_pool.borrow_index());

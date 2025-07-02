@@ -188,6 +188,10 @@ public(package) fun update_indices<Asset>(self: &mut MarginPool<Asset>, clock: &
         self.borrow_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, borrow_interest_rate), YEAR_MS));
     let new_supply_index =
         self.supply_index * (constants::float_scaling() + margin_math::div(margin_math::mul(ms_elapsed, supply_interest_rate), YEAR_MS));
+    self.total_loan =
+        margin_math::mul(self.total_loan, margin_math::div(new_borrow_index, self.borrow_index));
+    self.total_supply =
+        margin_math::mul(self.total_supply, margin_math::div(new_supply_index, self.supply_index));
     self.borrow_index = new_borrow_index;
     self.supply_index = new_supply_index;
     self.last_index_update_timestamp = current_time;
@@ -279,12 +283,8 @@ fun update_user_supply<Asset>(
         supply.last_supply_index,
     );
     let new_supply_amount = margin_math::mul(supply.supplied_amount, interest_multiplier);
-    let interest_earned = new_supply_amount - supply.supplied_amount;
-
     supply.supplied_amount = new_supply_amount;
     supply.last_supply_index = margin_pool.supply_index;
-
-    margin_pool.total_supply = margin_pool.total_supply + interest_earned;
 
     supply
 }
