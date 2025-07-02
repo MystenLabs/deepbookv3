@@ -29,13 +29,13 @@ public struct RiskParams has drop, store {
     min_borrow_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow borrow
     liquidation_risk_ratio: u64, // 9 decimals, risk ratio below which liquidation is allowed
     target_liquidation_risk_ratio: u64, // 9 decimals, target risk ratio after liquidation
+    liquidation_reward_perc: u64, // reward for liquidating a position, in 9 decimals
 }
 
 public struct MarginRegistry has key, store {
     id: UID,
     margin_pools: Bag,
     risk_params: Table<MarginPair, RiskParams>, // determines when transfer, borrow, and trade are allowed
-    liquidation_reward_perc: u64, // reward for liquidating a position, in 9 decimals
 }
 
 public struct MarginPair has copy, drop, store {
@@ -50,7 +50,6 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         id: object::new(ctx),
         margin_pools: bag::new(ctx),
         risk_params: table::new(ctx), // Default risk params
-        liquidation_reward_perc: 10_000_000, // 9 decimals, default is 1%
     };
     transfer::share_object(registry);
     let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
@@ -63,12 +62,14 @@ public fun new_risk_params(
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
     target_liquidation_risk_ratio: u64,
+    liquidation_reward_perc: u64,
 ): RiskParams {
     RiskParams {
         min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
+        liquidation_reward_perc,
     }
 }
 
@@ -86,15 +87,6 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     assert!(self.risk_params.contains(pair), EPairNotAllowed);
     self.risk_params.remove(pair);
     self.risk_params.add(pair, risk_params);
-}
-
-/// Updates liquidation reward for the margin pool as the admin.
-public fun update_liquidation_reward(
-    self: &mut MarginRegistry,
-    liquidation_reward_perc: u64,
-    _cap: &MarginAdminCap,
-) {
-    self.liquidation_reward_perc = liquidation_reward_perc;
 }
 
 /// Allow a margin trading pair
@@ -150,10 +142,6 @@ public fun margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry): bo
     };
 
     self.risk_params.contains(pair)
-}
-
-public fun liquidation_reward_perc(self: &MarginRegistry): u64 {
-    self.liquidation_reward_perc
 }
 
 /// Get the ID of the pool given the asset types.
@@ -222,6 +210,15 @@ public(package) fun target_liquidation_risk_ratio<BaseAsset, QuoteAsset>(
     };
 
     self.risk_params.borrow(pair).target_liquidation_risk_ratio
+}
+
+public(package) fun liquidation_reward_perc<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
+    let pair = MarginPair {
+        base: type_name::get<BaseAsset>(),
+        quote: type_name::get<QuoteAsset>(),
+    };
+
+    self.risk_params.borrow(pair).liquidation_reward_perc
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
