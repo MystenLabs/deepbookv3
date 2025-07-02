@@ -32,7 +32,7 @@ public struct Supply has drop, store {
 }
 
 /// TODO: update interest params as needed, like max interest rate, etc.
-/// Represents all the interest parameters for the lending pool. Can be updated on chain.
+/// Represents all the interest parameters for the margin pool. Can be updated on chain.
 public struct InterestParams has drop, store {
     base_rate: u64, // 9 decimals
     multiplier: u64, // 9 decimals
@@ -55,7 +55,7 @@ public struct MarginPool<phantom Asset> has key, store {
 }
 
 // === Public Functions * ADMIN * ===
-/// Creates a lending pool as the admin.
+/// Creates a margin pool as the admin.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
     supply_cap: u64,
@@ -94,7 +94,7 @@ public fun new_interest_params(base_rate: u64, multiplier: u64): InterestParams 
     }
 }
 
-/// Updates interest params for the lending pool as the admin.
+/// Updates interest params for the margin pool as the admin.
 public fun update_interest_params<Asset>(
     pool: &mut MarginPool<Asset>,
     interest_params: InterestParams,
@@ -103,7 +103,7 @@ public fun update_interest_params<Asset>(
     pool.interest_params = interest_params;
 }
 
-/// Updates the supply cap for the lending pool as the admin.
+/// Updates the supply cap for the margin pool as the admin.
 public fun update_supply_cap<Asset>(
     pool: &mut MarginPool<Asset>,
     supply_cap: u64,
@@ -112,7 +112,7 @@ public fun update_supply_cap<Asset>(
     pool.supply_cap = supply_cap;
 }
 
-/// Updates the maximum borrow percentage for the lending pool as the admin.
+/// Updates the maximum borrow percentage for the margin pool as the admin.
 public fun update_max_borrow_percentage<Asset>(
     pool: &mut MarginPool<Asset>,
     max_borrow_percentage: u64,
@@ -122,7 +122,7 @@ public fun update_max_borrow_percentage<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Allows anyone to supply the lending pool. Returns the new user supply amount.
+/// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply_margin_pool<Asset>(
     margin_pool: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
@@ -157,7 +157,7 @@ public fun supply_margin_pool<Asset>(
     new_user_supply
 }
 
-/// Allows withdrawal from the lending pool. Returns the withdrawn coin and the new user supply amount.
+/// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
 public fun withdraw_from_margin_pool<Asset>(
     margin_pool: &mut MarginPool<Asset>,
     amount: Option<u64>, // if None, withdraw all
@@ -183,7 +183,7 @@ public fun withdraw_from_margin_pool<Asset>(
 }
 
 // === Public-Package Functions ===
-/// Updates the borrow and supply indices for the lending pool.
+/// Updates the borrow and supply indices for the margin pool.
 /// This will be called before any borrow or supply operation.
 public(package) fun update_indices<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let current_time = clock.timestamp_ms();
@@ -258,7 +258,7 @@ fun interest_rates<Asset>(self: &mut MarginPool<Asset>): (u64, u64) {
     (borrow_interest_rate, supply_interest_rate)
 }
 
-/// Updates the utilization rate of the lending pool.
+/// Updates the utilization rate of the margin pool.
 fun update_utilization_rate<Asset>(self: &mut MarginPool<Asset>) {
     self.utilization_rate = if (self.total_supply == 0) {
             0

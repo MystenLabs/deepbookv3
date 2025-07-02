@@ -584,7 +584,7 @@ fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     }
 }
 
-/// Updates the loan interest for the margin manager if it has an active loan in the lending pool.
+/// Updates the loan interest for the margin manager if it has an active loan in the margin pool.
 fun update_loan_interest<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,

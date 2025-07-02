@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry holds all lending pools.
+/// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
 use std::type_name::{Self, TypeName};
@@ -63,8 +63,8 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         liquidation_reward_perc: 10_000_000, // 9 decimals, default is 1%
     };
     transfer::share_object(registry);
-    let lending_admin_cap = MarginAdminCap { id: object::new(ctx) };
-    transfer::public_transfer(lending_admin_cap, ctx.sender())
+    let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
+    transfer::public_transfer(margin_admin_cap, ctx.sender())
 }
 
 // === Public Functions * ADMIN * ===
@@ -82,7 +82,7 @@ public fun new_risk_params(
     }
 }
 
-/// Updates risk params for the lending pool as the admin.
+/// Updates risk params for the margin pool as the admin.
 /// TODO: maybe liquidation risk ratio shouldn't be updated?
 public fun update_risk_params(
     registry: &mut MarginRegistry,
@@ -92,7 +92,7 @@ public fun update_risk_params(
     registry.risk_params = risk_params;
 }
 
-/// Updates liquidation reward for the lending pool as the admin.
+/// Updates liquidation reward for the margin pool as the admin.
 public fun update_liquidation_reward(
     registry: &mut MarginRegistry,
     liquidation_reward_perc: u64,
@@ -164,14 +164,14 @@ public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
 }
 
 // === Public-Package Functions ===
-/// Register a new lending pool. If a same asset pool already exists, abort.
+/// Register a new margin pool. If a same asset pool already exists, abort.
 public(package) fun register_margin_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
     let key = type_name::get<Asset>();
     assert!(!self.margin_pools.contains(key), EMarginPoolAlreadyExists);
     self.margin_pools.add(key, pool_id);
 }
 
-/// Get the lending pool id for the given asset.
+/// Get the margin pool id for the given asset.
 public(package) fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
     let key = type_name::get<Asset>();
     assert!(self.margin_pools.contains(key), EMarginPoolDoesNotExists);
