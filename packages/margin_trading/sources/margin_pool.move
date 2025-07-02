@@ -43,13 +43,13 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
     supplies: Table<address, Supply>, // maps address id to deposits
-    supply_cap: u64, // maximum amount of assets that can be supplied to the pool
-    max_borrow_percentage: u64, // maximum percentage of the total supply that can be borrowed. 9 decimals.
     total_loan: u64, // total amount of loans in the pool, excluding interest
     total_supply: u64, // total amount of assets in the pool
     borrow_index: u64, // 9 decimals
     supply_index: u64, // 9 decimals
     last_index_update_timestamp: u64,
+    supply_cap: u64, // maximum amount of assets that can be supplied to the pool
+    max_borrow_percentage: u64, // maximum percentage of the total supply that can be borrowed. 9 decimals.
     interest_params: InterestParams,
     utilization_rate: u64, // 9 decimals
 }
@@ -70,13 +70,13 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
         supplies: table::new(ctx),
-        supply_cap,
-        max_borrow_percentage,
         total_loan: 0,
         total_supply: 0,
         borrow_index: 1_000_000_000, // start at 1.0
         supply_index: 1_000_000_000, // start at 1.0
         last_index_update_timestamp: clock.timestamp_ms(),
+        supply_cap,
+        max_borrow_percentage,
         interest_params,
         utilization_rate: 0,
     };
