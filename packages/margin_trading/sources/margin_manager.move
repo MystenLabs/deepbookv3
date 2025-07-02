@@ -133,7 +133,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
 }
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
-/// The withdrawal is subject to the risk ratio limit. This is restricted through the WithdrawalRequest.
+/// The withdrawal is subject to the risk ratio limit. This is restricted through the Request.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
