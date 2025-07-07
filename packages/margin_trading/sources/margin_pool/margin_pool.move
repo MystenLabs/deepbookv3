@@ -4,7 +4,7 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{margin_registry::MarginAdminCap, state::{Self, State}};
+use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
@@ -13,6 +13,7 @@ const ESupplyCapExceeded: u64 = 2;
 const ECannotWithdrawMoreThanSupply: u64 = 3;
 
 // === Structs ===
+#[allow(unused_field)]
 public struct Loan has drop, store {
     loan_amount: u64, // total loan remaining, including interest
     last_index: u64, // 9 decimals
@@ -46,7 +47,7 @@ public fun create_margin_pool<Asset>(
         loans: table::new(ctx),
         supplies: table::new(ctx),
         supply_cap,
-        state: state::default(clock),
+        state: margin_state::default(clock),
     };
 
     transfer::share_object(margin_pool);
@@ -104,10 +105,10 @@ public fun withdraw<Asset>(
 }
 
 /// Borrow a loan from the margin pool.
-public fun borrow<Asset>(self: &mut MarginPool<Asset>) {}
+public fun borrow<Asset>(_self: &mut MarginPool<Asset>) {}
 
 /// Repay a loan.
-public fun repay<Asset>(self: &mut MarginPool<Asset>) {}
+public fun repay<Asset>(_self: &mut MarginPool<Asset>) {}
 
 // === Internal Functions ===
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.

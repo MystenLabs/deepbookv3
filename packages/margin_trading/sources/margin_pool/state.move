@@ -1,4 +1,4 @@
-module margin_trading::state;
+module margin_trading::margin_state;
 
 use deepbook::math;
 use sui::clock::Clock;
