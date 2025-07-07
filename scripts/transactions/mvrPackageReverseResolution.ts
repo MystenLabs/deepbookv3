@@ -28,7 +28,7 @@ const mainnetPlugin = namedPackagesPlugin({
   //     "0x4e9264ba30222c1701457ed3d4745c74fd9d736c6609558aafd46ec734e60d78",
   // };
 
-  const latestSha = "6c559d26ec6e3f9a460d085e7ef2cb8d823e8b83";
+  const latestSha = "releases/metadata/2";
   const repository = "https://github.com/mystenlabs/mvr";
 
   const data = {
