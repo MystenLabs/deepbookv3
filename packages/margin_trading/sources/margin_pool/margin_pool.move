@@ -110,13 +110,34 @@ public fun borrow<Asset>(_self: &mut MarginPool<Asset>) {}
 /// Repay a loan.
 public fun repay<Asset>(_self: &mut MarginPool<Asset>) {}
 
+// === Public-Package Functions ===
+/// Returns the loans table.
+public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
+    &self.loans
+}
+
+/// Returns the supplies table.
+public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
+    &self.supplies
+}
+
+/// Returns the supply cap.
+public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
+    self.supply_cap
+}
+
+/// Returns the state.
+public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
+    &self.state
+}
+
 // === Internal Functions ===
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
 fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
     self.add_user_supply_entry(supplier);
 
     let supply = self.supplies.borrow_mut(supplier);
-    let current_index = self.state.index();
+    let current_index = self.state.supply_index();
     let interest_multiplier = math::div(
         current_index,
         supply.last_index,
@@ -140,7 +161,7 @@ fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address,
 }
 
 fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
-    let current_index = self.state.index();
+    let current_index = self.state.supply_index();
     let supply = Supply {
         supplied_amount: 0,
         last_index: current_index,
