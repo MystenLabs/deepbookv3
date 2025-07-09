@@ -4,8 +4,12 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use margin_trading::margin_registry::MarginAdminCap;
+use margin_trading::margin_state::{Self, State};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::table::{Self, Table};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -117,7 +121,9 @@ public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
 }
 
 /// Returns the supplies table.
-public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
+public(package) fun supplies<Asset>(
+    self: &MarginPool<Asset>,
+): &Table<address, Supply> {
     &self.supplies
 }
 
@@ -150,25 +156,37 @@ fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
     supply.last_index = current_index;
 }
 
-fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+fun increase_user_supply<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount + amount;
 }
 
-fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+fun decrease_user_supply<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount - amount;
 }
 
-fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
+fun add_user_supply_entry<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+) {
+    if (self.supplies.contains(supplier)) {
+        return
+    };
     let current_index = self.state.supply_index();
     let supply = Supply {
         supplied_amount: 0,
         last_index: current_index,
     };
-    if (!self.supplies.contains(supplier)) {
-        self.supplies.add(supplier, supply);
-    };
+    self.supplies.add(supplier, supply);
 }
 
 fun user_supply<Asset>(self: &MarginPool<Asset>, supplier: address): u64 {
