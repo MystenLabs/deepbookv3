@@ -37,50 +37,46 @@ impl Processor for OrderUpdateHandler {
     const NAME: &'static str = "order_update";
     type Value = OrderUpdate;
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
-        checkpoint
-            .transactions
-            .iter()
-            .try_fold(vec![], |result, tx| {
-                if !is_deepbook_tx(tx) {
-                    return Ok(result);
+        let mut results = vec![];
+
+        for tx in &checkpoint.transactions {
+            if !is_deepbook_tx(tx) {
+                continue;
+            }
+            let Some(events) = &tx.events else {
+                continue;
+            };
+
+            let package = try_extract_move_call_package(tx).unwrap_or_default();
+            let metadata = (
+                tx.transaction.sender_address().to_string(),
+                checkpoint.checkpoint_summary.sequence_number,
+                checkpoint.checkpoint_summary.timestamp_ms,
+                tx.transaction.digest().to_string(),
+                package.clone(),
+            );
+
+            for (index, ev) in events.data.iter().enumerate() {
+                if ev.type_ == self.order_placed_type {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_placed(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Placed {:?}", tx);
+                } else if ev.type_ == self.order_modified_type {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_modified(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Modified {:?}", tx);
+                } else if ev.type_ == self.order_canceled_type {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_canceled(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Canceled {:?}", tx);
+                } else if ev.type_ == self.order_expired_type {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_expired(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Expired {:?}", tx);
                 }
-                let Some(events) = &tx.events else {
-                    return Ok(result);
-                };
-
-                let package = try_extract_move_call_package(tx).unwrap_or_default();
-                let metadata = (
-                    tx.transaction.sender_address().to_string(),
-                    checkpoint.checkpoint_summary.sequence_number,
-                    checkpoint.checkpoint_summary.timestamp_ms,
-                    tx.transaction.digest().to_string(),
-                    package.clone(),
-                );
-
-                return events.data.iter().enumerate().try_fold(
-                    result,
-                    |mut result, (index, ev)| {
-                        if ev.type_ == self.order_placed_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_placed(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Placed {:?}", tx);
-                        } else if ev.type_ == self.order_modified_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_modified(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Modified {:?}", tx);
-                        } else if ev.type_ == self.order_canceled_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_canceled(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Canceled {:?}", tx);
-                        } else if ev.type_ == self.order_expired_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_expired(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Expired {:?}", tx);
-                        }
-                        Ok(result)
-                    },
-                );
-            })
+            }
+        }
+        Ok(results)
     }
 }
 
