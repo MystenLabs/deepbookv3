@@ -105,26 +105,6 @@ public fun withdraw<Asset>(
 }
 
 // === Public-Package Functions ===
-/// Returns the loans table.
-public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
-    &self.loans
-}
-
-/// Returns the supplies table.
-public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
-    &self.supplies
-}
-
-/// Returns the supply cap.
-public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
-    self.supply_cap
-}
-
-/// Returns the state.
-public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
-    &self.state
-}
-
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
@@ -145,7 +125,7 @@ public(package) fun borrow<Asset>(
     balance.into_coin(ctx)
 }
 
-/// Allows repaying the loan. Returns the repaid coin.
+/// Allows repaying the loan.
 public(package) fun repay<Asset>(
     self: &mut MarginPool<Asset>,
     manager_id: ID,
@@ -163,6 +143,26 @@ public(package) fun repay<Asset>(
 
     let balance = coin.into_balance();
     self.vault.join(balance);
+}
+
+/// Returns the loans table.
+public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
+    &self.loans
+}
+
+/// Returns the supplies table.
+public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
+    &self.supplies
+}
+
+/// Returns the supply cap.
+public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
+    self.supply_cap
+}
+
+/// Returns the state.
+public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
+    &self.state
 }
 
 // === Internal Functions ===
