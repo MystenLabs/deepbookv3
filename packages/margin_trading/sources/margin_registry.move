@@ -5,9 +5,7 @@
 module margin_trading::margin_registry;
 
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::dynamic_field as df;
-use sui::table::{Self, Table};
+use sui::{bag::{Self, Bag}, dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -43,10 +41,7 @@ public struct MarginPair has copy, drop, store {
 public struct MarginRegistry has key, store {
     id: UID,
     margin_pools: Bag,
-    risk_params: Table<
-        MarginPair,
-        RiskParams,
-    >, // determines when transfer, borrow, and trade are allowed
+    risk_params: Table<MarginPair, RiskParams>, // determines when transfer, borrow, and trade are allowed
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
