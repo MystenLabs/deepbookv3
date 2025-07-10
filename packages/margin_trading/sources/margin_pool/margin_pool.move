@@ -11,6 +11,7 @@ use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Tabl
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
 const ECannotWithdrawMoreThanSupply: u64 = 3;
+const ECannotRepayMoreThanLoan: u64 = 4;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -155,6 +156,8 @@ public(package) fun repay<Asset>(
 
     let repay_amount = coin.value();
     self.update_user_loan(manager_id);
+    let user_loan = self.user_loan(manager_id);
+    assert!(repay_amount <= user_loan, ECannotRepayMoreThanLoan);
     self.decrease_user_loan(manager_id, repay_amount);
     self.state.decrease_total_borrow(repay_amount);
 
@@ -244,4 +247,8 @@ fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
         last_index: current_index,
     };
     self.loans.add(manager_id, loan);
+}
+
+fun user_loan<Asset>(self: &MarginPool<Asset>, manager_id: ID): u64 {
+    self.loans.borrow(manager_id).loan_amount
 }
