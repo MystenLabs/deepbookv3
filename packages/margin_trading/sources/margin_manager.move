@@ -516,14 +516,15 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // We can withdraw the liquidation reward.
     // Liquidation reward is a percentage of the amount to repay.
     // We take as much base asset as possible, then quote asset if needed.
+    // This is a WIP: If there are not enough assets in the manager, we will withdraw all of them. This could possibly be 0.
     let liquidation_reward = registry.liquidation_reward<BaseAsset, QuoteAsset>();
     let liquidation_reward_usd = math::mul(
         liquidation_reward,
         usd_amount_to_repay,
     );
 
-    let base_manager_asset = 15;
-    let quote_manager_asset = 15;
+    let base_manager_asset = margin_manager.balance_manager().balance<BaseAsset>();
+    let quote_manager_asset = margin_manager.balance_manager().balance<QuoteAsset>();
 
     let base_in_usd = calculate_usd_price<BaseAsset>(
         registry,
