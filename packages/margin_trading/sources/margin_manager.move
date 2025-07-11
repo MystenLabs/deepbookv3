@@ -515,57 +515,69 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // After repayment, the manager should be close to the target risk ratio.
     // We can withdraw the liquidation reward.
     // Liquidation reward is a percentage of the amount to repay.
-    // TODO: This is a work in progress, need think about more edge cases.
+    // We take as much base asset as possible, then quote asset if needed.
     let liquidation_reward = registry.liquidation_reward<BaseAsset, QuoteAsset>();
+    let liquidation_reward_usd = math::mul(
+        liquidation_reward,
+        usd_amount_to_repay,
+    );
 
-    let quote_liquidation_reward = if (net_debt_is_base) {
-        math::mul(
-            liquidation_reward,
-            calculate_target_amount<QuoteAsset>(
-                registry,
-                usd_amount_to_repay,
-                clock,
-                quote_price_info_object,
-            ),
-        )
-    } else {
-        0
+    let base_manager_asset = 15;
+    let quote_manager_asset = 15;
+
+    let base_in_usd = calculate_usd_price<BaseAsset>(
+        registry,
+        base_manager_asset,
+        clock,
+        base_price_info_object,
+    );
+    let quote_in_usd = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_manager_asset,
+        clock,
+        quote_price_info_object,
+    );
+
+    if (base_in_usd >= liquidation_reward_usd) {
+        let withdraw_base_amount = calculate_target_amount<BaseAsset>(
+            registry,
+            liquidation_reward_usd,
+            clock,
+            base_price_info_object,
+        );
+        let base_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
+            withdraw_base_amount,
+            ctx,
+        );
+        return (base_coin, coin::zero<QuoteAsset>(ctx));
     };
 
-    let base_liquidation_reward = if (net_debt_is_quote) {
-        math::mul(
-            liquidation_reward,
-            calculate_target_amount<BaseAsset>(
-                registry,
-                usd_amount_to_repay,
-                clock,
-                base_price_info_object,
-            ),
-        )
-    } else {
-        0
+    let remaining_usd = liquidation_reward_usd - base_in_usd;
+    let base_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
+        base_manager_asset,
+        ctx,
+    );
+
+    if (quote_in_usd >= remaining_usd) {
+        let withdraw_quote_amount = calculate_target_amount<QuoteAsset>(
+            registry,
+            remaining_usd,
+            clock,
+            quote_price_info_object,
+        );
+        let quote_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+            withdraw_quote_amount,
+            ctx,
+        );
+        return (base_coin, quote_coin)
     };
 
-    if (quote_liquidation_reward > 0) {
-        return (
-            coin::zero<BaseAsset>(ctx),
-            margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
-                quote_liquidation_reward,
-                ctx,
-            ),
-        )
-    };
-    if (base_liquidation_reward > 0) {
-        return (
-            margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
-                base_liquidation_reward,
-                ctx,
-            ),
-            coin::zero<QuoteAsset>(ctx),
-        )
-    };
+    let quote_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+        quote_manager_asset,
+        ctx,
+    );
 
-    (coin::zero<BaseAsset>(ctx), coin::zero<QuoteAsset>(ctx))
+    (base_coin, quote_coin)
 }
 
 /// Unwraps balance manager for trading in deepbook.
