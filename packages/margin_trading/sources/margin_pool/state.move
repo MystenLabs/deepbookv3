@@ -88,6 +88,10 @@ public(package) fun increase_total_borrow(self: &mut State, amount: u64) {
     self.total_borrow = self.total_borrow + amount;
 }
 
+public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
+    self.total_borrow = self.total_borrow - amount;
+}
+
 public(package) fun total_supply(self: &State): u64 {
     self.total_supply
 }
