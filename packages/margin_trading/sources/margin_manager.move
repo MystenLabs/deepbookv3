@@ -546,15 +546,12 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             clock,
             base_price_info_object,
         );
-        let base_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
-            withdraw_base_amount,
-            ctx,
-        );
+        let base_coin = margin_manager.liquidation_withdraw_base(withdraw_base_amount, ctx);
         return (base_coin, coin::zero<QuoteAsset>(ctx))
     };
 
     let remaining_usd = liquidation_reward_usd - base_in_usd;
-    let base_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
+    let base_coin = margin_manager.liquidation_withdraw_base<BaseAsset, QuoteAsset>(
         base_manager_asset,
         ctx,
     );
@@ -566,14 +563,14 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             clock,
             quote_price_info_object,
         );
-        let quote_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+        let quote_coin = margin_manager.liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
             withdraw_quote_amount,
             ctx,
         );
         return (base_coin, quote_coin)
     };
 
-    let quote_coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+    let quote_coin = margin_manager.liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
         quote_manager_asset,
         ctx,
     );
@@ -712,6 +709,28 @@ fun manager_debt<BaseAsset, QuoteAsset, Asset>(
     margin_pool.update_user_loan(margin_manager.id());
 
     margin_pool.user_loan(margin_manager.id())
+}
+
+fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    withdraw_amount: u64,
+    ctx: &mut TxContext,
+): Coin<BaseAsset> {
+    margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
+        withdraw_amount,
+        ctx,
+    )
+}
+
+fun liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    withdraw_amount: u64,
+    ctx: &mut TxContext,
+): Coin<QuoteAsset> {
+    margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+        withdraw_amount,
+        ctx,
+    )
 }
 
 fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
