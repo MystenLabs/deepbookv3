@@ -549,7 +549,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             withdraw_base_amount,
             ctx,
         );
-        return (base_coin, coin::zero<QuoteAsset>(ctx));
+        return (base_coin, coin::zero<QuoteAsset>(ctx))
     };
 
     let remaining_usd = liquidation_reward_usd - base_in_usd;
