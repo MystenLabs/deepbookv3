@@ -3,29 +3,27 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        mint_deposit_cap,
-        mint_trade_cap,
-        mint_withdraw_cap,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap
-    },
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    mint_deposit_cap,
+    mint_trade_cap,
+    mint_withdraw_cap,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap
 };
-use margin_trading::{
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_usd_price, calculate_target_amount}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::clock::Clock;
+use sui::coin::{Self, Coin};
+use sui::event;
 use token::deep::DEEP;
 
 // === Errors ===
@@ -319,7 +317,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -444,10 +442,16 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             // Alternatively, we can utilize DEEP flash loan.
 
             let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
-            let base_quantity = base_amount_liquidate - base_amount_liquidate % lot_size;
+
+            // We can only swap the lesser of the amount to liquidate and the manager balance, if there's a default scenario.
+            let base_balance = balance_manager.balance<BaseAsset>();
+            let base_amount_swap = base_balance.min(
+                base_amount_liquidate,
+            );
+            let base_quantity = base_amount_swap - base_amount_swap % lot_size;
 
             pool.place_market_order(
-                margin_manager.balance_manager_mut(),
+                balance_manager,
                 &trade_proof,
                 client_order_id,
                 constants::self_matching_allowed(),
@@ -465,13 +469,18 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
             // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
             // Alternatively, we can utilize DEEP flash loan.
-            let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
+
+            let quote_amount_swap = (balance_manager.balance<QuoteAsset>()).min(
                 quote_amount_liquidate,
+            );
+
+            let (base_out, _, _) = pool.get_base_quantity_out_input_fee(
+                quote_amount_swap,
                 clock,
             );
 
             pool.place_market_order(
-                margin_manager.balance_manager_mut(),
+                balance_manager,
                 &trade_proof,
                 client_order_id,
                 constants::self_matching_allowed(),
@@ -500,6 +509,61 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     // We repay the same loans using the same assets.
     margin_manager.repay_all_liquidation(base_margin_pool, quote_margin_pool, clock, ctx);
+
+    // After repayment, the manager should be close to the target risk ratio.
+    // We can withdraw the liquidation reward.
+    // Liquidation reward is a percentage of the amount to repay.
+    // TODO: This is a work in progress, need think about more edge cases.
+    let liquidation_reward = registry.liquidation_reward<BaseAsset, QuoteAsset>();
+
+    let quote_liquidation_reward = if (net_debt_is_base) {
+        math::mul(
+            liquidation_reward,
+            calculate_target_amount<QuoteAsset>(
+                registry,
+                usd_amount_to_repay,
+                clock,
+                quote_price_info_object,
+            ),
+        )
+    } else {
+        0
+    };
+
+    let base_liquidation_reward = if (net_debt_is_quote) {
+        math::mul(
+            liquidation_reward,
+            calculate_target_amount<BaseAsset>(
+                registry,
+                usd_amount_to_repay,
+                clock,
+                base_price_info_object,
+            ),
+        )
+    } else {
+        0
+    };
+
+    if (quote_liquidation_reward > 0) {
+        return (
+            coin::zero<BaseAsset>(ctx),
+            margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
+                quote_liquidation_reward,
+                ctx,
+            ),
+        )
+    };
+    if (base_liquidation_reward > 0) {
+        return (
+            margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
+                base_liquidation_reward,
+                ctx,
+            ),
+            coin::zero<QuoteAsset>(ctx),
+        )
+    };
+
+    (coin::zero<BaseAsset>(ctx), coin::zero<QuoteAsset>(ctx))
 }
 
 /// Unwraps balance manager for trading in deepbook.
