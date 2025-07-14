@@ -167,6 +167,33 @@ public(package) fun repay<Asset>(
     self.vault.join(balance);
 }
 
+/// Marks a loan as defaulted.
+/// TODO: revisit this logic?
+public(package) fun default_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    clock: &Clock,
+) {
+    self.update_state(clock);
+    self.update_user_loan(manager_id);
+
+    let user_loan = self.user_loan(manager_id);
+    self.decrease_user_loan(manager_id, user_loan);
+    self.state.decrease_total_borrow(user_loan);
+
+    let total_supply = self.state.total_supply();
+    let new_supply = total_supply - user_loan;
+    let new_supply_index = math::mul(
+        self.state.supply_index(),
+        math::div(new_supply, total_supply),
+    );
+
+    self.state.decrease_total_supply(user_loan);
+    self.state.set_supply_index(new_supply_index);
+
+    // Optionally, handle the default logic (e.g., liquidating collateral)
+}
+
 public(package) fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     self.add_user_loan_entry(manager_id);
 

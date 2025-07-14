@@ -68,6 +68,10 @@ public(package) fun borrow_index(self: &State): u64 {
     self.borrow_index
 }
 
+public(package) fun set_supply_index(self: &mut State, index: u64) {
+    self.supply_index = index;
+}
+
 public(package) fun utilization_rate(self: &State): u64 {
     if (self.total_supply == 0) {
         0
