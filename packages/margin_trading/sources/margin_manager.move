@@ -185,7 +185,6 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
         repay_amount,
-        false,
         clock,
         ctx,
     )
@@ -203,7 +202,6 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
         repay_amount,
-        false,
         clock,
         ctx,
     )
@@ -383,6 +381,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
     // amount_to_liquidate = (target_ratio × debt_value - asset) / (target_ratio - 1)
+    // TODO: multiply this to account for liquidation rewards, even though will be a small difference.
     let usd_amount_to_repay = math::div(
         (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
         (target_ratio - constants::float_scaling()),
@@ -511,90 +510,48 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         });
     };
 
-    // We repay the same loans using the same assets.
+    // We repay the same loans using the same assets. The amount repaid is returned
     let (base_repaid, quote_repaid) = margin_manager.repay_all_liquidation(
         base_margin_pool,
         quote_margin_pool,
+        registry,
         clock,
         ctx,
     );
-
-    let base_usd_repaid = calculate_usd_price<BaseAsset>(
-        registry,
-        base_repaid,
-        clock,
-        base_price_info_object,
-    );
-    let quote_usd_repaid = calculate_usd_price<QuoteAsset>(
-        registry,
-        quote_repaid,
-        clock,
-        quote_price_info_object,
-    );
-
-    let total_usd_repaid = base_usd_repaid + quote_usd_repaid;
 
     // After repayment, the manager should be close to the target risk ratio.
-    // We can withdraw the liquidation reward.
-    // Liquidation reward is a percentage of the amount to repay.
-    // We take as much base asset as possible, then quote asset if needed.
-    // This is a WIP: If there are not enough assets in the manager, we will withdraw all of them. This could possibly be 0.
-    let liquidation_reward = registry.liquidation_reward<BaseAsset, QuoteAsset>();
-    let liquidation_reward_usd = math::mul(liquidation_reward, total_usd_repaid);
+    // We withdraw the liquidation reward for the pool.
 
-    let base_manager_asset = margin_manager.balance_manager().balance<BaseAsset>();
-    let quote_manager_asset = margin_manager.balance_manager().balance<QuoteAsset>();
-
-    let base_in_usd = calculate_usd_price<BaseAsset>(
-        registry,
-        base_manager_asset,
-        clock,
-        base_price_info_object,
+    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+    let pool_liquidation_reward_base = math::mul(pool_liquidation_reward, base_repaid);
+    let pool_base_coin = margin_manager.liquidation_withdraw_base(
+        pool_liquidation_reward_base,
+        ctx,
     );
-    let quote_in_usd = calculate_usd_price<QuoteAsset>(
-        registry,
-        quote_manager_asset,
-        clock,
-        quote_price_info_object,
-    );
-
-    if (base_in_usd >= liquidation_reward_usd) {
-        let withdraw_base_amount = calculate_target_amount<BaseAsset>(
-            registry,
-            liquidation_reward_usd,
-            clock,
-            base_price_info_object,
-        );
-        let base_coin = margin_manager.liquidation_withdraw_base(withdraw_base_amount, ctx);
-        return (base_coin, coin::zero<QuoteAsset>(ctx))
-    };
-
-    let remaining_usd = liquidation_reward_usd - base_in_usd;
-    let base_coin = margin_manager.liquidation_withdraw_base<BaseAsset, QuoteAsset>(
-        base_manager_asset,
+    let pool_liquidation_reward_quote = math::mul(pool_liquidation_reward, quote_repaid);
+    let pool_quote_coin = margin_manager.liquidation_withdraw_quote(
+        pool_liquidation_reward_quote,
         ctx,
     );
 
-    if (quote_in_usd >= remaining_usd) {
-        let withdraw_quote_amount = calculate_target_amount<QuoteAsset>(
-            registry,
-            remaining_usd,
-            clock,
-            quote_price_info_object,
-        );
-        let quote_coin = margin_manager.liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
-            withdraw_quote_amount,
-            ctx,
-        );
-        return (base_coin, quote_coin)
-    };
+    base_margin_pool.add_liquidation_reward<BaseAsset>(pool_base_coin, clock);
+    quote_margin_pool.add_liquidation_reward<QuoteAsset>(pool_quote_coin, clock);
 
-    let quote_coin = margin_manager.liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
-        quote_manager_asset,
+    // We can withdraw the liquidation reward for the user.
+    // Liquidation reward is a percentage of the amount repaid.
+    let user_liquidation_reward = registry.user_liquidation_reward<BaseAsset, QuoteAsset>();
+    let user_liquidation_reward_base = math::mul(user_liquidation_reward, base_repaid);
+    let user_base_coin = margin_manager.liquidation_withdraw_base(
+        user_liquidation_reward_base,
+        ctx,
+    );
+    let user_liquidation_reward_quote = math::mul(user_liquidation_reward, quote_repaid);
+    let user_quote_coin = margin_manager.liquidation_withdraw_quote(
+        user_liquidation_reward_quote,
         ctx,
     );
 
-    (base_coin, quote_coin)
+    (user_base_coin, user_quote_coin)
 }
 
 /// Unwraps balance manager for trading in deepbook.
@@ -661,7 +618,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
     repay_amount: Option<u64>,
-    is_liquidation: bool,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
@@ -689,17 +645,67 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     };
 
     // Owner check is skipped if this is liquidation
-    let coin = if (is_liquidation) {
-        margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
-            repayment,
-            ctx,
-        )
+    let coin = margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
+        repayment,
+        ctx,
+    );
+
+    let repay_amount = coin.value();
+
+    margin_pool.repay(
+        manager_id,
+        coin,
+        clock,
+    );
+
+    repay_amount
+}
+
+/// Repays the loan using the margin manager.
+/// Returns the total amount repaid
+/// This is used for liquidation, where the repay amount is not specified.
+fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_pool: &mut MarginPool<RepayAsset>,
+    registry: &MarginRegistry,
+    repay_amount: Option<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    margin_pool.update_state(clock);
+    let manager_id = margin_manager.id();
+
+    margin_pool.update_user_loan(manager_id);
+    let user_loan = margin_pool.user_loan(manager_id);
+
+    let repay_amount = repay_amount.get_with_default(user_loan);
+    let manager_asset = margin_manager.balance_manager().balance<RepayAsset>();
+    let liquidation_multiplier =
+        constants::float_scaling() + registry.user_liquidation_reward<BaseAsset, QuoteAsset>() + registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+    let available_balance_for_repayment = math::div(
+        manager_asset,
+        liquidation_multiplier,
+    );
+
+    // if user tries to repay more than owed, just repay the loan amount
+    let repayment = if (repay_amount >= user_loan) {
+        user_loan
     } else {
-        margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
-            repayment,
-            ctx,
-        )
+        repay_amount
     };
+
+    // if user tries to repay more than available balance, just repay the available balance
+    let repayment = if (repayment >= available_balance_for_repayment) {
+        available_balance_for_repayment
+    } else {
+        repayment
+    };
+
+    // Owner check is skipped if this is liquidation
+    let coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
+        repayment,
+        ctx,
+    );
 
     let repay_amount = coin.value();
 
@@ -807,11 +813,24 @@ fun repay_all_liquidation<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    margin_registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64) {
-    let base_repaid = repay_base_liquidate(margin_manager, base_margin_pool, clock, ctx);
-    let quote_repaid = repay_quote_liquidate(margin_manager, quote_margin_pool, clock, ctx);
+    let base_repaid = repay_base_liquidate(
+        margin_manager,
+        base_margin_pool,
+        margin_registry,
+        clock,
+        ctx,
+    );
+    let quote_repaid = repay_quote_liquidate(
+        margin_manager,
+        quote_margin_pool,
+        margin_registry,
+        clock,
+        ctx,
+    );
 
     (base_repaid, quote_repaid)
 }
@@ -821,13 +840,14 @@ fun repay_all_liquidation<BaseAsset, QuoteAsset>(
 fun repay_base_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BaseAsset>,
+    registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
+    margin_manager.repay_liquidation<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
+        registry,
         option::none(),
-        true,
         clock,
         ctx,
     )
@@ -838,13 +858,14 @@ fun repay_base_liquidate<BaseAsset, QuoteAsset>(
 fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<QuoteAsset>,
+    registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
+    margin_manager.repay_liquidation<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
+        registry,
         option::none(),
-        true,
         clock,
         ctx,
     )

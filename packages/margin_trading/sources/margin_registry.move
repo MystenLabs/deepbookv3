@@ -31,7 +31,8 @@ public struct RiskParams has drop, store {
     min_borrow_risk_ratio: u64, // 9 decimals, minimum risk ratio to allow borrow
     liquidation_risk_ratio: u64, // 9 decimals, risk ratio below which liquidation is allowed
     target_liquidation_risk_ratio: u64, // 9 decimals, target risk ratio after liquidation
-    liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
+    user_liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
+    pool_liquidation_reward: u64, // fractional reward for the pool, in 9 decimals
 }
 
 public struct MarginPair has copy, drop, store {
@@ -64,20 +65,24 @@ public fun new_risk_params(
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
     target_liquidation_risk_ratio: u64,
-    liquidation_reward: u64,
+    user_liquidation_reward: u64,
+    pool_liquidation_reward: u64,
 ): RiskParams {
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
-    assert!(liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+    assert!(user_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+    assert!(pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+    assert!(user_liquidation_reward + pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
 
     RiskParams {
         min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
-        liquidation_reward,
+        user_liquidation_reward,
+        pool_liquidation_reward,
     }
 }
 
@@ -241,13 +246,22 @@ public(package) fun target_liquidation_risk_ratio<BaseAsset, QuoteAsset>(
     self.risk_params.borrow(pair).target_liquidation_risk_ratio
 }
 
-public(package) fun liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
+public(package) fun user_liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
     let pair = MarginPair {
         base: type_name::get<BaseAsset>(),
         quote: type_name::get<QuoteAsset>(),
     };
 
-    self.risk_params.borrow(pair).liquidation_reward
+    self.risk_params.borrow(pair).user_liquidation_reward
+}
+
+public(package) fun pool_liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
+    let pair = MarginPair {
+        base: type_name::get<BaseAsset>(),
+        quote: type_name::get<QuoteAsset>(),
+    };
+
+    self.risk_params.borrow(pair).pool_liquidation_reward
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
