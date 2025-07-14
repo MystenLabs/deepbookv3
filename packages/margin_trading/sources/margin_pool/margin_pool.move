@@ -190,8 +190,26 @@ public(package) fun default_loan<Asset>(
 
     self.state.decrease_total_supply(user_loan);
     self.state.set_supply_index(new_supply_index);
+}
 
-    // Optionally, handle the default logic (e.g., liquidating collateral)
+/// Adds rewards in liquidation back to the protocol
+public(package) fun add_liquidation_reward<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+    clock: &Clock,
+) {
+    self.update_state(clock);
+    let liquidation_reward = coin.value();
+    let current_supply = self.state.total_supply();
+    let new_supply = current_supply + liquidation_reward;
+    let new_supply_index = math::mul(
+        self.state.supply_index(),
+        math::div(new_supply, current_supply),
+    );
+
+    self.state.increase_total_supply(liquidation_reward);
+    self.state.set_supply_index(new_supply_index);
+    self.vault.join(coin.into_balance());
 }
 
 public(package) fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
