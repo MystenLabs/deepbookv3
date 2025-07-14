@@ -106,7 +106,7 @@ const mainnetPlugin = namedPackagesPlugin({
         "0x9accbc6d7c86abf91dcbe247fd44c6eb006d8f1864ff93b90faaeb09114d3b6f",
       sha: "releases/temp_subdomain_proxy/2",
       version: "2",
-      path: "packages/temp-subname-proxy",
+      path: "packages/temp_subdomain_proxy",
     },
     // denylist: {
     //   packageInfo:
