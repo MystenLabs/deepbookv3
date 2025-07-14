@@ -174,37 +174,39 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 }
 
 /// Repay the base asset loan using the margin manager.
+/// Returns the total amount repaid
 public fun repay_base<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BaseAsset>,
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u64 {
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
         repay_amount,
         false,
         clock,
         ctx,
-    );
+    )
 }
 
 /// Repay the quote asset loan using the margin manager.
+/// Returns the total amount repaid
 public fun repay_quote<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<QuoteAsset>,
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u64 {
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
         repay_amount,
         false,
         clock,
         ctx,
-    );
+    )
 }
 
 /// Destroys the request to borrow or withdraw if risk ratio conditions are met.
@@ -510,7 +512,27 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     };
 
     // We repay the same loans using the same assets.
-    margin_manager.repay_all_liquidation(base_margin_pool, quote_margin_pool, clock, ctx);
+    let (base_repaid, quote_repaid) = margin_manager.repay_all_liquidation(
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+        ctx,
+    );
+
+    let base_usd_repaid = calculate_usd_price<BaseAsset>(
+        registry,
+        base_repaid,
+        clock,
+        base_price_info_object,
+    );
+    let quote_usd_repaid = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_repaid,
+        clock,
+        quote_price_info_object,
+    );
+
+    let total_usd_repaid = base_usd_repaid + quote_usd_repaid;
 
     // After repayment, the manager should be close to the target risk ratio.
     // We can withdraw the liquidation reward.
@@ -518,10 +540,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // We take as much base asset as possible, then quote asset if needed.
     // This is a WIP: If there are not enough assets in the manager, we will withdraw all of them. This could possibly be 0.
     let liquidation_reward = registry.liquidation_reward<BaseAsset, QuoteAsset>();
-    let liquidation_reward_usd = math::mul(
-        liquidation_reward,
-        usd_amount_to_repay,
-    );
+    let liquidation_reward_usd = math::mul(liquidation_reward, total_usd_repaid);
 
     let base_manager_asset = margin_manager.balance_manager().balance<BaseAsset>();
     let quote_manager_asset = margin_manager.balance_manager().balance<QuoteAsset>();
@@ -636,6 +655,8 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     }
 }
 
+/// Repays the loan using the margin manager.
+/// Returns the total amount repaid
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
@@ -643,7 +664,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     is_liquidation: bool,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u64 {
     margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
 
@@ -680,11 +701,15 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         )
     };
 
+    let repay_amount = coin.value();
+
     margin_pool.repay(
         manager_id,
         coin,
         clock,
     );
+
+    repay_amount
 }
 
 /// Returns the (base_debt, quote_debt) for the margin manager
@@ -776,44 +801,51 @@ fun margin_manager_asset<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
+/// Repay all for the balance manager.
+/// Returns (base_repaid, quote_repaid)
 fun repay_all_liquidation<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
-    repay_base_liquidate(margin_manager, base_margin_pool, clock, ctx);
-    repay_quote_liquidate(margin_manager, quote_margin_pool, clock, ctx);
+): (u64, u64) {
+    let base_repaid = repay_base_liquidate(margin_manager, base_margin_pool, clock, ctx);
+    let quote_repaid = repay_quote_liquidate(margin_manager, quote_margin_pool, clock, ctx);
+
+    (base_repaid, quote_repaid)
 }
 
+/// Repay the base asset loan using the margin manager.
+/// Returns the total amount repaid
 fun repay_base_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BaseAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u64 {
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
         option::none(),
         true,
         clock,
         ctx,
-    );
+    )
 }
 
 /// Repay the quote asset loan using the margin manager.
+/// Returns the total amount repaid
 fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<QuoteAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u64 {
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
         option::none(),
         true,
         clock,
         ctx,
-    );
+    )
 }
