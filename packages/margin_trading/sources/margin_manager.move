@@ -381,11 +381,19 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
     // amount_to_liquidate = (target_ratio × debt_value - asset) / (target_ratio - 1)
-    // TODO: multiply this to account for liquidation rewards, even though will be a small difference.
-    let usd_amount_to_repay = math::div(
+    let mut usd_amount_to_repay = math::div(
         (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
         (target_ratio - constants::float_scaling()),
     );
+
+    // We increase the amount to account for the liquidation reward
+    usd_amount_to_repay =
+        math::mul(
+            usd_amount_to_repay,
+            constants::float_scaling() +
+        registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
+        registry.pool_liquidation_reward<BaseAsset, QuoteAsset>(),
+        );
 
     let base_same_asset_repay = base_asset.min(base_debt);
     let quote_same_asset_repay = quote_asset.min(quote_debt);
