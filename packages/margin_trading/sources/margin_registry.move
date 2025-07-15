@@ -4,6 +4,7 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
+use deepbook::{constants, math};
 use std::type_name::{Self, TypeName};
 use sui::{bag::{Self, Bag}, dynamic_field as df, table::{Self, Table}};
 
@@ -77,6 +78,21 @@ public fun new_risk_params(
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
         liquidation_reward,
+    }
+}
+
+public fun default_risk_params(leverage: u64): RiskParams {
+    assert!(leverage > 1_000_000_000, EInvalidRiskParam);
+    assert!(leverage <= 20_000_000_000, EInvalidRiskParam); // Max 20x leverage
+
+    let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
+
+    RiskParams {
+        min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor,
+        min_borrow_risk_ratio: constants::float_scaling() + factor,
+        liquidation_risk_ratio: constants::float_scaling() + factor / 2,
+        target_liquidation_risk_ratio: constants::float_scaling() + factor,
+        liquidation_reward: 50_000_000, // TODO: Set another default value. Currently 5%.
     }
 }
 
