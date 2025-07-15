@@ -81,7 +81,6 @@ public fun new_risk_params(
 }
 
 /// Updates risk params for the margin pool as the admin.
-/// TODO: maybe liquidation risk ratio can only decrease?
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     risk_params: RiskParams,
@@ -92,7 +91,12 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
         quote: type_name::get<QuoteAsset>(),
     };
     assert!(self.risk_params.contains(pair), EPairNotAllowed);
-    self.risk_params.remove(pair);
+    let prev_risk_params = self.risk_params.remove(pair);
+    assert!(
+        prev_risk_params.liquidation_risk_ratio <= risk_params.liquidation_risk_ratio,
+        EInvalidRiskParam,
+    );
+
     self.risk_params.add(pair, risk_params);
 }
 
