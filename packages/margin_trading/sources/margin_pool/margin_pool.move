@@ -114,11 +114,11 @@ public(package) fun borrow<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     self.state.update(clock);
+    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.update_user_loan(manager_id);
     self.increase_user_loan(manager_id, amount);
 
-    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     self.state.increase_total_borrow(amount);
 
     let balance = self.vault.split(amount);
