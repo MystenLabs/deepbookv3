@@ -168,7 +168,6 @@ public(package) fun repay<Asset>(
 }
 
 /// Marks a loan as defaulted.
-/// TODO: revisit this logic?
 public(package) fun default_loan<Asset>(
     self: &mut MarginPool<Asset>,
     manager_id: ID,

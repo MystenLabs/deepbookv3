@@ -374,10 +374,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
 
-    // If the manager is in default, we should repay as much as we can.
-    // TODO: add default logic here
-    // Repay first. Whatever is left, swap, and then repay?
-
     // Now we check whether we have base or quote loan that needs to be covered. Only one of them can be net negative.
     // TODO: some edge cases here during defaults?
     let net_debt_is_base = base_debt > base_asset; // If true, we have to swap quote to base
@@ -452,9 +448,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         if (base_amount_liquidate > 0) {
             let client_order_id = 0;
             let is_bid = false;
-            let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
-            // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
-            // Alternatively, we can utilize DEEP flash loan.
+            let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
 
             let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
 
@@ -481,9 +475,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         if (quote_amount_liquidate > 0) {
             let client_order_id = 0;
             let is_bid = true;
-            let pay_with_deep = false; // TODO: Should this be customizable? No guarantee to be DEEP in manager however
-            // We have to use input token as fee during, in case there is not enough DEEP in the balance manager.
-            // Alternatively, we can utilize DEEP flash loan.
+            let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
 
             let quote_amount_swap = (balance_manager.balance<QuoteAsset>()).min(
                 quote_amount_liquidate,
@@ -562,6 +554,13 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         user_liquidation_reward_quote,
         ctx,
     );
+
+    let in_default = risk_ratio < constants::float_scaling();
+    if (in_default) {
+        // If the manager is in default, we call the default endpoint
+        base_margin_pool.default_loan(margin_manager.id(), clock);
+        quote_margin_pool.default_loan(margin_manager.id(), clock);
+    };
 
     (user_base_coin, user_quote_coin)
 }
