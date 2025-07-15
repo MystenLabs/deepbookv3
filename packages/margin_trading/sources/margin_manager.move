@@ -374,6 +374,10 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
 
+    // If the manager is in default, we should repay as much as we can.
+    // TODO: add default logic here
+    // Repay first. Whatever is left, swap, and then repay?
+
     // Now we check whether we have base or quote loan that needs to be covered. Only one of them can be net negative.
     // TODO: some edge cases here during defaults?
     let net_debt_is_base = base_debt > base_asset; // If true, we have to swap quote to base
