@@ -86,17 +86,19 @@ public fun default_risk_params(leverage: u64): RiskParams {
     assert!(leverage <= 20_000_000_000, EInvalidRiskParam); // Max 20x leverage
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
+    // 1/(5-1) = 0.11
 
     RiskParams {
-        min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor,
-        min_borrow_risk_ratio: constants::float_scaling() + factor,
-        liquidation_risk_ratio: constants::float_scaling() + factor / 2,
-        target_liquidation_risk_ratio: constants::float_scaling() + factor,
+        min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
+        min_borrow_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
+        liquidation_risk_ratio: constants::float_scaling() + factor / 2, // 1 + 0.125 = 1.125
+        target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
         liquidation_reward: 50_000_000, // TODO: Set another default value. Currently 5%.
     }
 }
 
 /// Updates risk params for the margin pool as the admin.
+/// TODO: should admin be able to increase liquidation_risk_ratio?
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     risk_params: RiskParams,
@@ -109,7 +111,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     assert!(self.risk_params.contains(pair), EPairNotAllowed);
     let prev_risk_params = self.risk_params.remove(pair);
     assert!(
-        prev_risk_params.liquidation_risk_ratio <= risk_params.liquidation_risk_ratio,
+        risk_params.liquidation_risk_ratio <= prev_risk_params.liquidation_risk_ratio,
         EInvalidRiskParam,
     );
 
