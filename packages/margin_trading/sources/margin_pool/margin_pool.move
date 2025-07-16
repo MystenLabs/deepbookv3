@@ -11,9 +11,9 @@ use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Tabl
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
 const ECannotWithdrawMoreThanSupply: u64 = 3;
+const ECannotRepayMoreThanLoan: u64 = 4;
 
 // === Structs ===
-#[allow(unused_field)]
 public struct Loan has drop, store {
     loan_amount: u64, // total loan remaining, including interest
     last_index: u64, // 9 decimals
@@ -104,13 +104,47 @@ public fun withdraw<Asset>(
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
-/// Borrow a loan from the margin pool.
-public fun borrow<Asset>(_self: &mut MarginPool<Asset>) {}
-
-/// Repay a loan.
-public fun repay<Asset>(_self: &mut MarginPool<Asset>) {}
-
 // === Public-Package Functions ===
+/// Allows borrowing from the margin pool. Returns the borrowed coin.
+public(package) fun borrow<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    amount: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    self.state.update(clock);
+    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
+
+    self.update_user_loan(manager_id);
+    self.increase_user_loan(manager_id, amount);
+
+    self.state.increase_total_borrow(amount);
+
+    let balance = self.vault.split(amount);
+    balance.into_coin(ctx)
+}
+
+/// Allows repaying the loan.
+public(package) fun repay<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    coin: Coin<Asset>,
+    clock: &Clock,
+) {
+    self.state.update(clock);
+
+    let repay_amount = coin.value();
+    self.update_user_loan(manager_id);
+    let user_loan = self.user_loan(manager_id);
+    assert!(repay_amount <= user_loan, ECannotRepayMoreThanLoan);
+    self.decrease_user_loan(manager_id, repay_amount);
+    self.state.decrease_total_borrow(repay_amount);
+
+    let balance = coin.into_balance();
+    self.vault.join(balance);
+}
+
 /// Returns the loans table.
 public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
     &self.loans
@@ -174,4 +208,47 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
 
 fun user_supply<Asset>(self: &MarginPool<Asset>, supplier: address): u64 {
     self.supplies.borrow(supplier).supplied_amount
+}
+
+fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
+    self.add_user_loan_entry(manager_id);
+
+    let loan = self.loans.borrow_mut(manager_id);
+    let current_index = self.state.borrow_index();
+    let interest_multiplier = math::div(
+        current_index,
+        loan.last_index,
+    );
+    let new_loan_amount = math::mul(
+        loan.loan_amount,
+        interest_multiplier,
+    );
+    loan.loan_amount = new_loan_amount;
+    loan.last_index = current_index;
+}
+
+fun increase_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
+    let loan = self.loans.borrow_mut(manager_id);
+    loan.loan_amount = loan.loan_amount + amount;
+}
+
+fun decrease_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
+    let loan = self.loans.borrow_mut(manager_id);
+    loan.loan_amount = loan.loan_amount - amount;
+}
+
+fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
+    if (self.loans.contains(manager_id)) {
+        return
+    };
+    let current_index = self.state.borrow_index();
+    let loan = Loan {
+        loan_amount: 0,
+        last_index: current_index,
+    };
+    self.loans.add(manager_id, loan);
+}
+
+fun user_loan<Asset>(self: &MarginPool<Asset>, manager_id: ID): u64 {
+    self.loans.borrow(manager_id).loan_amount
 }
