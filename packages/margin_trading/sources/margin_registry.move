@@ -4,7 +4,6 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
-
 use deepbook::{constants, math};
 use std::type_name::{Self, TypeName};
 use sui::{bag::{Self, Bag}, dynamic_field as df, table::{Self, Table}};

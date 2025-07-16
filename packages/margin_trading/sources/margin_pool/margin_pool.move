@@ -279,7 +279,3 @@ fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     };
     self.loans.add(manager_id, loan);
 }
-
-fun user_loan<Asset>(self: &MarginPool<Asset>, manager_id: ID): u64 {
-    self.loans.borrow(manager_id).loan_amount
-}
