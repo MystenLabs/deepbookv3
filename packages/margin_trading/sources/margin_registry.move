@@ -4,6 +4,8 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
+
+use deepbook::{constants, math};
 use std::type_name::{Self, TypeName};
 use sui::{bag::{Self, Bag}, dynamic_field as df, table::{Self, Table}};
 
@@ -80,8 +82,23 @@ public fun new_risk_params(
     }
 }
 
+public fun default_risk_params(leverage: u64): RiskParams {
+    assert!(leverage > 1_000_000_000, EInvalidRiskParam);
+    assert!(leverage <= 20_000_000_000, EInvalidRiskParam); // Max 20x leverage
+
+    let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
+    // 1/(5-1) = 0.11
+
+    RiskParams {
+        min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
+        min_borrow_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
+        liquidation_risk_ratio: constants::float_scaling() + factor / 2, // 1 + 0.125 = 1.125
+        target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
+        liquidation_reward: 50_000_000, // TODO: Set another default value. Currently 5%.
+    }
+}
+
 /// Updates risk params for the margin pool as the admin.
-/// TODO: maybe liquidation risk ratio can only decrease?
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     risk_params: RiskParams,
@@ -92,7 +109,13 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
         quote: type_name::get<QuoteAsset>(),
     };
     assert!(self.risk_params.contains(pair), EPairNotAllowed);
-    self.risk_params.remove(pair);
+
+    let prev_risk_params = self.risk_params.remove(pair);
+    assert!(
+        risk_params.liquidation_risk_ratio <= prev_risk_params.liquidation_risk_ratio,
+        EInvalidRiskParam,
+    );
+
     self.risk_params.add(pair, risk_params);
 }
 

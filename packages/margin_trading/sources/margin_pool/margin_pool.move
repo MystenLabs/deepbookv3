@@ -128,12 +128,12 @@ public(package) fun borrow<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     self.update_state(clock);
+    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     assert!(amount > 0, EInvalidLoanQuantity);
     self.update_user_loan(manager_id);
     self.increase_user_loan(manager_id, amount);
 
-    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     self.state.increase_total_borrow(amount);
 
     let borrow_percentage = math::div(
@@ -278,4 +278,8 @@ fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
         last_index: current_index,
     };
     self.loans.add(manager_id, loan);
+}
+
+fun user_loan<Asset>(self: &MarginPool<Asset>, manager_id: ID): u64 {
+    self.loans.borrow(manager_id).loan_amount
 }
