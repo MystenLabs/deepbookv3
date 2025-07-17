@@ -98,7 +98,8 @@ public fun default_risk_params(leverage: u64): RiskParams {
         min_borrow_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
         liquidation_risk_ratio: constants::float_scaling() + factor / 2, // 1 + 0.125 = 1.125
         target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
-        liquidation_reward: 50_000_000, // TODO: Set another default value. Currently 5%.
+        user_liquidation_reward: 10_000_000, // TODO: Set another default value. Currently 1%.
+        pool_liquidation_reward: 40_000_000, // TODO: Set another default value. Currently 4%.
     }
 }
 
