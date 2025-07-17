@@ -209,9 +209,9 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 
 /// Destroys the request to borrow or withdraw if risk ratio conditions are met.
 /// This function is called after the borrow or withdraw request is created.
-public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
+public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -222,9 +222,8 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
 
-    let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
+    let risk_ratio = margin_manager.risk_ratio<BaseAsset, QuoteAsset>(
         registry,
-        margin_manager,
         base_margin_pool,
         quote_margin_pool,
         pool,
@@ -254,8 +253,8 @@ public fun risk_ratio_proof<BaseAsset, QuoteAsset>(
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -263,15 +262,13 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): u64 {
-    let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
+    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
-        margin_manager,
         clock,
     );
-    let (base_asset, quote_asset) = margin_manager_asset<BaseAsset, QuoteAsset>(
+    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
-        margin_manager,
     );
 
     let base_usd_debt = calculate_usd_price<BaseAsset>(
@@ -310,8 +307,8 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 
 /// Liquidates a margin manager
 public fun liquidate<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -320,15 +317,13 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let (base_debt, quote_debt) = margin_manager_debt<BaseAsset, QuoteAsset>(
+    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
-        margin_manager,
         clock,
     );
-    let (base_asset, quote_asset) = margin_manager_asset<BaseAsset, QuoteAsset>(
+    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
-        margin_manager,
     );
 
     let base_usd_debt = calculate_usd_price<BaseAsset>(
@@ -359,9 +354,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 9 decimals
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
 
-    let risk_ratio = risk_ratio<BaseAsset, QuoteAsset>(
+    let risk_ratio = margin_manager.risk_ratio<BaseAsset, QuoteAsset>(
         registry,
-        margin_manager,
         base_margin_pool,
         quote_margin_pool,
         pool,
@@ -568,11 +562,8 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
-
-    margin_pool.update_user_loan(manager_id);
-    let user_loan = margin_pool.user_loan(manager_id);
+    let user_loan = margin_pool.user_loan(manager_id, clock);
 
     let repay_amount = repay_amount.get_with_default(user_loan);
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
@@ -612,27 +603,24 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
 }
 
 /// Returns the (base_debt, quote_debt) for the margin manager
-fun margin_manager_debt<BaseAsset, QuoteAsset>(
+fun total_debt<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     clock: &Clock,
 ): (u64, u64) {
-    let base_debt = margin_manager.manager_debt(base_margin_pool, clock);
-    let quote_debt = margin_manager.manager_debt(quote_margin_pool, clock);
+    let base_debt = margin_manager.debt(base_margin_pool, clock);
+    let quote_debt = margin_manager.debt(quote_margin_pool, clock);
 
     (base_debt, quote_debt)
 }
 
-fun manager_debt<BaseAsset, QuoteAsset, Asset>(
+fun debt<BaseAsset, QuoteAsset, Asset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<Asset>,
     clock: &Clock,
 ): u64 {
-    margin_pool.update_state(clock);
-    margin_pool.update_user_loan(margin_manager.id());
-
-    margin_pool.user_loan(margin_manager.id())
+    margin_pool.user_loan(margin_manager.id(), clock)
 }
 
 fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
@@ -655,9 +643,13 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
-    let balance_manager = &mut margin_manager.balance_manager;
+    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
 
-    let coin = balance_manager.withdraw<WithdrawAsset>(
+    let balance_manager = &mut margin_manager.balance_manager;
+    let withdraw_cap = &margin_manager.withdraw_cap;
+
+    let coin = balance_manager.withdraw_with_cap<WithdrawAsset>(
+        withdraw_cap,
         withdraw_amount,
         ctx,
     );
@@ -666,9 +658,9 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 }
 
 /// Returns (base_asset, quote_asset) for margin manager.
-fun margin_manager_asset<BaseAsset, QuoteAsset>(
-    pool: &Pool<BaseAsset, QuoteAsset>,
+fun total_assets<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
 ): (u64, u64) {
     let balance_manager = margin_manager.balance_manager();
     let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
