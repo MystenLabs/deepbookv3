@@ -498,20 +498,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
                 ctx,
             );
         };
-
-        event::emit(LiquidationEvent {
-            margin_manager_id: margin_manager.id(),
-            base_amount: base_amount_liquidate,
-            quote_amount: quote_amount_liquidate,
-            liquidator: ctx.sender(),
-        });
-    } else {
-        event::emit(LiquidationEvent {
-            margin_manager_id: margin_manager.id(),
-            base_amount: 0,
-            quote_amount: 0,
-            liquidator: ctx.sender(),
-        });
     };
 
     // We repay the same loans using the same assets. The amount repaid is returned
@@ -522,6 +508,14 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
+
+    // Emit a liquidation event for the liquidator
+    event::emit(LiquidationEvent {
+        margin_manager_id: margin_manager.id(),
+        base_amount: base_repaid,
+        quote_amount: quote_repaid,
+        liquidator: ctx.sender(),
+    });
 
     // After repayment, the manager should be close to the target risk ratio.
     // We withdraw the liquidation reward for the pool.
