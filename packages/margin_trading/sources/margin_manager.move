@@ -388,6 +388,14 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
 
+    let trade_proof = margin_manager
+        .balance_manager
+        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+
+    let balance_manager = margin_manager.balance_manager_mut();
+    pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
+    pool.withdraw_settled_amounts(balance_manager, &trade_proof);
+
     // We're in scenario 1, 2, or 3 in this if loop.
     let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
         let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
@@ -412,14 +420,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         } else {
             0
         };
-
-        let trade_proof = margin_manager
-            .balance_manager
-            .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-
-        let balance_manager = margin_manager.balance_manager_mut();
-        pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
-        pool.withdraw_settled_amounts(balance_manager, &trade_proof);
 
         if (base_amount_liquidate > 0) {
             let client_order_id = 0;
