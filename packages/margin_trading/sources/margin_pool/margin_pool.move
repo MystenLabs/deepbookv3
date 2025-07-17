@@ -207,6 +207,7 @@ public(package) fun default_loan<Asset>(
 public(package) fun add_liquidation_reward<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
+    manager_id: ID,
     clock: &Clock,
 ) {
     self.update_state(clock);
@@ -221,6 +222,12 @@ public(package) fun add_liquidation_reward<Asset>(
     self.state.increase_total_supply(liquidation_reward);
     self.state.set_supply_index(new_supply_index);
     self.vault.join(coin.into_balance());
+
+    event::emit(PoolLiquidationReward {
+        pool_id: self.id.to_inner(),
+        manager_id,
+        liquidation_reward,
+    });
 }
 
 public(package) fun user_loan<Asset>(
