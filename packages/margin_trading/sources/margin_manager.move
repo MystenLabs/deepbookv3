@@ -25,7 +25,7 @@ use margin_trading::{
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::{Self, Coin}, event};
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
