@@ -280,26 +280,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     abort
 }
 
-/// Unwraps balance manager for trading in deepbook.
-public fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-): &mut BalanceManager {
-    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
-
-    &mut margin_manager.balance_manager
-}
-
-/// Unwraps TradeCap reference for trading in deepbook.
-public fun trade_cap<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-): &TradeCap {
-    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
-
-    &margin_manager.trade_cap
-}
-
 // === Public-Package Functions ===
 public(package) fun balance_manager<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
