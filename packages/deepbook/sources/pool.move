@@ -718,6 +718,18 @@ public fun update_allowed_versions<BaseAsset, QuoteAsset>(
     inner.allowed_versions = allowed_versions;
 }
 
+/// Takes the registry and updates the allowed version within pool
+/// Permissionless equivalent of `update_allowed_versions`
+/// This function does not have version restrictions
+public fun update_pool_allowed_versions<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    registry: &Registry,
+) {
+    let allowed_versions = registry.allowed_versions();
+    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
+    inner.allowed_versions = allowed_versions;
+}
+
 /// Adjust the tick size of the pool. Only admin can adjust the tick size.
 public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
