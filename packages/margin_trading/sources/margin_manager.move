@@ -272,28 +272,28 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     );
 
     let base_usd_debt = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
         registry,
         base_debt,
         clock,
-        base_price_info_object,
     );
     let base_usd_asset = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
         registry,
         base_asset,
         clock,
-        base_price_info_object,
     );
     let quote_usd_debt = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
         registry,
         quote_debt,
         clock,
-        quote_price_info_object,
     );
     let quote_usd_asset = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
         registry,
         quote_asset,
         clock,
-        quote_price_info_object,
     );
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
@@ -327,28 +327,28 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     );
 
     let base_usd_debt = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
         registry,
         base_debt,
         clock,
-        base_price_info_object,
     );
     let base_usd_asset = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
         registry,
         base_asset,
         clock,
-        base_price_info_object,
     );
     let quote_usd_debt = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
         registry,
         quote_debt,
         clock,
-        quote_price_info_object,
     );
     let quote_usd_asset = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
         registry,
         quote_asset,
         clock,
-        quote_price_info_object,
     );
 
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 9 decimals
@@ -393,16 +393,16 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let quote_same_asset_repay = quote_asset.min(quote_debt);
 
     let base_usd_repay = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
         registry,
         base_same_asset_repay,
         clock,
-        base_price_info_object,
     );
     let quote_usd_repay = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
         registry,
         quote_same_asset_repay,
         clock,
-        quote_price_info_object,
     );
 
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
@@ -412,20 +412,20 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
         let quote_amount_liquidate = if (net_debt_is_base) {
             calculate_target_amount<QuoteAsset>(
+                quote_price_info_object,
                 registry,
                 remaining_usd_repay,
                 clock,
-                quote_price_info_object,
             )
         } else {
             0
         };
         let base_amount_liquidate = if (net_debt_is_quote) {
             calculate_target_amount<BaseAsset>(
+                base_price_info_object,
                 registry,
                 remaining_usd_repay,
                 clock,
-                base_price_info_object,
             )
         } else {
             0
