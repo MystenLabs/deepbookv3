@@ -98,7 +98,6 @@ public fun default_risk_params(leverage: u64): RiskParams {
 }
 
 /// Updates risk params for the margin pool as the admin.
-/// TODO: should admin be able to increase liquidation_risk_ratio?
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     risk_params: RiskParams,
@@ -109,6 +108,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
         quote: type_name::get<QuoteAsset>(),
     };
     assert!(self.risk_params.contains(pair), EPairNotAllowed);
+
     let prev_risk_params = self.risk_params.remove(pair);
     assert!(
         risk_params.liquidation_risk_ratio <= prev_risk_params.liquidation_risk_ratio,
