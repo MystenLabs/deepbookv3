@@ -52,6 +52,12 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
     trade_cap: TradeCap,
 }
 
+/// Request_type: 0 for withdraw, 1 for borrow
+public struct Request {
+    margin_manager_id: ID,
+    request_type: u8,
+}
+
 /// Event emitted when a new margin_manager is created.
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
@@ -65,12 +71,6 @@ public struct LiquidationEvent has copy, drop {
     base_amount: u64,
     quote_amount: u64,
     liquidator: address,
-}
-
-/// Request_type: 0 for withdraw, 1 for borrow
-public struct Request {
-    margin_manager_id: ID,
-    request_type: u8,
 }
 
 // === Public Functions - Margin Manager ===
@@ -669,7 +669,7 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     ctx: &mut TxContext,
 ): u64 {
     let manager_id = margin_manager.id();
-    let user_loan = margin_pool.user_loan(manager_id);
+    let user_loan = margin_pool.user_loan(manager_id, clock);
 
     let repay_amount = repay_amount.get_with_default(user_loan);
     let manager_asset = margin_manager.balance_manager().balance<RepayAsset>();

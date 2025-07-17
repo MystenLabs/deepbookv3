@@ -164,10 +164,7 @@ public(package) fun default_loan<Asset>(
     manager_id: ID,
     clock: &Clock,
 ) {
-    self.update_state(clock);
-    self.update_user_loan(manager_id);
-
-    let user_loan = self.user_loan(manager_id);
+    let user_loan = self.user_loan(manager_id, clock);
     self.decrease_user_loan(manager_id, user_loan);
     self.state.decrease_total_borrow(user_loan);
 
@@ -202,22 +199,6 @@ public(package) fun add_liquidation_reward<Asset>(
     self.vault.join(coin.into_balance());
 }
 
-public(package) fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
-    self.add_user_loan_entry(manager_id);
-
-    let loan = self.loans.borrow_mut(manager_id);
-    let current_index = self.state.borrow_index();
-    let interest_multiplier = math::div(
-        current_index,
-        loan.last_index,
-    );
-    let new_loan_amount = math::mul(
-        loan.loan_amount,
-        interest_multiplier,
-    );
-    loan.loan_amount = new_loan_amount;
-    loan.last_index = current_index;
-}
 public(package) fun user_loan<Asset>(
     self: &mut MarginPool<Asset>,
     manager_id: ID,
