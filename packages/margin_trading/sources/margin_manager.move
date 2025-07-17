@@ -253,16 +253,56 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
-    _margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    _registry: &MarginRegistry,
-    _base_margin_pool: &mut MarginPool<BaseAsset>,
-    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    _pool: &Pool<BaseAsset, QuoteAsset>,
-    _base_price_info_object: &PriceInfoObject,
-    _quote_price_info_object: &PriceInfoObject,
-    _clock: &Clock,
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
 ): u64 {
-    abort
+    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
+        pool,
+    );
+
+    let base_usd_debt = calculate_usd_price<BaseAsset>(
+        registry,
+        base_debt,
+        clock,
+        base_price_info_object,
+    );
+    let base_usd_asset = calculate_usd_price<BaseAsset>(
+        registry,
+        base_asset,
+        clock,
+        base_price_info_object,
+    );
+    let quote_usd_debt = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_debt,
+        clock,
+        quote_price_info_object,
+    );
+    let quote_usd_asset = calculate_usd_price<QuoteAsset>(
+        registry,
+        quote_asset,
+        clock,
+        quote_price_info_object,
+    );
+    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
+    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
+
+    if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
+        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
+    } else {
+        math::div(total_usd_asset, total_usd_debt) // 9 decimals
+    }
 }
 
 /// Liquidates a margin manager
@@ -476,18 +516,31 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
     let pool_liquidation_reward_base = math::mul(pool_liquidation_reward, base_repaid);
-    let pool_base_coin = margin_manager.liquidation_withdraw_base(
-        pool_liquidation_reward_base,
-        ctx,
-    );
     let pool_liquidation_reward_quote = math::mul(pool_liquidation_reward, quote_repaid);
-    let pool_quote_coin = margin_manager.liquidation_withdraw_quote(
-        pool_liquidation_reward_quote,
-        ctx,
-    );
 
-    base_margin_pool.add_liquidation_reward<BaseAsset>(pool_base_coin, clock);
-    quote_margin_pool.add_liquidation_reward<QuoteAsset>(pool_quote_coin, clock);
+    if (pool_liquidation_reward_base > 0) {
+        let pool_base_coin = margin_manager.liquidation_withdraw_base(
+            pool_liquidation_reward_base,
+            ctx,
+        );
+        base_margin_pool.add_liquidation_reward<BaseAsset>(
+            pool_base_coin,
+            margin_manager.id(),
+            clock,
+        );
+    };
+
+    if (pool_liquidation_reward_quote > 0) {
+        let pool_quote_coin = margin_manager.liquidation_withdraw_quote(
+            pool_liquidation_reward_quote,
+            ctx,
+        );
+        quote_margin_pool.add_liquidation_reward<QuoteAsset>(
+            pool_quote_coin,
+            margin_manager.id(),
+            clock,
+        );
+    };
 
     // We can withdraw the liquidation reward for the user.
     // Liquidation reward is a percentage of the amount repaid.
@@ -771,15 +824,13 @@ fun repay_all_liquidation<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64) {
-    let base_repaid = repay_base_liquidate(
-        margin_manager,
+    let base_repaid = margin_manager.repay_base_liquidate(
         base_margin_pool,
         margin_registry,
         clock,
         ctx,
     );
-    let quote_repaid = repay_quote_liquidate(
-        margin_manager,
+    let quote_repaid = margin_manager.repay_quote_liquidate(
         quote_margin_pool,
         margin_registry,
         clock,

@@ -5,7 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -34,6 +34,18 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
+}
+
+public struct LoanDefault has copy, drop {
+    pool_id: ID,
+    manager_id: ID, // id of the margin manager
+    loan_amount: u64, // amount of the loan that was defaulted
+}
+
+public struct PoolLiquidationReward has copy, drop {
+    pool_id: ID,
+    manager_id: ID, // id of the margin manager
+    liquidation_reward: u64, // amount of the liquidation reward
 }
 
 // === Public Functions * ADMIN * ===
@@ -165,6 +177,12 @@ public(package) fun default_loan<Asset>(
     clock: &Clock,
 ) {
     let user_loan = self.user_loan(manager_id, clock);
+
+    // No loan to default
+    if (user_loan == 0) {
+        return
+    };
+
     self.decrease_user_loan(manager_id, user_loan);
     self.state.decrease_total_borrow(user_loan);
 
@@ -177,6 +195,12 @@ public(package) fun default_loan<Asset>(
 
     self.state.decrease_total_supply(user_loan);
     self.state.set_supply_index(new_supply_index);
+
+    event::emit(LoanDefault {
+        pool_id: self.id.to_inner(),
+        manager_id,
+        loan_amount: user_loan,
+    });
 }
 
 /// Adds rewards in liquidation back to the protocol
