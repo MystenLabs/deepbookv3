@@ -253,56 +253,16 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    clock: &Clock,
+    _margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    _registry: &MarginRegistry,
+    _base_margin_pool: &mut MarginPool<BaseAsset>,
+    _quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_price_info_object: &PriceInfoObject,
+    _quote_price_info_object: &PriceInfoObject,
+    _clock: &Clock,
 ): u64 {
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
-
-    let base_usd_debt = calculate_usd_price<BaseAsset>(
-        registry,
-        base_debt,
-        clock,
-        base_price_info_object,
-    );
-    let base_usd_asset = calculate_usd_price<BaseAsset>(
-        registry,
-        base_asset,
-        clock,
-        base_price_info_object,
-    );
-    let quote_usd_debt = calculate_usd_price<QuoteAsset>(
-        registry,
-        quote_debt,
-        clock,
-        quote_price_info_object,
-    );
-    let quote_usd_asset = calculate_usd_price<QuoteAsset>(
-        registry,
-        quote_asset,
-        clock,
-        quote_price_info_object,
-    );
-    let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
-    let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
-
-    if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
-        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
-    } else {
-        math::div(total_usd_asset, total_usd_debt) // 9 decimals
-    }
+    abort
 }
 
 /// Liquidates a margin manager
