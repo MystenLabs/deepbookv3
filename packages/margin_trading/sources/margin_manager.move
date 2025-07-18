@@ -12,8 +12,7 @@ use deepbook::{
         BalanceManager,
         TradeCap,
         DepositCap,
-        WithdrawCap,
-        TradeProof
+        WithdrawCap
     },
     constants,
     math,
