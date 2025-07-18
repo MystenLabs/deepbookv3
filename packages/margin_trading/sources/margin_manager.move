@@ -37,6 +37,7 @@ const EBorrowRiskRatioExceeded: u64 = 5;
 const EWithdrawRiskRatioExceeded: u64 = 6;
 const ECannotLiquidate: u64 = 8;
 const EInvalidMarginManagerOwner: u64 = 9;
+const ECannotStakeWithDeepMarginManager: u64 = 10;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -460,6 +461,14 @@ public fun stake<BaseAsset, QuoteAsset>(
     amount: u64,
     ctx: &TxContext,
 ) {
+    let base_asset_type = type_name::get<BaseAsset>();
+    let quote_asset_type = type_name::get<QuoteAsset>();
+    let deep_asset_type = type_name::get<DEEP>();
+    assert!(
+        base_asset_type != deep_asset_type && quote_asset_type != deep_asset_type,
+        ECannotStakeWithDeepMarginManager,
+    );
+
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
