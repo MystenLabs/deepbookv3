@@ -12,7 +12,8 @@ use deepbook::{
         BalanceManager,
         TradeCap,
         DepositCap,
-        WithdrawCap
+        WithdrawCap,
+        TradeProof
     },
     constants,
     math,
@@ -578,6 +579,14 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
 
     &mut margin_manager.balance_manager
+}
+
+/// Unwraps balance manager for trading in deepbook.
+public(package) fun trade_proof<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+): TradeProof {
+    margin_manager.balance_manager.generate_proof_as_trader(&margin_manager.trade_cap, ctx)
 }
 
 public(package) fun id<BaseAsset, QuoteAsset>(
