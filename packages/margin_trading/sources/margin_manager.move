@@ -17,7 +17,6 @@ use deepbook::{
     },
     constants,
     math,
-    order_info::OrderInfo,
     pool::Pool
 };
 use margin_trading::{
