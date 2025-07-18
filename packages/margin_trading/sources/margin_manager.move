@@ -397,8 +397,21 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
     pool.withdraw_settled_amounts(balance_manager, &trade_proof);
 
-    // We're in scenario 1, 2, or 3 in this if loop.
-    let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
+    let (base_repaid, quote_repaid) = if (net_debt_is_base && net_debt_is_quote) {
+        // We're in scenario 3 in this if loop.
+        // Both base and quote are in net debt, just repay using same assets then default logic will follow at end of function.
+        // We repay the same loans using the same assets. The amount repaid is returned
+        margin_manager.repay_all_liquidation(
+            base_margin_pool,
+            quote_margin_pool,
+            registry,
+            option::none(),
+            option::none(),
+            clock,
+            ctx,
+        )
+    } else if (same_asset_usd_repay < usd_amount_to_repay) {
+        // We're in scenario 1 or 2 in this if loop.
         let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
 
         let quote_amount_liquidate = if (net_debt_is_base) {
@@ -487,8 +500,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             ctx,
         )
     } else {
-        // usd_amount_to_repay / total_usd_debt, this is the proportion of base and quote user needs to repay
         // We're in scenario 4, we can repay each asset proportionally to the amount of debt.
+        // usd_amount_to_repay / total_usd_debt, this is the proportion of base and quote user needs to repay
         // Max base repay is base_debt * (usd_amount_to_repay / total_usd_debt)
         // Max quote repay is quote_debt * (usd_amount_to_repay / total_usd_debt)
 
