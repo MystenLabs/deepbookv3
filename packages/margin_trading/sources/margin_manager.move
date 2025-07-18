@@ -301,7 +301,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.place_limit_order(
         balance_manager,
@@ -334,7 +334,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.place_market_order(
         balance_manager,
@@ -361,7 +361,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.modify_order(
         balance_manager,
@@ -384,7 +384,7 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.cancel_order(
         balance_manager,
@@ -406,7 +406,7 @@ public fun cancel_orders<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.cancel_orders(
         balance_manager,
@@ -427,7 +427,7 @@ public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.cancel_all_orders(
         balance_manager,
@@ -446,7 +446,7 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.withdraw_settled_amounts(
         balance_manager,
@@ -464,7 +464,7 @@ public fun stake<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.stake(
         balance_manager,
@@ -483,7 +483,7 @@ public fun unstake<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.unstake(
         balance_manager,
@@ -504,7 +504,7 @@ public fun submit_proposal<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.submit_proposal(
         balance_manager,
@@ -526,7 +526,7 @@ public fun vote<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.vote(
         balance_manager,
@@ -544,7 +544,7 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
-    let balance_manager = margin_manager.balance_manager_mut();
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.claim_rebates(balance_manager, &trade_proof, ctx);
 }
