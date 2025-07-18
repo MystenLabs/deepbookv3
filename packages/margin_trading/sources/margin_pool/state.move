@@ -12,6 +12,7 @@ public struct State has drop, store {
     total_borrow: u64,
     supply_index: u64,
     borrow_index: u64,
+    protocol_profit: u64,
     last_index_update_timestamp: u64,
 }
 
@@ -21,13 +22,14 @@ public(package) fun default(clock: &Clock): State {
         total_borrow: 0,
         supply_index: 1_000_000_000,
         borrow_index: 1_000_000_000,
+        protocol_profit: 0,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
 
 // === Public-Package Functions ===
 /// Updates the index for the margin pool.
-public(package) fun update(self: &mut State, clock: &Clock) {
+public(package) fun update(self: &mut State, protocol_spread: u64, clock: &Clock) {
     let current_timestamp = clock.timestamp_ms();
     let ms_elapsed = current_timestamp - self.last_index_update_timestamp;
     let interest_rate = self.interest_rate();
@@ -35,9 +37,16 @@ public(package) fun update(self: &mut State, clock: &Clock) {
         math::mul(ms_elapsed, interest_rate),
         YEAR_MS,
     );
-    let interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
-    let new_supply = self.total_supply + interest_accrued;
-    let new_borrow = self.total_borrow + interest_accrued;
+    let total_interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
+    let protocol_profit_accrued = math::mul(
+        total_interest_accrued,
+        protocol_spread,
+    );
+    self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
+
+    let supply_interest_accrued = total_interest_accrued - protocol_profit_accrued;
+    let new_supply = self.total_supply + supply_interest_accrued;
+    let new_borrow = self.total_borrow + total_interest_accrued;
     let new_supply_index = math::mul(
         self.supply_index,
         math::div(new_supply, self.total_supply),
@@ -90,6 +99,13 @@ public(package) fun increase_total_borrow(self: &mut State, amount: u64) {
 
 public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
     self.total_borrow = self.total_borrow - amount;
+}
+
+public(package) fun reset_protocol_profit(self: &mut State): u64 {
+    let profit = self.protocol_profit;
+    self.protocol_profit = 0;
+
+    profit
 }
 
 public(package) fun total_supply(self: &State): u64 {

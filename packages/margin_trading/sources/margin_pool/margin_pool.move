@@ -14,6 +14,8 @@ const ECannotWithdrawMoreThanSupply: u64 = 3;
 const ECannotRepayMoreThanLoan: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
+const EInvalidMaxBorrow: u64 = 7;
+const EInvalidProtocolSpread: u64 = 8;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -33,6 +35,7 @@ public struct MarginPool<phantom Asset> has key, store {
     supplies: Table<address, Supply>, // maps address id to deposits
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
+    protocol_spread: u64, // protocol spread in 9 decimals
     state: State,
 }
 
@@ -52,6 +55,7 @@ public fun create_margin_pool<Asset>(
         supplies: table::new(ctx),
         supply_cap,
         max_borrow_percentage,
+        protocol_spread: 0,
         state: margin_state::default(clock),
     };
 
@@ -73,7 +77,30 @@ public fun update_max_borrow_percentage<Asset>(
     max_borrow_percentage: u64,
     _cap: &MarginAdminCap,
 ) {
+    assert!(max_borrow_percentage <= 1_000_000_000, EInvalidMaxBorrow);
     pool.max_borrow_percentage = max_borrow_percentage;
+}
+
+/// Updates the protocol spread for the margin pool as the admin.
+public fun update_protocol_spread<Asset>(
+    pool: &mut MarginPool<Asset>,
+    protocol_spread: u64,
+    _cap: &MarginAdminCap,
+) {
+    assert!(protocol_spread <= 1_000_000_000, EInvalidProtocolSpread);
+    pool.protocol_spread = protocol_spread;
+}
+
+/// Withdraws the protocol profit from the margin pool as the admin.
+public fun withdraw_protocol_profit<Asset>(
+    pool: &mut MarginPool<Asset>,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    let profit = pool.state.reset_protocol_profit();
+    let balance = pool.vault.split(profit);
+
+    balance.into_coin(ctx)
 }
 
 // === Public Functions * LENDING * ===
@@ -192,7 +219,7 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
 // === Internal Functions ===
 /// Updates the state
 fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    self.state.update(clock);
+    self.state.update(self.protocol_spread, clock);
 }
 
 /// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
