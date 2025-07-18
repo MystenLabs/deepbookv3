@@ -348,7 +348,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Now we check whether we have base or quote loan that needs to be covered.
     // Scenario 1: net debt is base, we have to swap quote to base
     // Scenario 2: net debt is quote, we have to swap base to quote
-    // Scenario 3: both assets are in net debt, therefore in default. (harder)
+    // Scenario 3: both assets are in net debt, therefore in default. (harder, WIP)
     // Scenario 4: both assets are net positive. We don't have to swap, just have to repay the loans using same assets.
     let net_debt_is_base = base_debt > base_asset; // If true, we have to swap quote to base
     let net_debt_is_quote = quote_debt > quote_asset; // If true, we have to swap base to quote
@@ -388,6 +388,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
 
+    // TODO: update this to use the new proof generation method
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
@@ -513,9 +514,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         liquidator: ctx.sender(),
     });
 
-    // After repayment, the manager should be close to the target risk ratio.
+    // After repayment, the manager should be close to the target risk ratio (some slippage, but should be close).
     // We withdraw the liquidation reward for the pool.
-
     let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
     let pool_liquidation_reward_base = math::mul(pool_liquidation_reward, base_repaid);
     let pool_liquidation_reward_quote = math::mul(pool_liquidation_reward, quote_repaid);
@@ -560,6 +560,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let in_default = risk_ratio < constants::float_scaling();
     if (in_default) {
+        // TODO: should we check the risk ratio again? If the initial check is < 1, new risk ratio should be < 1 as well.
         // If the manager is in default, we call the default endpoint
         base_margin_pool.default_loan(margin_manager.id(), clock);
         quote_margin_pool.default_loan(margin_manager.id(), clock);
