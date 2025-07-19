@@ -43,7 +43,7 @@ expression: rows
     "deposit": true
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m3",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m5",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
@@ -56,7 +56,7 @@ expression: rows
     "deposit": false
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m4",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m6",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
@@ -67,32 +67,6 @@ expression: rows
     "asset": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
     "amount": 55847000,
     "deposit": false
-  },
-  {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m5",
-    "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
-    "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
-    "checkpoint": 100000177,
-    "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": 1736510411558,
-    "package": "",
-    "balance_manager_id": "0xab9f57591f29313ba1d45a0fd5a23ecc6f6975d60aeced7fa7ed1c58b084e9a9",
-    "asset": "deeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
-    "amount": 0,
-    "deposit": false
-  },
-  {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m6",
-    "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
-    "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
-    "checkpoint": 100000177,
-    "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": 1736510411558,
-    "package": "",
-    "balance_manager_id": "0xc8e754c3c0753664d995aa91e244ed89fcb3587b0a913c76f3f71f2521d2a1bc",
-    "asset": "deeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
-    "amount": 0,
-    "deposit": true
   },
   {
     "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m7",
@@ -102,13 +76,13 @@ expression: rows
     "timestamp": "1970-01-01 00:00:00.000000",
     "checkpoint_timestamp_ms": 1736510411558,
     "package": "",
-    "balance_manager_id": "0xc8e754c3c0753664d995aa91e244ed89fcb3587b0a913c76f3f71f2521d2a1bc",
-    "asset": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
-    "amount": 55847000,
-    "deposit": true
+    "balance_manager_id": "0xab9f57591f29313ba1d45a0fd5a23ecc6f6975d60aeced7fa7ed1c58b084e9a9",
+    "asset": "deeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
+    "amount": 0,
+    "deposit": false
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m8",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m10",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
@@ -121,7 +95,33 @@ expression: rows
     "deposit": true
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m9",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m11",
+    "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
+    "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
+    "checkpoint": 100000177,
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": 1736510411558,
+    "package": "",
+    "balance_manager_id": "0xc8e754c3c0753664d995aa91e244ed89fcb3587b0a913c76f3f71f2521d2a1bc",
+    "asset": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+    "amount": 55847000,
+    "deposit": true
+  },
+  {
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m12",
+    "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
+    "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
+    "checkpoint": 100000177,
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": 1736510411558,
+    "package": "",
+    "balance_manager_id": "0xc8e754c3c0753664d995aa91e244ed89fcb3587b0a913c76f3f71f2521d2a1bc",
+    "asset": "deeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
+    "amount": 0,
+    "deposit": true
+  },
+  {
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m15",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
@@ -134,7 +134,7 @@ expression: rows
     "deposit": false
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m10",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m16",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
@@ -147,7 +147,7 @@ expression: rows
     "deposit": false
   },
   {
-    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m11",
+    "event_digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m17",
     "digest": "9AeQ2ApuPBCuR4mAAwFhz8phfWnVpKs7S81KBDe89M7m",
     "sender": "0xdb2fabc66becb36d269f6e9a78c0279761a08f1a50a55c2c9f6071a4bac9cc66",
     "checkpoint": 100000177,
