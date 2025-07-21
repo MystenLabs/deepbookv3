@@ -387,6 +387,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
 
+    // Step 3: Trade execution and repayment
     // TODO: update this to use the new proof generation method
     let trade_proof = margin_manager
         .balance_manager
@@ -526,6 +527,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         liquidator: ctx.sender(),
     });
 
+    // Step 4: Liquidation rewards based on amount repaid.
     // After repayment, the manager should be close to the target risk ratio (some slippage, but should be close).
     // We withdraw the liquidation reward for the pool.
     let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
