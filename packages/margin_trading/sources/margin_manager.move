@@ -348,6 +348,9 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     assert!(registry.can_liquidate<BaseAsset, QuoteAsset>(risk_ratio), ECannotLiquidate);
 
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
+    let total_liquidation_reward =
+        registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
+        registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
     // Now we check whether we have base or quote loan that needs to be covered.
@@ -362,10 +365,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - 1)
     let usd_amount_to_repay = math::div(
         (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
-        (
-            target_ratio - (constants::float_scaling() + registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
-        registry.pool_liquidation_reward<BaseAsset, QuoteAsset>()),
-        ),
+        (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
     );
 
     let base_same_asset_repay = base_asset.min(base_debt);
@@ -415,21 +415,27 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
 
         let quote_amount_liquidate = if (net_debt_is_base) {
-            calculate_target_amount<QuoteAsset>(
-                quote_price_info_object,
-                registry,
-                remaining_usd_repay,
-                clock,
+            math::mul(
+                constants::float_scaling() + total_liquidation_reward,
+                calculate_target_amount<QuoteAsset>(
+                    quote_price_info_object,
+                    registry,
+                    remaining_usd_repay,
+                    clock,
+                ),
             )
         } else {
             0
         };
         let base_amount_liquidate = if (net_debt_is_quote) {
-            calculate_target_amount<BaseAsset>(
-                base_price_info_object,
-                registry,
-                remaining_usd_repay,
-                clock,
+            math::mul(
+                constants::float_scaling() + total_liquidation_reward,
+                calculate_target_amount<BaseAsset>(
+                    base_price_info_object,
+                    registry,
+                    remaining_usd_repay,
+                    clock,
+                ),
             )
         } else {
             0
