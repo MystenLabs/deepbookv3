@@ -75,6 +75,10 @@ public fun new_risk_params(
     assert!(user_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
     assert!(pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
     assert!(user_liquidation_reward + pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+    assert!(
+        target_liquidation_risk_ratio > 1_000_000_000 + user_liquidation_reward + pool_liquidation_reward,
+        EInvalidRiskParam,
+    );
 
     RiskParams {
         min_withdraw_risk_ratio,
@@ -88,18 +92,19 @@ public fun new_risk_params(
 
 public fun default_risk_params(leverage: u64): RiskParams {
     assert!(leverage > 1_000_000_000, EInvalidRiskParam);
-    assert!(leverage <= 20_000_000_000, EInvalidRiskParam); // Max 20x leverage
+    assert!(leverage <= 10_000_000_000, EInvalidRiskParam); // Max 10x leverage
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
-    // 1/(5-1) = 0.11
+    let user_liquidation_reward = 10_000_000;
+    let pool_liquidation_reward = 40_000_000;
 
     RiskParams {
         min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
         min_borrow_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
         liquidation_risk_ratio: constants::float_scaling() + factor / 2, // 1 + 0.125 = 1.125
         target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
-        user_liquidation_reward: 10_000_000, // TODO: Set another default value. Currently 1%.
-        pool_liquidation_reward: 40_000_000, // TODO: Set another default value. Currently 4%.
+        user_liquidation_reward,
+        pool_liquidation_reward,
     }
 }
 
