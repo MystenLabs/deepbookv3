@@ -5,6 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math};
+use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
 use sui::{bag::{Self, Bag}, dynamic_field as df, table::{Self, Table}};
 
@@ -95,8 +96,8 @@ public fun default_risk_params(leverage: u64): RiskParams {
     assert!(leverage <= 10_000_000_000, EInvalidRiskParam); // Max 10x leverage
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
-    let user_liquidation_reward = 10_000_000;
-    let pool_liquidation_reward = 40_000_000;
+    let user_liquidation_reward = margin_constants::default_user_liquidation_reward();
+    let pool_liquidation_reward = margin_constants::default_pool_liquidation_reward();
 
     RiskParams {
         min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
