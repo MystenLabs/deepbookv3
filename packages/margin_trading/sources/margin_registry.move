@@ -274,3 +274,22 @@ public(package) fun pool_liquidation_reward<BaseAsset, QuoteAsset>(self: &Margin
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
     self.id.borrow(ConfigKey<Config> {})
 }
+
+#[test_only]
+public fun margin_registry_for_testing(ctx: &mut TxContext): ID {
+    let registry = MarginRegistry {
+        id: object::new(ctx),
+        margin_pools: bag::new(ctx),
+        risk_params: table::new(ctx),
+    };
+
+    let id = object::id(&registry);
+    transfer::share_object(registry);
+
+    id
+}
+
+#[test_only]
+public fun get_margin_admin_cap_for_testing(ctx: &mut TxContext): MarginAdminCap {
+    MarginAdminCap { id: object::new(ctx) }
+}
