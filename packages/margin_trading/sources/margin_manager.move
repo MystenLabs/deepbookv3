@@ -362,7 +362,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let net_debt_is_quote = quote_debt > quote_asset; // If true, we have to swap base to quote
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
-    // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - 1)
+    // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
     let usd_amount_to_repay = math::div(
         (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
         (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
