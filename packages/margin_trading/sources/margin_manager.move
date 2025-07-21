@@ -19,6 +19,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
+    margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
     oracle::{calculate_usd_price, calculate_target_amount, calculate_asset_debt_usd_price}
@@ -288,9 +289,10 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 6 decimals
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
+    let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
 
-    if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
-        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
+    if (total_usd_debt == 0 || total_usd_asset > max_risk_ratio) {
+        max_risk_ratio
     } else {
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
     }
@@ -334,9 +336,10 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 9 decimals
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
+    let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
 
-    let risk_ratio = if (total_usd_debt == 0 || total_usd_asset > 1000 * total_usd_debt) {
-        1000 * constants::float_scaling() // 9 decimals, risk ratio above 1000 will be considered as 1000
+    let risk_ratio = if (total_usd_debt == 0 || total_usd_asset > max_risk_ratio) {
+        max_risk_ratio
     } else {
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
     };
