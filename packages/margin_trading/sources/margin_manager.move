@@ -60,12 +60,17 @@ public struct Request {
     request_type: u8,
 }
 
+public struct AssetInfo has drop, store {
+    asset: u64,
+    debt: u64,
+    usd_asset: u64,
+    usd_debt: u64,
+}
+
 public struct ManagerInfo has drop, store {
-    base_asset: u64,
-    quote_asset: u64,
-    deep_asset: u64,
-    base_debt: u64,
-    quote_debt: u64,
+    base: AssetInfo,
+    quote: AssetInfo,
+    risk_ratio: u64, // 9 decimals
 }
 
 /// Event emitted when a new margin_manager is created.
@@ -252,15 +257,17 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
 
-    let risk_ratio = margin_manager.risk_ratio<BaseAsset, QuoteAsset>(
-        registry,
-        base_margin_pool,
-        quote_margin_pool,
-        pool,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
-    );
+    let risk_ratio = margin_manager
+        .manager_info<BaseAsset, QuoteAsset>(
+            registry,
+            base_margin_pool,
+            quote_margin_pool,
+            pool,
+            base_price_info_object,
+            quote_price_info_object,
+            clock,
+        )
+        .risk_ratio;
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow<BaseAsset, QuoteAsset>(risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
@@ -282,7 +289,8 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
 /// Risk ratio between 1.1 and 1.25 allows for trading only
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
-public fun risk_ratio<BaseAsset, QuoteAsset>(
+/// TODO: Add a read only accessor for ManagerInfo
+public fun manager_info<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
@@ -291,7 +299,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
-): u64 {
+): ManagerInfo {
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -328,7 +336,21 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
     };
 
-    risk_ratio
+    ManagerInfo {
+        base: AssetInfo {
+            asset: base_asset,
+            debt: base_debt,
+            usd_asset: base_usd_asset,
+            usd_debt: base_usd_debt,
+        },
+        quote: AssetInfo {
+            asset: quote_asset,
+            debt: quote_debt,
+            usd_asset: quote_usd_asset,
+            usd_debt: quote_usd_debt,
+        },
+        risk_ratio,
+    }
 }
 
 /// Liquidates a margin manager
@@ -343,45 +365,22 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    // Step 1: We gather the assets and debt for the manager. Use the oracle to calculate the risk ratio.
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
+    let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
+        registry,
         base_margin_pool,
         quote_margin_pool,
-        clock,
-    );
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
-    );
-
-    let (base_usd_asset, base_usd_debt) = calculate_asset_debt_usd_price<BaseAsset>(
         base_price_info_object,
-        registry,
-        base_asset,
-        base_debt,
-        clock,
-    );
-    let (quote_usd_asset, quote_usd_debt) = calculate_asset_debt_usd_price<QuoteAsset>(
         quote_price_info_object,
-        registry,
-        quote_asset,
-        quote_debt,
         clock,
     );
+    let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
+    let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
 
-    let total_usd_asset = base_usd_asset + quote_usd_asset; // 9 decimals
-    let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
-    let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
-
-    // If the risk ratio is above the max risk ratio, we will set it to the maximum.
-    let risk_ratio = if (
-        total_usd_debt == 0 || total_usd_asset > math::mul(total_usd_debt, max_risk_ratio)
-    ) {
-        max_risk_ratio
-    } else {
-        math::div(total_usd_asset, total_usd_debt) // 9 decimals
-    };
-
-    assert!(registry.can_liquidate<BaseAsset, QuoteAsset>(risk_ratio), ECannotLiquidate);
+    assert!(
+        registry.can_liquidate<BaseAsset, QuoteAsset>(manager_info.risk_ratio),
+        ECannotLiquidate,
+    );
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
@@ -392,7 +391,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Now we check whether we have base or quote loan that needs to be covered.
     // Scenario 1: debt is in base asset.
     // Scenario 2: debt is in quote asset.
-    let debt_is_base = base_debt > 0; // If true, we have to swap quote to base. Otherwise, we swap base to quote.
+    let debt_is_base = manager_info.base.debt > 0; // If true, we have to swap quote to base. Otherwise, we swap base to quote.
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
     // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
@@ -401,8 +400,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
     );
 
-    let base_same_asset_repay = base_asset.min(base_debt);
-    let quote_same_asset_repay = quote_asset.min(quote_debt);
+    let base_same_asset_repay = manager_info.base.asset.min(manager_info.base.debt);
+    let quote_same_asset_repay = manager_info.quote.asset.min(manager_info.quote.debt);
 
     let base_usd_repay = if (base_same_asset_repay > 0) {
         calculate_usd_price<BaseAsset>(
@@ -550,8 +549,14 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         )
     } else {
         // Just repaying using existing assets without swaps is enough to bring the risk ratio to target.
-        let max_base_repay = math::mul(base_debt, math::div(usd_amount_to_repay, total_usd_debt));
-        let max_quote_repay = math::mul(quote_debt, math::div(usd_amount_to_repay, total_usd_debt));
+        let max_base_repay = math::mul(
+            manager_info.base.debt,
+            math::div(usd_amount_to_repay, total_usd_debt),
+        );
+        let max_quote_repay = math::mul(
+            manager_info.quote.debt,
+            math::div(usd_amount_to_repay, total_usd_debt),
+        );
 
         margin_manager.repay_all_liquidation(
             base_margin_pool,
@@ -617,7 +622,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    let in_default = risk_ratio < constants::float_scaling();
+    let in_default = manager_info.risk_ratio < constants::float_scaling();
     if (in_default) {
         // TODO: should we check the risk ratio again? If the initial check is < 1, new risk ratio should be < 1 as well.
         // If the manager is in default, we call the default endpoint
