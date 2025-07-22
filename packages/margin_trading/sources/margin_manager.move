@@ -360,6 +360,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
     let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
 
+    // If the risk ratio is above the max risk ratio, we will set it to the maximum.
     let risk_ratio = if (
         total_usd_debt == 0 || total_usd_asset > math::mul(total_usd_debt, max_risk_ratio)
     ) {
@@ -370,18 +371,16 @@ public fun liquidate<BaseAsset, QuoteAsset>(
 
     assert!(registry.can_liquidate<BaseAsset, QuoteAsset>(risk_ratio), ECannotLiquidate);
 
+    // Step 2: We calculate how much needs to be sold (if any), and repaid.
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
     let total_liquidation_reward =
         registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
         registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
 
-    // Step 2: We calculate how much needs to be sold (if any), and repaid.
     // Now we check whether we have base or quote loan that needs to be covered.
-    // Scenario 1: net debt is base, we have to swap quote to base
-    // Scenario 2: net debt is quote, we have to swap base to quote
-    // Scenario 3: both assets are net positive. We don't have to swap, just have to repay the loans using same assets.
-    let net_debt_is_base = base_debt > base_asset; // If true, we have to swap quote to base
-    let net_debt_is_quote = quote_debt > quote_asset; // If true, we have to swap base to quote
+    // Scenario 1: debt is in base asset.
+    // Scenario 2: debt is in quote asset.
+    let debt_is_base = base_debt > 0; // If true, we have to swap quote to base. Otherwise, we swap base to quote.
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
     // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
@@ -393,18 +392,26 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let base_same_asset_repay = base_asset.min(base_debt);
     let quote_same_asset_repay = quote_asset.min(quote_debt);
 
-    let base_usd_repay = calculate_usd_price<BaseAsset>(
-        base_price_info_object,
-        registry,
-        base_same_asset_repay,
-        clock,
-    );
-    let quote_usd_repay = calculate_usd_price<QuoteAsset>(
-        quote_price_info_object,
-        registry,
-        quote_same_asset_repay,
-        clock,
-    );
+    let base_usd_repay = if (base_same_asset_repay > 0) {
+        calculate_usd_price<BaseAsset>(
+            base_price_info_object,
+            registry,
+            base_same_asset_repay,
+            clock,
+        )
+    } else {
+        0
+    };
+    let quote_usd_repay = if (quote_same_asset_repay > 0) {
+        calculate_usd_price<QuoteAsset>(
+            quote_price_info_object,
+            registry,
+            quote_same_asset_repay,
+            clock,
+        )
+    } else {
+        0
+    };
 
     // Simply repaying the loan using same assets will be enough to cover the liquidation.
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
@@ -419,70 +426,47 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
     pool.withdraw_settled_amounts(balance_manager, &trade_proof);
 
+    // If the current asset is not enough to cover repayment, we need to swap.
     let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
-        // We're in scenario 1 or 2 in this if loop.
-        let remaining_usd_repay = usd_amount_to_repay - same_asset_usd_repay;
+        let (taker_fee, _, _) = pool.pool_trade_params();
+        // Assume taker fee is 1%. We apply the 1.25 multiplier to make it 1.25%, since we're paying in input token.
+        let penalty_taker_fee = math::mul(
+            constants::fee_penalty_multiplier(),
+            taker_fee,
+        );
 
-        let quote_amount_liquidate = if (net_debt_is_base) {
-            math::mul(
-                constants::float_scaling() + total_liquidation_reward,
-                calculate_target_amount<QuoteAsset>(
-                    quote_price_info_object,
-                    registry,
-                    remaining_usd_repay,
-                    clock,
-                ),
-            )
-        } else {
-            0
-        };
-        let base_amount_liquidate = if (net_debt_is_quote) {
-            math::mul(
-                constants::float_scaling() + total_liquidation_reward,
-                calculate_target_amount<BaseAsset>(
-                    base_price_info_object,
-                    registry,
-                    remaining_usd_repay,
-                    clock,
-                ),
-            )
-        } else {
-            0
-        };
+        let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
-        if (base_amount_liquidate > 0) {
-            let client_order_id = 0;
-            let is_bid = false;
-            let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
+        // After repayment of the same assets, these will be the debt and asset remaining
+        let new_total_usd_debt =
+            total_usd_debt - math::mul(same_asset_usd_repay, liquidation_reward_multiplier);
+        let new_total_usd_asset =
+            total_usd_asset - math::mul(same_asset_usd_repay, liquidation_reward_multiplier);
 
-            let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
+        // Equation to calculate the amount to swap, accounting for taker fees and liquidation rewards.
+        let usd_amount_to_swap = math::div(
+            (math::mul(new_total_usd_debt, target_ratio) - new_total_usd_asset),
+            (
+                math::div(math::mul(target_ratio,constants::float_scaling() - penalty_taker_fee), liquidation_reward_multiplier) - constants::float_scaling(),
+            ),
+        );
 
-            // We can only swap the lesser of the amount to liquidate and the manager balance, if there's a default scenario.
-            let base_balance = balance_manager.balance<BaseAsset>();
-            let base_amount_swap = base_balance.min(
-                base_amount_liquidate,
-            );
-            let base_quantity = base_amount_swap - base_amount_swap % lot_size;
-
-            pool.place_market_order(
-                balance_manager,
-                &trade_proof,
-                client_order_id,
-                constants::self_matching_allowed(),
-                base_quantity,
-                is_bid,
-                pay_with_deep,
+        // Calculate the amount to swap from quote to base
+        if (debt_is_base) {
+            // This becomes 1.1 * target_amount
+            let quote_amount_liquidate = calculate_target_amount<QuoteAsset>(
+                quote_price_info_object,
+                registry,
+                usd_amount_to_swap,
                 clock,
-                ctx,
             );
-        };
 
-        if (quote_amount_liquidate > 0) {
             let client_order_id = 0;
             let is_bid = true;
             let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
 
-            let quote_amount_swap = (balance_manager.balance<QuoteAsset>()).min(
+            let quote_balance = balance_manager.balance<QuoteAsset>();
+            let quote_amount_swap = quote_balance.min(
                 quote_amount_liquidate,
             );
 
@@ -504,6 +488,44 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             );
         };
 
+        // Calculate the amount to swap from base to quote.
+        if (!debt_is_base) {
+            let base_amount_liquidate = calculate_target_amount<BaseAsset>(
+                base_price_info_object,
+                registry,
+                usd_amount_to_swap,
+                clock,
+            );
+
+            let client_order_id = 0;
+            let is_bid = false;
+            let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
+
+            let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
+
+            // We can only swap the lesser of the amount to liquidate and the manager balance, if there's a default scenario.
+            let base_balance = balance_manager.balance<BaseAsset>();
+            let mut base_amount_swap = base_balance.min(
+                base_amount_liquidate,
+            );
+            // Since our amount to swap includes fees, we have to adjust the base_quantity down, or order will fail.
+            base_amount_swap =
+                math::div(base_amount_swap, constants::float_scaling() + penalty_taker_fee);
+            let base_quantity = base_amount_swap - base_amount_swap % lot_size;
+
+            pool.place_market_order(
+                balance_manager,
+                &trade_proof,
+                client_order_id,
+                constants::self_matching_allowed(),
+                base_quantity,
+                is_bid,
+                pay_with_deep,
+                clock,
+                ctx,
+            );
+        };
+
         // We repay the same loans using the same assets. The amount repaid is returned
         margin_manager.repay_all_liquidation(
             base_margin_pool,
@@ -515,11 +537,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             ctx,
         )
     } else {
-        // We're in scenario 3, we can repay each asset proportionally to the amount of debt.
-        // usd_amount_to_repay / total_usd_debt, this is the proportion of base and quote user needs to repay
-        // Max base repay is base_debt * (usd_amount_to_repay / total_usd_debt)
-        // Max quote repay is quote_debt * (usd_amount_to_repay / total_usd_debt)
-
+        // Just repaying using existing assets without swaps is enough to bring the risk ratio to target.
         let max_base_repay = math::mul(base_debt, math::div(usd_amount_to_repay, total_usd_debt));
         let max_quote_repay = math::mul(quote_debt, math::div(usd_amount_to_repay, total_usd_debt));
 
@@ -895,6 +913,10 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         available_balance_for_repayment
     } else {
         repayment
+    };
+
+    if (repayment == 0) {
+        return 0 // Nothing to repay
     };
 
     // Owner check is skipped if this is liquidation
