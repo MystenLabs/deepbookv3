@@ -60,14 +60,14 @@ public struct Request {
     request_type: u8,
 }
 
-public struct AssetInfo has drop, store {
+public struct AssetInfo has copy, drop, store {
     asset: u64,
     debt: u64,
     usd_asset: u64,
     usd_debt: u64,
 }
 
-public struct ManagerInfo has drop, store {
+public struct ManagerInfo has copy, drop, store {
     base: AssetInfo,
     quote: AssetInfo,
     risk_ratio: u64, // 9 decimals
