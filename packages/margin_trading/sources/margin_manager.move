@@ -331,7 +331,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    // Step 1: We gather the assets and debt for the manager. Use the oracle to check the risk ratio.
+    // Step 1: We gather the assets and debt for the manager. Use the oracle to calculate the risk ratio.
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -360,7 +360,9 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let total_usd_debt = base_usd_debt + quote_usd_debt; // 9 decimals
     let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
 
-    let risk_ratio = if (total_usd_debt == 0 || total_usd_asset > max_risk_ratio) {
+    let risk_ratio = if (
+        total_usd_debt == 0 || total_usd_asset > math::mul(total_usd_debt, max_risk_ratio)
+    ) {
         max_risk_ratio
     } else {
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
@@ -382,7 +384,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let net_debt_is_quote = quote_debt > quote_asset; // If true, we have to swap base to quote
 
     // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
-    // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - 1)
+    // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
     let usd_amount_to_repay = math::div(
         (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
         (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
