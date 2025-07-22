@@ -365,6 +365,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
         registry,
         base_margin_pool,
@@ -374,8 +375,6 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
-    let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
 
     assert!(
         registry.can_liquidate<BaseAsset, QuoteAsset>(manager_info.risk_ratio),
@@ -383,6 +382,8 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     );
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
+    let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
+    let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
     let total_liquidation_reward =
         registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
