@@ -289,7 +289,6 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
 /// Risk ratio between 1.1 and 1.25 allows for trading only
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
-/// TODO: Add a read only accessor for ManagerInfo
 public fun manager_info<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -351,6 +350,21 @@ public fun manager_info<BaseAsset, QuoteAsset>(
         },
         risk_ratio,
     }
+}
+
+/// Returns the risk ratio from the ManagerInfo
+public fun risk_ratio(manager_info: &ManagerInfo): u64 {
+    manager_info.risk_ratio
+}
+
+/// Returns the base and quote AssetInfo from the ManagerInfo
+public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
+    (manager_info.base, manager_info.quote)
+}
+
+/// Returns (asset, debt, usd_asset, usd_debt) given AssetInfo
+public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
+    (asset_info.asset, asset_info.debt, asset_info.usd_asset, asset_info.usd_debt)
 }
 
 /// Liquidates a margin manager
@@ -429,7 +443,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
 
     // Step 3: Trade execution and repayment
-    // TODO: update this to use the new proof generation method
+    // TODO: update this to use the new function in main
     let trade_proof = margin_manager
         .balance_manager
         .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
@@ -437,16 +451,16 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let balance_manager = margin_manager.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
     pool.withdraw_settled_amounts(balance_manager, &trade_proof);
+    let (_, lot_size, min_size) = pool.pool_book_params<BaseAsset, QuoteAsset>();
+    let (taker_fee, _, _) = pool.pool_trade_params();
+    // Assume taker fee is 1%. We apply the 1.25 multiplier to make it 1.25%, since we're paying in input token.
+    let penalty_taker_fee = math::mul(
+        constants::fee_penalty_multiplier(),
+        taker_fee,
+    );
+    let penalty_taker_fee_multiplier = constants::float_scaling() + penalty_taker_fee;
 
-    // If the current asset is not enough to cover repayment, we need to swap.
     let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
-        let (taker_fee, _, _) = pool.pool_trade_params();
-        // Assume taker fee is 1%. We apply the 1.25 multiplier to make it 1.25%, since we're paying in input token.
-        let penalty_taker_fee = math::mul(
-            constants::fee_penalty_multiplier(),
-            taker_fee,
-        );
-
         let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
         // After repayment of the same assets, these will be the debt and asset remaining
@@ -513,16 +527,13 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             let is_bid = false;
             let pay_with_deep = false; // We have to use input token as fee during liquidation, in case there is not enough DEEP in the balance manager.
 
-            let (_, lot_size, _) = pool.pool_book_params<BaseAsset, QuoteAsset>();
-
             // We can only swap the lesser of the amount to liquidate and the manager balance, if there's a default scenario.
             let base_balance = balance_manager.balance<BaseAsset>();
             let mut base_amount_swap = base_balance.min(
                 base_amount_liquidate,
             );
             // Since our amount to swap includes fees, we have to adjust the base_quantity down, or order will fail.
-            base_amount_swap =
-                math::div(base_amount_swap, constants::float_scaling() + penalty_taker_fee);
+            base_amount_swap = math::div(base_amount_swap, penalty_taker_fee_multiplier);
             let base_quantity = base_amount_swap - base_amount_swap % lot_size;
 
             pool.place_market_order(
@@ -623,12 +634,50 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    let in_default = manager_info.risk_ratio < constants::float_scaling();
-    if (in_default) {
-        // TODO: should we check the risk ratio again? If the initial check is < 1, new risk ratio should be < 1 as well.
-        // If the manager is in default, we call the default endpoint
-        base_margin_pool.default_loan(margin_manager.id(), clock);
-        quote_margin_pool.default_loan(margin_manager.id(), clock);
+    if (in_default(manager_info.risk_ratio)) {
+        // Based on the pool min_size, we calculate the minimum USD order size including fees.
+        let min_usd_order = math::mul(
+            penalty_taker_fee_multiplier,
+            calculate_usd_price<BaseAsset>(
+                base_price_info_object,
+                registry,
+                min_size,
+                clock,
+            ),
+        );
+
+        // Either user defaulted on a base debt, or a quote debt. Cannot be both.
+        if (debt_is_base) {
+            // If user defaulted on a base debt, we have to make sure the quote to base swap is complete.
+            // We check to see no more quote assets can be swapped to base.
+            let quote_asset_remain = margin_manager.balance_manager.balance<QuoteAsset>();
+            let quote_asset_remain_usd = calculate_usd_price<QuoteAsset>(
+                quote_price_info_object,
+                registry,
+                quote_asset_remain,
+                clock,
+            );
+
+            // No more quote asset can be swapped to base, so we default on the base loan
+            if (quote_asset_remain_usd < min_usd_order) {
+                base_margin_pool.default_loan(margin_manager.id(), clock);
+            };
+        } else {
+            // If user defaulted on a quote debt, we have to make sure the base to quote swap is complete.
+            // We check to see no more base assets can be swapped to quote.
+            let base_asset_remain = margin_manager.balance_manager.balance<BaseAsset>();
+            let base_asset_remain_usd = calculate_usd_price<BaseAsset>(
+                base_price_info_object,
+                registry,
+                base_asset_remain,
+                clock,
+            );
+
+            // No more base asset can be swapped to quote, so we default on the quote loan
+            if (base_asset_remain_usd < min_usd_order) {
+                quote_margin_pool.default_loan(margin_manager.id(), clock);
+            };
+        };
     };
 
     (user_base_coin, user_quote_coin)
@@ -952,4 +1001,8 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     );
 
     repay_amount
+}
+
+fun in_default(risk_ratio: u64): bool {
+    risk_ratio < constants::float_scaling() // Risk ratio < 1.0 means the manager is in default.
 }
