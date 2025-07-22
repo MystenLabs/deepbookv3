@@ -4,8 +4,11 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use margin_trading::margin_state::{Self, State};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::table::{Self, Table};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -34,46 +37,6 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
-}
-
-// === Public Functions * ADMIN * ===
-/// Creates a margin pool as the admin. Registers the margin pool in the margin registry.
-public fun create_margin_pool<Asset>(
-    supply_cap: u64,
-    max_borrow_percentage: u64,
-    _cap: &MarginAdminCap,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let margin_pool = MarginPool<Asset> {
-        id: object::new(ctx),
-        vault: balance::zero<Asset>(),
-        loans: table::new(ctx),
-        supplies: table::new(ctx),
-        supply_cap,
-        max_borrow_percentage,
-        state: margin_state::default(clock),
-    };
-
-    transfer::share_object(margin_pool);
-}
-
-/// Updates the supply cap for the margin pool as the admin.
-public fun update_supply_cap<Asset>(
-    pool: &mut MarginPool<Asset>,
-    supply_cap: u64,
-    _cap: &MarginAdminCap,
-) {
-    pool.supply_cap = supply_cap;
-}
-
-/// Updates the maximum borrow percentage for the margin pool as the admin.
-public fun update_max_borrow_percentage<Asset>(
-    pool: &mut MarginPool<Asset>,
-    max_borrow_percentage: u64,
-    _cap: &MarginAdminCap,
-) {
-    pool.max_borrow_percentage = max_borrow_percentage;
 }
 
 // === Public Functions * LENDING * ===
@@ -114,6 +77,46 @@ public fun withdraw<Asset>(
 }
 
 // === Public-Package Functions ===
+/// Creates a margin pool as the admin.
+public(package) fun create_margin_pool<Asset>(
+    supply_cap: u64,
+    max_borrow_percentage: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginPool<Asset> {
+    let margin_pool = MarginPool<Asset> {
+        id: object::new(ctx),
+        vault: balance::zero<Asset>(),
+        loans: table::new(ctx),
+        supplies: table::new(ctx),
+        supply_cap,
+        max_borrow_percentage,
+        state: margin_state::default(clock),
+    };
+
+    margin_pool
+}
+
+/// Updates the supply cap for the margin pool.
+public(package) fun update_supply_cap<Asset>(
+    self: &mut MarginPool<Asset>,
+    supply_cap: u64,
+) {
+    self.supply_cap = supply_cap;
+}
+
+/// Updates the maximum borrow percentage for the margin pool.
+public(package) fun update_max_borrow_percentage<Asset>(
+    self: &mut MarginPool<Asset>,
+    max_borrow_percentage: u64,
+) {
+    self.max_borrow_percentage = max_borrow_percentage;
+}
+
+public(package) fun share<Asset>(self: MarginPool<Asset>) {
+    transfer::share_object(self);
+}
+
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
@@ -135,7 +138,10 @@ public(package) fun borrow<Asset>(
         self.state.total_supply(),
     );
 
-    assert!(borrow_percentage <= self.max_borrow_percentage, EMaxPoolBorrowPercentageExceeded);
+    assert!(
+        borrow_percentage <= self.max_borrow_percentage,
+        EMaxPoolBorrowPercentageExceeded,
+    );
 
     let balance = self.vault.split(amount);
     balance.into_coin(ctx)
@@ -175,7 +181,9 @@ public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
 }
 
 /// Returns the supplies table.
-public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
+public(package) fun supplies<Asset>(
+    self: &MarginPool<Asset>,
+): &Table<address, Supply> {
     &self.supplies
 }
 
@@ -190,6 +198,7 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
 }
 
 // === Internal Functions ===
+
 /// Updates the state
 fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.state.update(clock);
@@ -213,17 +222,28 @@ fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
     supply.last_index = current_index;
 }
 
-fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+fun increase_user_supply<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount + amount;
 }
 
-fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+fun decrease_user_supply<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount - amount;
 }
 
-fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
+fun add_user_supply_entry<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+) {
     if (self.supplies.contains(supplier)) {
         return
     };
@@ -235,7 +255,11 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
     self.supplies.add(supplier, supply);
 }
 
-fun user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, clock: &Clock): u64 {
+fun user_supply<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    clock: &Clock,
+): u64 {
     self.update_state(clock);
     self.update_user_supply(supplier);
 
@@ -259,12 +283,20 @@ fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     loan.last_index = current_index;
 }
 
-fun increase_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
+fun increase_user_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    amount: u64,
+) {
     let loan = self.loans.borrow_mut(manager_id);
     loan.loan_amount = loan.loan_amount + amount;
 }
 
-fun decrease_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
+fun decrease_user_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    amount: u64,
+) {
     let loan = self.loans.borrow_mut(manager_id);
     loan.loan_amount = loan.loan_amount - amount;
 }
