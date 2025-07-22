@@ -464,8 +464,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
         let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
         // After repayment of the same assets, these will be the debt and asset remaining
-        let new_total_usd_debt =
-            total_usd_debt - math::mul(same_asset_usd_repay, liquidation_reward_multiplier);
+        let new_total_usd_debt = total_usd_debt - same_asset_usd_repay;
         let new_total_usd_asset =
             total_usd_asset - math::mul(same_asset_usd_repay, liquidation_reward_multiplier);
 
@@ -592,7 +591,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     // Step 4: Liquidation rewards based on amount repaid.
     // After repayment, the manager should be close to the target risk ratio (some slippage, but should be close).
     // We withdraw the liquidation reward for the pool.
-    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>(); // 2%
     let pool_liquidation_reward_base = math::mul(pool_liquidation_reward, base_repaid);
     let pool_liquidation_reward_quote = math::mul(pool_liquidation_reward, quote_repaid);
 
