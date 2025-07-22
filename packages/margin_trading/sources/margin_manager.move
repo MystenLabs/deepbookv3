@@ -60,6 +60,14 @@ public struct Request {
     request_type: u8,
 }
 
+public struct ManagerInfo has drop, store {
+    base_asset: u64,
+    quote_asset: u64,
+    deep_asset: u64,
+    base_debt: u64,
+    quote_debt: u64,
+}
+
 /// Event emitted when a new margin_manager is created.
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
@@ -312,11 +320,15 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     let total_usd_asset = base_usd_asset + quote_usd_asset; // 6 decimals
     let max_risk_ratio = margin_constants::max_risk_ratio(); // 9 decimals
 
-    if (total_usd_debt == 0 || total_usd_asset > max_risk_ratio) {
+    let risk_ratio = if (
+        total_usd_debt == 0 || total_usd_asset > math::mul(total_usd_debt, max_risk_ratio)
+    ) {
         max_risk_ratio
     } else {
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
-    }
+    };
+
+    risk_ratio
 }
 
 /// Liquidates a margin manager
