@@ -16,8 +16,7 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool,
-    registry
+    pool::Pool
 };
 use margin_trading::{
     margin_constants,

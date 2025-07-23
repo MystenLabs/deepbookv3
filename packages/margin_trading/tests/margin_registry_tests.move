@@ -20,6 +20,7 @@ fun test_update_risk_params_ok() {
     let target_liquidation_risk_ratio = 1_250_000_000; // 1.25
     let user_liquidation_reward = 10_000_000; // 1%
     let pool_liquidation_reward = 40_000_000; // 4%
+    let max_slippage = 10_000_000; // 1%
 
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -35,6 +36,7 @@ fun test_update_risk_params_ok() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
 
     margin_registry::add_margin_pair<SUI, USDC>(&mut registry, risk_params, &admin_cap);
@@ -52,6 +54,7 @@ fun test_update_risk_params_ok() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
     margin_registry::update_risk_params<SUI, USDC>(
         &mut registry,
@@ -76,6 +79,7 @@ fun test_update_risk_params_pair_not_allowed_e() {
     let target_liquidation_risk_ratio = 1_250_000_000; // 1.25
     let user_liquidation_reward = 10_000_000; // 1%
     let pool_liquidation_reward = 40_000_000; // 4%
+    let max_slippage = 10_000_000; // 1%
 
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -91,6 +95,7 @@ fun test_update_risk_params_pair_not_allowed_e() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
 
     margin_registry::update_risk_params<SUI, USDC>(
@@ -130,6 +135,7 @@ fun test_add_margin_pair_e() {
     let target_liquidation_risk_ratio = 1_250_000_000; // 1.25
     let user_liquidation_reward = 10_000_000; // 1%
     let pool_liquidation_reward = 40_000_000; // 4%
+    let max_slippage = 10_000_000; // 1%
 
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -145,6 +151,7 @@ fun test_add_margin_pair_e() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
 
     margin_registry::add_margin_pair<SUI, USDC>(&mut registry, risk_params, &admin_cap);
@@ -156,6 +163,7 @@ fun test_add_margin_pair_e() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
     margin_registry::add_margin_pair<SUI, USDC>(&mut registry, risk_params_2, &admin_cap);
 
@@ -173,6 +181,7 @@ fun test_update_risk_params_increase_liquidation_rr_e() {
     let target_liquidation_risk_ratio = 1_250_000_000; // 1.25
     let user_liquidation_reward = 10_000_000; // 1%
     let pool_liquidation_reward = 40_000_000; // 4%
+    let max_slippage = 10_000_000; // 1%
 
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -188,6 +197,7 @@ fun test_update_risk_params_increase_liquidation_rr_e() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
 
     margin_registry::add_margin_pair<SUI, USDC>(&mut registry, risk_params, &admin_cap);
@@ -203,6 +213,7 @@ fun test_update_risk_params_increase_liquidation_rr_e() {
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     );
     margin_registry::update_risk_params<SUI, USDC>(
         &mut registry,
