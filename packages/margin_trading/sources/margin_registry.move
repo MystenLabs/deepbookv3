@@ -34,6 +34,7 @@ public struct RiskParams has drop, store {
     target_liquidation_risk_ratio: u64, // 9 decimals, target risk ratio after liquidation
     user_liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
     pool_liquidation_reward: u64, // fractional reward for the pool, in 9 decimals
+    max_slippage: u64, // maximum slippage allowed during liquidation, in 9 decimals
 }
 
 public struct MarginPair has copy, drop, store {
@@ -68,6 +69,7 @@ public fun new_risk_params(
     target_liquidation_risk_ratio: u64,
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
+    max_slippage: u64,
 ): RiskParams {
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
@@ -88,6 +90,7 @@ public fun new_risk_params(
         target_liquidation_risk_ratio,
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     }
 }
 
@@ -98,6 +101,7 @@ public fun default_risk_params(leverage: u64): RiskParams {
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
     let user_liquidation_reward = margin_constants::default_user_liquidation_reward();
     let pool_liquidation_reward = margin_constants::default_pool_liquidation_reward();
+    let max_slippage = margin_constants::default_max_slippage();
 
     RiskParams {
         min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
@@ -106,6 +110,7 @@ public fun default_risk_params(leverage: u64): RiskParams {
         target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
         user_liquidation_reward,
         pool_liquidation_reward,
+        max_slippage,
     }
 }
 
@@ -269,6 +274,15 @@ public(package) fun pool_liquidation_reward<BaseAsset, QuoteAsset>(self: &Margin
     };
 
     self.risk_params.borrow(pair).pool_liquidation_reward
+}
+
+public(package) fun max_slippage<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
+    let pair = MarginPair {
+        base: type_name::get<BaseAsset>(),
+        quote: type_name::get<QuoteAsset>(),
+    };
+
+    self.risk_params.borrow(pair).max_slippage
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {

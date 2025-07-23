@@ -89,7 +89,7 @@ public(package) fun calculate_usd_price<T>(
 /// Calculates the USD price of a given asset or debt amount.
 /// 9 decimals are used for USD representation.
 /// Returns a tuple of two amounts
-public(package) fun calculate_asset_debt_usd_price<T>(
+public(package) fun calculate_pair_usd_price<T>(
     price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
     amount1: u64,

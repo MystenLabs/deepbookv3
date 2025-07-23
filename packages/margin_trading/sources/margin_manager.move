@@ -16,13 +16,14 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool
+    pool::Pool,
+    registry
 };
 use margin_trading::{
     margin_constants,
     margin_pool::{user_loan, MarginPool},
     margin_registry::MarginRegistry,
-    oracle::{calculate_usd_price, calculate_target_amount, calculate_asset_debt_usd_price}
+    oracle::{calculate_usd_price, calculate_target_amount, calculate_pair_usd_price}
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
@@ -38,6 +39,7 @@ const EWithdrawRiskRatioExceeded: u64 = 4;
 const ECannotLiquidate: u64 = 5;
 const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
+const ELiquidationSlippageExceeded: u64 = 8;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -308,14 +310,14 @@ public fun manager_info<BaseAsset, QuoteAsset>(
         pool,
     );
 
-    let (base_usd_asset, base_usd_debt) = calculate_asset_debt_usd_price<BaseAsset>(
+    let (base_usd_asset, base_usd_debt) = calculate_pair_usd_price<BaseAsset>(
         base_price_info_object,
         registry,
         base_asset,
         base_debt,
         clock,
     );
-    let (quote_usd_asset, quote_usd_debt) = calculate_asset_debt_usd_price<QuoteAsset>(
+    let (quote_usd_asset, quote_usd_debt) = calculate_pair_usd_price<QuoteAsset>(
         quote_price_info_object,
         registry,
         quote_asset,
@@ -461,6 +463,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
     let penalty_taker_fee_multiplier = constants::float_scaling() + penalty_taker_fee;
 
     let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
+        let max_slippage = registry.max_slippage<BaseAsset, QuoteAsset>();
         let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
         // After repayment of the same assets, these will be the debt and asset remaining
@@ -500,7 +503,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
                 clock,
             );
 
-            pool.place_market_order(
+            let order_info = pool.place_market_order(
                 balance_manager,
                 &trade_proof,
                 client_order_id,
@@ -510,6 +513,29 @@ public fun liquidate<BaseAsset, QuoteAsset>(
                 pay_with_deep,
                 clock,
                 ctx,
+            );
+
+            // We check the usd value of the base quantity received, vs the quote quantity used
+            // The base received in USD should be at least the quote used in USD, minus slippage
+            let base_quantity_received = order_info.executed_quantity();
+            let quote_quantity_used = order_info.cumulative_quote_quantity();
+
+            let base_usd_received = calculate_usd_price<BaseAsset>(
+                base_price_info_object,
+                registry,
+                base_quantity_received,
+                clock,
+            );
+            let quote_usd_used = calculate_usd_price<QuoteAsset>(
+                quote_price_info_object,
+                registry,
+                quote_quantity_used,
+                clock,
+            );
+
+            assert!(
+                base_usd_received >= math::mul(quote_usd_used, constants::float_scaling() - max_slippage),
+                ELiquidationSlippageExceeded,
             );
         };
 
@@ -535,7 +561,7 @@ public fun liquidate<BaseAsset, QuoteAsset>(
             base_amount_swap = math::div(base_amount_swap, penalty_taker_fee_multiplier);
             let base_quantity = base_amount_swap - base_amount_swap % lot_size;
 
-            pool.place_market_order(
+            let order_info = pool.place_market_order(
                 balance_manager,
                 &trade_proof,
                 client_order_id,
@@ -545,6 +571,29 @@ public fun liquidate<BaseAsset, QuoteAsset>(
                 pay_with_deep,
                 clock,
                 ctx,
+            );
+
+            // We check the usd value of the quote quantity received, vs the base quantity used
+            // The quote received in USD should be at least the base used in USD, minus slippage
+            let base_quantity_used = order_info.executed_quantity();
+            let quote_quantity_received = order_info.cumulative_quote_quantity();
+
+            let base_usd_used = calculate_usd_price<BaseAsset>(
+                base_price_info_object,
+                registry,
+                base_quantity_used,
+                clock,
+            );
+            let quote_usd_received = calculate_usd_price<QuoteAsset>(
+                quote_price_info_object,
+                registry,
+                quote_quantity_received,
+                clock,
+            );
+
+            assert!(
+                quote_usd_received >= math::mul(base_usd_used, constants::float_scaling() - max_slippage),
+                ELiquidationSlippageExceeded,
             );
         };
 

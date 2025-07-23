@@ -1,0 +1,34 @@
+USDT/USDC
+Threshold = 1.15
+Liquidation Reward (User + Pool combined) = 0.1 (10%)
+Taker fee 1%
+
+USDT = 500
+USDC = 500
+USDC Loan = 900
+
+RR = 1000/900 = 1.11 (this is under our threshold)
+
+usd_amount_to_repay = (target_ratio * debt - asset) / (target_ratio - (1 + r))
+= (1.2 * 900 - 1000)/(1.2-1.1) = 800
+
+quote_same_repay = 500
+quote_usd_repay = 500
+
+USDT = 500
+USDC Loan =
+
+new_total_usd_debt = 900 - 500 = 400
+new_total_usd_asset = 1000 - 550 = 450
+
+Amount_to_be_swapped = (1.2 * 400 - 450)/(1.2*(0.99)/1.1-1) = 375
+We swap 375 USDT to USDC, 371.28 USDC. We're going to repay 337.5 into the pool
+(33.75 is liquidation reward).
+Final debt = 400 - 337.5 = 62.5
+Final asset = 450 - 375 = 75
+Final Risk ratio = 75/62.5 = 1.2
+
+new_total_usd_debt = 900 - 800 = 100
+new_total_usd_asset = 1000 - 880 = 120
+
+800 * 0.1 = 80, some will go to user, some will go to pool
