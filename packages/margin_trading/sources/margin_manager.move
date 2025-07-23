@@ -20,13 +20,13 @@ use deepbook::{
 };
 use margin_trading::{
     margin_constants,
-    margin_pool::{user_loan, MarginPool},
+    margin_pool::{user_loan, MarginPool, create_repayment_proof, RepaymentProof},
     margin_registry::MarginRegistry,
     oracle::{calculate_usd_price, calculate_target_amount, calculate_pair_usd_price}
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::{balance, clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -366,6 +366,237 @@ public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
 /// Returns (asset, debt, usd_asset, usd_debt) given AssetInfo
 public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
     (asset_info.asset, asset_info.debt, asset_info.usd_asset, asset_info.usd_debt)
+}
+
+/// Liquidates a margin manager
+public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, RepaymentProof<BaseAsset>, RepaymentProof<QuoteAsset>) {
+    // Step 1: We retrieve the manager info and check if liquidation is possible.
+    let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
+        registry,
+        base_margin_pool,
+        quote_margin_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+
+    assert!(
+        registry.can_liquidate<BaseAsset, QuoteAsset>(manager_info.risk_ratio),
+        ECannotLiquidate,
+    );
+
+    // Step 2: We calculate how much needs to be sold (if any), and repaid.
+    let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
+    let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
+    let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
+    let user_liquidation_reward = registry.user_liquidation_reward<BaseAsset, QuoteAsset>();
+    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
+
+    // Now we check whether we have base or quote loan that needs to be covered.
+    // Scenario 1: debt is in base asset.
+    // Scenario 2: debt is in quote asset.
+    let debt_is_base = manager_info.base.debt > 0; // If true, we have to swap quote to base. Otherwise, we swap base to quote.
+
+    // Amount in USD (9 decimals) to repay to bring risk_ratio to target_ratio
+    // amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
+    let usd_amount_to_repay = math::div(
+        (math::mul(total_usd_debt, target_ratio) - total_usd_asset),
+        (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
+    );
+
+    let base_same_asset_repay = manager_info.base.asset.min(manager_info.base.debt);
+    let quote_same_asset_repay = manager_info.quote.asset.min(manager_info.quote.debt);
+
+    let base_usd_repay = if (base_same_asset_repay > 0) {
+        calculate_usd_price<BaseAsset>(
+            base_price_info_object,
+            registry,
+            base_same_asset_repay,
+            clock,
+        )
+    } else {
+        0
+    };
+    let quote_usd_repay = if (quote_same_asset_repay > 0) {
+        calculate_usd_price<QuoteAsset>(
+            quote_price_info_object,
+            registry,
+            quote_same_asset_repay,
+            clock,
+        )
+    } else {
+        0
+    };
+    // Simply repaying the loan using same assets could be enough to cover the liquidation.
+    let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
+
+    // Step 3: Trade execution and repayment
+    // TODO: update this to use the new function in main
+    let trade_proof = margin_manager
+        .balance_manager
+        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+
+    let balance_manager = margin_manager.balance_manager_mut();
+    pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
+    pool.withdraw_settled_amounts(balance_manager, &trade_proof);
+
+    // We repay the same loans using the same assets. The amount repaid is returned
+    // Just repaying using existing assets without swaps is enough to bring the risk ratio to target.
+    let max_base_repay = math::mul(
+        manager_info.base.debt,
+        math::div(usd_amount_to_repay, total_usd_debt),
+    );
+    let max_quote_repay = math::mul(
+        manager_info.quote.debt,
+        math::div(usd_amount_to_repay, total_usd_debt),
+    );
+
+    let (base_repaid, quote_repaid) = margin_manager.repay_all_liquidation(
+        base_margin_pool,
+        quote_margin_pool,
+        registry,
+        option::some(max_base_repay),
+        option::some(max_quote_repay),
+        clock,
+        ctx,
+    );
+
+    // Emit a liquidation event for the liquidator
+    event::emit(LiquidationEvent {
+        margin_manager_id: margin_manager.id(),
+        base_amount: base_repaid,
+        quote_amount: quote_repaid,
+        liquidator: ctx.sender(),
+    });
+
+    // We can withdraw the liquidation reward for the user.
+    // Liquidation reward is a percentage of the amount repaid.
+    let user_liquidation_reward = registry.user_liquidation_reward<BaseAsset, QuoteAsset>();
+    let user_liquidation_reward_base = math::mul(user_liquidation_reward, base_repaid);
+    let mut base_returned = margin_manager.liquidation_withdraw_base(
+        user_liquidation_reward_base,
+        ctx,
+    );
+    let user_liquidation_reward_quote = math::mul(user_liquidation_reward, quote_repaid);
+    let mut quote_returned = margin_manager.liquidation_withdraw_quote(
+        user_liquidation_reward_quote,
+        ctx,
+    );
+
+    if (same_asset_usd_repay < usd_amount_to_repay) {
+        let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
+
+        // After repayment of the same assets, these will be the debt and asset remaining
+        let new_total_usd_debt = total_usd_debt - same_asset_usd_repay;
+        let new_total_usd_asset =
+            total_usd_asset - math::mul(same_asset_usd_repay, liquidation_reward_multiplier);
+
+        // How much USD we still need to repay
+        let usd_repay_remaining = math::div(
+            (math::mul(new_total_usd_debt, target_ratio) - new_total_usd_asset),
+            (target_ratio - (constants::float_scaling() + total_liquidation_reward)),
+        );
+
+        let base_repay_amount = calculate_target_amount<BaseAsset>(
+            base_price_info_object,
+            registry,
+            usd_repay_remaining,
+            clock,
+        );
+        let quote_repay_amount = calculate_target_amount<QuoteAsset>(
+            quote_price_info_object,
+            registry,
+            usd_repay_remaining,
+            clock,
+        );
+
+        if (debt_is_base) {
+            let quote_amount = math::mul(quote_repay_amount, liquidation_reward_multiplier);
+            let quote_amount_returned = quote_amount.min(balance_manager.balance<QuoteAsset>());
+            let base_repay_loan = math::mul(
+                base_repay_amount,
+                math::div(quote_amount_returned, quote_amount),
+            );
+
+            let in_default = in_default(manager_info.risk_ratio);
+
+            quote_returned.join(margin_manager.liquidation_withdraw_quote(
+                quote_amount_returned,
+                ctx,
+            ));
+
+            let repayment_proof_base = create_repayment_proof<BaseAsset>(
+                margin_manager.id(),
+                base_repay_loan,
+                math::mul(base_repay_loan, pool_liquidation_reward),
+                in_default,
+            );
+            let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
+                margin_manager.id(),
+                0,
+                0,
+                false,
+            );
+
+            (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
+        } else {
+            let base_amount = math::mul(base_repay_amount, liquidation_reward_multiplier);
+            let base_amount_returned = base_amount.min(balance_manager.balance<BaseAsset>());
+            let quote_repay_loan = math::mul(
+                quote_repay_amount,
+                math::div(base_amount_returned, base_amount),
+            );
+
+            let in_default = in_default(manager_info.risk_ratio);
+
+            base_returned.join(margin_manager.liquidation_withdraw_base(
+                base_amount_returned,
+                ctx,
+            ));
+
+            let repayment_proof_base = create_repayment_proof<BaseAsset>(
+                margin_manager.id(),
+                0,
+                0,
+                false,
+            );
+            let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
+                margin_manager.id(),
+                quote_repay_loan,
+                math::mul(quote_repay_loan, pool_liquidation_reward),
+                in_default,
+            );
+
+            (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
+        }
+    } else {
+        let repayment_proof_base = create_repayment_proof<BaseAsset>(
+            margin_manager.id(),
+            0,
+            0,
+            false,
+        );
+        let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
+            margin_manager.id(),
+            0,
+            0,
+            false,
+        );
+
+        (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
+    }
 }
 
 /// Liquidates a margin manager
