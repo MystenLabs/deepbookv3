@@ -379,7 +379,12 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Coin<BaseAsset>, Coin<QuoteAsset>, RepaymentProof<BaseAsset>, RepaymentProof<QuoteAsset>) {
+): (
+    Coin<BaseAsset>,
+    Coin<QuoteAsset>,
+    Option<RepaymentProof<BaseAsset>>,
+    Option<RepaymentProof<QuoteAsset>>,
+) {
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
         registry,
@@ -397,6 +402,7 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
     );
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
+    let margin_manager_id = margin_manager.id();
     let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
     let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
     let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
@@ -475,7 +481,7 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
 
     // Emit a liquidation event for the liquidator
     event::emit(LiquidationEvent {
-        margin_manager_id: margin_manager.id(),
+        margin_manager_id: margin_manager_id,
         base_amount: base_repaid,
         quote_amount: quote_repaid,
         liquidator: ctx.sender(),
@@ -537,18 +543,15 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
                 ctx,
             ));
 
-            let repayment_proof_base = create_repayment_proof<BaseAsset>(
-                margin_manager.id(),
-                base_repay_loan,
-                math::mul(base_repay_loan, pool_liquidation_reward),
-                in_default,
+            let repayment_proof_base = option::some(
+                create_repayment_proof<BaseAsset>(
+                    margin_manager_id,
+                    base_repay_loan,
+                    math::mul(base_repay_loan, pool_liquidation_reward),
+                    in_default,
+                ),
             );
-            let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
-                margin_manager.id(),
-                0,
-                0,
-                false,
-            );
+            let repayment_proof_quote = option::none<RepaymentProof<QuoteAsset>>();
 
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         } else {
@@ -566,34 +569,21 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
                 ctx,
             ));
 
-            let repayment_proof_base = create_repayment_proof<BaseAsset>(
-                margin_manager.id(),
-                0,
-                0,
-                false,
-            );
-            let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
-                margin_manager.id(),
-                quote_repay_loan,
-                math::mul(quote_repay_loan, pool_liquidation_reward),
-                in_default,
+            let repayment_proof_base = option::none<RepaymentProof<BaseAsset>>();
+            let repayment_proof_quote = option::some(
+                create_repayment_proof<QuoteAsset>(
+                    margin_manager_id,
+                    quote_repay_loan,
+                    math::mul(quote_repay_loan, pool_liquidation_reward),
+                    in_default,
+                ),
             );
 
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         }
     } else {
-        let repayment_proof_base = create_repayment_proof<BaseAsset>(
-            margin_manager.id(),
-            0,
-            0,
-            false,
-        );
-        let repayment_proof_quote = create_repayment_proof<QuoteAsset>(
-            margin_manager.id(),
-            0,
-            0,
-            false,
-        );
+        let repayment_proof_base = option::none<RepaymentProof<BaseAsset>>();
+        let repayment_proof_quote = option::none<RepaymentProof<QuoteAsset>>();
 
         (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
     }
