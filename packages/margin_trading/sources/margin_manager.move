@@ -437,6 +437,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
     let mut max_base_repay = 0;
     let mut max_quote_repay = 0;
 
+    // Step 4: We calculate how much we can already repay.
     // Just repaying using existing assets without swaps could help bring the risk ratio to the target.
     let (base_repaid, base_left_to_repay) = if (debt_is_base) {
         max_base_repay =
@@ -478,6 +479,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
         (0, false)
     };
 
+    // Step 5: We calculate how much to give the liquidator to swap, and then repay.
     if (base_left_to_repay || quote_left_to_repay) {
         let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
