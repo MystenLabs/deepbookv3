@@ -167,6 +167,43 @@ public fun verify_and_repay_liquidation<Asset>(
 }
 
 // === Public-Package Functions ===
+/// Creates a margin pool as the admin.
+public(package) fun create_margin_pool<Asset>(
+    supply_cap: u64,
+    max_borrow_percentage: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginPool<Asset> {
+    let margin_pool = MarginPool<Asset> {
+        id: object::new(ctx),
+        vault: balance::zero<Asset>(),
+        loans: table::new(ctx),
+        supplies: table::new(ctx),
+        supply_cap,
+        max_borrow_percentage,
+        state: margin_state::default(clock),
+    };
+
+    margin_pool
+}
+
+/// Updates the supply cap for the margin pool.
+public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
+    self.supply_cap = supply_cap;
+}
+
+/// Updates the maximum borrow percentage for the margin pool.
+public(package) fun update_max_borrow_percentage<Asset>(
+    self: &mut MarginPool<Asset>,
+    max_borrow_percentage: u64,
+) {
+    self.max_borrow_percentage = max_borrow_percentage;
+}
+
+public(package) fun share<Asset>(self: MarginPool<Asset>) {
+    transfer::share_object(self);
+}
+
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,

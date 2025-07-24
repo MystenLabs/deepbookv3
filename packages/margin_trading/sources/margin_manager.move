@@ -12,7 +12,8 @@ use deepbook::{
         BalanceManager,
         TradeCap,
         DepositCap,
-        WithdrawCap
+        WithdrawCap,
+        TradeProof
     },
     constants,
     math,
@@ -90,8 +91,12 @@ public struct LiquidationEvent has copy, drop {
 }
 
 // === Public Functions - Margin Manager ===
-public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
-    assert!(margin_registry.margin_pair_allowed<BaseAsset, QuoteAsset>(), EMarginPairNotAllowed);
+public fun new<BaseAsset, QuoteAsset>(
+    margin_registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    ctx: &mut TxContext,
+) {
+    assert!(margin_registry.pool_registered(pool), EMarginPairNotAllowed);
 
     let id = object::new(ctx);
 
@@ -269,11 +274,12 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
             clock,
         )
         .risk_ratio;
+    let pool_id = object::id(pool);
     if (request.request_type == BORROW) {
-        assert!(registry.can_borrow<BaseAsset, QuoteAsset>(risk_ratio), EBorrowRiskRatioExceeded);
+        assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
         assert!(
-            registry.can_withdraw<BaseAsset, QuoteAsset>(risk_ratio),
+            registry.can_withdraw(pool_id, risk_ratio),
             EWithdrawRiskRatioExceeded,
         );
     };
@@ -1028,26 +1034,6 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     (user_base_coin, user_quote_coin)
 }
 
-/// Unwraps balance manager for trading in deepbook.
-public fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-): &mut BalanceManager {
-    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
-
-    &mut margin_manager.balance_manager
-}
-
-/// Unwraps TradeCap reference for trading in deepbook.
-public fun trade_cap<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-): &TradeCap {
-    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
-
-    &margin_manager.trade_cap
-}
-
 // === Public-Package Functions ===
 public(package) fun balance_manager<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -1059,6 +1045,24 @@ public(package) fun balance_manager_mut<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
 ): &mut BalanceManager {
     &mut margin_manager.balance_manager
+}
+
+/// Unwraps balance manager for trading in deepbook.
+public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+): &mut BalanceManager {
+    assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
+
+    &mut margin_manager.balance_manager
+}
+
+/// Unwraps balance manager for trading in deepbook.
+public(package) fun trade_proof<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+): TradeProof {
+    margin_manager.balance_manager.generate_proof_as_trader(&margin_manager.trade_cap, ctx)
 }
 
 public(package) fun id<BaseAsset, QuoteAsset>(

@@ -22,34 +22,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install Sui 1.45.3
+      - name: Install Homebrew
         run: |
-          echo "Installing Sui 1.45.3..."
-          mkdir -p $HOME/sui-bin
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
 
-          SUI_URL="https://github.com/MystenLabs/sui/releases/download/mainnet-v1.49.2/sui-mainnet-v1.49.2-macos-x86_64.tgz"
-          echo "Downloading Sui from $SUI_URL"
-
-          # Use curl with fail flag and check response
-          HTTP_STATUS=$(curl -o sui.tar.gz -w "%{http_code}" -L $SUI_URL)
-
-          if [[ "$HTTP_STATUS" -ne 200 ]]; then
-            echo "Error: Failed to download Sui. HTTP Status: $HTTP_STATUS"
-            exit 1
-          fi
-
-          if ! file sui.tar.gz | grep -q "gzip compressed"; then
-            echo "Error: Downloaded file is not a valid tar.gz archive."
-            exit 1
-          fi
-
-          tar -xvzf sui.tar.gz -C $HOME/sui-bin
-          chmod +x $HOME/sui-bin/sui
-          echo "$HOME/sui-bin" >> $GITHUB_PATH
-          export PATH="$HOME/sui-bin:$PATH"
-
-          # Verify installation
-          sui --version
+      - name: Install Sui using Homebrew
+        run: brew install sui
 
       - name: Run Move tests in all package subdirectories, with exclusions
         run: |
