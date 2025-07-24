@@ -5,10 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::margin_state::{Self, State};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::table::{Self, Table};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -98,10 +95,7 @@ public(package) fun create_margin_pool<Asset>(
 }
 
 /// Updates the supply cap for the margin pool.
-public(package) fun update_supply_cap<Asset>(
-    self: &mut MarginPool<Asset>,
-    supply_cap: u64,
-) {
+public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
     self.supply_cap = supply_cap;
 }
 
@@ -138,10 +132,7 @@ public(package) fun borrow<Asset>(
         self.state.total_supply(),
     );
 
-    assert!(
-        borrow_percentage <= self.max_borrow_percentage,
-        EMaxPoolBorrowPercentageExceeded,
-    );
+    assert!(borrow_percentage <= self.max_borrow_percentage, EMaxPoolBorrowPercentageExceeded);
 
     let balance = self.vault.split(amount);
     balance.into_coin(ctx)
@@ -181,9 +172,7 @@ public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
 }
 
 /// Returns the supplies table.
-public(package) fun supplies<Asset>(
-    self: &MarginPool<Asset>,
-): &Table<address, Supply> {
+public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
     &self.supplies
 }
 
@@ -222,28 +211,17 @@ fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
     supply.last_index = current_index;
 }
 
-fun increase_user_supply<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-    amount: u64,
-) {
+fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount + amount;
 }
 
-fun decrease_user_supply<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-    amount: u64,
-) {
+fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount - amount;
 }
 
-fun add_user_supply_entry<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-) {
+fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
     if (self.supplies.contains(supplier)) {
         return
     };
@@ -255,11 +233,7 @@ fun add_user_supply_entry<Asset>(
     self.supplies.add(supplier, supply);
 }
 
-fun user_supply<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-    clock: &Clock,
-): u64 {
+fun user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, clock: &Clock): u64 {
     self.update_state(clock);
     self.update_user_supply(supplier);
 
@@ -283,20 +257,12 @@ fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     loan.last_index = current_index;
 }
 
-fun increase_user_loan<Asset>(
-    self: &mut MarginPool<Asset>,
-    manager_id: ID,
-    amount: u64,
-) {
+fun increase_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
     let loan = self.loans.borrow_mut(manager_id);
     loan.loan_amount = loan.loan_amount + amount;
 }
 
-fun decrease_user_loan<Asset>(
-    self: &mut MarginPool<Asset>,
-    manager_id: ID,
-    amount: u64,
-) {
+fun decrease_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, amount: u64) {
     let loan = self.loans.borrow_mut(manager_id);
     loan.loan_amount = loan.loan_amount - amount;
 }

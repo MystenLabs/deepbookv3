@@ -4,15 +4,10 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
+use deepbook::{constants, math, pool::Pool};
 use margin_trading::margin_pool::{Self, MarginPool};
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::clock::Clock;
-use sui::dynamic_field as df;
-use sui::table::{Self, Table};
+use sui::{bag::{Self, Bag}, clock::Clock, dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -51,7 +46,7 @@ public struct MarginPair has copy, drop, store {
 public struct MarginRegistry has key, store {
     id: UID,
     risk_registry: Table<ID, RiskParams>, // deepbook pool id -> risk params
-    pool_registry: Table<ID, ID>, // deepbook pool id -> margin pool id
+    pool_registry: Table<ID, vec<ID>>, // deepbook pool id -> margin pool id
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
@@ -112,10 +107,7 @@ public fun new_risk_params(
 ): RiskParams {
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
-    assert!(
-        liquidation_risk_ratio < target_liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
+    assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
     assert!(liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
 
@@ -183,10 +175,7 @@ public fun register_margin_pool<BaseAsset, QuoteAsset>(
     let base_asset = type_name::get<BaseAsset>();
     let quote_asset = type_name::get<QuoteAsset>();
     let margin_asset = type_name::get<Asset>();
-    assert!(
-        margin_asset == base_asset || margin_asset == quote_asset,
-        EInvalidAsset,
-    );
+    assert!(margin_asset == base_asset || margin_asset == quote_asset, EInvalidAsset);
     let pool_id = object::id(deepbook_pool);
     let margin_pool_id = object::id(margin_pool);
     assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
@@ -239,9 +228,7 @@ public fun remove_config<Config: store + drop>(
 
 // === Public Helper Functions ===
 /// Check if a margin trading pair is allowed
-public fun margin_pair_allowed<BaseAsset, QuoteAsset>(
-    self: &MarginRegistry,
-): bool {
+public fun margin_pair_allowed<BaseAsset, QuoteAsset>(self: &MarginRegistry): bool {
     let pair = MarginPair {
         base: type_name::get<BaseAsset>(),
         quote: type_name::get<QuoteAsset>(),
@@ -257,10 +244,7 @@ public fun get_margin_pool_id_by_asset<Asset>(registry: &MarginRegistry): ID {
 
 // === Public-Package Functions ===
 /// Register a new margin pool. If a same asset pool already exists, abort.
-public(package) fun register_margin_pool<Asset>(
-    self: &mut MarginRegistry,
-    pool_id: ID,
-) {
+public(package) fun register_margin_pool<Asset>(self: &mut MarginRegistry, pool_id: ID) {
     let key = type_name::get<Asset>();
     assert!(!self.margin_pools.contains(key), EMarginPoolAlreadyExists);
     self.margin_pools.add(key, pool_id);
@@ -321,9 +305,7 @@ public(package) fun target_liquidation_risk_ratio<BaseAsset, QuoteAsset>(
     self.risk_params.borrow(pair).target_liquidation_risk_ratio
 }
 
-public(package) fun liquidation_reward<BaseAsset, QuoteAsset>(
-    self: &MarginRegistry,
-): u64 {
+public(package) fun liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
     let pair = MarginPair {
         base: type_name::get<BaseAsset>(),
         quote: type_name::get<QuoteAsset>(),
@@ -332,8 +314,6 @@ public(package) fun liquidation_reward<BaseAsset, QuoteAsset>(
     self.risk_params.borrow(pair).liquidation_reward
 }
 
-public(package) fun get_config<Config: store + drop>(
-    self: &MarginRegistry,
-): &Config {
+public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
     self.id.borrow(ConfigKey<Config> {})
 }
