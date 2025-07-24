@@ -14,6 +14,7 @@ const ECannotWithdrawMoreThanSupply: u64 = 3;
 const ECannotRepayMoreThanLoan: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
+const EInvalidRepaymentQuantity: u64 = 7;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -34,6 +35,13 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
+}
+
+public struct RepaymentProof<phantom Asset> {
+    manager_id: ID,
+    repay_amount: u64,
+    pool_reward_amount: u64,
+    in_default: bool,
 }
 
 public struct LoanDefault has copy, drop {
@@ -123,6 +131,39 @@ public fun withdraw<Asset>(
     self.state.decrease_total_supply(withdrawal_amount);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
+}
+
+/// Repays a loan for a margin manager being liquidated.
+public fun verify_and_repay_liquidation<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    mut coin: Coin<Asset>,
+    repayment_proof: RepaymentProof<Asset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(
+        coin.value() == repayment_proof.repay_amount + repayment_proof.pool_reward_amount,
+        EInvalidRepaymentQuantity,
+    );
+
+    let repay_coin = coin.split(repayment_proof.repay_amount, ctx);
+    margin_pool.repay<Asset>(
+        repayment_proof.manager_id,
+        repay_coin,
+        clock,
+    );
+    margin_pool.add_liquidation_reward(coin, repayment_proof.manager_id, clock);
+
+    if (repayment_proof.in_default) {
+        margin_pool.default_loan(repayment_proof.manager_id, clock);
+    };
+
+    let RepaymentProof {
+        manager_id: _,
+        repay_amount: _,
+        pool_reward_amount: _,
+        in_default: _,
+    } = repayment_proof;
 }
 
 // === Public-Package Functions ===
@@ -228,6 +269,21 @@ public(package) fun add_liquidation_reward<Asset>(
         manager_id,
         liquidation_reward,
     });
+}
+
+/// Creates a RepaymentProof object for the margin pool.
+public(package) fun create_repayment_proof<Asset>(
+    manager_id: ID,
+    repay_amount: u64,
+    pool_reward_amount: u64,
+    in_default: bool,
+): RepaymentProof<Asset> {
+    RepaymentProof<Asset> {
+        manager_id,
+        repay_amount,
+        pool_reward_amount,
+        in_default,
+    }
 }
 
 public(package) fun user_loan<Asset>(
