@@ -212,15 +212,6 @@ public fun get_deepbook_pool_margin_pools(
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }
 
-/// Get both margin pool IDs for a deepbook pool (package function version)
-public(package) fun get_margin_pool_ids(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-): (ID, ID) {
-    let config = self.get_pool_config(deepbook_pool_id);
-    (config.base_margin_pool_id, config.quote_margin_pool_id)
-}
-
 // === Public-Package Functions ===
 /// Get the pool configuration for a deepbook pool
 public(package) fun get_pool_config(
