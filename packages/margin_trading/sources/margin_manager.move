@@ -368,8 +368,8 @@ public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
     (asset_info.asset, asset_info.debt, asset_info.usd_asset, asset_info.usd_debt)
 }
 
-/// Liquidates a margin manager
-public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
+/// Liquidates a margin manager. Can source liquidity from anywhere.
+public fun liquidate_custom<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
@@ -536,6 +536,14 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
                 coin::zero<QuoteAsset>(ctx)
             };
 
+            // Emit a liquidation event for the liquidator
+            event::emit(LiquidationEvent {
+                margin_manager_id,
+                base_amount: total_repayment,
+                quote_amount: 0,
+                liquidator: ctx.sender(),
+            });
+
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         } else {
             let quote_repaid_usd = calculate_usd_price<QuoteAsset>(
@@ -589,6 +597,14 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
                 coin::zero<QuoteAsset>(ctx)
             };
 
+            // Emit a liquidation event for the liquidator
+            event::emit(LiquidationEvent {
+                margin_manager_id,
+                base_amount: 0,
+                quote_amount: total_repayment,
+                liquidator: ctx.sender(),
+            });
+
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         }
     } else {
@@ -609,6 +625,14 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
             );
             let quote_returned = coin::zero<QuoteAsset>(ctx);
 
+            // Emit a liquidation event for the liquidator
+            event::emit(LiquidationEvent {
+                margin_manager_id,
+                base_amount: base_repaid,
+                quote_amount: 0,
+                liquidator: ctx.sender(),
+            });
+
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         } else {
             let repayment_proof_base = option::none<RepaymentProof<BaseAsset>>();
@@ -626,6 +650,14 @@ public fun liquidate_custom_sourcing<BaseAsset, QuoteAsset>(
                 math::mul(quote_repaid, liquidation_multiplier),
                 ctx,
             );
+
+            // Emit a liquidation event for the liquidator
+            event::emit(LiquidationEvent {
+                margin_manager_id,
+                base_amount: 0,
+                quote_amount: quote_repaid,
+                liquidator: ctx.sender(),
+            });
 
             (base_returned, quote_returned, repayment_proof_base, repayment_proof_quote)
         }
