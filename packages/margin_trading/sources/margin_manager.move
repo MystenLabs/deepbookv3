@@ -278,10 +278,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
-        assert!(
-            registry.can_withdraw(pool_id, risk_ratio),
-            EWithdrawRiskRatioExceeded,
-        );
+        assert!(registry.can_withdraw(pool_id, risk_ratio), EWithdrawRiskRatioExceeded);
     };
 
     let Request {
@@ -401,19 +398,17 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
+    let pool_id = object::id(pool);
 
-    assert!(
-        registry.can_liquidate<BaseAsset, QuoteAsset>(manager_info.risk_ratio),
-        ECannotLiquidate,
-    );
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
     let margin_manager_id = margin_manager.id();
     let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
     let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
-    let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
-    let user_liquidation_reward = registry.user_liquidation_reward<BaseAsset, QuoteAsset>();
-    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+    let target_ratio = registry.target_liquidation_risk_ratio(pool_id);
+    let user_liquidation_reward = registry.user_liquidation_reward(pool_id);
+    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id);
     let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
     let liquidation_multiplier = constants::float_scaling() + total_liquidation_reward;
     let in_default = in_default(manager_info.risk_ratio);
@@ -694,19 +689,18 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
+    let pool_id = object::id(pool);
 
-    assert!(
-        registry.can_liquidate<BaseAsset, QuoteAsset>(manager_info.risk_ratio),
-        ECannotLiquidate,
-    );
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
     // Step 2: We calculate how much needs to be sold (if any), and repaid.
     let total_usd_debt = manager_info.base.usd_debt + manager_info.quote.usd_debt;
     let total_usd_asset = manager_info.base.usd_asset + manager_info.quote.usd_asset;
-    let target_ratio = registry.target_liquidation_risk_ratio<BaseAsset, QuoteAsset>();
+    let target_ratio = registry.target_liquidation_risk_ratio(pool_id);
     let total_liquidation_reward =
-        registry.user_liquidation_reward<BaseAsset, QuoteAsset>() +
-        registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+        registry.user_liquidation_reward(pool_id) +
+        registry.pool_liquidation_reward(pool_id);
+    let liquidation_multiplier = constants::float_scaling() + total_liquidation_reward;
 
     // Now we check whether we have base or quote loan that needs to be covered.
     // Scenario 1: debt is in base asset.
@@ -766,7 +760,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     let penalty_taker_fee_multiplier = constants::float_scaling() + penalty_taker_fee;
 
     let (base_repaid, quote_repaid) = if (same_asset_usd_repay < usd_amount_to_repay) {
-        let max_slippage = registry.max_slippage<BaseAsset, QuoteAsset>();
+        let max_slippage = registry.max_slippage(pool_id);
         let liquidation_reward_multiplier = constants::float_scaling() + total_liquidation_reward;
 
         // After repayment of the same assets, these will be the debt and asset remaining
@@ -904,9 +898,9 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
         margin_manager.repay_all_liquidation(
             base_margin_pool,
             quote_margin_pool,
-            registry,
             option::none(),
             option::none(),
+            liquidation_multiplier,
             clock,
             ctx,
         )
@@ -924,9 +918,9 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
         margin_manager.repay_all_liquidation(
             base_margin_pool,
             quote_margin_pool,
-            registry,
             option::some(max_base_repay),
             option::some(max_quote_repay),
+            liquidation_multiplier,
             clock,
             ctx,
         )
@@ -943,7 +937,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     // Step 4: Liquidation rewards based on amount repaid.
     // After repayment, the manager should be close to the target risk ratio (some slippage, but should be close).
     // We withdraw the liquidation reward for the pool.
-    let pool_liquidation_reward = registry.pool_liquidation_reward<BaseAsset, QuoteAsset>(); // 2%
+    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id);
     let pool_liquidation_reward_base = math::mul(pool_liquidation_reward, base_repaid);
     let pool_liquidation_reward_quote = math::mul(pool_liquidation_reward, quote_repaid);
 
@@ -973,7 +967,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
 
     // We can withdraw the liquidation reward for the user.
     // Liquidation reward is a percentage of the amount repaid.
-    let user_liquidation_reward = registry.user_liquidation_reward<BaseAsset, QuoteAsset>();
+    let user_liquidation_reward = registry.user_liquidation_reward(pool_id);
     let user_liquidation_reward_base = math::mul(user_liquidation_reward, base_repaid);
     let user_base_coin = margin_manager.liquidation_withdraw_base(
         user_liquidation_reward_base,
@@ -1232,23 +1226,23 @@ fun repay_all_liquidation<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    margin_registry: &MarginRegistry,
     max_base_repay: Option<u64>, // if None, repay max
     max_quote_repay: Option<u64>, // if None, repay max
+    liquidation_multiplier: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64) {
     let base_repaid = margin_manager.repay_base_liquidate(
         base_margin_pool,
-        margin_registry,
         max_base_repay,
+        liquidation_multiplier,
         clock,
         ctx,
     );
     let quote_repaid = margin_manager.repay_quote_liquidate(
         quote_margin_pool,
-        margin_registry,
         max_quote_repay,
+        liquidation_multiplier,
         clock,
         ctx,
     );
@@ -1261,15 +1255,15 @@ fun repay_all_liquidation<BaseAsset, QuoteAsset>(
 fun repay_base_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BaseAsset>,
-    registry: &MarginRegistry,
     repay_amount: Option<u64>, // if None, repay max
+    liquidation_multiplier: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
     margin_manager.repay_liquidation<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
-        registry,
         repay_amount,
+        liquidation_multiplier,
         clock,
         ctx,
     )
@@ -1280,15 +1274,15 @@ fun repay_base_liquidate<BaseAsset, QuoteAsset>(
 fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<QuoteAsset>,
-    registry: &MarginRegistry,
     repay_amount: Option<u64>, // if None, repay max
+    liquidation_multiplier: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
     margin_manager.repay_liquidation<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
-        registry,
         repay_amount,
+        liquidation_multiplier,
         clock,
         ctx,
     )
@@ -1300,8 +1294,8 @@ fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
 fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
-    registry: &MarginRegistry,
     repay_amount: Option<u64>,
+    liquidation_multiplier: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
@@ -1310,8 +1304,7 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let repay_amount = repay_amount.get_with_default(user_loan);
     let manager_asset = margin_manager.balance_manager().balance<RepayAsset>();
-    let liquidation_multiplier =
-        constants::float_scaling() + registry.user_liquidation_reward<BaseAsset, QuoteAsset>() + registry.pool_liquidation_reward<BaseAsset, QuoteAsset>();
+
     let available_balance_for_repayment = math::div(
         manager_asset,
         liquidation_multiplier,

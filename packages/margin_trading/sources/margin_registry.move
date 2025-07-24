@@ -5,7 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::margin_pool::{MarginPool};
+use margin_trading::margin_pool::MarginPool;
 use sui::{dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
@@ -18,7 +18,9 @@ const EPoolAlreadyRegistered: u64 = 6;
 const EPoolNotRegistered: u64 = 7;
 
 // === Constants ===
-const DEFAULT_LIQUIDATION_REWARD: u64 = 50_000_000; // 5%
+const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 20_000_000; // 2%
+const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 30_000_000; // 3%
+const DEFAULT_MAX_SLIPPAGE: u64 = 10_000_000; // 1%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 
@@ -44,7 +46,7 @@ public struct PoolConfig has copy, drop, store {
 
 public struct MarginRegistry has key, store {
     id: UID,
-    pool_registry: Table<ID, PoolConfig>, 
+    pool_registry: Table<ID, PoolConfig>,
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
@@ -78,8 +80,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
     max_slippage: u64,
-): RiskParams {
-    liquidation_reward: u64,
 ): PoolConfig {
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
@@ -92,6 +92,7 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         target_liquidation_risk_ratio > 1_000_000_000 + user_liquidation_reward + pool_liquidation_reward,
         EInvalidRiskParam,
     );
+    assert!(max_slippage <= 1_000_000_000, EInvalidRiskParam);
 
     PoolConfig {
         base_margin_pool_id: object::id(base_margin_pool),
@@ -100,26 +101,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
-        user_liquidation_reward,
-        pool_liquidation_reward,
-        max_slippage,
-    }
-}
-
-public fun default_risk_params(leverage: u64): RiskParams {
-    assert!(leverage > 1_000_000_000, EInvalidRiskParam);
-    assert!(leverage <= 10_000_000_000, EInvalidRiskParam); // Max 10x leverage
-
-    let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
-    let user_liquidation_reward = margin_constants::default_user_liquidation_reward();
-    let pool_liquidation_reward = margin_constants::default_pool_liquidation_reward();
-    let max_slippage = margin_constants::default_max_slippage();
-
-    RiskParams {
-        min_withdraw_risk_ratio: constants::float_scaling() + 4 * factor, // 1 + 1 = 1.44
-        min_borrow_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
-        liquidation_risk_ratio: constants::float_scaling() + factor / 2, // 1 + 0.125 = 1.125
-        target_liquidation_risk_ratio: constants::float_scaling() + factor, // 1 + 0.25 = 1.25
         user_liquidation_reward,
         pool_liquidation_reward,
         max_slippage,
@@ -143,11 +124,11 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     leverage: u64,
 ): PoolConfig {
     assert!(leverage > MIN_LEVERAGE, EInvalidRiskParam);
-    assert!(leverage <= MAX_LEVERAGE, EInvalidRiskParam); 
+    assert!(leverage <= MAX_LEVERAGE, EInvalidRiskParam);
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
     let risk_ratios = calculate_risk_ratios(factor);
-    
+
     new_pool_config(
         base_margin_pool,
         quote_margin_pool,
@@ -155,7 +136,9 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
         risk_ratios.min_borrow_risk_ratio,
         risk_ratios.liquidation_risk_ratio,
         risk_ratios.target_liquidation_risk_ratio,
-        DEFAULT_LIQUIDATION_REWARD
+        DEFAULT_USER_LIQUIDATION_REWARD,
+        DEFAULT_POOL_LIQUIDATION_REWARD,
+        DEFAULT_MAX_SLIPPAGE,
     )
 }
 
@@ -167,24 +150,22 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
     target_liquidation_risk_ratio: u64,
-    liquidation_reward: u64,
+    user_liquidation_reward: u64,
+    pool_liquidation_reward: u64,
+    max_slippage: u64,
     _cap: &MarginAdminCap,
 ) {
     let pool_id = object::id(pool);
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
     let prev_config = self.pool_registry.remove(pool_id);
-    assert!(
-        liquidation_risk_ratio <= prev_config.liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
+    assert!(liquidation_risk_ratio <= prev_config.liquidation_risk_ratio, EInvalidRiskParam);
 
     // Validate new risk parameters
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
-    assert!(liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
 
     let updated_config = PoolConfig {
         base_margin_pool_id: prev_config.base_margin_pool_id,
@@ -193,7 +174,9 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
-        liquidation_reward,
+        user_liquidation_reward,
+        pool_liquidation_reward,
+        max_slippage,
     };
     self.pool_registry.add(pool_id, updated_config);
 }
@@ -208,12 +191,14 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
     target_liquidation_risk_ratio: u64,
-    liquidation_reward: u64,
+    user_liquidation_reward: u64,
+    pool_liquidation_reward: u64,
+    max_slippage: u64,
     _cap: &MarginAdminCap,
 ) {
     let pool_id = object::id(pool);
     assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
-    
+
     let config = new_pool_config(
         base_margin_pool,
         quote_margin_pool,
@@ -221,7 +206,9 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
-        liquidation_reward,
+        user_liquidation_reward,
+        pool_liquidation_reward,
+        max_slippage,
     );
     self.pool_registry.add(pool_id, config);
 }
@@ -235,7 +222,7 @@ public fun unregister_deepbook_pool<BaseAsset, QuoteAsset>(
 ) {
     let pool_id = object::id(pool);
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
-    
+
     self.pool_registry.remove(pool_id);
 }
 
@@ -277,28 +264,19 @@ public fun get_deepbook_pool_margin_pool_ids(
 
 // === Public-Package Functions ===
 /// Get the pool configuration for a deepbook pool
-public(package) fun get_pool_config(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-): &PoolConfig {
+public(package) fun get_pool_config(self: &MarginRegistry, deepbook_pool_id: ID): &PoolConfig {
     assert!(self.pool_registry.contains(deepbook_pool_id), EPoolNotRegistered);
     self.pool_registry.borrow(deepbook_pool_id)
 }
 
 /// Get the base margin pool ID for a deepbook pool
-public(package) fun get_base_margin_pool_id(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-): ID {
+public(package) fun get_base_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
     let config = self.get_pool_config(deepbook_pool_id);
     config.base_margin_pool_id
 }
 
 /// Get the quote margin pool ID for a deepbook pool
-public(package) fun get_quote_margin_pool_id(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-): ID {
+public(package) fun get_quote_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
     let config = self.get_pool_config(deepbook_pool_id);
     config.quote_margin_pool_id
 }
@@ -312,11 +290,7 @@ public(package) fun can_withdraw(
     risk_ratio >= config.min_withdraw_risk_ratio
 }
 
-public(package) fun can_borrow(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-    risk_ratio: u64,
-): bool {
+public(package) fun can_borrow(self: &MarginRegistry, deepbook_pool_id: ID, risk_ratio: u64): bool {
     let config = self.get_pool_config(deepbook_pool_id);
     risk_ratio >= config.min_borrow_risk_ratio
 }
@@ -338,52 +312,21 @@ public(package) fun target_liquidation_risk_ratio(
     config.target_liquidation_risk_ratio
 }
 
-public(package) fun user_liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
-    let pair = MarginPair {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
-    };
-
-    self.risk_params.borrow(pair).user_liquidation_reward
+public(package) fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.user_liquidation_reward
 }
 
-public(package) fun pool_liquidation_reward<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
-    let pair = MarginPair {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
-    };
-
-    self.risk_params.borrow(pair).pool_liquidation_reward
+public(package) fun pool_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.pool_liquidation_reward
 }
 
-public(package) fun max_slippage<BaseAsset, QuoteAsset>(self: &MarginRegistry): u64 {
-    let pair = MarginPair {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
-    };
-
-    self.risk_params.borrow(pair).max_slippage
+public(package) fun max_slippage(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.max_slippage
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
     self.id.borrow(ConfigKey<Config> {})
-}
-
-#[test_only]
-public fun margin_registry_for_testing(ctx: &mut TxContext): ID {
-    let registry = MarginRegistry {
-        id: object::new(ctx),
-        margin_pools: bag::new(ctx),
-        risk_params: table::new(ctx),
-    };
-
-    let id = object::id(&registry);
-    transfer::share_object(registry);
-
-    id
-}
-
-#[test_only]
-public fun get_margin_admin_cap_for_testing(ctx: &mut TxContext): MarginAdminCap {
-    MarginAdminCap { id: object::new(ctx) }
 }
