@@ -17,6 +17,11 @@ const EInvalidRiskParam: u64 = 5;
 const EPoolAlreadyRegistered: u64 = 6;
 const EPoolNotRegistered: u64 = 7;
 
+// === Constants ===
+const DEFAULT_LIQUIDATION_REWARD: u64 = 50_000_000; // 5%
+const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
+const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
+
 public struct MARGIN_REGISTRY has drop {}
 
 // === Structs ===
@@ -42,6 +47,13 @@ public struct MarginRegistry has key, store {
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
 
+public struct RiskRatios has drop {
+    min_withdraw_risk_ratio: u64,
+    min_borrow_risk_ratio: u64,
+    liquidation_risk_ratio: u64,
+    target_liquidation_risk_ratio: u64,
+}
+
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let registry = MarginRegistry {
         id: object::new(ctx),
@@ -54,9 +66,9 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 
 // === Public Functions * ADMIN * ===
 /// Create a PoolConfig with margin pool IDs and risk parameters
-public fun new_pool_config(
-    base_margin_pool_id: ID,
-    quote_margin_pool_id: ID,
+public fun new_pool_config<BaseAsset, QuoteAsset>(
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
@@ -70,8 +82,8 @@ public fun new_pool_config(
     assert!(liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
 
     PoolConfig {
-        base_margin_pool_id,
-        quote_margin_pool_id,
+        base_margin_pool_id: object::id(base_margin_pool),
+        quote_margin_pool_id: object::id(quote_margin_pool),
         min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
@@ -80,32 +92,44 @@ public fun new_pool_config(
     }
 }
 
+
+/// Calculate risk parameters based on leverage factor
+fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
+    RiskRatios {
+        min_withdraw_risk_ratio: constants::float_scaling() + 4 * leverage_factor, // 1 + 1 = 2x
+        min_borrow_risk_ratio: constants::float_scaling() + leverage_factor, // 1 + 0.25 = 1.25x
+        liquidation_risk_ratio: constants::float_scaling() + leverage_factor / 2, // 1 + 0.125 = 1.125x
+        target_liquidation_risk_ratio: constants::float_scaling() + leverage_factor, // 1 + 0.25 = 1.25x
+    }
+}
+
 /// Create a PoolConfig with default risk parameters based on leverage
-public fun new_pool_config_with_leverage(
-    base_margin_pool_id: ID,
-    quote_margin_pool_id: ID,
+public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     leverage: u64,
 ): PoolConfig {
-    assert!(leverage > 1_000_000_000, EInvalidRiskParam);
-    assert!(leverage <= 20_000_000_000, EInvalidRiskParam); // Max 20x leverage
+    assert!(leverage > MIN_LEVERAGE, EInvalidRiskParam);
+    assert!(leverage <= MAX_LEVERAGE, EInvalidRiskParam); 
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
+    let risk_ratios = calculate_risk_ratios(factor);
     
     new_pool_config(
-        base_margin_pool_id,
-        quote_margin_pool_id,
-        constants::float_scaling() + 4 * factor, // min_withdraw_risk_ratio: 1 + 1 = 2 x
-        constants::float_scaling() + factor, // min_borrow_risk_ratio: 1 + 0.25 = 1.25x
-        constants::float_scaling() + factor / 2, // liquidation_risk_ratio: 1 + 0.125 = 1.125x
-        constants::float_scaling() + factor, // target_liquidation_risk_ratio: 1 + 0.25 = 1.25x
-        50_000_000, // liquidation_reward: 5%
+        base_margin_pool,
+        quote_margin_pool,
+        risk_ratios.min_withdraw_risk_ratio,
+        risk_ratios.min_borrow_risk_ratio,
+        risk_ratios.liquidation_risk_ratio,
+        risk_ratios.target_liquidation_risk_ratio,
+        DEFAULT_LIQUIDATION_REWARD
     )
 }
 
 /// Updates risk params for a deepbook pool as the admin.
-public fun update_risk_params(
+public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    pool_id: ID,
+    pool: &Pool<BaseAsset, QuoteAsset>,
     min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
@@ -113,6 +137,7 @@ public fun update_risk_params(
     liquidation_reward: u64,
     _cap: &MarginAdminCap,
 ) {
+    let pool_id = object::id(pool);
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
     let prev_config = self.pool_registry.remove(pool_id);
@@ -121,15 +146,22 @@ public fun update_risk_params(
         EInvalidRiskParam,
     );
 
-    let updated_config = new_pool_config(
-        prev_config.base_margin_pool_id,
-        prev_config.quote_margin_pool_id,
+    // Validate new risk parameters
+    assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
+    assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
+    assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
+    assert!(liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
+    assert!(liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+
+    let updated_config = PoolConfig {
+        base_margin_pool_id: prev_config.base_margin_pool_id,
+        quote_margin_pool_id: prev_config.quote_margin_pool_id,
         min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
         target_liquidation_risk_ratio,
         liquidation_reward,
-    );
+    };
     self.pool_registry.add(pool_id, updated_config);
 }
 
@@ -149,12 +181,9 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     let pool_id = object::id(pool);
     assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
     
-    let base_margin_pool_id = object::id(base_margin_pool);
-    let quote_margin_pool_id = object::id(quote_margin_pool);
-    
     let config = new_pool_config(
-        base_margin_pool_id,
-        quote_margin_pool_id,
+        base_margin_pool,
+        quote_margin_pool,
         min_withdraw_risk_ratio,
         min_borrow_risk_ratio,
         liquidation_risk_ratio,
@@ -164,6 +193,7 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     self.pool_registry.add(pool_id, config);
 }
 
+// TODO: Account for open orders before allowing unregister
 /// Unregister a deepbook pool from margin trading
 public fun unregister_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
@@ -204,7 +234,7 @@ public fun pool_registered<BaseAsset, QuoteAsset>(
 }
 
 /// Get the margin pool IDs for a deepbook pool
-public fun get_deepbook_pool_margin_pools(
+public fun get_deepbook_pool_margin_pool_ids(
     registry: &MarginRegistry,
     deepbook_pool_id: ID,
 ): (ID, ID) {
