@@ -5,7 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::margin_pool::MarginPool;
+use margin_trading::{margin_constants, margin_pool::MarginPool};
 use sui::{dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
@@ -16,13 +16,6 @@ use fun df::remove as UID.remove;
 const EInvalidRiskParam: u64 = 5;
 const EPoolAlreadyRegistered: u64 = 6;
 const EPoolNotRegistered: u64 = 7;
-
-// === Constants ===
-const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 20_000_000; // 2%
-const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 30_000_000; // 3%
-const DEFAULT_MAX_SLIPPAGE: u64 = 10_000_000; // 1%
-const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
-const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -123,8 +116,8 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     leverage: u64,
 ): PoolConfig {
-    assert!(leverage > MIN_LEVERAGE, EInvalidRiskParam);
-    assert!(leverage <= MAX_LEVERAGE, EInvalidRiskParam);
+    assert!(leverage > margin_constants::min_leverage(), EInvalidRiskParam);
+    assert!(leverage <= margin_constants::max_leverage(), EInvalidRiskParam);
 
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
     let risk_ratios = calculate_risk_ratios(factor);
@@ -136,9 +129,9 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
         risk_ratios.min_borrow_risk_ratio,
         risk_ratios.liquidation_risk_ratio,
         risk_ratios.target_liquidation_risk_ratio,
-        DEFAULT_USER_LIQUIDATION_REWARD,
-        DEFAULT_POOL_LIQUIDATION_REWARD,
-        DEFAULT_MAX_SLIPPAGE,
+        margin_constants::default_user_liquidation_reward(),
+        margin_constants::default_pool_liquidation_reward(),
+        margin_constants::default_max_slippage(),
     )
 }
 
