@@ -75,8 +75,12 @@ public struct Request {
 }
 
 // === Public Functions - Margin Manager ===
-public fun new<BaseAsset, QuoteAsset>(margin_registry: &MarginRegistry, ctx: &mut TxContext) {
-    assert!(margin_registry.margin_pair_allowed<BaseAsset, QuoteAsset>(), EMarginPairNotAllowed);
+public fun new<BaseAsset, QuoteAsset>(
+    margin_registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    ctx: &mut TxContext,
+) {
+    assert!(margin_registry.pool_registered(pool), EMarginPairNotAllowed);
 
     let id = object::new(ctx);
 
@@ -232,11 +236,12 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
+    let pool_id = object::id(pool);
     if (request.request_type == BORROW) {
-        assert!(registry.can_borrow<BaseAsset, QuoteAsset>(risk_ratio), EBorrowRiskRatioExceeded);
+        assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
         assert!(
-            registry.can_withdraw<BaseAsset, QuoteAsset>(risk_ratio),
+            registry.can_withdraw(pool_id, risk_ratio),
             EWithdrawRiskRatioExceeded,
         );
     };
