@@ -4,7 +4,7 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
+use margin_trading::margin_state::{Self, State};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
@@ -34,46 +34,6 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
-}
-
-// === Public Functions * ADMIN * ===
-/// Creates a margin pool as the admin. Registers the margin pool in the margin registry.
-public fun create_margin_pool<Asset>(
-    supply_cap: u64,
-    max_borrow_percentage: u64,
-    _cap: &MarginAdminCap,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let margin_pool = MarginPool<Asset> {
-        id: object::new(ctx),
-        vault: balance::zero<Asset>(),
-        loans: table::new(ctx),
-        supplies: table::new(ctx),
-        supply_cap,
-        max_borrow_percentage,
-        state: margin_state::default(clock),
-    };
-
-    transfer::share_object(margin_pool);
-}
-
-/// Updates the supply cap for the margin pool as the admin.
-public fun update_supply_cap<Asset>(
-    pool: &mut MarginPool<Asset>,
-    supply_cap: u64,
-    _cap: &MarginAdminCap,
-) {
-    pool.supply_cap = supply_cap;
-}
-
-/// Updates the maximum borrow percentage for the margin pool as the admin.
-public fun update_max_borrow_percentage<Asset>(
-    pool: &mut MarginPool<Asset>,
-    max_borrow_percentage: u64,
-    _cap: &MarginAdminCap,
-) {
-    pool.max_borrow_percentage = max_borrow_percentage;
 }
 
 // === Public Functions * LENDING * ===
@@ -114,6 +74,43 @@ public fun withdraw<Asset>(
 }
 
 // === Public-Package Functions ===
+/// Creates a margin pool as the admin.
+public(package) fun create_margin_pool<Asset>(
+    supply_cap: u64,
+    max_borrow_percentage: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginPool<Asset> {
+    let margin_pool = MarginPool<Asset> {
+        id: object::new(ctx),
+        vault: balance::zero<Asset>(),
+        loans: table::new(ctx),
+        supplies: table::new(ctx),
+        supply_cap,
+        max_borrow_percentage,
+        state: margin_state::default(clock),
+    };
+
+    margin_pool
+}
+
+/// Updates the supply cap for the margin pool.
+public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
+    self.supply_cap = supply_cap;
+}
+
+/// Updates the maximum borrow percentage for the margin pool.
+public(package) fun update_max_borrow_percentage<Asset>(
+    self: &mut MarginPool<Asset>,
+    max_borrow_percentage: u64,
+) {
+    self.max_borrow_percentage = max_borrow_percentage;
+}
+
+public(package) fun share<Asset>(self: MarginPool<Asset>) {
+    transfer::share_object(self);
+}
+
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
