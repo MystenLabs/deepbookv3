@@ -426,10 +426,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
     );
 
     // Step 3: We cancel all orders and withdraw settled amounts from the pool.
-    // TODO: update this to use the new function in main
-    let trade_proof = margin_manager
-        .balance_manager
-        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+    let trade_proof = margin_manager.trade_proof(ctx);
 
     let balance_manager = margin_manager.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
@@ -742,10 +739,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     let same_asset_usd_repay = base_usd_repay + quote_usd_repay;
 
     // Step 3: Trade execution and repayment
-    // TODO: update this to use the new function in main
-    let trade_proof = margin_manager
-        .balance_manager
-        .generate_proof_as_trader(&margin_manager.trade_cap, ctx);
+    let trade_proof = margin_manager.trade_proof(ctx);
 
     let balance_manager = margin_manager.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
