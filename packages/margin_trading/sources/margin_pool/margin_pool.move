@@ -5,7 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{margin_registry::MarginAdminCap, margin_state::{Self, State}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin}, event, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
