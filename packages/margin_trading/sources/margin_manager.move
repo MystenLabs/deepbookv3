@@ -369,7 +369,7 @@ public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
 }
 
 /// Liquidates a margin manager
-public fun liquidate<BaseAsset, QuoteAsset>(
+public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
