@@ -197,21 +197,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     );
     assert!(pool_config.risk_ratios.liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
 
-    let updated_config = PoolConfig {
-        base_margin_pool_id: prev_config.base_margin_pool_id,
-        quote_margin_pool_id: prev_config.quote_margin_pool_id,
-        risk_ratios: RiskRatios {
-            min_withdraw_risk_ratio: pool_config.risk_ratios.min_withdraw_risk_ratio,
-            min_borrow_risk_ratio: pool_config.risk_ratios.min_borrow_risk_ratio,
-            liquidation_risk_ratio: pool_config.risk_ratios.liquidation_risk_ratio,
-            target_liquidation_risk_ratio: pool_config.risk_ratios.target_liquidation_risk_ratio,
-        },
-        user_liquidation_reward: pool_config.user_liquidation_reward,
-        pool_liquidation_reward: pool_config.pool_liquidation_reward,
-        max_slippage: pool_config.max_slippage,
-        enabled: prev_config.enabled,
-    };
-    self.pool_registry.add(pool_id, updated_config);
+    self.pool_registry.add(pool_id, pool_config);
 }
 
 /// Disables a deepbook pool from margin trading. Only cancel orders and withdraw settled amounts are allowed.
