@@ -1059,6 +1059,32 @@ public(package) fun id<BaseAsset, QuoteAsset>(
     object::id(margin_manager)
 }
 
+/// Returns the (base_debt, quote_debt) for the margin manager
+public(package) fun total_debt<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    clock: &Clock,
+): (u64, u64) {
+    let base_debt = margin_manager.debt(base_margin_pool, clock);
+    let quote_debt = margin_manager.debt(quote_margin_pool, clock);
+
+    (base_debt, quote_debt)
+}
+
+/// Returns (base_asset, quote_asset) for margin manager.
+public(package) fun total_assets<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): (u64, u64) {
+    let balance_manager = margin_manager.balance_manager();
+    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
+    base = base + balance_manager.balance<BaseAsset>();
+    quote = quote + balance_manager.balance<QuoteAsset>();
+
+    (base, quote)
+}
+
 // === Private Functions ===
 fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1124,19 +1150,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     repay_amount
 }
 
-/// Returns the (base_debt, quote_debt) for the margin manager
-fun total_debt<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    clock: &Clock,
-): (u64, u64) {
-    let base_debt = margin_manager.debt(base_margin_pool, clock);
-    let quote_debt = margin_manager.debt(quote_margin_pool, clock);
-
-    (base_debt, quote_debt)
-}
-
 fun debt<BaseAsset, QuoteAsset, Asset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<Asset>,
@@ -1199,19 +1212,6 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     );
 
     coin
-}
-
-/// Returns (base_asset, quote_asset) for margin manager.
-fun total_assets<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-): (u64, u64) {
-    let balance_manager = margin_manager.balance_manager();
-    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
-    base = base + balance_manager.balance<BaseAsset>();
-    quote = quote + balance_manager.balance<QuoteAsset>();
-
-    (base, quote)
 }
 
 /// Repay all for the balance manager.
