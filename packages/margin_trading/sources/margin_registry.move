@@ -5,8 +5,9 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{margin_constants, margin_pool::MarginPool};
-use sui::{dynamic_field as df, table::{Self, Table}};
+use margin_trading::{margin_constants, margin_pool::{Self, MarginPool}};
+use std::type_name::{Self, TypeName};
+use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -19,6 +20,8 @@ const EPoolNotRegistered: u64 = 3;
 const EPoolNotEnabled: u64 = 4;
 const EPoolAlreadyEnabled: u64 = 5;
 const EPoolAlreadyDisabled: u64 = 6;
+const EMarginPoolAlreadyExists: u64 = 7;
+const EMarginPoolDoesNotExists: u64 = 8;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -41,6 +44,7 @@ public struct PoolConfig has copy, drop, store {
 public struct MarginRegistry has key, store {
     id: UID,
     pool_registry: Table<ID, PoolConfig>,
+    margin_pools: Table<TypeName, ID>,
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
@@ -56,10 +60,33 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let registry = MarginRegistry {
         id: object::new(ctx),
         pool_registry: table::new(ctx),
+        margin_pools: table::new(ctx),
     };
     transfer::share_object(registry);
     let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
     transfer::public_transfer(margin_admin_cap, ctx.sender())
+}
+
+// === Public-Package Functions ===
+/// Register a new margin pool. If a same asset pool already exists, abort.
+public fun new_margin_pool<Asset>(
+    self: &mut MarginRegistry,
+    supply_cap: u64,
+    max_borrow_percentage: u64,
+    clock: &Clock,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+) {
+    let margin_pool_id = margin_pool::create_margin_pool<Asset>(
+        supply_cap,
+        max_borrow_percentage,
+        clock,
+        ctx,
+    );
+
+    let key = type_name::get<Asset>();
+    assert!(!self.margin_pools.contains(key), EMarginPoolAlreadyExists);
+    self.margin_pools.add(key, margin_pool_id);
 }
 
 // === Public Functions * ADMIN * ===
@@ -268,6 +295,14 @@ public fun pool_enabled<BaseAsset, QuoteAsset>(
     } else {
         false
     }
+}
+
+/// Get the margin pool id for the given asset.
+public fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
+    let key = type_name::get<Asset>();
+    assert!(self.margin_pools.contains(key), EMarginPoolDoesNotExists);
+
+    *self.margin_pools.borrow<TypeName, ID>(key)
 }
 
 /// Get the margin pool IDs for a deepbook pool

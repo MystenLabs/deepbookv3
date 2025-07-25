@@ -133,7 +133,7 @@ public(package) fun create_margin_pool<Asset>(
     max_borrow_percentage: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): MarginPool<Asset> {
+): ID {
     let margin_pool = MarginPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
@@ -143,8 +143,10 @@ public(package) fun create_margin_pool<Asset>(
         max_borrow_percentage,
         state: margin_state::default(clock),
     };
+    let margin_pool_id = margin_pool.id.to_inner();
+    transfer::share_object(margin_pool);
 
-    margin_pool
+    margin_pool_id
 }
 
 /// Updates the supply cap for the margin pool.
