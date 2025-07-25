@@ -4,18 +4,20 @@
 module margin_trading::pool_proxy;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
-use margin_trading::margin_manager::MarginManager;
+use margin_trading::{margin_manager::MarginManager, margin_registry::MarginRegistry};
 use std::type_name;
 use sui::clock::Clock;
 use token::deep::DEEP;
 
 // === Errors ===
-const ECannotStakeWithDeepMarginManager: u64 = 0;
+const ECannotStakeWithDeepMarginManager: u64 = 1;
+const EPoolNotEnabledForMarginTrading: u64 = 2;
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     client_order_id: u64,
     order_type: u8,
@@ -30,6 +32,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -50,6 +53,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 /// Places a market order in the pool.
 public fun place_market_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     client_order_id: u64,
     self_matching_option: u8,
@@ -61,6 +65,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_market_order(
         balance_manager,
