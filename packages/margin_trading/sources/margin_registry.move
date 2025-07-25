@@ -5,7 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{margin_constants, margin_pool::{Self, MarginPool}};
+use margin_trading::{margin_constants, margin_pool};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
 
@@ -33,7 +33,6 @@ public struct MarginAdminCap has key, store {
 public struct PoolConfig has copy, drop, store {
     base_margin_pool_id: ID,
     quote_margin_pool_id: ID,
-    // Risk parameters
     risk_ratios: RiskRatios,
     user_liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
     pool_liquidation_reward: u64, // fractional reward for the pool, in 9 decimals
@@ -90,10 +89,22 @@ public fun new_margin_pool<Asset>(
 }
 
 // === Public Functions * ADMIN * ===
+/// Register a margin pool for margin trading with existing margin pools
+public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool_config: PoolConfig,
+    _cap: &MarginAdminCap,
+) {
+    let pool_id = object::id(pool);
+    assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
+
+    self.pool_registry.add(pool_id, pool_config);
+}
+
 /// Create a PoolConfig with default risk parameters based on leverage
 public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
+    self: &MarginRegistry,
     leverage: u64,
 ): PoolConfig {
     assert!(leverage > margin_constants::min_leverage(), EInvalidRiskParam);
@@ -102,9 +113,7 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     let factor = math::div(constants::float_scaling(), leverage - constants::float_scaling());
     let risk_ratios = calculate_risk_ratios(factor);
 
-    new_pool_config(
-        base_margin_pool,
-        quote_margin_pool,
+    self.new_pool_config<BaseAsset, QuoteAsset>(
         risk_ratios.min_withdraw_risk_ratio,
         risk_ratios.min_borrow_risk_ratio,
         risk_ratios.liquidation_risk_ratio,
@@ -115,37 +124,10 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Register a margin pool for margin trading with existing margin pools
-public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    pool_config: PoolConfig,
-    _cap: &MarginAdminCap,
-) {
-    let pool_id = object::id(pool);
-    assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
-
-    let config = new_pool_config(
-        base_margin_pool,
-        quote_margin_pool,
-        pool_config.risk_ratios.min_withdraw_risk_ratio,
-        pool_config.risk_ratios.min_borrow_risk_ratio,
-        pool_config.risk_ratios.liquidation_risk_ratio,
-        pool_config.risk_ratios.target_liquidation_risk_ratio,
-        pool_config.user_liquidation_reward,
-        pool_config.pool_liquidation_reward,
-        pool_config.max_slippage,
-    );
-    self.pool_registry.add(pool_id, config);
-}
-
 /// Create a PoolConfig with margin pool IDs and risk parameters
 /// Enable is false by default, must be enabled after registration
 public fun new_pool_config<BaseAsset, QuoteAsset>(
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
+    self: &MarginRegistry,
     min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
     liquidation_risk_ratio: u64,
@@ -168,8 +150,8 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     assert!(max_slippage <= 1_000_000_000, EInvalidRiskParam);
 
     PoolConfig {
-        base_margin_pool_id: object::id(base_margin_pool),
-        quote_margin_pool_id: object::id(quote_margin_pool),
+        base_margin_pool_id: self.get_margin_pool_id<BaseAsset>(),
+        quote_margin_pool_id: self.get_margin_pool_id<QuoteAsset>(),
         risk_ratios: RiskRatios {
             min_withdraw_risk_ratio,
             min_borrow_risk_ratio,
