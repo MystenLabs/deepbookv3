@@ -96,7 +96,7 @@ public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     ctx: &mut TxContext,
 ) {
-    assert!(margin_registry.pool_registered(pool), EMarginPairNotAllowed);
+    assert!(margin_registry.pool_enabled(pool), EMarginPairNotAllowed);
 
     let id = object::new(ctx);
 
