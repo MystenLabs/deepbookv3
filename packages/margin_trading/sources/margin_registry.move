@@ -215,7 +215,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     self.pool_registry.add(pool_id, pool_config);
 }
 
-/// Disables a deepbook pool from margin trading. Only cancel orders and withdraw settled amounts are allowed.
+/// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
 public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -231,7 +231,7 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     self.pool_registry.add(pool_id, config);
 }
 
-/// Disables a deepbook pool from margin trading. Only cancel orders and withdraw settled amounts are allowed.
+/// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
 public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
