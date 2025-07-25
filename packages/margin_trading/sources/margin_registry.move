@@ -5,7 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{margin_constants, margin_pool};
+use margin_trading::{margin_constants, margin_pool::{Self, MarginPool}};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
 
@@ -66,8 +66,8 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     transfer::public_transfer(margin_admin_cap, ctx.sender())
 }
 
-// === Public-Package Functions ===
-/// Register a new margin pool. If a same asset pool already exists, abort.
+// === Public Functions * ADMIN * ===
+/// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 public fun new_margin_pool<Asset>(
     self: &mut MarginRegistry,
     supply_cap: u64,
@@ -88,7 +88,22 @@ public fun new_margin_pool<Asset>(
     self.margin_pools.add(key, margin_pool_id);
 }
 
-// === Public Functions * ADMIN * ===
+public fun update_supply_cap<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    supply_cap: u64,
+    _cap: &MarginAdminCap,
+) {
+    margin_pool::update_supply_cap<Asset>(margin_pool, supply_cap);
+}
+
+public fun update_max_borrow_percentage<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    max_borrow_percentage: u64,
+    _cap: &MarginAdminCap,
+) {
+    margin_pool::update_max_borrow_percentage<Asset>(margin_pool, max_borrow_percentage);
+}
+
 /// Register a margin pool for margin trading with existing margin pools
 public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
