@@ -107,7 +107,6 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
     );
@@ -158,7 +157,6 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
     );
