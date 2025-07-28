@@ -1927,8 +1927,8 @@ fun test_master_deep_price(error_code: u64) {
         client_order_id,
         order_type,
         constants::self_matching_allowed(),
-        price, // 100 * constants::float_scaling();
-        quantity, // 1 * constants::float_scaling();
+        price,
+        quantity,
         is_bid,
         pay_with_deep,
         expire_timestamp,
