@@ -93,7 +93,7 @@ public fun update_supply_cap<Asset>(
     supply_cap: u64,
     _cap: &MarginAdminCap,
 ) {
-    margin_pool::update_supply_cap<Asset>(margin_pool, supply_cap);
+    margin_pool.update_supply_cap<Asset>(supply_cap);
 }
 
 public fun update_max_borrow_percentage<Asset>(
@@ -101,7 +101,7 @@ public fun update_max_borrow_percentage<Asset>(
     max_borrow_percentage: u64,
     _cap: &MarginAdminCap,
 ) {
-    margin_pool::update_max_borrow_percentage<Asset>(margin_pool, max_borrow_percentage);
+    margin_pool.update_max_borrow_percentage<Asset>(max_borrow_percentage);
 }
 
 /// Register a margin pool for margin trading with existing margin pools
@@ -224,11 +224,9 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     let pool_id = object::id(pool);
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
-    let mut config = self.pool_registry.remove(pool_id);
+    let config = self.pool_registry.borrow_mut(pool_id);
     assert!(config.enabled == false, EPoolAlreadyEnabled);
     config.enabled = true;
-
-    self.pool_registry.add(pool_id, config);
 }
 
 /// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
@@ -240,11 +238,9 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     let pool_id = object::id(pool);
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
-    let mut config = self.pool_registry.remove(pool_id);
+    let config = self.pool_registry.borrow_mut(pool_id);
     assert!(config.enabled == true, EPoolAlreadyDisabled);
     config.enabled = false;
-
-    self.pool_registry.add(pool_id, config);
 }
 
 /// Add Pyth Config to the MarginRegistry.
