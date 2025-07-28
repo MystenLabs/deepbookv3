@@ -893,6 +893,50 @@ fun test_get_order() {
 }
 
 #[test]
+fun test_place_cancel_whitelisted_pool() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    let pool_id = setup_pool_with_default_fees<SUI, DEEP>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let order_info_1 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_1.order_id(),
+        &mut test,
+    );
+
+    end(test);
+}
+
+#[test]
 fun test_get_orders() {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
