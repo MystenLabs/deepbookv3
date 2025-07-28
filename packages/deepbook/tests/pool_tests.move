@@ -933,6 +933,75 @@ fun test_place_cancel_whitelisted_pool() {
         &mut test,
     );
 
+    let order_info_2 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        true,
+        false,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_2.order_id(),
+        &mut test,
+    );
+
+    let order_info_3 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_3.order_id(),
+        &mut test,
+    );
+
+    let order_info_4 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        false,
+        false,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_4.order_id(),
+        &mut test,
+    );
+
     end(test);
 }
 
