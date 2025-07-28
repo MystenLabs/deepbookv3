@@ -38,8 +38,9 @@ fun process_create_ok() {
         test.ctx().epoch(),
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 1 * constants::usdc_unit();
     let quantity = 1 * constants::sui_unit();
     let mut order_info1 = create_order_info_base(
@@ -152,8 +153,9 @@ fun process_create_expired_ok() {
         test.ctx().epoch(),
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 1 * constants::usdc_unit();
     let quantity = 10 * constants::sui_unit();
     let balance_manager_id = id_from_address(ALICE);
@@ -267,8 +269,9 @@ fun process_create_deep_price_ok() {
         order_inserted,
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 13 * constants::usdc_unit();
     let quantity = 13 * constants::sui_unit();
     let mut order_info = create_order_info_base(
@@ -309,8 +312,9 @@ fun process_create_stake_req_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -379,8 +383,9 @@ fun process_create_after_raising_steak_req_ok() {
     test.next_tx(ALICE);
     // alice and bob stake 100 DEEP each
     // default stake required is 100
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -524,8 +529,9 @@ fun process_create_after_lowering_steak_req_ok() {
     test.next_tx(ALICE);
     // alice and bob stake 50 DEEP each
     // default stake required is 100
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -693,8 +699,9 @@ fun process_cancel_ok() {
         true,
         test.ctx().epoch(),
     );
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info,
         object::id_from_address(@0x0),
@@ -737,8 +744,9 @@ fun process_cancel_after_partial_ok() {
         true,
         test.ctx().epoch(),
     );
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_create(
         &mut order_info,
         object::id_from_address(@0x0),
@@ -793,8 +801,9 @@ fun process_cancel_after_modify_epoch_change_ok() {
 
     test.next_tx(ALICE);
     // stake 100 DEEP
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -875,8 +884,9 @@ fun process_stake_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -921,8 +931,9 @@ fun process_proposal_no_stake_e() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_proposal(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -941,8 +952,9 @@ fun process_proposal_no_stake_e2() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -966,8 +978,9 @@ fun process_proposal_already_proposed_e() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -1002,8 +1015,9 @@ fun process_proposal_already_proposed_next_epoch_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -1042,8 +1056,9 @@ fun process_proposal_vote_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),

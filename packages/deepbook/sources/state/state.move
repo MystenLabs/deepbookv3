@@ -75,8 +75,9 @@ public struct RebateEvent has copy, drop {
     claim_amount: u64,
 }
 
-public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
+public(package) fun empty(whitelisted: bool, stable_pool: bool, ctx: &mut TxContext): State {
     let governance = governance::empty(
+        whitelisted,
         stable_pool,
         ctx,
     );
