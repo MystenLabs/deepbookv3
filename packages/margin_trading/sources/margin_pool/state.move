@@ -38,14 +38,24 @@ public(package) fun update(self: &mut State, clock: &Clock) {
     let interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
     let new_supply = self.total_supply + interest_accrued;
     let new_borrow = self.total_borrow + interest_accrued;
-    let new_supply_index = math::mul(
-        self.supply_index,
-        math::div(new_supply, self.total_supply),
-    );
-    let new_borrow_index = math::mul(
-        self.borrow_index,
-        math::div(new_borrow, self.total_borrow),
-    );
+    
+    let new_supply_index = if (self.total_supply == 0) {
+        self.supply_index
+    } else {
+        math::mul(
+            self.supply_index,
+            math::div(new_supply, self.total_supply),
+        )
+    };
+    
+    let new_borrow_index = if (self.total_borrow == 0) {
+        self.borrow_index
+    } else {
+        math::mul(
+            self.borrow_index,
+            math::div(new_borrow, self.total_borrow),
+        )
+    };
 
     self.supply_index = new_supply_index;
     self.borrow_index = new_borrow_index;
