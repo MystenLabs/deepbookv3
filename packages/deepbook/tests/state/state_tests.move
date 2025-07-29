@@ -4,15 +4,19 @@
 #[test_only]
 module deepbook::state_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::ewma_tests::test_init_ewma_state;
-use deepbook::order_info_tests::{create_order_info_base, create_order_info};
-use deepbook::state;
-use deepbook::utils;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::{assert_eq, destroy};
+use deepbook::{
+    balances,
+    constants,
+    ewma_tests::test_init_ewma_state,
+    order_info_tests::{create_order_info_base, create_order_info},
+    state,
+    utils
+};
+use sui::{
+    object::id_from_address,
+    test_scenario::{next_tx, begin, end},
+    test_utils::{assert_eq, destroy}
+};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -729,8 +733,8 @@ fun process_cancel_ok() {
     let stable_pool = false;
     let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_create(
-    &mut order_info,
-    &ewma_state,
+        &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
