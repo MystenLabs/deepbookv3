@@ -789,11 +789,7 @@ public fun enable_ewma_state<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ) {
-    self.update_ewma_state(ctx);
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state = self.update_ewma_state(ctx);
     ewma_state.enable();
 }
 
@@ -803,11 +799,7 @@ public fun disable_ewma_state<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ) {
-    self.update_ewma_state(ctx);
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state = self.update_ewma_state(ctx);
     ewma_state.disable();
 }
 
@@ -818,11 +810,7 @@ public fun set_ewma_z_score_threshold<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ) {
-    self.update_ewma_state(ctx);
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state = self.update_ewma_state(ctx);
     ewma_state.set_z_score_threshold(z_score_threshold);
 }
 
@@ -833,11 +821,7 @@ public fun set_ewma_alpha<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ) {
-    self.update_ewma_state(ctx);
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state = self.update_ewma_state(ctx);
     ewma_state.set_alpha(alpha);
 }
 
@@ -848,11 +832,7 @@ public fun set_ewma_additional_taker_fee<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     ctx: &mut TxContext,
 ) {
-    self.update_ewma_state(ctx);
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state = self.update_ewma_state(ctx);
     ewma_state.set_additional_taker_fee(additional_taker_fee);
 }
 
@@ -1365,7 +1345,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
 fun update_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
-) {
+): &mut EWMAState {
     if (!dynamic_field::exists_(&self.id, constants::ewma_df_key())) {
         dynamic_field::add(&mut self.id, constants::ewma_df_key(), init_ewma_state(ctx));
     };
@@ -1375,6 +1355,8 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
         constants::ewma_df_key(),
     );
     ewma_state.update(ctx);
+
+    ewma_state
 }
 
 fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
