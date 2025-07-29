@@ -57,9 +57,16 @@ public(package) fun update(self: &mut State, clock: &Clock) {
         math::mul(ms_elapsed, interest_rate),
         margin_constants::year_ms(),
     );
-    let interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
-    let new_supply = self.total_supply + interest_accrued;
-    let new_borrow = self.total_borrow + interest_accrued;
+    let total_interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
+    let protocol_profit_accrued = math::mul(
+        total_interest_accrued,
+        self.protocol_spread,
+    );
+    self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
+
+    let supply_interest_accrued = total_interest_accrued - protocol_profit_accrued;
+    let new_supply = self.total_supply + supply_interest_accrued;
+    let new_borrow = self.total_borrow + total_interest_accrued;
     let new_supply_index = math::mul(
         self.supply_index,
         math::div(new_supply, self.total_supply),
