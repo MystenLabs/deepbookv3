@@ -5,7 +5,11 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{margin_constants, margin_pool::{Self, MarginPool}};
+use margin_trading::{
+    margin_constants,
+    margin_pool::{Self, MarginPool},
+    margin_state::{Self, InterestParams}
+};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
 
@@ -22,6 +26,7 @@ const EPoolAlreadyEnabled: u64 = 5;
 const EPoolAlreadyDisabled: u64 = 6;
 const EMarginPoolAlreadyExists: u64 = 7;
 const EMarginPoolDoesNotExists: u64 = 8;
+const EInvalidOptimalUtilization: u64 = 9;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -70,6 +75,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 public fun new_margin_pool<Asset>(
     self: &mut MarginRegistry,
+    interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
     clock: &Clock,
@@ -77,6 +83,7 @@ public fun new_margin_pool<Asset>(
     ctx: &mut TxContext,
 ) {
     let margin_pool_id = margin_pool::create_margin_pool<Asset>(
+        interest_params,
         supply_cap,
         max_borrow_percentage,
         clock,
@@ -101,7 +108,34 @@ public fun update_max_borrow_percentage<Asset>(
     max_borrow_percentage: u64,
     _cap: &MarginAdminCap,
 ) {
+    assert!(max_borrow_percentage <= 1_000_000_000, EInvalidRiskParam);
+
     margin_pool.update_max_borrow_percentage<Asset>(max_borrow_percentage);
+}
+
+public fun update_interest_params<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    interest_params: InterestParams,
+    _cap: &MarginAdminCap,
+) {
+    margin_pool.update_interest_params<Asset>(interest_params);
+}
+
+/// Creates a new InterestParams object with the given parameters.
+public fun new_interest_params(
+    base_rate: u64,
+    base_slope: u64,
+    optimal_utilization: u64,
+    excess_slope: u64,
+): InterestParams {
+    assert!(optimal_utilization <= 1_000_000_000, EInvalidOptimalUtilization);
+
+    margin_state::new_interest_params(
+        base_rate,
+        base_slope,
+        optimal_utilization,
+        excess_slope,
+    )
 }
 
 /// Register a margin pool for margin trading with existing margin pools

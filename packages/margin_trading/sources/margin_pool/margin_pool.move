@@ -4,7 +4,7 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::margin_state::{Self, State};
+use margin_trading::margin_state::{Self, State, InterestParams};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
@@ -32,8 +32,6 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
     supplies: Table<address, Supply>, // maps address id to deposits
-    supply_cap: u64, // maximum amount of assets that can be supplied to the pool
-    max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
 }
 
@@ -72,7 +70,7 @@ public fun supply<Asset>(
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    assert!(self.state.total_supply() <= self.supply_cap, ESupplyCapExceeded);
+    assert!(self.state.total_supply() <= self.state.supply_cap(), ESupplyCapExceeded);
 }
 
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
@@ -129,6 +127,7 @@ public fun verify_and_repay_liquidation<Asset>(
 // === Public-Package Functions ===
 /// Creates a margin pool as the admin.
 public(package) fun create_margin_pool<Asset>(
+    interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
     clock: &Clock,
@@ -139,9 +138,7 @@ public(package) fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
         supplies: table::new(ctx),
-        supply_cap,
-        max_borrow_percentage,
-        state: margin_state::default(clock),
+        state: margin_state::default(interest_params, supply_cap, max_borrow_percentage, clock),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -151,7 +148,7 @@ public(package) fun create_margin_pool<Asset>(
 
 /// Updates the supply cap for the margin pool.
 public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
-    self.supply_cap = supply_cap;
+    self.state.set_supply_cap(supply_cap);
 }
 
 /// Updates the maximum borrow percentage for the margin pool.
@@ -159,7 +156,15 @@ public(package) fun update_max_borrow_percentage<Asset>(
     self: &mut MarginPool<Asset>,
     max_borrow_percentage: u64,
 ) {
-    self.max_borrow_percentage = max_borrow_percentage;
+    self.state.set_max_borrow_percentage(max_borrow_percentage);
+}
+
+/// Updates the interest parameters for the margin pool.
+public(package) fun update_interest_params<Asset>(
+    self: &mut MarginPool<Asset>,
+    interest_params: InterestParams,
+) {
+    self.state.update_interest_params(interest_params);
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
@@ -183,7 +188,10 @@ public(package) fun borrow<Asset>(
         self.state.total_supply(),
     );
 
-    assert!(borrow_percentage <= self.max_borrow_percentage, EMaxPoolBorrowPercentageExceeded);
+    assert!(
+        borrow_percentage <= self.state.max_borrow_percentage(),
+        EMaxPoolBorrowPercentageExceeded,
+    );
 
     let balance = self.vault.split(amount);
     balance.into_coin(ctx)
@@ -304,7 +312,7 @@ public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, S
 
 /// Returns the supply cap.
 public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
-    self.supply_cap
+    self.state.supply_cap()
 }
 
 /// Returns the state.
