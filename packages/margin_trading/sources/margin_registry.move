@@ -116,9 +116,10 @@ public fun update_max_borrow_percentage<Asset>(
 public fun update_interest_params<Asset>(
     margin_pool: &mut MarginPool<Asset>,
     interest_params: InterestParams,
+    clock: &Clock,
     _cap: &MarginAdminCap,
 ) {
-    margin_pool.update_interest_params<Asset>(interest_params);
+    margin_pool.update_interest_params<Asset>(interest_params, clock);
 }
 
 /// Creates a new InterestParams object with the given parameters.

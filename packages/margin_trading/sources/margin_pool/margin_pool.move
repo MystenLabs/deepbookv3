@@ -163,8 +163,9 @@ public(package) fun update_max_borrow_percentage<Asset>(
 public(package) fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
     interest_params: InterestParams,
+    clock: &Clock,
 ) {
-    self.state.update_interest_params(interest_params);
+    self.state.update_interest_params(interest_params, clock);
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.

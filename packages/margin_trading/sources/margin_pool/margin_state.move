@@ -113,7 +113,13 @@ public(package) fun set_max_borrow_percentage(self: &mut State, percentage: u64)
     self.max_borrow_percentage = percentage;
 }
 
-public(package) fun update_interest_params(self: &mut State, interest_params: InterestParams) {
+public(package) fun update_interest_params(
+    self: &mut State,
+    interest_params: InterestParams,
+    clock: &Clock,
+) {
+    // Update the state before interest params are updated
+    self.update(clock);
     self.interest_params = interest_params;
 }
 
