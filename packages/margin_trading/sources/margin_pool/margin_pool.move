@@ -317,7 +317,7 @@ public(package) fun update_protocol_spread<Asset>(
     self.state.update_protocol_spread(protocol_spread, clock);
 }
 
-/// Resets the protocol profit and returns the amount.
+/// Resets the protocol profit and returns the coin.
 public(package) fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
     ctx: &mut TxContext,
