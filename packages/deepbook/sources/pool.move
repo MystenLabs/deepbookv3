@@ -11,6 +11,7 @@ use deepbook::{
     book::{Self, Book},
     constants,
     deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
+    ewma::{init_ewma_state, EWMAState},
     math,
     order::Order,
     order_info::{Self, OrderInfo},
@@ -22,6 +23,7 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
+    dynamic_field,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
@@ -780,6 +782,80 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     });
 }
 
+/// Enable the EWMA state for the pool. This allows the pool to use
+/// the EWMA state for volatility calculations and additional taker fees.
+public fun enable_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    self.update_ewma_state(ctx);
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.enable();
+}
+
+/// Disable the EWMA state for the pool.
+public fun disable_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    self.update_ewma_state(ctx);
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.disable();
+}
+
+/// Set the EWMA z-score threshold for the pool.
+public fun set_ewma_z_score_threshold<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    z_score_threshold: u64,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    self.update_ewma_state(ctx);
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.set_z_score_threshold(z_score_threshold);
+}
+
+/// Set the EWMA alpha for the pool.
+public fun set_ewma_alpha<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    alpha: u64,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    self.update_ewma_state(ctx);
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.set_alpha(alpha);
+}
+
+/// Set the additional taker fee for the pool.
+public fun set_ewma_additional_taker_fee<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    additional_taker_fee: u64,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    self.update_ewma_state(ctx);
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.set_additional_taker_fee(additional_taker_fee);
+}
+
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
 public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
@@ -1243,6 +1319,8 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     let whitelist = self.whitelisted();
+    self.update_ewma_state(ctx);
+    let ewma_state = self.load_ewma_state();
     let self = self.load_inner_mut();
 
     let order_deep_price = if (pay_with_deep) {
@@ -1273,6 +1351,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         .state
         .process_create(
             &mut order_info,
+            &ewma_state,
             self.pool_id,
             ctx,
         );
@@ -1281,4 +1360,23 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info.emit_orders_filled(clock.timestamp_ms());
 
     order_info
+}
+
+fun update_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+) {
+    if (!dynamic_field::exists_(&self.id, constants::ewma_df_key())) {
+        dynamic_field::add(&mut self.id, constants::ewma_df_key(), init_ewma_state(ctx));
+    };
+
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.update(ctx);
+}
+
+fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
+    *dynamic_field::borrow(&self.id, constants::ewma_df_key())
 }

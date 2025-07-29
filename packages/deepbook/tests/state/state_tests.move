@@ -4,18 +4,15 @@
 #[test_only]
 module deepbook::state_tests;
 
-use deepbook::{
-    balances,
-    constants,
-    order_info_tests::{create_order_info_base, create_order_info},
-    state,
-    utils
-};
-use sui::{
-    object::id_from_address,
-    test_scenario::{next_tx, begin, end},
-    test_utils::{assert_eq, destroy}
-};
+use deepbook::balances;
+use deepbook::constants;
+use deepbook::ewma_tests::test_init_ewma_state;
+use deepbook::order_info_tests::{create_order_info_base, create_order_info};
+use deepbook::state;
+use deepbook::utils;
+use sui::object::id_from_address;
+use sui::test_scenario::{next_tx, begin, end};
+use sui::test_utils::{assert_eq, destroy};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -50,8 +47,10 @@ fun process_create_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info1,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -71,6 +70,7 @@ fun process_create_ok() {
     );
     let (settled, owed) = state.process_create(
         &mut order_info2,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -90,6 +90,7 @@ fun process_create_ok() {
     );
     let (settled, owed) = state.process_create(
         &mut order_info3,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -108,6 +109,7 @@ fun process_create_ok() {
     // total fees = 0.002001001 + 0.003999499 = 0.0060005 = 6000500
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -183,8 +185,10 @@ fun process_create_expired_ok() {
         fill_limit_reached,
         order_inserted,
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info1,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -194,6 +198,7 @@ fun process_create_expired_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -210,6 +215,7 @@ fun process_create_expired_ok() {
     taker_order2.match_maker(&mut order, 10);
     let (settled, owed) = state.process_create(
         &mut taker_order2,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -281,8 +287,10 @@ fun process_create_deep_price_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -292,6 +300,7 @@ fun process_create_deep_price_ok() {
     taker_order.match_maker(&mut order_info.to_order(), 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -345,8 +354,10 @@ fun process_create_stake_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -366,6 +377,7 @@ fun process_create_stake_req_ok() {
     taker_order.match_maker(&mut order_info.to_order(), 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -414,8 +426,10 @@ fun process_create_after_raising_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -433,6 +447,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -455,6 +470,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -490,6 +506,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -511,6 +528,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -559,8 +577,10 @@ fun process_create_after_lowering_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -578,6 +598,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -600,6 +621,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -620,6 +642,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -654,6 +677,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -675,6 +699,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -699,11 +724,13 @@ fun process_cancel_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let whitelisted = false;
     let stable_pool = false;
     let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_create(
-        &mut order_info,
+    &mut order_info,
+    &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -744,11 +771,13 @@ fun process_cancel_after_partial_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let whitelisted = false;
     let stable_pool = false;
     let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -767,6 +796,7 @@ fun process_cancel_after_partial_ok() {
     taker_order.match_maker(&mut order, 0);
     state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -821,8 +851,10 @@ fun process_cancel_after_modify_epoch_change_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );

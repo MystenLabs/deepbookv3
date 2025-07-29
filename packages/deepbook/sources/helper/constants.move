@@ -15,6 +15,10 @@ const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
+const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
+const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
+const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
+const EWMA_DF_KEY: vector<u8> = b"ewma";
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -219,6 +223,22 @@ public fun max_fan_out(): u64 {
 
 public fun fee_penalty_multiplier(): u64 {
     FEE_PENALTY_MULTIPLIER
+}
+
+public fun default_ewma_alpha(): u64 {
+    DEFAULT_EWMA_ALPHA
+}
+
+public fun default_z_score_threshold(): u64 {
+    DEFAULT_Z_SCORE_THRESHOLD
+}
+
+public fun default_additional_taker_fee(): u64 {
+    DEFAULT_ADDITIONAL_TAKER_FEE
+}
+
+public fun ewma_df_key(): vector<u8> {
+    EWMA_DF_KEY
 }
 
 #[test_only]

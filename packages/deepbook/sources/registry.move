@@ -97,7 +97,6 @@ public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdm
 /// Adds a stablecoin to the whitelist
 /// Only Admin can add stablecoin
 public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
-    let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::get<StableCoin>();
     if (
         !dynamic_field::exists_(
@@ -123,7 +122,6 @@ public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminC
 /// Removes a stablecoin from the whitelist
 /// Only Admin can remove stablecoin
 public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
-    let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::get<StableCoin>();
     assert!(
         dynamic_field::exists_(
@@ -142,7 +140,6 @@ public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdm
 
 /// Returns whether the given coin is whitelisted
 public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
-    let _: &RegistryInner = self.load_inner();
     if (
         !dynamic_field::exists_(
             &self.id,
