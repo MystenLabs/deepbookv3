@@ -107,12 +107,13 @@ public(package) fun disable(self: &mut EWMAState) {
 }
 
 /// Applies the taker penalty based on the Z-score of the current gas price.
-public(package) fun apply_taker_penalty(self: &EWMAState, taker_fee: u64, ctx: &TxContext): u64 {
-    let z_score = self.z_score(ctx);
-    if (!self.enabled) {
+/// If the gas price is below the mean, the taker fee is not applied.
+public(package) fun apply_taker_penalty(self: &EWMAState, taker_fee: u64, ctx: &TxContext): u64 {    
+    if (!self.enabled || ctx.gas_price() < self.mean) {
         return taker_fee
     };
 
+    let z_score = self.z_score(ctx);
     if (z_score > self.z_score_threshold) {
         taker_fee + self.additional_taker_fee
     } else {
