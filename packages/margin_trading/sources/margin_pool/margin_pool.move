@@ -130,6 +130,7 @@ public(package) fun create_margin_pool<Asset>(
     interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
+    protocol_spread: u64, // protocol spread in 9 decimals
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -138,7 +139,13 @@ public(package) fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
         supplies: table::new(ctx),
-        state: margin_state::default(interest_params, supply_cap, max_borrow_percentage, clock),
+        state: margin_state::default(
+            interest_params,
+            supply_cap,
+            max_borrow_percentage,
+            protocol_spread,
+            clock,
+        ),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -299,6 +306,26 @@ public(package) fun user_loan<Asset>(
     self.update_user_loan(manager_id);
 
     self.loans.borrow(manager_id).loan_amount
+}
+
+/// Updates the protocol spread
+public(package) fun update_protocol_spread<Asset>(
+    self: &mut MarginPool<Asset>,
+    protocol_spread: u64,
+    clock: &Clock,
+) {
+    self.state.update_protocol_spread(protocol_spread, clock);
+}
+
+/// Resets the protocol profit and returns the amount.
+public(package) fun withdraw_protocol_profit<Asset>(
+    self: &mut MarginPool<Asset>,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    let profit = self.state.reset_protocol_profit();
+    let balance = self.vault.split(profit);
+
+    balance.into_coin(ctx)
 }
 
 /// Returns the loans table.

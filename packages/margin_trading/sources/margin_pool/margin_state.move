@@ -10,9 +10,11 @@ public struct State has drop, store {
     total_borrow: u64,
     supply_index: u64,
     borrow_index: u64,
+    protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
     interest_params: InterestParams,
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
+    protocol_spread: u64, // protocol spread in 9 decimals
     last_index_update_timestamp: u64,
 }
 
@@ -28,6 +30,7 @@ public(package) fun default(
     interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
+    protocol_spread: u64,
     clock: &Clock,
 ): State {
     State {
@@ -35,9 +38,11 @@ public(package) fun default(
         total_borrow: 0,
         supply_index: 1_000_000_000,
         borrow_index: 1_000_000_000,
+        protocol_profit: 0,
         interest_params,
         supply_cap,
         max_borrow_percentage,
+        protocol_spread,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
@@ -113,6 +118,12 @@ public(package) fun set_max_borrow_percentage(self: &mut State, percentage: u64)
     self.max_borrow_percentage = percentage;
 }
 
+public(package) fun update_protocol_spread(self: &mut State, spread: u64, clock: &Clock) {
+    // Update the state before spread is updated
+    self.update(clock);
+    self.protocol_spread = spread;
+}
+
 public(package) fun update_interest_params(
     self: &mut State,
     interest_params: InterestParams,
@@ -121,6 +132,13 @@ public(package) fun update_interest_params(
     // Update the state before interest params are updated
     self.update(clock);
     self.interest_params = interest_params;
+}
+
+public(package) fun reset_protocol_profit(self: &mut State): u64 {
+    let profit = self.protocol_profit;
+    self.protocol_profit = 0;
+
+    profit
 }
 
 /// Get current interest rate based on utilization and default rate.

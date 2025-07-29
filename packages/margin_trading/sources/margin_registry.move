@@ -11,7 +11,7 @@ use margin_trading::{
     margin_state::{Self, InterestParams}
 };
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
+use sui::{clock::Clock, coin::Coin, dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -27,6 +27,7 @@ const EPoolAlreadyDisabled: u64 = 6;
 const EMarginPoolAlreadyExists: u64 = 7;
 const EMarginPoolDoesNotExists: u64 = 8;
 const EInvalidOptimalUtilization: u64 = 9;
+const EInvalidProtocolSpread: u64 = 10;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -78,6 +79,7 @@ public fun new_margin_pool<Asset>(
     interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
+    protocol_spread: u64,
     clock: &Clock,
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
@@ -86,6 +88,7 @@ public fun new_margin_pool<Asset>(
         interest_params,
         supply_cap,
         max_borrow_percentage,
+        protocol_spread,
         clock,
         ctx,
     );
@@ -137,6 +140,26 @@ public fun new_interest_params(
         optimal_utilization,
         excess_slope,
     )
+}
+
+/// Updates the protocol spread for the margin pool as the admin.
+public fun update_protocol_spread<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    protocol_spread: u64,
+    clock: &Clock,
+    _cap: &MarginAdminCap,
+) {
+    assert!(protocol_spread <= 1_000_000_000, EInvalidProtocolSpread);
+    margin_pool.update_protocol_spread(protocol_spread, clock);
+}
+
+/// Withdraws the protocol profit from the margin pool as the admin.
+public fun withdraw_protocol_profit<Asset>(
+    pool: &mut MarginPool<Asset>,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    pool.withdraw_protocol_profit<Asset>(ctx)
 }
 
 /// Register a margin pool for margin trading with existing margin pools
