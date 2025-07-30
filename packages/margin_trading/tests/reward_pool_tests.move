@@ -305,9 +305,12 @@ fun test_supply_during_reward_period() {
     scenario.next_tx(USER2);
     let claimed2 = pool.claim_rewards<USDC, SUI>(&clock, scenario.ctx());
     
-    // Both users should get equal rewards since they both have equal supply
-    // and the reward calculation is based on supply proportion at claim time
-    assert!(claimed1.value() == claimed2.value(), 0);
+    // User1 should get more rewards since they supplied earlier
+    // User1 gets rewards for full period on their portion, User2 gets rewards for half period
+    assert!(claimed1.value() > claimed2.value(), 0);
+    
+    // Verify that total rewards don't exceed the pool
+    assert!(claimed1.value() + claimed2.value() <= 3600, 1);
     
     destroy(claimed1);
     destroy(claimed2);

@@ -12,8 +12,7 @@ use sui::{
     clock::Clock, 
     coin::Coin, 
     event, 
-    table::{Self, Table},
-    bag::{Self, Bag}
+    table::{Self, Table}
 };
 
 // === Errors ===
@@ -24,7 +23,6 @@ const ECannotRepayMoreThanLoan: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
-const ERewardPoolNotFound: u64 = 8;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -46,7 +44,7 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
-    reward_pools: Bag, // stores vector<RewardPool<T>> by TypeName
+    reward_pools: vector<RewardPool>, // stores all reward pools
     user_rewards: Table<address, UserRewards>, // maps user address to their reward tracking
 }
 
@@ -81,7 +79,9 @@ public fun supply<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
     
-    let _old_user_supply = self.user_supply(supplier, clock);
+    let old_user_supply = self.user_supply(supplier, clock);
+    self.update_user_rewards_on_supply_change(supplier, old_user_supply, clock);
+    
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
@@ -105,6 +105,8 @@ public fun withdraw<Asset>(
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
+    
+    self.update_user_rewards_on_supply_change(supplier, user_supply, clock);
     self.decrease_user_supply(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
 
@@ -160,7 +162,7 @@ public(package) fun create_margin_pool<Asset>(
         supply_cap,
         max_borrow_percentage,
         state: margin_state::default(clock),
-        reward_pools: bag::new(ctx),
+        reward_pools: vector[],
         user_rewards: table::new(ctx),
     };
 
@@ -191,21 +193,9 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let reward_type = type_name::get<RewardToken>();
-    let margin_pool_id = self.id.to_inner();
+    let reward_pool = reward_pool::create_reward_pool(self.id.to_inner(), reward_coin, start_time, end_time, clock, ctx);
     
-    let reward_pool = reward_pool::create_reward_pool(reward_coin, start_time, end_time, clock, ctx);
-    
-    if (!self.reward_pools.contains(reward_type)) {
-        self.reward_pools.add(reward_type, vector<RewardPool<RewardToken>>[]);
-    };
-    
-    let pools: &mut vector<RewardPool<RewardToken>> = self.reward_pools.borrow_mut(reward_type);
-    pools.push_back(reward_pool);
-    
-    let pools_ref: &vector<RewardPool<RewardToken>> = self.reward_pools.borrow(reward_type);
-    let reward_pool_ref = &pools_ref[pools_ref.length() - 1];
-    reward_pool::emit_reward_pool_added(margin_pool_id, reward_pool_ref);
+    self.reward_pools.push_back(reward_pool);
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
@@ -368,32 +358,52 @@ public fun claim_rewards<Asset, RewardToken>(
     let user = ctx.sender();
     let reward_type = type_name::get<RewardToken>();
     
-    assert!(self.reward_pools.contains(reward_type), ERewardPoolNotFound);
-    
     let user_supply_amount = self.user_supply(user, clock);
     self.update_user_rewards_entry(user);
     
-    let pools: &mut vector<RewardPool<RewardToken>> = self.reward_pools.borrow_mut(reward_type);
+    // Update all reward pools first
+    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
+    
+    // Update user rewards and claim
+    self.update_user_rewards_on_supply_change(user, user_supply_amount, clock);
+    
+    // Calculate cumulative per share sum first  
+    let cumulative_per_share_sum = self.calculate_cumulative_reward_per_share_sum_for_token(reward_type);
+    
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
-    let (total_claimed_balance, total_claimed_amount) = reward_pool::process_reward_claim<RewardToken>(
-        pools,
+    let mut total_claimed_balance = balance::zero<RewardToken>();
+    let mut total_claimed_amount = 0;
+    
+    self.reward_pools.do_mut!(|reward_pool| {
+        if (reward_pool::reward_token_type(reward_pool) == reward_type) {
+            let claimed_balance = reward_pool::claim_from_pool<RewardToken>(
+                reward_pool,
+                user_rewards_mut,
+                user_supply_amount,
+                ctx
+            );
+            total_claimed_amount = total_claimed_amount + claimed_balance.value();
+            total_claimed_balance.join(claimed_balance);
+        };
+    });
+    
+    // Update user accumulated rewards for this token type
+    reward_pool::update_user_accumulated_rewards_for_token<RewardToken>(
         user_rewards_mut,
-        user_supply_amount,
-        clock.timestamp_ms(),
-        self.state.total_supply(),
-        ctx
+        cumulative_per_share_sum,
+        user_supply_amount
     );
     
     if (total_claimed_amount > 0) {
         reward_pool::emit_rewards_claimed(self.id.to_inner(), user, total_claimed_amount);
     };
+    
     total_claimed_balance.into_coin(ctx)
 }
 
-/// Returns all reward pools for a specific token type
-public fun get_reward_pools<Asset, RewardToken>(self: &MarginPool<Asset>): &vector<RewardPool<RewardToken>> {
-    let reward_type = type_name::get<RewardToken>();
-    self.reward_pools.borrow(reward_type)
+/// Returns all reward pools
+public fun get_reward_pools<Asset>(self: &MarginPool<Asset>): &vector<RewardPool> {
+    &self.reward_pools
 }
 
 // === Internal Functions ===
@@ -495,4 +505,48 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
     
     let user_rewards = reward_pool::create_user_rewards();
     self.user_rewards.add(user, user_rewards);
+}
+
+/// Updates user rewards when their supply changes
+fun update_user_rewards_on_supply_change<Asset>(
+    self: &mut MarginPool<Asset>,
+    user: address,
+    user_supply: u64,
+    clock: &Clock,
+) {
+    self.update_user_rewards_entry(user);
+    
+    // Update all reward pools
+    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
+    
+    // Update user accumulated rewards for each reward pool
+    let user_rewards_mut = self.user_rewards.borrow_mut(user);
+    self.reward_pools.do_ref!(|reward_pool| {
+        let reward_type = reward_pool::reward_token_type(reward_pool);
+        let cumulative_reward_per_share = reward_pool::cumulative_reward_per_share(reward_pool);
+        
+        // Update accumulated rewards for this specific token type
+        let new_accumulated = ((user_supply as u128) * (cumulative_reward_per_share as u128) / 1_000_000_000) as u64;
+        let accumulated_rewards_mut = reward_pool::accumulated_rewards_mut(user_rewards_mut);
+        
+        if (accumulated_rewards_mut.contains(&reward_type)) {
+            *accumulated_rewards_mut.get_mut(&reward_type) = new_accumulated;
+        } else {
+            accumulated_rewards_mut.insert(reward_type, new_accumulated);
+        };
+    });
+}
+
+/// Calculates cumulative reward per share sum for a specific token type
+fun calculate_cumulative_reward_per_share_sum_for_token<Asset>(
+    self: &MarginPool<Asset>,
+    reward_type: TypeName,
+): u64 {
+    let mut cumulative_per_share_sum = 0;
+    self.reward_pools.do_ref!(|reward_pool| {
+        if (reward_pool::reward_token_type(reward_pool) == reward_type) {
+            cumulative_per_share_sum = cumulative_per_share_sum + reward_pool::cumulative_reward_per_share(reward_pool);
+        };
+    });
+    cumulative_per_share_sum
 }
