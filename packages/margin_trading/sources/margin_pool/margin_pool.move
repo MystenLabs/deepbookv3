@@ -5,7 +5,12 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::margin_state::{Self, State};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, table::{Self, Table}};
+use margin_trading::reward_pool::{Self, RewardPoolManager};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::table::{Self, Table};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -25,6 +30,8 @@ public struct Loan has drop, store {
 public struct Supply has drop, store {
     supplied_amount: u64, // amount supplied in this transaction
     last_index: u64, // 9 decimals
+    last_cumulative_rewards: vector<u64>,
+    accumulated_rewards: vector<u64>,
 }
 
 public struct MarginPool<phantom Asset> has key, store {
@@ -35,6 +42,7 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
+    reward_pool_manager: RewardPoolManager,
 }
 
 public struct RepaymentProof<phantom Asset> {
@@ -126,6 +134,20 @@ public fun verify_and_repay_liquidation<Asset>(
     } = repayment_proof;
 }
 
+public fun claim_rewards<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+): Balance<Asset> {
+    self.update_user_supply(supplier);
+    self.consolidate_rewards(supplier);
+    let reward_pool_index = self.reward_pool_manager.index_of_reward_pool<Asset>();
+    let supply = self.supplies.borrow_mut(supplier);
+    let amount = supply.accumulated_rewards[reward_pool_index];
+    let balance = self.reward_pool_manager.withdraw_reward_pool(amount);
+
+    balance
+}
+
 // === Public-Package Functions ===
 /// Creates a margin pool as the admin.
 public(package) fun create_margin_pool<Asset>(
@@ -142,6 +164,7 @@ public(package) fun create_margin_pool<Asset>(
         supply_cap,
         max_borrow_percentage,
         state: margin_state::default(clock),
+        reward_pool_manager: reward_pool::new(ctx),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -337,13 +360,38 @@ fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
 }
 
 fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+    self.consolidate_rewards(supplier);
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount + amount;
 }
 
 fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+    self.consolidate_rewards(supplier);
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount - amount;
+}
+
+fun consolidate_rewards<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
+    let supply = self.supplies.borrow_mut(supplier);
+    let current_rewards_index = self.reward_pool_manager.cumulative_rewards_per_share();
+
+    // add empty 0 if needed
+    let mut last_cumulative_rewards_length = supply.last_cumulative_rewards.length();
+    while (last_cumulative_rewards_length < current_rewards_index.length()) {
+        supply.last_cumulative_rewards.push_back(0);
+        last_cumulative_rewards_length = last_cumulative_rewards_length + 1;
+    };
+
+    // consolidate rewards
+    let mut i = 0;
+    while (i < supply.last_cumulative_rewards.length()) {
+        let last_cumulative_rewards = supply.last_cumulative_rewards[i];
+        let current_cumulative_rewards = current_rewards_index[i];
+        let rewards_per_share_since_last_update = current_cumulative_rewards - last_cumulative_rewards;
+        let new_accumulated_rewards = supply.accumulated_rewards[i] + rewards_per_share_since_last_update;
+        reward_pool::insert_swap_remove(&mut supply.accumulated_rewards, i, new_accumulated_rewards);
+        i = i + 1;
+    };
 }
 
 fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
@@ -354,6 +402,8 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
     let supply = Supply {
         supplied_amount: 0,
         last_index: current_index,
+        last_cumulative_rewards: self.reward_pool_manager.cumulative_rewards_per_share(),
+        accumulated_rewards: vector::empty(),
     };
     self.supplies.add(supplier, supply);
 }
@@ -361,6 +411,8 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
 fun user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, clock: &Clock): u64 {
     self.update_state(clock);
     self.update_user_supply(supplier);
+    let total_supply = self.state.total_supply();
+    self.reward_pool_manager.update_reward_pools(total_supply, clock);
 
     self.supplies.borrow(supplier).supplied_amount
 }
