@@ -5,6 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::margin_state::{Self, State};
+use margin_trading::reward_pool::{Self, RewardPool, UserRewards};
 use std::type_name::{Self, TypeName};
 use sui::{
     balance::{Self, Balance}, 
@@ -12,9 +13,11 @@ use sui::{
     coin::Coin, 
     event, 
     table::{Self, Table},
-    bag::{Self, Bag},
-    vec_map::{Self, VecMap}
+    bag::{Self, Bag}
 };
+
+#[test_only]
+use sui::test_utils;
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -25,16 +28,6 @@ const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
 const ERewardPoolNotFound: u64 = 8;
-const EInvalidRewardPeriod: u64 = 10;
-const ERewardAmountTooSmall: u64 = 11;
-const ERewardPeriodTooShort: u64 = 12;
-
-// === Reward Constraints ===
-const MIN_REWARD_AMOUNT: u64 = 1000;
-const MIN_REWARD_DURATION_MS: u64 = 3_600_000;
-/// Precision scaling for cumulative_reward_per_share calculations
-/// Using 9 decimals to match most tokens 
-const SCALING_FACTOR: u64 = 1_000_000_000;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -45,22 +38,6 @@ public struct Loan has drop, store {
 public struct Supply has drop, store {
     supplied_amount: u64, // amount supplied in this transaction
     last_index: u64, // 9 decimals
-}
-
-public struct RewardPool has store {
-    id: ID, // unique identifier for this reward pool instance
-    reward_balance: Bag, // stores Balance<T> for arbitrary token types
-    total_rewards: u64, // total reward amount for this pool
-    start_time: u64, // when rewards start distributing (ms)
-    end_time: u64, // when rewards stop distributing (ms)
-    reward_per_ms: u64, // reward distributed per millisecond
-    cumulative_reward_per_share: u64, // scaled by SCALING_FACTOR for precision
-    last_update_time: u64, // last time this pool was updated
-    type_name: TypeName, // type of reward token
-}
-
-public struct UserRewards has store {
-    accumulated_rewards: VecMap<ID, u64>, // tracks user's accumulated rewards per reward pool ID
 }
 
 public struct PoolData has drop {
@@ -76,7 +53,7 @@ public struct MarginPool<phantom Asset> has key, store {
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
-    reward_pools: VecMap<TypeName, vector<RewardPool>>, // maps reward token type to list of reward pools
+    reward_pools: Bag, // stores vector<RewardPool<T>> by TypeName
     user_rewards: Table<address, UserRewards>, // maps user address to their reward tracking
 }
 
@@ -99,21 +76,6 @@ public struct PoolLiquidationReward has copy, drop {
     liquidation_reward: u64, // amount of the liquidation reward
 }
 
-public struct RewardPoolAdded has copy, drop {
-    pool_id: ID,
-    reward_pool_id: ID,
-    reward_type: TypeName,
-    total_rewards: u64,
-    start_time: u64,
-    end_time: u64,
-}
-
-public struct RewardsClaimed has copy, drop {
-    pool_id: ID,
-    user: address,
-    reward_type: TypeName,
-    amount: u64,
-}
 
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
@@ -126,19 +88,16 @@ public fun supply<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
     
-    // Update rewards before changing user's share
-    self.update_all_reward_pools(clock);
-    self.update_user_rewards(supplier, clock, ctx);
+    // Rewards are now updated on-demand when claiming
     
-    let old_user_supply = self.user_supply(supplier, clock);
+    let _old_user_supply = self.user_supply(supplier, clock);
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    // Update user accumulated rewards after supply change
-    let new_user_supply = old_user_supply + supply_amount;
-    self.update_user_accumulated_rewards(supplier, new_user_supply, ctx);
+    // Initialize user rewards tracking for new supply
+    self.add_user_rewards_entry(supplier);
 
     assert!(self.state.total_supply() <= self.supply_cap, ESupplyCapExceeded);
 }
@@ -152,9 +111,7 @@ public fun withdraw<Asset>(
 ): Coin<Asset> {
     let supplier = ctx.sender();
     
-    // Update rewards before changing user's share
-    self.update_all_reward_pools(clock);
-    self.update_user_rewards(supplier, clock, ctx);
+    // Rewards are now updated on-demand when claiming
     
     let user_supply = self.user_supply(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
@@ -163,9 +120,7 @@ public fun withdraw<Asset>(
     self.decrease_user_supply(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
 
-    // Update user accumulated rewards after withdrawal
-    let new_user_supply = user_supply - withdrawal_amount;
-    self.update_user_accumulated_rewards(supplier, new_user_supply, ctx);
+    // Reward tracking is now handled on-demand when claiming rewards
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
@@ -219,7 +174,7 @@ public(package) fun create_margin_pool<Asset>(
         supply_cap,
         max_borrow_percentage,
         state: margin_state::default(clock),
-        reward_pools: vec_map::empty(),
+        reward_pools: bag::new(ctx),
         user_rewards: table::new(ctx),
     };
 
@@ -240,6 +195,8 @@ public(package) fun update_max_borrow_percentage<Asset>(
 }
 
 /// Adds a reward token to be distributed linearly over a specified time period.
+/// Each call creates a new reward pool, allowing multiple reward periods for the same token type.
+/// Times are specified in seconds.
 public(package) fun add_reward_pool<Asset, RewardToken>(
     self: &mut MarginPool<Asset>,
     reward_coin: Coin<RewardToken>,
@@ -248,55 +205,21 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(start_time < end_time, EInvalidRewardPeriod);
-    assert!(end_time > clock.timestamp_ms(), EInvalidRewardPeriod);
-    
-    let reward_amount = reward_coin.value();
-    let duration = end_time - start_time;
-    
-    assert!(reward_amount >= MIN_REWARD_AMOUNT, ERewardAmountTooSmall);
-    assert!(duration >= MIN_REWARD_DURATION_MS, ERewardPeriodTooShort);
-    
-    let reward_per_ms = (reward_amount * SCALING_FACTOR) / duration;
     let reward_type = type_name::get<RewardToken>();
-    self.update_all_reward_pools(clock);
-
-    let uid = object::new(ctx);
-    let reward_pool_id = uid.to_inner();
-    uid.delete();
+    let margin_pool_id = self.id.to_inner();
     
-    let mut reward_pool = RewardPool {
-        id: reward_pool_id,
-        reward_balance: bag::new(ctx),
-        total_rewards: reward_amount,
-        start_time,
-        end_time,
-        reward_per_ms,
-        cumulative_reward_per_share: 0,
-        last_update_time: start_time.max(clock.timestamp_ms()),
-        type_name: reward_type,
+    let reward_pool = reward_pool::create_reward_pool(reward_coin, start_time, end_time, clock, ctx);
+    
+    if (!self.reward_pools.contains(reward_type)) {
+        self.reward_pools.add(reward_type, vector<RewardPool<RewardToken>>[]);
     };
     
-    let reward_balance = reward_coin.into_balance();
-    reward_pool.reward_balance.add(reward_type, reward_balance);
+    let pools: &mut vector<RewardPool<RewardToken>> = self.reward_pools.borrow_mut(reward_type);
+    pools.push_back(reward_pool);
     
-    if (self.reward_pools.contains(&reward_type)) {
-        let pools = self.reward_pools.get_mut(&reward_type);
-        pools.push_back(reward_pool);
-    } else {
-        let mut pools = vector[];
-        pools.push_back(reward_pool);
-        self.reward_pools.insert(reward_type, pools);
-    };
-    
-    event::emit(RewardPoolAdded {
-        pool_id: self.id.to_inner(),
-        reward_pool_id,
-        reward_type,
-        total_rewards: reward_amount,
-        start_time,
-        end_time,
-    });
+    let pools_ref: &vector<RewardPool<RewardToken>> = self.reward_pools.borrow(reward_type);
+    let reward_pool_ref = &pools_ref[pools_ref.length() - 1];
+    reward_pool::emit_reward_pool_added(margin_pool_id, reward_pool_ref);
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
@@ -449,8 +372,8 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
     &self.state
 }
 
-/// Allows users to claim their accumulated rewards for a specific reward token.
-/// Claims from all pools of that token type.
+/// Allows users to claim their accumulated rewards for a specific reward token type.
+/// Claims from all active reward pools of that token type.
 public fun claim_rewards<Asset, RewardToken>(
     self: &mut MarginPool<Asset>,
     clock: &Clock,
@@ -459,81 +382,32 @@ public fun claim_rewards<Asset, RewardToken>(
     let user = ctx.sender();
     let reward_type = type_name::get<RewardToken>();
     
-    // Update reward pools first
-    self.update_all_reward_pools(clock);
+    assert!(self.reward_pools.contains(reward_type), ERewardPoolNotFound);
     
-    assert!(self.reward_pools.contains(&reward_type), ERewardPoolNotFound);
-    
-    // Get user's current supply amount
     let user_supply_amount = self.user_supply(user, clock);
+    self.add_user_rewards_entry(user);
     
-    // Calculate total pending rewards across all pools of this type BEFORE updating user debt
-    let pending_rewards = self.calculate_pending_rewards_for_type(
-        user,
-        reward_type,
+    let pools: &mut vector<RewardPool<RewardToken>> = self.reward_pools.borrow_mut(reward_type);
+    let user_rewards_mut = self.user_rewards.borrow_mut(user);
+    let (total_claimed_balance, total_claimed_amount) = reward_pool::process_reward_claim<RewardToken>(
+        pools,
+        user_rewards_mut,
         user_supply_amount,
+        clock.timestamp_ms(),
+        self.state.total_supply(),
+        ctx
     );
     
-    
-    if (pending_rewards == 0) {
-        return balance::zero<RewardToken>().into_coin(ctx)
+    if (total_claimed_amount > 0) {
+        reward_pool::emit_rewards_claimed(self.id.to_inner(), user, total_claimed_amount);
     };
-    
-    // Update user's accumulated rewards for all pools of this type
-    // First collect the pool data to avoid borrowing conflicts
-    let pools = self.reward_pools.get(&reward_type);
-    let pool_data = vector::tabulate!(pools.length(), |pool_idx| {
-        let reward_pool = pools.borrow(pool_idx);
-        PoolData {
-            pool_id: reward_pool.id,
-            cumulative_reward_per_share: reward_pool.cumulative_reward_per_share
-        }
-    });
-    
-    // Transfer rewards from pools to user BEFORE updating user's accumulated rewards
-    let mut total_claimed_balance = balance::zero<RewardToken>();
-    let pools_mut = self.reward_pools.get_mut(&reward_type);
-    let user_rewards = self.user_rewards.borrow(user);
-    
-    // Calculate pending rewards for each pool
-    pools_mut.length().do!(|pool_idx| {
-        let reward_pool = pools_mut.borrow_mut(pool_idx);
-        let pool_id = reward_pool.id;
-        let reward_balance: &mut Balance<RewardToken> = reward_pool.reward_balance.borrow_mut(reward_type);
-        
-        let pool_rewards = ((user_supply_amount as u128) * (reward_pool.cumulative_reward_per_share as u128) / (SCALING_FACTOR as u128)) as u64;
-        
-        let user_accumulated = if (user_rewards.accumulated_rewards.contains(&pool_id)) {
-            *user_rewards.accumulated_rewards.get(&pool_id)
-        } else {
-            0
-        };
-        
-        let pool_pending = if (pool_rewards > user_accumulated) {
-            pool_rewards - user_accumulated
-        } else {
-            0
-        };
-        
-        if (pool_pending > 0 && reward_balance.value() >= pool_pending) {
-            let claimed_from_pool = reward_balance.split(pool_pending);
-            total_claimed_balance.join(claimed_from_pool);
-        };
-    });
-    
-    // Update user's accumulated rewards for each pool
-    pool_data.do_ref!(|data| {
-        self.update_user_accumulated_rewards_for_pool(user, data.pool_id, data.cumulative_reward_per_share, user_supply_amount);
-    });
-    
-    event::emit(RewardsClaimed {
-        pool_id: self.id.to_inner(),
-        user,
-        reward_type,
-        amount: total_claimed_balance.value(),
-    });
-    
     total_claimed_balance.into_coin(ctx)
+}
+
+/// Returns all reward pools for a specific token type
+public fun get_reward_pools<Asset, RewardToken>(self: &MarginPool<Asset>): &vector<RewardPool<RewardToken>> {
+    let reward_type = type_name::get<RewardToken>();
+    self.reward_pools.borrow(reward_type)
 }
 
 // === Internal Functions ===
@@ -628,153 +502,11 @@ fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     self.loans.add(manager_id, loan);
 }
 
-// === Reward Functions ===
-
-/// Updates all active reward pools to the current time.
-fun update_all_reward_pools<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let current_time = clock.timestamp_ms();
-    let total_supply = self.state.total_supply();
-    
-    if (total_supply == 0) {
-        return // No shares to distribute rewards to
-    };
-    
-    let reward_types = vector::tabulate!(self.reward_pools.size(), |i| {
-        let (key, _) = self.reward_pools.get_entry_by_idx(i);
-        *key
-    });
-    
-    reward_types.do_ref!(|reward_type| {
-        let pools = self.reward_pools.get_mut(reward_type);
-        
-        // Update each pool for this reward type
-        pools.length().do!(|pool_idx| {
-            let reward_pool = pools.borrow_mut(pool_idx);
-            
-            if (current_time > reward_pool.last_update_time && current_time >= reward_pool.start_time) {
-                let end_time = reward_pool.end_time.min(current_time);
-                let time_elapsed = end_time - reward_pool.last_update_time;
-                
-                if (time_elapsed > 0) {
-                    // reward_per_ms is already scaled by SCALING_FACTOR, so we need to account for that
-                    let scaled_rewards_to_distribute = reward_pool.reward_per_ms * time_elapsed;
-                    // Divide by SCALING_FACTOR to get actual rewards, then scale again for per-share calculation
-                    let rewards_to_distribute = scaled_rewards_to_distribute / SCALING_FACTOR;
-                    let reward_per_share = ((rewards_to_distribute as u128) * (SCALING_FACTOR as u128) / (total_supply as u128)) as u64;
-                    
-                    reward_pool.cumulative_reward_per_share = reward_pool.cumulative_reward_per_share + reward_per_share;
-                    reward_pool.last_update_time = end_time;
-                };
-            };
-        });
-    });
-}
-
-/// Updates a user's reward tracking for all reward pools.
-fun update_user_rewards<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Clock, ctx: &mut TxContext) {
-    self.add_user_rewards_entry(user, ctx);
-    
-    let user_supply_amount = self.user_supply(user, clock);
-    self.update_user_accumulated_rewards(user, user_supply_amount, ctx);
-}
-
-/// Updates a user's accumulated rewards for all active reward pools.
-fun update_user_accumulated_rewards<Asset>(self: &mut MarginPool<Asset>, user: address, user_supply: u64, ctx: &mut TxContext) {
-    self.add_user_rewards_entry(user, ctx);
-    
-    let reward_types = vector::tabulate!(self.reward_pools.size(), |i| {
-        let (key, _) = self.reward_pools.get_entry_by_idx(i);
-        *key
-    });
-    
-    // Update accumulated rewards for each pool ID across all reward types
-    // First collect all pool data to avoid borrowing conflicts
-    let all_pool_data = reward_types.fold!(vector[], |mut acc, reward_type| {
-        let pools = self.reward_pools.get(&reward_type);
-        let pool_data = vector::tabulate!(pools.length(), |pool_idx| {
-            let reward_pool = pools.borrow(pool_idx);
-            PoolData {
-                pool_id: reward_pool.id,
-                cumulative_reward_per_share: reward_pool.cumulative_reward_per_share
-            }
-        });
-        acc.append(pool_data);
-        acc
-    });
-    
-    // Now update accumulated rewards without borrowing conflicts
-    all_pool_data.do_ref!(|data| {
-        self.update_user_accumulated_rewards_for_pool(user, data.pool_id, data.cumulative_reward_per_share, user_supply);
-    });
-}
-
-/// Updates a user's accumulated rewards for a specific reward pool.
-fun update_user_accumulated_rewards_for_pool<Asset>(
-    self: &mut MarginPool<Asset>, 
-    user: address, 
-    pool_id: ID, 
-    cumulative_reward_per_share: u64,
-    user_supply: u64
-) {
-    let user_rewards = self.user_rewards.borrow_mut(user);
-    
-    // Calculate: (user_supply * cumulative_reward_per_share) / SCALING_FACTOR
-    let new_accumulated = ((user_supply as u128) * (cumulative_reward_per_share as u128) / (SCALING_FACTOR as u128)) as u64;
-    
-    if (user_rewards.accumulated_rewards.contains(&pool_id)) {
-        *user_rewards.accumulated_rewards.get_mut(&pool_id) = new_accumulated;
-    } else {
-        user_rewards.accumulated_rewards.insert(pool_id, new_accumulated);
-    };
-}
-
-/// Calculates pending rewards for a user for a specific reward type across all pools.
-fun calculate_pending_rewards_for_type<Asset>(
-    self: &MarginPool<Asset>,
-    user: address,
-    reward_type: TypeName,
-    user_supply: u64,
-): u64 {
-    if (!self.user_rewards.contains(user) || !self.reward_pools.contains(&reward_type)) {
-        return 0
-    };
-    
-    let user_rewards = self.user_rewards.borrow(user);
-    let pools = self.reward_pools.get(&reward_type);
-    
-    // Calculate pending rewards from each pool of this token type
-    let mut total_pending = 0;
-    
-    pools.length().do!(|pool_idx| {
-        let reward_pool = pools.borrow(pool_idx);
-        let pool_id = reward_pool.id;
-        
-        if (user_rewards.accumulated_rewards.contains(&pool_id)) {
-            let user_accumulated = *user_rewards.accumulated_rewards.get(&pool_id);
-            let total_rewards = ((user_supply as u128) * (reward_pool.cumulative_reward_per_share as u128) / (SCALING_FACTOR as u128)) as u64;
-            
-            if (total_rewards > user_accumulated) {
-                total_pending = total_pending + (total_rewards - user_accumulated);
-            };
-        } else {
-            // User has no accumulated rewards for this pool, so all rewards are pending
-            let total_rewards = ((user_supply as u128) * (reward_pool.cumulative_reward_per_share as u128) / (SCALING_FACTOR as u128)) as u64;
-            total_pending = total_pending + total_rewards;
-        };
-    });
-    total_pending
-}
-
-/// Adds a user rewards entry if it doesn't exist.
-fun add_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address, _ctx: &mut TxContext) {
+fun add_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address) {
     if (self.user_rewards.contains(user)) {
         return
     };
     
-    let user_rewards = UserRewards {
-        accumulated_rewards: vec_map::empty(),
-    };
-    
+    let user_rewards = reward_pool::create_user_rewards();
     self.user_rewards.add(user, user_rewards);
 }
-
