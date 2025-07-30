@@ -183,19 +183,36 @@ public(package) fun update_max_borrow_percentage<Asset>(
 }
 
 /// Adds a reward token to be distributed linearly over a specified time period.
-/// Each call creates a new reward pool, allowing multiple reward periods for the same token type.
-/// Times are specified in seconds.
+/// If a reward pool for the same token type already exists, adds the new rewards
+/// to the existing pool and resets the timing to end at the specified time.
+/// End time is specified in seconds.
 public(package) fun add_reward_pool<Asset, RewardToken>(
     self: &mut MarginPool<Asset>,
     reward_coin: Coin<RewardToken>,
-    start_time: u64,
     end_time: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let reward_pool = reward_pool::create_reward_pool(self.id.to_inner(), reward_coin, start_time, end_time, clock, ctx);
+    let reward_token_type = type_name::get<RewardToken>();
+    let current_time = clock.timestamp_ms() / 1000;
     
-    self.reward_pools.push_back(reward_pool);
+    let existing_pool_index = self.reward_pools.find_index!(|pool| {
+        reward_pool::reward_token_type(pool) == reward_token_type
+    });
+    
+    if (existing_pool_index.is_some()) {
+        let index = existing_pool_index.destroy_some();
+        reward_pool::add_rewards_and_reset_timing<RewardToken>(
+            &mut self.reward_pools[index],
+            reward_coin,
+            current_time,
+            end_time,
+            clock
+        );
+    } else {
+        let reward_pool = reward_pool::create_reward_pool(self.id.to_inner(), reward_coin, current_time, end_time, clock, ctx);
+        self.reward_pools.push_back(reward_pool);
+    };
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.

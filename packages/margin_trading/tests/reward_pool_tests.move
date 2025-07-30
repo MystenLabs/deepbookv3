@@ -57,7 +57,6 @@ fun test_add_reward_pool_success() {
     
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -79,7 +78,6 @@ fun test_add_reward_pool_amount_too_small() {
     
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -101,7 +99,6 @@ fun test_add_reward_pool_period_too_short() {
     
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -114,16 +111,18 @@ fun test_add_reward_pool_period_too_short() {
 
 #[test, expected_failure(abort_code = reward_pool::EInvalidRewardPeriod)] 
 fun test_add_reward_pool_invalid_time_range() {
-    let (mut scenario, clock, mut pool) = setup_test();
+    let (mut scenario, mut clock, mut pool) = setup_test();
     
     scenario.next_tx(ADMIN);
     let reward_coin = mint_coin<SUI>(10000, scenario.ctx());
-    let start_time = 2000;
-    let end_time = 1000; // End before start
+    let current_time = 2000;
+    let end_time = 1000; // End before current time
+    
+    // Set current time to after the end_time to trigger EInvalidRewardPeriod
+    clock.set_for_testing(current_time * 1000); // Set to 2000 seconds = 2000000 ms
     
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -145,7 +144,6 @@ fun test_replace_reward_pool_same_token() {
     let reward_coin1 = mint_coin<SUI>(10000, scenario.ctx());
     pool.add_reward_pool<USDC, SUI>(
         reward_coin1,
-        start_time,
         start_time + HOUR_SECONDS,
         &clock,
         scenario.ctx()
@@ -155,7 +153,6 @@ fun test_replace_reward_pool_same_token() {
     let reward_coin2 = mint_coin<SUI>(5000, scenario.ctx());
     pool.add_reward_pool<USDC, SUI>(
         reward_coin2,
-        start_time + HOUR_SECONDS / 2, // Start halfway through first pool
         start_time + HOUR_SECONDS * 2,
         &clock,
         scenario.ctx()
@@ -185,7 +182,6 @@ fun test_single_user_reward_distribution() {
     
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -223,7 +219,6 @@ fun test_multiple_users_reward_distribution() {
     clock.set_for_testing(start_time * 1000);
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -276,7 +271,6 @@ fun test_supply_during_reward_period() {
     clock.set_for_testing(start_time * 1000); 
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -336,7 +330,6 @@ fun test_claim_rewards_multiple_times() {
     clock.set_for_testing(start_time * 1000); 
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -385,11 +378,10 @@ fun test_different_reward_token_pools() {
     let start_time = 1000;
     
     // Add SUI reward pool
-    clock.set_for_testing(start_time * 1000); // Convert to milliseconds
+    clock.set_for_testing(start_time * 1000);
     let reward_coin1 = mint_coin<SUI>(3600, scenario.ctx());
     pool.add_reward_pool<USDC, SUI>(
         reward_coin1,
-        start_time,
         start_time + HOUR_SECONDS,
         &clock,
         scenario.ctx()
@@ -399,7 +391,6 @@ fun test_different_reward_token_pools() {
     let reward_coin2 = mint_coin<REWARD_TOKEN>(3600, scenario.ctx()); // Match SUI amount
     pool.add_reward_pool<USDC, REWARD_TOKEN>(
         reward_coin2,
-        start_time,
         start_time + HOUR_SECONDS,
         &clock,
         scenario.ctx()
@@ -436,10 +427,9 @@ fun test_reward_pool_after_period_ends() {
     let end_time = start_time + HOUR_SECONDS;
     let reward_coin = mint_coin<SUI>(3600, scenario.ctx());
     
-    clock.set_for_testing(start_time);
+    clock.set_for_testing(start_time * 1000); 
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -484,7 +474,6 @@ fun test_no_rewards_before_start_time() {
     clock.set_for_testing(1000 * 1000); // Before start time, in milliseconds
     pool.add_reward_pool<USDC, SUI>(
         reward_coin,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -514,13 +503,12 @@ fun test_different_reward_token_types() {
     let start_time = 1000;
     let end_time = start_time + HOUR_SECONDS;
     
-    clock.set_for_testing(start_time * 1000); // Convert to milliseconds
+    clock.set_for_testing(start_time * 1000); 
     
     // Add SUI reward pool
     let sui_reward = mint_coin<SUI>(3600, scenario.ctx());
     pool.add_reward_pool<USDC, SUI>(
         sui_reward,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()
@@ -530,7 +518,6 @@ fun test_different_reward_token_types() {
     let other_reward = mint_coin<REWARD_TOKEN>(3600, scenario.ctx()); // Match SUI amount
     pool.add_reward_pool<USDC, REWARD_TOKEN>(
         other_reward,
-        start_time,
         end_time,
         &clock,
         scenario.ctx()

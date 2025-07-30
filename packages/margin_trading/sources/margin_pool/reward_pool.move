@@ -272,6 +272,40 @@ fun reward_balance_mut<RewardToken>(reward_pool: &mut RewardPool): &mut Balance<
     )
 }
 
+/// Adds new rewards to an existing reward pool and resets the timing
+/// All existing rewards (both accrued and unaccrued) are combined with new rewards
+/// and redistributed over the new time period
+public(package) fun add_rewards_and_reset_timing<RewardToken>(
+    reward_pool: &mut RewardPool,
+    new_reward_coin: Coin<RewardToken>,
+    start_time: u64,
+    end_time: u64,
+    clock: &Clock,
+) {
+    let current_time_seconds = clock.timestamp_ms() / 1000;
+    let new_reward_amount = new_reward_coin.value();
+    
+    assert!(start_time < end_time, EInvalidRewardPeriod);
+    assert!(end_time > current_time_seconds, EInvalidRewardPeriod);
+    assert!(new_reward_amount >= MIN_REWARD_AMOUNT, ERewardAmountTooSmall);
+    
+    let duration = end_time - start_time;
+    assert!(duration >= MIN_REWARD_DURATION_SECONDS, ERewardPeriodTooShort);
+    
+    // Get existing reward balance and add new rewards
+    let existing_balance = reward_pool.reward_balance_mut<RewardToken>();
+    existing_balance.join(new_reward_coin.into_balance());
+    
+    // Reset pool parameters with combined rewards
+    let total_combined_rewards = existing_balance.value();
+    reward_pool.total_rewards = total_combined_rewards;
+    reward_pool.start_time = start_time;
+    reward_pool.end_time = end_time;
+    reward_pool.reward_per_second = total_combined_rewards / duration;
+    // Keep existing cumulative_reward_per_share - don't reset it
+    reward_pool.last_update_time = start_time.max(current_time_seconds);
+}
+
 /// Destroys a reward pool and returns any remaining balance
 public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool): Balance<T> {
     let RewardPool {
