@@ -16,9 +16,6 @@ use sui::{
     bag::{Self, Bag}
 };
 
-#[test_only]
-use sui::test_utils;
-
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
@@ -40,10 +37,6 @@ public struct Supply has drop, store {
     last_index: u64, // 9 decimals
 }
 
-public struct PoolData has drop {
-    pool_id: ID,
-    cumulative_reward_per_share: u64,
-}
 
 public struct MarginPool<phantom Asset> has key, store {
     id: UID,
@@ -88,16 +81,13 @@ public fun supply<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
     
-    // Rewards are now updated on-demand when claiming
-    
     let _old_user_supply = self.user_supply(supplier, clock);
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    // Initialize user rewards tracking for new supply
-    self.add_user_rewards_entry(supplier);
+    self.update_user_rewards_entry(supplier);
 
     assert!(self.state.total_supply() <= self.supply_cap, ESupplyCapExceeded);
 }
@@ -111,16 +101,12 @@ public fun withdraw<Asset>(
 ): Coin<Asset> {
     let supplier = ctx.sender();
     
-    // Rewards are now updated on-demand when claiming
-    
     let user_supply = self.user_supply(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
     self.decrease_user_supply(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
-
-    // Reward tracking is now handled on-demand when claiming rewards
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
@@ -385,7 +371,7 @@ public fun claim_rewards<Asset, RewardToken>(
     assert!(self.reward_pools.contains(reward_type), ERewardPoolNotFound);
     
     let user_supply_amount = self.user_supply(user, clock);
-    self.add_user_rewards_entry(user);
+    self.update_user_rewards_entry(user);
     
     let pools: &mut vector<RewardPool<RewardToken>> = self.reward_pools.borrow_mut(reward_type);
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
@@ -502,7 +488,7 @@ fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     self.loans.add(manager_id, loan);
 }
 
-fun add_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address) {
+fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address) {
     if (self.user_rewards.contains(user)) {
         return
     };
