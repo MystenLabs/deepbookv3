@@ -171,24 +171,6 @@ public(package) fun update_user_accumulated_rewards_by_type(
     reward_info.last_cumulative_reward_per_share = cumulative_reward_per_share;
 }
 
-/// Calculates pending rewards for a user for a specific reward pool
-public(package) fun calculate_pending_rewards(
-    user_rewards: &UserRewards,
-    reward_pool: &RewardPool,
-    user_supply: u64,
-): u64 {
-    let reward_type = reward_pool.reward_token_type;
-    
-    let user_last_checkpoint = if (user_rewards.rewards_by_token.contains(&reward_type)) {
-        user_rewards.rewards_by_token.get(&reward_type).last_cumulative_reward_per_share
-    } else {
-        0
-    };
-    let reward_per_share_diff = reward_pool.cumulative_reward_per_share - user_last_checkpoint;
-    math::mul(user_supply, reward_per_share_diff)
-}
-
-/// Claims rewards from a specific reward pool
 public(package) fun claim_from_pool<RewardToken>(
     reward_pool: &mut RewardPool,
     user_rewards: &mut UserRewards,
