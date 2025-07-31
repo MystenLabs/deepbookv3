@@ -309,12 +309,12 @@ public(package) fun user_loan<Asset>(
 }
 
 /// Updates the protocol spread
-public(package) fun update_protocol_spread<Asset>(
+public(package) fun update_margin_pool_spread<Asset>(
     self: &mut MarginPool<Asset>,
     protocol_spread: u64,
     clock: &Clock,
 ) {
-    self.state.update_protocol_spread(protocol_spread, clock);
+    self.state.update_margin_pool_spread(protocol_spread, clock);
 }
 
 /// Resets the protocol profit and returns the coin.

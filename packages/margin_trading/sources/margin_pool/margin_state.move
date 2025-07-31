@@ -1,6 +1,6 @@
 module margin_trading::margin_state;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use margin_trading::margin_constants;
 use sui::clock::Clock;
 
@@ -36,8 +36,8 @@ public(package) fun default(
     State {
         total_supply: 0,
         total_borrow: 0,
-        supply_index: 1_000_000_000,
-        borrow_index: 1_000_000_000,
+        supply_index: constants::float_scaling(),
+        borrow_index: constants::float_scaling(),
         protocol_profit: 0,
         interest_params,
         supply_cap,
@@ -133,7 +133,7 @@ public(package) fun set_max_borrow_percentage(self: &mut State, percentage: u64)
     self.max_borrow_percentage = percentage;
 }
 
-public(package) fun update_protocol_spread(self: &mut State, spread: u64, clock: &Clock) {
+public(package) fun update_margin_pool_spread(self: &mut State, spread: u64, clock: &Clock) {
     // Update the state before spread is updated
     self.update(clock);
     self.protocol_spread = spread;
