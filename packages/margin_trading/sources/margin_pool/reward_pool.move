@@ -3,7 +3,7 @@
 
 module margin_trading::reward_pool;
 
-use std::type_name::TypeName;
+use std::type_name::{Self, TypeName};
 use sui::{
     balance::{Self, Balance}, 
     clock::Clock, 
@@ -12,28 +12,23 @@ use sui::{
     vec_map::{Self, VecMap},
     dynamic_field as df
 };
+use margin_trading::margin_constants;
 
 // === Errors ===
-const EInvalidRewardPeriod: u64 = 10;
-const ERewardAmountTooSmall: u64 = 11;
-const ERewardPeriodTooShort: u64 = 12;
-
-// === Reward Constraints ===
-const MIN_REWARD_AMOUNT: u64 = 1000;
-const MIN_REWARD_DURATION_SECONDS: u64 = 3600; 
+const EInvalidRewardPeriod: u64 = 1;
+const ERewardAmountTooSmall: u64 = 2;
+const ERewardPeriodTooShort: u64 = 3;
 
 // === Structs ===
 public struct RewardBalance(TypeName) has copy, drop, store;
 
-// ID is used to distinguish between different reward pools
-#[allow(lint(missing_key))]
-public struct RewardPool has store {
+public struct RewardPool has key, store {
     id: UID, // unique identifier for this reward pool
     reward_token_type: TypeName, // type of the reward token
     total_rewards: u64, // total reward amount for this pool
     start_time: u64, // when rewards start distributing (seconds)
     end_time: u64, // when rewards stop distributing (seconds)
-    reward_per_second: u64, // reward distributed per second
+    rewards_per_second: u64, // reward distributed per second
     cumulative_reward_per_share: u64, // cumulative rewards per share (no scaling)
     last_update_time: u64, // last time this pool was updated (seconds)
 }
@@ -46,7 +41,6 @@ public struct UserRewardInfo has store {
 public struct UserRewards has store {
     rewards_by_token: VecMap<TypeName, UserRewardInfo>, // maps token type to reward info
 }
-
 
 public struct RewardPoolAdded has copy, drop {
     pool_id: ID,
@@ -62,7 +56,7 @@ public struct RewardsClaimed has copy, drop {
     amount: u64,
 }
 
-// === Public Functions ===
+// === Public(package) Functions ===
 
 public(package) fun create_reward_pool<RewardToken>(
     margin_pool_id: ID,
@@ -77,22 +71,22 @@ public(package) fun create_reward_pool<RewardToken>(
     
     assert!(start_time < end_time, EInvalidRewardPeriod);
     assert!(end_time > current_time_seconds, EInvalidRewardPeriod);
-    assert!(reward_amount >= MIN_REWARD_AMOUNT, ERewardAmountTooSmall);
+    assert!(reward_amount >= margin_constants::min_reward_amount(), ERewardAmountTooSmall);
     
     let duration = end_time - start_time; 
-    let reward_per_second = reward_amount / duration;
+    let rewards_per_second = reward_amount / duration;
     let last_update_time = start_time.max(current_time_seconds);
     
-    assert!(duration >= MIN_REWARD_DURATION_SECONDS, ERewardPeriodTooShort);
+    assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
-    let reward_token_type = std::type_name::get<RewardToken>();
+    let reward_token_type = type_name::get<RewardToken>();
     let mut reward_pool = RewardPool {
         id: object::new(ctx),
         reward_token_type,
         total_rewards: reward_amount,
         start_time,
         end_time,
-        reward_per_second,
+        rewards_per_second,
         cumulative_reward_per_share: 0,
         last_update_time,
     };
@@ -129,9 +123,9 @@ public(package) fun update_reward_pool(
         return
     };
     
-    let time_elapsed = end_time - reward_pool.last_update_time;
+    let elapsed_time = end_time - reward_pool.last_update_time;
     
-    let rewards_to_distribute = reward_pool.reward_per_second * time_elapsed;
+    let rewards_to_distribute = reward_pool.rewards_per_second * elapsed_time;
     let reward_per_share = ((rewards_to_distribute as u128) * 1_000_000_000 / (total_supply as u128)) as u64;
     
     reward_pool.cumulative_reward_per_share = reward_pool.cumulative_reward_per_share + reward_per_share;
@@ -144,7 +138,7 @@ public(package) fun update_user_accumulated_rewards_for_token<T>(
     user_supply: u64
 ) {
     let reward_type = std::type_name::get<T>();
-    update_user_accumulated_rewards_by_type(user_rewards, reward_type, cumulative_reward_per_share, user_supply);
+    user_rewards.update_user_accumulated_rewards_by_type(reward_type, cumulative_reward_per_share, user_supply);
 }
 
 /// Updates user's accumulated rewards for a specific reward token type
@@ -188,13 +182,9 @@ public(package) fun calculate_pending_rewards(
     } else {
         0
     };
-    
-    if (reward_pool.cumulative_reward_per_share > user_last_checkpoint) {
-        let reward_per_share_diff = reward_pool.cumulative_reward_per_share - user_last_checkpoint;
-        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64
-    } else {
-        0
-    }
+    let reward_per_share_diff = reward_pool.cumulative_reward_per_share - user_last_checkpoint;
+        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64;
+    reward_per_share_diff
 }
 
 /// Claims rewards from a specific reward pool
@@ -299,13 +289,6 @@ public(package) fun reward_token_type(reward_pool: &RewardPool): TypeName {
     reward_pool.reward_token_type
 }
 
-/// Checks if a user has accumulated rewards for a specific reward token type
-public(package) fun has_accumulated_rewards_for_token<T>(user_rewards: &UserRewards): bool {
-    let reward_type = std::type_name::get<T>();
-    user_rewards.rewards_by_token.contains(&reward_type) && 
-        user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards > 0
-}
-
 /// Helper function to get reward balance
 fun reward_balance<RewardToken>(reward_pool: &RewardPool): &Balance<RewardToken> {
     df::borrow<RewardBalance, Balance<RewardToken>>(
@@ -337,10 +320,10 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
     
     assert!(start_time < end_time, EInvalidRewardPeriod);
     assert!(end_time > current_time_seconds, EInvalidRewardPeriod);
-    assert!(new_reward_amount >= MIN_REWARD_AMOUNT, ERewardAmountTooSmall);
+    assert!(new_reward_amount >= margin_constants::min_reward_amount(), ERewardAmountTooSmall);
     
     let duration = end_time - start_time;
-    assert!(duration >= MIN_REWARD_DURATION_SECONDS, ERewardPeriodTooShort);
+    assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
     // Get existing reward balance and add new rewards
     let existing_balance = reward_pool.reward_balance_mut<RewardToken>();
@@ -351,7 +334,7 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
     reward_pool.total_rewards = total_combined_rewards;
     reward_pool.start_time = start_time;
     reward_pool.end_time = end_time;
-    reward_pool.reward_per_second = total_combined_rewards / duration;
+    reward_pool.rewards_per_second = total_combined_rewards / duration;
     // Keep existing cumulative_reward_per_share - don't reset it
     reward_pool.last_update_time = start_time.max(current_time_seconds);
 }
@@ -364,7 +347,7 @@ public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool): Balance<T> 
         total_rewards: _,
         start_time: _,
         end_time: _,
-        reward_per_second: _,
+        rewards_per_second: _,
         cumulative_reward_per_share: _,
         last_update_time: _,
     } = reward_pool;

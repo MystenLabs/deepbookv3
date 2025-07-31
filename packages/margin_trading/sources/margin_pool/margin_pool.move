@@ -194,13 +194,12 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     let current_time = clock.timestamp_ms() / 1000;
     
     let existing_pool_index = self.reward_pools.find_index!(|pool| {
-        reward_pool::reward_token_type(pool) == reward_token_type
+        pool.reward_token_type() == reward_token_type
     });
     
     if (existing_pool_index.is_some()) {
         let index = existing_pool_index.destroy_some();
-        reward_pool::add_rewards_and_reset_timing<RewardToken>(
-            &mut self.reward_pools[index],
+        self.reward_pools[index].add_rewards_and_reset_timing<RewardToken>(
             reward_coin,
             current_time,
             end_time,
@@ -380,9 +379,8 @@ public fun claim_rewards<Asset, RewardToken>(
     let mut total_claimed_amount = 0;
     
     self.reward_pools.do_mut!(|reward_pool| {
-        if (reward_pool::reward_token_type(reward_pool) == type_name::get<RewardToken>()) {
-            let claimed_balance = reward_pool::claim_from_pool<RewardToken>(
-                reward_pool,
+        if (reward_pool.reward_token_type() == type_name::get<RewardToken>()) {
+            let claimed_balance = reward_pool.claim_from_pool<RewardToken>(
                 user_rewards_mut,
                 user_supply_amount,
                 ctx
@@ -518,7 +516,7 @@ fun update_user_rewards_on_supply_change<Asset>(
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
         let reward_type = reward_pool::reward_token_type(reward_pool);
-        let cumulative_reward_per_share = reward_pool::cumulative_reward_per_share(reward_pool);
+        let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
         
         reward_pool::update_user_accumulated_rewards_by_type(
             user_rewards_mut,

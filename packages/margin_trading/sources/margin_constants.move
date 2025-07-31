@@ -11,6 +11,9 @@ const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
 const DEFAULT_MAX_SLIPPAGE: u64 = 10_000_000; // 1%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
+// === Reward Constraints ===
+const MIN_REWARD_AMOUNT: u64 = 1000;
+const MIN_REWARD_DURATION_SECONDS: u64 = 3600; 
 
 public fun max_risk_ratio(): u64 {
     MAX_RISK_RATIO
@@ -34,4 +37,12 @@ public fun min_leverage(): u64 {
 
 public fun max_leverage(): u64 {
     MAX_LEVERAGE
+}
+
+public fun min_reward_amount(): u64 {
+    MIN_REWARD_AMOUNT
+}
+
+public fun min_reward_duration_seconds(): u64 {
+    MIN_REWARD_DURATION_SECONDS
 }
