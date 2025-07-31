@@ -52,6 +52,7 @@ public struct RewardPoolAdded has copy, drop {
 
 public struct RewardsClaimed has copy, drop {
     pool_id: ID,
+    typename: TypeName,
     user: address,
     amount: u64,
 }
@@ -59,8 +60,8 @@ public struct RewardsClaimed has copy, drop {
 // === Public(package) Functions ===
 
 public(package) fun create_reward_pool<RewardToken>(
-    margin_pool_id: ID,
     reward_coin: Coin<RewardToken>,
+    margin_pool_id: ID,
     start_time: u64,
     end_time: u64,
     clock: &Clock,
@@ -109,14 +110,14 @@ public(package) fun create_user_rewards(): UserRewards {
 
 public(package) fun update_reward_pool(
     reward_pool: &mut RewardPool,
-    current_time_ms: u64,
+    clock: &Clock,
     total_supply: u64,
 ) {
     if (total_supply == 0) {
         return
     };
     
-    let current_time = current_time_ms / 1000;
+    let current_time = clock.timestamp_ms() / 1000;
     let end_time = reward_pool.end_time.min(current_time);
     
     if (current_time <= reward_pool.last_update_time || current_time < reward_pool.start_time || end_time <= reward_pool.last_update_time) {
@@ -230,20 +231,22 @@ public(package) fun emit_reward_pool_added(
 /// Updates all reward pools in a vector
 public(package) fun update_all_reward_pools(
     pools: &mut vector<RewardPool>,
-    current_time_ms: u64,
+    clock: &Clock,
     total_supply: u64,
 ) {
-    pools.do_mut!(|pool| update_reward_pool(pool, current_time_ms, total_supply));
+    pools.do_mut!(|pool| update_reward_pool(pool, clock, total_supply));
 }
 
 /// Emits a RewardsClaimed event
 public(package) fun emit_rewards_claimed(
     pool_id: ID,
+    typename: TypeName,
     user: address,
     amount: u64,
 ) {
     event::emit(RewardsClaimed {
         pool_id,
+        typename,
         user,
         amount,
     });

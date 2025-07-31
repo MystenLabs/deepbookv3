@@ -206,7 +206,7 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
             clock
         );
     } else {
-        let reward_pool = reward_pool::create_reward_pool(self.id.to_inner(), reward_coin, current_time, end_time, clock, ctx);
+        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, ctx);
         self.reward_pools.push_back(reward_pool);
     };
 }
@@ -371,15 +371,15 @@ public fun claim_rewards<Asset, RewardToken>(
     let user = ctx.sender();
     let user_supply_amount = self.user_supply(user, clock);
     
-    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
     self.update_user_rewards_on_supply_change(user, user_supply_amount, clock);
     
+    let reward_token_type = type_name::get<RewardToken>();
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     let mut total_claimed_balance = balance::zero<RewardToken>();
     let mut total_claimed_amount = 0;
     
     self.reward_pools.do_mut!(|reward_pool| {
-        if (reward_pool.reward_token_type() == type_name::get<RewardToken>()) {
+        if (reward_pool.reward_token_type() == reward_token_type) {
             let claimed_balance = reward_pool.claim_from_pool<RewardToken>(
                 user_rewards_mut,
                 user_supply_amount,
@@ -391,7 +391,7 @@ public fun claim_rewards<Asset, RewardToken>(
     });
     
     if (total_claimed_amount > 0) {
-        reward_pool::emit_rewards_claimed(self.id.to_inner(), user, total_claimed_amount);
+        reward_pool::emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, total_claimed_amount);
     };
     
     total_claimed_balance.into_coin(ctx)
@@ -511,7 +511,7 @@ fun update_user_rewards_on_supply_change<Asset>(
     clock: &Clock,
 ) {
     self.update_user_rewards_entry(user);
-    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
+    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock, self.state.total_supply());
     
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
