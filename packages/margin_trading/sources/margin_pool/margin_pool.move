@@ -74,7 +74,7 @@ public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
     clock: &Clock,
-    ctx: &mut TxContext,
+    ctx: &TxContext,
 ) {
     let supplier = ctx.sender();
     let supply_amount = coin.value();
@@ -87,8 +87,6 @@ public fun supply<Asset>(
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    self.update_user_rewards_entry(supplier);
-
     assert!(self.state.total_supply() <= self.supply_cap, ESupplyCapExceeded);
 }
 
@@ -100,7 +98,6 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     let supplier = ctx.sender();
-    
     let user_supply = self.user_supply(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
@@ -373,26 +370,17 @@ public fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
-    let reward_type = type_name::get<RewardToken>();
-    
     let user_supply_amount = self.user_supply(user, clock);
-    self.update_user_rewards_entry(user);
     
-    // Update all reward pools first
     reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
-    
-    // Update user rewards and claim
     self.update_user_rewards_on_supply_change(user, user_supply_amount, clock);
-    
-    // Calculate cumulative per share sum first  
-    let cumulative_per_share_sum = self.calculate_cumulative_reward_per_share_sum_for_token(reward_type);
     
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     let mut total_claimed_balance = balance::zero<RewardToken>();
     let mut total_claimed_amount = 0;
     
     self.reward_pools.do_mut!(|reward_pool| {
-        if (reward_pool::reward_token_type(reward_pool) == reward_type) {
+        if (reward_pool::reward_token_type(reward_pool) == type_name::get<RewardToken>()) {
             let claimed_balance = reward_pool::claim_from_pool<RewardToken>(
                 reward_pool,
                 user_rewards_mut,
@@ -403,13 +391,6 @@ public fun claim_rewards<Asset, RewardToken>(
             total_claimed_balance.join(claimed_balance);
         };
     });
-    
-    // Update user accumulated rewards for this token type
-    reward_pool::update_user_accumulated_rewards_for_token<RewardToken>(
-        user_rewards_mut,
-        cumulative_per_share_sum,
-        user_supply_amount
-    );
     
     if (total_claimed_amount > 0) {
         reward_pool::emit_rewards_claimed(self.id.to_inner(), user, total_claimed_amount);
@@ -532,38 +513,19 @@ fun update_user_rewards_on_supply_change<Asset>(
     clock: &Clock,
 ) {
     self.update_user_rewards_entry(user);
-    
-    // Update all reward pools
     reward_pool::update_all_reward_pools(&mut self.reward_pools, clock.timestamp_ms(), self.state.total_supply());
     
-    // Update user accumulated rewards for each reward pool
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
         let reward_type = reward_pool::reward_token_type(reward_pool);
         let cumulative_reward_per_share = reward_pool::cumulative_reward_per_share(reward_pool);
         
-        // Update accumulated rewards for this specific token type
-        let new_accumulated = ((user_supply as u128) * (cumulative_reward_per_share as u128) / 1_000_000_000) as u64;
-        let accumulated_rewards_mut = reward_pool::accumulated_rewards_mut(user_rewards_mut);
-        
-        if (accumulated_rewards_mut.contains(&reward_type)) {
-            *accumulated_rewards_mut.get_mut(&reward_type) = new_accumulated;
-        } else {
-            accumulated_rewards_mut.insert(reward_type, new_accumulated);
-        };
+        reward_pool::update_user_accumulated_rewards_by_type(
+            user_rewards_mut,
+            reward_type,
+            cumulative_reward_per_share,
+            user_supply
+        );
     });
 }
 
-/// Calculates cumulative reward per share sum for a specific token type
-fun calculate_cumulative_reward_per_share_sum_for_token<Asset>(
-    self: &MarginPool<Asset>,
-    reward_type: TypeName,
-): u64 {
-    let mut cumulative_per_share_sum = 0;
-    self.reward_pools.do_ref!(|reward_pool| {
-        if (reward_pool::reward_token_type(reward_pool) == reward_type) {
-            cumulative_per_share_sum = cumulative_per_share_sum + reward_pool::cumulative_reward_per_share(reward_pool);
-        };
-    });
-    cumulative_per_share_sum
-}

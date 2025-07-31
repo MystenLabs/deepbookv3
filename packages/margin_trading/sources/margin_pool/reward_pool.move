@@ -20,7 +20,7 @@ const ERewardPeriodTooShort: u64 = 12;
 
 // === Reward Constraints ===
 const MIN_REWARD_AMOUNT: u64 = 1000;
-const MIN_REWARD_DURATION_SECONDS: u64 = 3600; // 1 hour in seconds
+const MIN_REWARD_DURATION_SECONDS: u64 = 3600; 
 
 // === Structs ===
 public struct RewardBalance(TypeName) has copy, drop, store;
@@ -38,8 +38,13 @@ public struct RewardPool has store {
     last_update_time: u64, // last time this pool was updated (seconds)
 }
 
+public struct UserRewardInfo has store {
+    accumulated_rewards: u64, // tracks user's accumulated rewards for this token type
+    last_cumulative_reward_per_share: u64, // tracks user's last cumulative_reward_per_share checkpoint for this token type
+}
+
 public struct UserRewards has store {
-    accumulated_rewards: VecMap<TypeName, u64>, // tracks user's accumulated rewards per reward token type
+    rewards_by_token: VecMap<TypeName, UserRewardInfo>, // maps token type to reward info
 }
 
 
@@ -104,7 +109,7 @@ public(package) fun create_reward_pool<RewardToken>(
 
 public(package) fun create_user_rewards(): UserRewards {
     UserRewards {
-        accumulated_rewards: vec_map::empty(),
+        rewards_by_token: vec_map::empty(),
     }
 }
 
@@ -139,13 +144,35 @@ public(package) fun update_user_accumulated_rewards_for_token<T>(
     user_supply: u64
 ) {
     let reward_type = std::type_name::get<T>();
-    let new_accumulated = ((user_supply as u128) * (cumulative_reward_per_share as u128) / 1_000_000_000) as u64;
-    
-    if (user_rewards.accumulated_rewards.contains(&reward_type)) {
-        *user_rewards.accumulated_rewards.get_mut(&reward_type) = new_accumulated;
-    } else {
-        user_rewards.accumulated_rewards.insert(reward_type, new_accumulated);
+    update_user_accumulated_rewards_by_type(user_rewards, reward_type, cumulative_reward_per_share, user_supply);
+}
+
+/// Updates user's accumulated rewards for a specific reward token type
+public(package) fun update_user_accumulated_rewards_by_type(
+    user_rewards: &mut UserRewards,
+    reward_type: TypeName,
+    cumulative_reward_per_share: u64,
+    user_supply: u64
+) {
+    if (!user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
+            accumulated_rewards: 0,
+            last_cumulative_reward_per_share: 0,
+        });
     };
+    
+    let reward_info = user_rewards.rewards_by_token.get_mut(&reward_type);
+    
+    // Calculate rewards since last checkpoint
+    let incremental_rewards = if (cumulative_reward_per_share > reward_info.last_cumulative_reward_per_share) {
+        let reward_per_share_diff = cumulative_reward_per_share - reward_info.last_cumulative_reward_per_share;
+        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64
+    } else {
+        0
+    };
+    
+    reward_info.accumulated_rewards = reward_info.accumulated_rewards + incremental_rewards;
+    reward_info.last_cumulative_reward_per_share = cumulative_reward_per_share;
 }
 
 /// Calculates pending rewards for a user for a specific reward pool
@@ -155,33 +182,42 @@ public(package) fun calculate_pending_rewards(
     user_supply: u64,
 ): u64 {
     let reward_type = reward_pool.reward_token_type;
-    let pool_rewards = ((user_supply as u128) * (reward_pool.cumulative_reward_per_share as u128) / 1_000_000_000) as u64;
     
-    if (user_rewards.accumulated_rewards.contains(&reward_type)) {
-        let user_accumulated = *user_rewards.accumulated_rewards.get(&reward_type);
-        if (pool_rewards > user_accumulated) {
-            pool_rewards - user_accumulated
-        } else {
-            0
-        }
+    let user_last_checkpoint = if (user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.get(&reward_type).last_cumulative_reward_per_share
     } else {
-        pool_rewards
+        0
+    };
+    
+    if (reward_pool.cumulative_reward_per_share > user_last_checkpoint) {
+        let reward_per_share_diff = reward_pool.cumulative_reward_per_share - user_last_checkpoint;
+        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64
+    } else {
+        0
     }
 }
 
 /// Claims rewards from a specific reward pool
 public(package) fun claim_from_pool<RewardToken>(
     reward_pool: &mut RewardPool,
-    _user_rewards: &UserRewards,
-    user_supply: u64,
+    user_rewards: &mut UserRewards,
+    _user_supply: u64,
     _ctx: &TxContext,
 ): Balance<RewardToken> {
-    let pool_rewards = ((user_supply as u128) * (reward_pool.cumulative_reward_per_share as u128) / 1_000_000_000) as u64;
+    let reward_type = std::type_name::get<RewardToken>();
+    
+    let claimable_rewards = if (user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards
+    } else {
+        0
+    };
+    
     let reward_balance = reward_pool.reward_balance<RewardToken>();
-    let can_claim = pool_rewards > 0 && reward_balance.value() >= pool_rewards;
+    let can_claim = claimable_rewards > 0 && reward_balance.value() >= claimable_rewards;
     
     if (can_claim) {
-        reward_pool.reward_balance_mut<RewardToken>().split(pool_rewards)
+        user_rewards.rewards_by_token.get_mut(&reward_type).accumulated_rewards = 0;
+        reward_pool.reward_balance_mut<RewardToken>().split(claimable_rewards)
     } else {
         balance::zero<RewardToken>()
     }
@@ -230,14 +266,27 @@ public(package) fun cumulative_reward_per_share(reward_pool: &RewardPool): u64 {
     reward_pool.cumulative_reward_per_share
 }
 
-/// Returns the user's accumulated rewards
-public(package) fun accumulated_rewards(user_rewards: &UserRewards): &VecMap<TypeName, u64> {
-    &user_rewards.accumulated_rewards
+/// Returns the user's rewards by token
+public(package) fun rewards_by_token(user_rewards: &UserRewards): &VecMap<TypeName, UserRewardInfo> {
+    &user_rewards.rewards_by_token
 }
 
-/// Returns the user's accumulated rewards (mutable)
-public(package) fun accumulated_rewards_mut(user_rewards: &mut UserRewards): &mut VecMap<TypeName, u64> {
-    &mut user_rewards.accumulated_rewards
+/// Returns the user's accumulated rewards for a specific token type
+public(package) fun accumulated_rewards_for_token(user_rewards: &UserRewards, reward_type: TypeName): u64 {
+    if (user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards
+    } else {
+        0
+    }
+}
+
+/// Returns the user's last cumulative reward per share checkpoint for a specific token type
+public(package) fun last_cumulative_reward_per_share_for_token(user_rewards: &UserRewards, reward_type: TypeName): u64 {
+    if (user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.get(&reward_type).last_cumulative_reward_per_share
+    } else {
+        0
+    }
 }
 
 /// Returns the reward pool ID
@@ -253,7 +302,8 @@ public(package) fun reward_token_type(reward_pool: &RewardPool): TypeName {
 /// Checks if a user has accumulated rewards for a specific reward token type
 public(package) fun has_accumulated_rewards_for_token<T>(user_rewards: &UserRewards): bool {
     let reward_type = std::type_name::get<T>();
-    user_rewards.accumulated_rewards.contains(&reward_type)
+    user_rewards.rewards_by_token.contains(&reward_type) && 
+        user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards > 0
 }
 
 /// Helper function to get reward balance
