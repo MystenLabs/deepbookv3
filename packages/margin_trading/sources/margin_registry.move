@@ -113,6 +113,10 @@ public fun update_max_borrow_percentage<Asset>(
     _cap: &MarginAdminCap,
 ) {
     assert!(max_borrow_percentage <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(
+        max_borrow_percentage >= margin_pool.state().interest_params().optimal_utilization(),
+        EInvalidRiskParam,
+    );
 
     margin_pool.update_max_borrow_percentage<Asset>(max_borrow_percentage);
 }
@@ -123,6 +127,10 @@ public fun update_interest_params<Asset>(
     clock: &Clock,
     _cap: &MarginAdminCap,
 ) {
+    assert!(
+        margin_pool.state().max_borrow_percentage() >= interest_params.optimal_utilization(),
+        EInvalidRiskParam,
+    );
     margin_pool.update_interest_params<Asset>(interest_params, clock);
 }
 

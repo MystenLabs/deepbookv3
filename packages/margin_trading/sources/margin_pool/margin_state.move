@@ -208,3 +208,23 @@ public(package) fun supply_cap(self: &State): u64 {
 public(package) fun max_borrow_percentage(self: &State): u64 {
     self.max_borrow_percentage
 }
+
+public(package) fun interest_params(self: &State): &InterestParams {
+    &self.interest_params
+}
+
+public(package) fun base_rate(self: &InterestParams): u64 {
+    self.base_rate
+}
+
+public(package) fun base_slope(self: &InterestParams): u64 {
+    self.base_slope
+}
+
+public(package) fun optimal_utilization(self: &InterestParams): u64 {
+    self.optimal_utilization
+}
+
+public(package) fun excess_slope(self: &InterestParams): u64 {
+    self.excess_slope
+}
