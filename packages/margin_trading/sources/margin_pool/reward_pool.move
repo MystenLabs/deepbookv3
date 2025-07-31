@@ -13,6 +13,7 @@ use sui::{
     dynamic_field as df
 };
 use margin_trading::margin_constants;
+use deepbook::math;
 
 // === Errors ===
 const EInvalidRewardPeriod: u64 = 1;
@@ -127,7 +128,7 @@ public(package) fun update_reward_pool(
     let elapsed_time = end_time - reward_pool.last_update_time;
     
     let rewards_to_distribute = reward_pool.rewards_per_second * elapsed_time;
-    let reward_per_share = ((rewards_to_distribute as u128) * 1_000_000_000 / (total_supply as u128)) as u64;
+    let reward_per_share = math::div(rewards_to_distribute, total_supply);
     
     reward_pool.cumulative_reward_per_share = reward_pool.cumulative_reward_per_share + reward_per_share;
     reward_pool.last_update_time = end_time;
@@ -161,7 +162,7 @@ public(package) fun update_user_accumulated_rewards_by_type(
     // Calculate rewards since last checkpoint
     let incremental_rewards = if (cumulative_reward_per_share > reward_info.last_cumulative_reward_per_share) {
         let reward_per_share_diff = cumulative_reward_per_share - reward_info.last_cumulative_reward_per_share;
-        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64
+        math::mul(user_supply, reward_per_share_diff)
     } else {
         0
     };
@@ -184,8 +185,7 @@ public(package) fun calculate_pending_rewards(
         0
     };
     let reward_per_share_diff = reward_pool.cumulative_reward_per_share - user_last_checkpoint;
-        ((user_supply as u128) * (reward_per_share_diff as u128) / 1_000_000_000) as u64;
-    reward_per_share_diff
+    math::mul(user_supply, reward_per_share_diff)
 }
 
 /// Claims rewards from a specific reward pool
