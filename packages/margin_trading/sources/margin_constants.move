@@ -11,6 +11,7 @@ const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
 const DEFAULT_MAX_SLIPPAGE: u64 = 10_000_000; // 1%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
+const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 
 public fun max_risk_ratio(): u64 {
     MAX_RISK_RATIO
@@ -34,4 +35,8 @@ public fun min_leverage(): u64 {
 
 public fun max_leverage(): u64 {
     MAX_LEVERAGE
+}
+
+public fun year_ms(): u64 {
+    YEAR_MS
 }

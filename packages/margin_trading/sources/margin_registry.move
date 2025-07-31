@@ -5,9 +5,13 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{margin_constants, margin_pool::{Self, MarginPool}};
+use margin_trading::{
+    margin_constants,
+    margin_pool::{Self, MarginPool},
+    margin_state::{Self, InterestParams}
+};
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, dynamic_field as df, table::{Self, Table}};
+use sui::{clock::Clock, coin::Coin, dynamic_field as df, table::{Self, Table}};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -22,6 +26,9 @@ const EPoolAlreadyEnabled: u64 = 5;
 const EPoolAlreadyDisabled: u64 = 6;
 const EMarginPoolAlreadyExists: u64 = 7;
 const EMarginPoolDoesNotExists: u64 = 8;
+const EInvalidOptimalUtilization: u64 = 9;
+const EInvalidProtocolSpread: u64 = 10;
+const EInvalidBaseRate: u64 = 11;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -70,15 +77,19 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 public fun new_margin_pool<Asset>(
     self: &mut MarginRegistry,
+    interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
+    protocol_spread: u64,
     clock: &Clock,
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ) {
     let margin_pool_id = margin_pool::create_margin_pool<Asset>(
+        interest_params,
         supply_cap,
         max_borrow_percentage,
+        protocol_spread,
         clock,
         ctx,
     );
@@ -101,7 +112,64 @@ public fun update_max_borrow_percentage<Asset>(
     max_borrow_percentage: u64,
     _cap: &MarginAdminCap,
 ) {
+    assert!(max_borrow_percentage <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(
+        max_borrow_percentage >= margin_pool.state().interest_params().optimal_utilization(),
+        EInvalidRiskParam,
+    );
+
     margin_pool.update_max_borrow_percentage<Asset>(max_borrow_percentage);
+}
+
+public fun update_interest_params<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    interest_params: InterestParams,
+    clock: &Clock,
+    _cap: &MarginAdminCap,
+) {
+    assert!(
+        margin_pool.state().max_borrow_percentage() >= interest_params.optimal_utilization(),
+        EInvalidRiskParam,
+    );
+    margin_pool.update_interest_params<Asset>(interest_params, clock);
+}
+
+/// Creates a new InterestParams object with the given parameters.
+public fun new_interest_params(
+    base_rate: u64,
+    base_slope: u64,
+    optimal_utilization: u64,
+    excess_slope: u64,
+): InterestParams {
+    assert!(base_rate <= constants::float_scaling(), EInvalidBaseRate);
+    assert!(optimal_utilization <= constants::float_scaling(), EInvalidOptimalUtilization);
+
+    margin_state::new_interest_params(
+        base_rate,
+        base_slope,
+        optimal_utilization,
+        excess_slope,
+    )
+}
+
+/// Updates the spread for the margin pool as the admin.
+public fun update_margin_pool_spread<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    protocol_spread: u64,
+    clock: &Clock,
+    _cap: &MarginAdminCap,
+) {
+    assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
+    margin_pool.update_margin_pool_spread(protocol_spread, clock);
+}
+
+/// Withdraws the protocol profit from the margin pool as the admin.
+public fun withdraw_protocol_profit<Asset>(
+    pool: &mut MarginPool<Asset>,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    pool.withdraw_protocol_profit<Asset>(ctx)
 }
 
 /// Register a margin pool for margin trading with existing margin pools
@@ -154,15 +222,18 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
-    assert!(liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
-    assert!(user_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
-    assert!(pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
-    assert!(user_liquidation_reward + pool_liquidation_reward <= 1_000_000_000, EInvalidRiskParam);
+    assert!(liquidation_risk_ratio >= constants::float_scaling(), EInvalidRiskParam);
+    assert!(user_liquidation_reward <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(pool_liquidation_reward <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
-        target_liquidation_risk_ratio > 1_000_000_000 + user_liquidation_reward + pool_liquidation_reward,
+        user_liquidation_reward + pool_liquidation_reward <= constants::float_scaling(),
         EInvalidRiskParam,
     );
-    assert!(max_slippage <= 1_000_000_000, EInvalidRiskParam);
+    assert!(
+        target_liquidation_risk_ratio > constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
+        EInvalidRiskParam,
+    );
+    assert!(max_slippage <= constants::float_scaling(), EInvalidRiskParam);
 
     PoolConfig {
         base_margin_pool_id: self.get_margin_pool_id<BaseAsset>(),
@@ -210,7 +281,10 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
         pool_config.risk_ratios.liquidation_risk_ratio < pool_config.risk_ratios.target_liquidation_risk_ratio,
         EInvalidRiskParam,
     );
-    assert!(pool_config.risk_ratios.liquidation_risk_ratio >= 1_000_000_000, EInvalidRiskParam);
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio >= constants::float_scaling(),
+        EInvalidRiskParam,
+    );
 
     self.pool_registry.add(pool_id, pool_config);
 }
