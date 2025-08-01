@@ -60,13 +60,11 @@ public(package) fun create_reward_pool<RewardToken>(
     clock: &Clock,
 ): RewardPool {
     let start_time = clock.timestamp_ms() / 1000;
-    
-    assert!(start_time < end_time, EInvalidRewardPeriod);
-    assert!(reward_amount >= margin_constants::min_reward_amount(), ERewardAmountTooSmall);
-    
     let duration = end_time - start_time; 
-    let rewards_per_second = reward_amount / duration;
-    
+    let rewards_per_second = math::div(reward_amount, duration);
+
+    assert!(start_time < end_time, EInvalidRewardPeriod);
+    assert!(rewards_per_second > 0, ERewardAmountTooSmall);
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
     let reward_token_type = type_name::get<RewardToken>();
