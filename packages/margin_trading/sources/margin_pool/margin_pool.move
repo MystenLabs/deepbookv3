@@ -12,6 +12,7 @@ use margin_trading::reward_pool::{
     create_reward_pool,
     claim_from_pool,
     emit_rewards_claimed,
+    emit_reward_pool_added,
     create_user_rewards,
     update_all_reward_pools,
     reward_token_type,
@@ -47,7 +48,6 @@ public struct Supply has drop, store {
     supplied_amount: u64, // amount supplied in this transaction
     last_index: u64, // 9 decimals
 }
-
 
 public struct MarginPool<phantom Asset> has key, store {
     id: UID,
@@ -217,8 +217,8 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
         );
     } else {
         assert!(self.reward_pools.length() < margin_constants::max_reward_types(), EMaxRewardTypesExceeded);
-        
-        let reward_pool = create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances);
+        let reward_pool = create_reward_pool(reward_coin, &mut self.reward_balances, end_time, clock);
+        emit_reward_pool_added(self.id.to_inner(), &reward_pool);
         self.reward_pools.push_back(reward_pool);
     };
 }
@@ -388,19 +388,21 @@ public fun claim_rewards<Asset, RewardToken>(
     let mut total_claimed_balance = balance::zero<RewardToken>();
     let mut total_claimed_amount = 0;
     
-    self.reward_pools.do_mut!(|reward_pool| {
-        if (reward_pool.reward_token_type() == reward_token_type) {
-            let claimed_balance = claim_from_pool<RewardToken>(
-                user_rewards_mut,
-                &mut self.reward_balances,
-                user_supply_amount,
-                ctx
-            );
-            total_claimed_amount = total_claimed_amount + claimed_balance.value();
-            total_claimed_balance.join(claimed_balance);
-        };
+    let reward_pool_index = self.reward_pools.find_index!(|pool| {
+        pool.reward_token_type() == reward_token_type
     });
-    
+
+    if (reward_pool_index.is_some()) {
+        let claimed_balance = claim_from_pool<RewardToken>(
+            user_rewards_mut,
+            &mut self.reward_balances,
+            user_supply_amount,
+            ctx
+        );
+        total_claimed_amount = total_claimed_amount + claimed_balance.value();
+        total_claimed_balance.join(claimed_balance);
+    };
+
     if (total_claimed_amount > 0) {
         emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, total_claimed_amount);
     };
@@ -510,9 +512,7 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
 
 /// Updates user supply with interest and rewards, returns the user's supply amount before update
 fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Clock): u64 {
-    self.update_state(clock);
     self.update_user_supply(user);
-    
     let user_supply = self.supplies.borrow(user).supplied_amount;
     
     self.update_user_rewards_entry(user);

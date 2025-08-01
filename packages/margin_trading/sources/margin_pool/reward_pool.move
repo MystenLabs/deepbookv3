@@ -58,25 +58,20 @@ public struct RewardsClaimed has copy, drop {
 }
 
 // === Public(package) Functions ===
-
 public(package) fun create_reward_pool<RewardToken>(
     reward_coin: Coin<RewardToken>,
-    margin_pool_id: ID,
-    start_time: u64,
+    reward_balances: &mut Bag,
     end_time: u64,
     clock: &Clock,
-    reward_balances: &mut Bag,
 ): RewardPool {
-    let current_time_seconds = clock.timestamp_ms() / 1000;
+    let start_time = clock.timestamp_ms() / 1000;
     let reward_amount = reward_coin.value();
     
     assert!(start_time < end_time, EInvalidRewardPeriod);
-    assert!(end_time > current_time_seconds, EInvalidRewardPeriod);
     assert!(reward_amount >= margin_constants::min_reward_amount(), ERewardAmountTooSmall);
     
     let duration = end_time - start_time; 
     let rewards_per_second = reward_amount / duration;
-    let last_update_time = start_time.max(current_time_seconds);
     
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
@@ -88,7 +83,7 @@ public(package) fun create_reward_pool<RewardToken>(
         end_time,
         rewards_per_second,
         cumulative_reward_per_share: 0,
-        last_update_time,
+        last_update_time: start_time,
     };
     
     let reward_balance_key = RewardBalance(reward_token_type);
@@ -98,8 +93,6 @@ public(package) fun create_reward_pool<RewardToken>(
     } else {
         reward_balances.add(reward_balance_key, reward_coin.into_balance());
     };
-    emit_reward_pool_added(margin_pool_id, &reward_pool);
-    
     reward_pool
 }
 
@@ -178,13 +171,15 @@ public(package) fun claim_from_pool<RewardToken>(
     _ctx: &TxContext,
 ): Balance<RewardToken> {
     let reward_type = std::type_name::get<RewardToken>();
-    
-    let claimable_rewards = if (user_rewards.rewards_by_token.contains(&reward_type)) {
-        user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards
-    } else {
-        0
+
+    if (!user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
+            accumulated_rewards: 0,
+            last_cumulative_reward_per_share: 0,
+        });
     };
     
+    let claimable_rewards = user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards;
     let reward_balance_key = RewardBalance(reward_type);
     let can_claim = claimable_rewards > 0 && 
         reward_balances.contains(reward_balance_key) && 
