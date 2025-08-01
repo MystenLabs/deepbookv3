@@ -90,8 +90,7 @@ public fun supply<Asset>(
 ) {
     let supplier = ctx.sender();
     let supply_amount = coin.value();
-    
-    self.update_state(clock);
+
     self.update_user(supplier, clock);
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
@@ -109,7 +108,6 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     let supplier = ctx.sender();
-    self.update_user(supplier, clock);
     let user_supply = self.update_user(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
@@ -427,7 +425,6 @@ public fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
-    self.update_state(clock);
     self.update_user(user, clock);
     
     let reward_token_type = type_name::get<RewardToken>();
@@ -564,6 +561,7 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
 
 /// Updates user supply with interest and rewards, returns the user's supply amount before update
 fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Clock): u64 {
+    self.update_state(clock);
     self.update_user_supply(user);
     let user_supply = self.supplies.borrow(user).supplied_amount;
     
