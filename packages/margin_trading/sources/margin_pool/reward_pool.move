@@ -89,6 +89,19 @@ public(package) fun create_user_rewards(): UserRewards {
     }
 }
 
+public(package) fun initialize_user_reward_for_type(
+    user_rewards: &mut UserRewards,
+    reward_type: TypeName,
+    cumulative_reward_per_share: u64,
+) {
+    if (!user_rewards.rewards_by_token.contains(&reward_type)) {
+        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
+            accumulated_rewards: 0,
+            last_cumulative_reward_per_share: cumulative_reward_per_share,
+        });
+    };
+}
+
 public(package) fun update_reward_pool(
     reward_pool: &mut RewardPool,
     total_supply: u64,

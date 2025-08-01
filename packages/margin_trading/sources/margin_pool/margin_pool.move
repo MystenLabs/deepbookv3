@@ -14,6 +14,7 @@ use margin_trading::reward_pool::{
     emit_rewards_claimed,
     emit_reward_pool_added,
     create_user_rewards,
+    initialize_user_reward_for_type,
     reward_token_type,
     update_user_accumulated_rewards_by_type,
     update_reward_pool,
@@ -511,7 +512,12 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
         return
     };
     
-    let user_rewards = create_user_rewards();
+    let mut user_rewards = create_user_rewards();
+    self.reward_pools.do_ref!(|reward_pool| {
+        let reward_type = reward_token_type(reward_pool);
+        let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
+        initialize_user_reward_for_type(&mut user_rewards, reward_type, cumulative_reward_per_share);
+    });
     self.user_rewards.add(user, user_rewards);
 }
 
