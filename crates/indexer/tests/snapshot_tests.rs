@@ -71,7 +71,7 @@ where
     let temp_db = TempDb::new()?;
     let url = temp_db.database().url();
     let db = Arc::new(Db::for_write(url.clone(), DbArgs::default()).await?);
-    db.run_migrations(MIGRATIONS).await?;
+    db.run_migrations(Some(&MIGRATIONS)).await?;
     let mut conn = db.connect().await?;
 
     // Test setup based on provided test_name
