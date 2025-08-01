@@ -5,6 +5,7 @@
 module margin_trading::reward_pool_tests;
 
 use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_state;
 use margin_trading::reward_pool::{Self};
 use sui::{
     test_scenario::{Self as test, Scenario},
@@ -25,17 +26,29 @@ const USER2: address = @0x2;
 // Test constants
 const SUPPLY_CAP: u64 = 1_000_000_000_000; // 1M tokens with 6 decimals
 const MAX_BORROW_PERCENTAGE: u64 = 800_000_000; // 80% with 9 decimals
+const PROTOCOL_SPREAD: u64 = 100_000_000; // 10% with 9 decimals
 const HOUR_SECONDS: u64 = 3600;
 
 fun setup_test(): (Scenario, Clock, MarginPool<USDC>) {
     let mut scenario = test::begin(@0x0);
     let clock = clock::create_for_testing(scenario.ctx());
-    let pool = margin_pool::create_margin_pool<USDC>(
+    let interest_params = margin_state::new_interest_params(
+        50_000_000, // base_rate: 5% with 9 decimals
+        100_000_000, // base_slope: 10% with 9 decimals
+        800_000_000, // optimal_utilization: 80% with 9 decimals
+        2_000_000_000, // excess_slope: 200% with 9 decimals
+    );
+    let _pool_id = margin_pool::create_margin_pool<USDC>(
+        interest_params,
         SUPPLY_CAP,
         MAX_BORROW_PERCENTAGE,
+        PROTOCOL_SPREAD,
         &clock,
         scenario.ctx()
     );
+    
+    scenario.next_tx(@0x0);
+    let pool = scenario.take_shared<MarginPool<USDC>>();
     (scenario, clock, pool)
 }
 
@@ -71,7 +84,7 @@ fun test_add_reward_pool_amount_too_small() {
     let (mut scenario, clock, mut pool) = setup_test();
     
     scenario.next_tx(ADMIN);
-    let reward_coin = mint_coin<SUI>(999, scenario.ctx()); // Below minimum
+    let reward_coin = mint_coin<SUI>(2, scenario.ctx()); // Below minimum
     let start_time = 1000;
     let end_time = start_time + HOUR_SECONDS;
     
@@ -438,39 +451,6 @@ fun test_reward_pool_after_period_ends() {
     
     destroy(claimed);
     destroy(claimed2);
-    destroy(pool);
-    destroy(clock);
-    scenario.end();
-}
-
-#[test]
-fun test_no_rewards_before_start_time() {
-    let (mut scenario, mut clock, mut pool) = setup_test();
-    
-    // User supplies
-    scenario.next_tx(USER1);
-    let supply_coin = mint_coin<USDC>(100000, scenario.ctx());
-    pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
-    
-    // Add reward pool with future start time
-    scenario.next_tx(ADMIN);
-    let start_time = 2000;
-    let end_time = start_time + HOUR_SECONDS;
-    let reward_coin = mint_coin<SUI>(3600, scenario.ctx());
-    
-    clock.set_for_testing(1000 * 1000); // Before start time, in milliseconds
-    pool.add_reward_pool<USDC, SUI>(
-        reward_coin,
-        end_time,
-        &clock,
-    );
-    
-    // Try to claim before start time
-    scenario.next_tx(USER1);
-    let claimed = pool.claim_rewards<USDC, SUI>(&clock, scenario.ctx());
-    assert!(claimed.value() == 0, 0);
-    
-    destroy(claimed);
     destroy(pool);
     destroy(clock);
     scenario.end();

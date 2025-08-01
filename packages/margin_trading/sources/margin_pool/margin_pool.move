@@ -19,7 +19,7 @@ use margin_trading::reward_pool::{
     update_user_accumulated_rewards_by_type,
     update_reward_pool,
 };
-use std::type_name::{Self, TypeName, get};
+use std::type_name::{Self, TypeName};
 use sui::{
     bag::{Self, Bag},
     balance::{Self, Balance}, 
@@ -91,6 +91,7 @@ public fun supply<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
     
+    self.update_state(clock);
     self.update_user(supplier, clock);
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
@@ -108,6 +109,7 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     let supplier = ctx.sender();
+    self.update_user(supplier, clock);
     let user_supply = self.update_user(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
@@ -425,6 +427,7 @@ public fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
+    self.update_state(clock);
     self.update_user(user, clock);
     
     let reward_token_type = type_name::get<RewardToken>();
@@ -436,7 +439,7 @@ public fun claim_rewards<Asset, RewardToken>(
     });
 
     if (reward_pool_index.is_some()) {
-        let claimed_amount = claim_from_pool<RewardToken>(user_rewards_mut,);
+        let claimed_amount = claim_from_pool<RewardToken>(user_rewards_mut);
         claimed_balance.join(withdraw_reward_balance_from_bag<RewardToken>(&mut self.reward_balances, claimed_amount));
     };
 

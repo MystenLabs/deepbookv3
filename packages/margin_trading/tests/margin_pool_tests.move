@@ -5,6 +5,8 @@
 module margin_trading::margin_pool_tests;
 
 use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_state;
+use std::option::{Self, some};
 use sui::{
     test_scenario::{Self as test, Scenario},
     clock::{Self, Clock},
@@ -21,16 +23,28 @@ const USER2: address = @0x2;
 // Test constants
 const SUPPLY_CAP: u64 = 1_000_000_000_000; // 1M tokens with 6 decimals
 const MAX_BORROW_PERCENTAGE: u64 = 800_000_000; // 80% with 9 decimals
+const PROTOCOL_SPREAD: u64 = 100_000_000; // 10% with 9 decimals
 
 fun setup_test(): (Scenario, Clock, MarginPool<USDC>) {
     let mut scenario = test::begin(@0x0);
     let clock = clock::create_for_testing(scenario.ctx());
-    let pool = margin_pool::create_margin_pool<USDC>(
+    let interest_params = margin_state::new_interest_params(
+        50_000_000, // base_rate: 5% with 9 decimals
+        100_000_000, // base_slope: 10% with 9 decimals
+        800_000_000, // optimal_utilization: 80% with 9 decimals
+        2_000_000_000, // excess_slope: 200% with 9 decimals
+    );
+    let _pool_id = margin_pool::create_margin_pool<USDC>(
+        interest_params,
         SUPPLY_CAP,
         MAX_BORROW_PERCENTAGE,
+        PROTOCOL_SPREAD,
         &clock,
         scenario.ctx()
     );
+    
+    scenario.next_tx(@0x0);
+    let pool = scenario.take_shared<MarginPool<USDC>>();
     (scenario, clock, pool)
 }
 
@@ -51,11 +65,11 @@ fun test_supply_and_withdraw_basic() {
     pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
     
     // User withdraws tokens
-    let withdrawn = pool.withdraw<USDC>(option::some(50000), &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(some(50000), &clock, scenario.ctx());
     assert!(withdrawn.value() == 50000);
     
     destroy(withdrawn);
-    destroy(pool);
+    test::return_shared(pool);
     destroy(clock);
     scenario.end();
 }

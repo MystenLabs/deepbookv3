@@ -5,7 +5,7 @@ module margin_trading::reward_pool;
 
 use std::type_name::{Self, TypeName};
 use sui::{
-    balance::{Self, Balance}, 
+ 
     clock::Clock, 
     event,
     vec_map::{Self, VecMap}
@@ -60,10 +60,10 @@ public(package) fun create_reward_pool<RewardToken>(
     clock: &Clock,
 ): RewardPool {
     let start_time = clock.timestamp_ms() / 1000;
-    let duration = end_time - start_time; 
-    let rewards_per_second = math::div(reward_amount, duration);
-
     assert!(start_time < end_time, EInvalidRewardPeriod);
+
+    let duration = end_time - start_time; 
+    let rewards_per_second = reward_amount / duration;
     assert!(rewards_per_second > 0, ERewardAmountTooSmall);
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
