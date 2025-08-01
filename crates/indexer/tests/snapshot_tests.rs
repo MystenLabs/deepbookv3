@@ -135,9 +135,9 @@ async fn read_table(table_name: &str, db_url: &str) -> Result<Vec<Value>, anyhow
                 let value = if let Ok(v) = row.try_get::<String, _>(column_name) {
                     Value::String(v)
                 } else if let Ok(v) = row.try_get::<i32, _>(column_name) {
-                    Value::Number(v.into())
+                    Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<i64, _>(column_name) {
-                    Value::Number(v.into())
+                    Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<bool, _>(column_name) {
                     Value::Bool(v)
                 } else if let Ok(v) = row.try_get::<Value, _>(column_name) {
