@@ -69,7 +69,6 @@ public struct PoolLiquidationReward has copy, drop {
     liquidation_reward: u64, // amount of the liquidation reward
 }
 
-
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(

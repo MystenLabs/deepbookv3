@@ -60,7 +60,7 @@ fun test_supply_and_withdraw_basic() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = 2)] // ESupplyCapExceeded
+#[test, expected_failure(abort_code = margin_pool::ESupplyCapExceeded)] 
 fun test_supply_cap_enforcement() {
     let (mut scenario, mut clock, mut pool) = setup_test();
     
@@ -131,7 +131,7 @@ fun test_withdraw_all() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = 3)] // ECannotWithdrawMoreThanSupply
+#[test, expected_failure(abort_code = margin_pool::ECannotWithdrawMoreThanSupply)] 
 fun test_withdraw_more_than_supplied() {
     let (mut scenario, mut clock, mut pool) = setup_test();
     
