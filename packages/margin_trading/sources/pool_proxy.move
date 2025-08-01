@@ -3,19 +3,26 @@
 
 module margin_trading::pool_proxy;
 
-use deepbook::{order_info::OrderInfo, pool::Pool};
-use margin_trading::margin_manager::MarginManager;
+use deepbook::{math, order_info::OrderInfo, pool::Pool};
+use margin_trading::{
+    margin_manager::MarginManager,
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use std::type_name;
 use sui::clock::Clock;
 use token::deep::DEEP;
 
 // === Errors ===
-const ECannotStakeWithDeepMarginManager: u64 = 0;
+const ECannotStakeWithDeepMarginManager: u64 = 1;
+const EPoolNotEnabledForMarginTrading: u64 = 2;
+const ENotReduceOnlyOrder: u64 = 3;
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     client_order_id: u64,
     order_type: u8,
@@ -30,6 +37,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -50,6 +58,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 /// Places a market order in the pool.
 public fun place_market_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     client_order_id: u64,
     self_matching_option: u8,
@@ -59,6 +68,113 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
+}
+
+/// Places a reduce-only order in the pool. Used when margin trading is diabled.
+public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
+        pool,
+    );
+
+    // The order is a bid, and quantity is less than the net base debt.
+    // The order is a ask, and quote quantity is less than the net quote debt.
+    assert!(
+        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+            (!is_bid && quote_debt > quote_asset && math::mul(quantity, price) <= quote_debt - quote_asset),
+        ENotReduceOnlyOrder,
+    );
+
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+
+    pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+/// Places a reduce-only market order in the pool. Used when margin trading is disabled.
+public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
+        pool,
+    );
+
+    let (_, quote_quantity, _) = if (pay_with_deep) {
+        pool.get_quote_quantity_out(quantity, clock)
+    } else {
+        pool.get_quote_quantity_out_input_fee(quantity, clock)
+    };
+
+    // The order is a bid, and quantity is less than the net base debt.
+    // The order is a ask, and quote quantity is less than the net quote debt.
+    assert!(
+        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+            (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
+        ENotReduceOnlyOrder,
+    );
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 

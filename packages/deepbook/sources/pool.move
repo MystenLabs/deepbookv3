@@ -1157,17 +1157,14 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
     assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
     let pool_id = object::new(ctx);
-    let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
+    let pool_inner = PoolInner<BaseAsset, QuoteAsset> {
         allowed_versions: registry.allowed_versions(),
         pool_id: pool_id.to_inner(),
         book: book::empty(tick_size, lot_size, min_size, ctx),
-        state: state::empty(stable_pool, ctx),
+        state: state::empty(whitelisted_pool, stable_pool, ctx),
         vault: vault::empty(),
         deep_price: deep_price::empty(),
         registered_pool: true,
-    };
-    if (whitelisted_pool) {
-        pool_inner.set_whitelist(ctx);
     };
     let params = pool_inner.state.governance().trade_params();
     let taker_fee = params.taker_fee();
@@ -1229,15 +1226,6 @@ public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
 }
 
 // === Private Functions ===
-/// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero
-/// fees.
-fun set_whitelist<BaseAsset, QuoteAsset>(
-    self: &mut PoolInner<BaseAsset, QuoteAsset>,
-    ctx: &TxContext,
-) {
-    self.state.governance_mut(ctx).set_whitelist(true);
-}
-
 fun place_order_int<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,

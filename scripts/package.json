@@ -11,11 +11,11 @@
     "author": "",
     "license": "ISC",
     "dependencies": {
-        "@mysten/deepbook-v3": "^0.14.16",
-        "@mysten/sui": "^1.30.5",
-        "dotenv": "^16.5.0",
+        "@mysten/deepbook-v3": "^0.15.9",
+        "@mysten/sui": "^1.37.0",
+        "dotenv": "^16.6.1",
         "esbuild": "^0.20.2",
         "ts-node": "^10.9.2",
-        "tsx": "^4.19.4"
+        "tsx": "^4.20.3"
     }
 }
