@@ -59,7 +59,6 @@ fun test_add_reward_pool_success() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     destroy(pool);
@@ -80,7 +79,6 @@ fun test_add_reward_pool_amount_too_small() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     destroy(pool);
@@ -101,7 +99,6 @@ fun test_add_reward_pool_period_too_short() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     destroy(pool);
@@ -125,7 +122,6 @@ fun test_add_reward_pool_invalid_time_range() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     destroy(pool);
@@ -146,7 +142,6 @@ fun test_replace_reward_pool_same_token() {
         reward_coin1,
         start_time + HOUR_SECONDS,
         &clock,
-        scenario.ctx()
     );
     
     // Add second SUI reward pool (replaces the first one)
@@ -155,7 +150,6 @@ fun test_replace_reward_pool_same_token() {
         reward_coin2,
         start_time + HOUR_SECONDS * 2,
         &clock,
-        scenario.ctx()
     );
     
     destroy(pool);
@@ -184,7 +178,6 @@ fun test_single_user_reward_distribution() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Fast forward halfway through reward period
@@ -221,7 +214,6 @@ fun test_multiple_users_reward_distribution() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // User1 supplies 75% of pool
@@ -273,7 +265,6 @@ fun test_supply_during_reward_period() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // User1 supplies at start
@@ -332,7 +323,6 @@ fun test_claim_rewards_multiple_times() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Claim at 25% through period
@@ -384,7 +374,6 @@ fun test_different_reward_token_pools() {
         reward_coin1,
         start_time + HOUR_SECONDS,
         &clock,
-        scenario.ctx()
     );
     
     // Add REWARD_TOKEN reward pool (different token type, so allowed)
@@ -393,7 +382,6 @@ fun test_different_reward_token_pools() {
         reward_coin2,
         start_time + HOUR_SECONDS,
         &clock,
-        scenario.ctx()
     );
     
     // Claim rewards from both token types
@@ -432,7 +420,6 @@ fun test_reward_pool_after_period_ends() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Fast forward past end time
@@ -476,7 +463,6 @@ fun test_no_rewards_before_start_time() {
         reward_coin,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Try to claim before start time
@@ -511,7 +497,6 @@ fun test_different_reward_token_types() {
         sui_reward,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Add different token reward pool
@@ -520,7 +505,6 @@ fun test_different_reward_token_types() {
         other_reward,
         end_time,
         &clock,
-        scenario.ctx()
     );
     
     // Fast forward and claim both types

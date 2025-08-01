@@ -6,7 +6,7 @@ module margin_trading::margin_pool;
 use deepbook::math;
 use margin_trading::margin_constants;
 use margin_trading::margin_state::{Self, State};
-use margin_trading::reward_pool::{Self, RewardPool, UserRewards};
+use margin_trading::reward_pool::{Self, RewardPool, UserRewards, create_reward_pool};
 use std::type_name::Self;
 use sui::{
     bag::{Self, Bag},
@@ -188,7 +188,6 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     reward_coin: Coin<RewardToken>,
     end_time: u64,
     clock: &Clock,
-    ctx: &mut TxContext,
 ) {
     let reward_token_type = type_name::get<RewardToken>();
     let current_time = clock.timestamp_ms() / 1000;
@@ -209,7 +208,7 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     } else {
         assert!(self.reward_pools.length() < margin_constants::max_reward_types(), EMaxRewardTypesExceeded);
         
-        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances);
+        let reward_pool = create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances);
         self.reward_pools.push_back(reward_pool);
     };
 }
