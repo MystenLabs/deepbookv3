@@ -102,7 +102,7 @@ public(package) fun update_reward_pool(
     // Cap end_time at current_time, but it can be less than current_time if rewards have ended
     let end_time = reward_pool.end_time.min(current_time);
     
-    if (current_time <= reward_pool.last_update_time || current_time < reward_pool.start_time || end_time <= reward_pool.last_update_time) {
+    if (end_time <= reward_pool.last_update_time) {
         return
     };
     
@@ -112,7 +112,7 @@ public(package) fun update_reward_pool(
     let reward_per_share = math::div(rewards_to_distribute, total_supply);
     
     reward_pool.cumulative_reward_per_share = reward_pool.cumulative_reward_per_share + reward_per_share;
-    reward_pool.last_update_time = end_time;
+    reward_pool.last_update_time = current_time;
 }
 
 /// Updates user's accumulated rewards for a specific reward token type
