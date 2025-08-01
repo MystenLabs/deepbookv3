@@ -4,6 +4,7 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
+use margin_trading::margin_constants;
 use margin_trading::margin_state::{Self, State};
 use margin_trading::reward_pool::{Self, RewardPool, UserRewards};
 use std::type_name::Self;
@@ -24,6 +25,7 @@ const ECannotRepayMoreThanLoan: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
+const EMaxRewardTypesExceeded: u64 = 8;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -205,7 +207,9 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
             &mut self.reward_balances
         );
     } else {
-        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances, ctx);
+        assert!(self.reward_pools.length() < margin_constants::max_reward_types(), EMaxRewardTypesExceeded);
+        
+        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances);
         self.reward_pools.push_back(reward_pool);
     };
 }

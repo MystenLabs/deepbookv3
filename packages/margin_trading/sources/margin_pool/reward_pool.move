@@ -66,7 +66,6 @@ public(package) fun create_reward_pool<RewardToken>(
     end_time: u64,
     clock: &Clock,
     reward_balances: &mut Bag,
-    ctx: &mut TxContext,
 ): RewardPool {
     let current_time_seconds = clock.timestamp_ms() / 1000;
     let reward_amount = reward_coin.value();
