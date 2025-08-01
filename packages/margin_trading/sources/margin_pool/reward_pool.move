@@ -23,8 +23,7 @@ const ERewardPeriodTooShort: u64 = 3;
 // === Structs ===
 public struct RewardBalance(TypeName) has copy, drop, store;
 
-public struct RewardPool has key, store {
-    id: UID, // unique identifier for this reward pool
+public struct RewardPool has store {
     reward_token_type: TypeName, // type of the reward token
     total_rewards: u64, // total reward amount for this pool
     start_time: u64, // when rewards start distributing (seconds)
@@ -84,7 +83,6 @@ public(package) fun create_reward_pool<RewardToken>(
     
     let reward_token_type = type_name::get<RewardToken>();
     let reward_pool = RewardPool {
-        id: object::new(ctx),
         reward_token_type,
         total_rewards: reward_amount,
         start_time,
@@ -270,11 +268,6 @@ public(package) fun last_cumulative_reward_per_share_for_token(user_rewards: &Us
     }
 }
 
-/// Returns the reward pool ID
-public(package) fun reward_pool_id(reward_pool: &RewardPool): ID {
-    reward_pool.id.to_inner()
-}
-
 /// Returns the reward token type
 public(package) fun reward_token_type(reward_pool: &RewardPool): TypeName {
     reward_pool.reward_token_type
@@ -320,7 +313,6 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
 /// Destroys a reward pool and returns any remaining balance
 public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool, reward_balances: &mut Bag): Balance<T> {
     let RewardPool {
-        id,
         reward_token_type,
         total_rewards: _,
         start_time: _,
@@ -333,6 +325,5 @@ public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool, reward_balan
     let reward_balance_key = RewardBalance(reward_token_type);
     let remaining_balance = reward_balances.remove<RewardBalance, Balance<T>>(reward_balance_key);
     
-    object::delete(id);
     remaining_balance
 }
