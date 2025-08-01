@@ -6,11 +6,11 @@ module margin_trading::reward_pool;
 use std::type_name::{Self, TypeName};
 use sui::{
     balance::{Self, Balance}, 
+    bag::Bag,
     clock::Clock, 
     coin::Coin, 
     event,
-    vec_map::{Self, VecMap},
-    dynamic_field as df
+    vec_map::{Self, VecMap}
 };
 use margin_trading::margin_constants;
 use deepbook::math;
@@ -66,6 +66,7 @@ public(package) fun create_reward_pool<RewardToken>(
     start_time: u64,
     end_time: u64,
     clock: &Clock,
+    reward_balances: &mut Bag,
     ctx: &mut TxContext,
 ): RewardPool {
     let current_time_seconds = clock.timestamp_ms() / 1000;
@@ -82,7 +83,7 @@ public(package) fun create_reward_pool<RewardToken>(
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
     let reward_token_type = type_name::get<RewardToken>();
-    let mut reward_pool = RewardPool {
+    let reward_pool = RewardPool {
         id: object::new(ctx),
         reward_token_type,
         total_rewards: reward_amount,
@@ -93,11 +94,13 @@ public(package) fun create_reward_pool<RewardToken>(
         last_update_time,
     };
     
-    df::add<RewardBalance, Balance<RewardToken>>(
-        &mut reward_pool.id,
-        RewardBalance(reward_token_type),
-        reward_coin.into_balance(),
-    );
+    let reward_balance_key = RewardBalance(reward_token_type);
+    if (reward_balances.contains(reward_balance_key)) {
+        let existing_balance: &mut Balance<RewardToken> = reward_balances.borrow_mut<RewardBalance, Balance<RewardToken>>(reward_balance_key);
+        existing_balance.join(reward_coin.into_balance());
+    } else {
+        reward_balances.add(reward_balance_key, reward_coin.into_balance());
+    };
     emit_reward_pool_added(margin_pool_id, &reward_pool);
     
     reward_pool
@@ -172,8 +175,8 @@ public(package) fun update_user_accumulated_rewards_by_type(
 }
 
 public(package) fun claim_from_pool<RewardToken>(
-    reward_pool: &mut RewardPool,
     user_rewards: &mut UserRewards,
+    reward_balances: &mut Bag,
     _user_supply: u64,
     _ctx: &TxContext,
 ): Balance<RewardToken> {
@@ -185,12 +188,15 @@ public(package) fun claim_from_pool<RewardToken>(
         0
     };
     
-    let reward_balance = reward_pool.reward_balance<RewardToken>();
-    let can_claim = claimable_rewards > 0 && reward_balance.value() >= claimable_rewards;
+    let reward_balance_key = RewardBalance(reward_type);
+    let can_claim = claimable_rewards > 0 && 
+        reward_balances.contains(reward_balance_key) && 
+        reward_balances.borrow<RewardBalance, Balance<RewardToken>>(reward_balance_key).value() >= claimable_rewards;
     
     if (can_claim) {
         user_rewards.rewards_by_token.get_mut(&reward_type).accumulated_rewards = 0;
-        reward_pool.reward_balance_mut<RewardToken>().split(claimable_rewards)
+        let reward_balance: &mut Balance<RewardToken> = reward_balances.borrow_mut<RewardBalance, Balance<RewardToken>>(reward_balance_key);
+        reward_balance.split(claimable_rewards)
     } else {
         balance::zero<RewardToken>()
     }
@@ -274,21 +280,6 @@ public(package) fun reward_token_type(reward_pool: &RewardPool): TypeName {
     reward_pool.reward_token_type
 }
 
-/// Helper function to get reward balance
-fun reward_balance<RewardToken>(reward_pool: &RewardPool): &Balance<RewardToken> {
-    df::borrow<RewardBalance, Balance<RewardToken>>(
-        &reward_pool.id,
-        RewardBalance(reward_pool.reward_token_type),
-    )
-}
-
-/// Helper function to get mutable reward balance
-fun reward_balance_mut<RewardToken>(reward_pool: &mut RewardPool): &mut Balance<RewardToken> {
-    df::borrow_mut<RewardBalance, Balance<RewardToken>>(
-        &mut reward_pool.id,
-        RewardBalance(reward_pool.reward_token_type),
-    )
-}
 
 /// Adds new rewards to an existing reward pool and resets the timing
 /// All existing rewards (both accrued and unaccrued) are combined with new rewards
@@ -299,6 +290,7 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
     start_time: u64,
     end_time: u64,
     clock: &Clock,
+    reward_balances: &mut Bag,
 ) {
     let current_time_seconds = clock.timestamp_ms() / 1000;
     let new_reward_amount = new_reward_coin.value();
@@ -311,7 +303,8 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
     
     // Get existing reward balance and add new rewards
-    let existing_balance = reward_pool.reward_balance_mut<RewardToken>();
+    let reward_balance_key = RewardBalance(reward_pool.reward_token_type);
+    let existing_balance: &mut Balance<RewardToken> = reward_balances.borrow_mut<RewardBalance, Balance<RewardToken>>(reward_balance_key);
     existing_balance.join(new_reward_coin.into_balance());
     
     // Reset pool parameters with combined rewards
@@ -325,9 +318,9 @@ public(package) fun add_rewards_and_reset_timing<RewardToken>(
 }
 
 /// Destroys a reward pool and returns any remaining balance
-public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool): Balance<T> {
+public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool, reward_balances: &mut Bag): Balance<T> {
     let RewardPool {
-        mut id,
+        id,
         reward_token_type,
         total_rewards: _,
         start_time: _,
@@ -337,10 +330,8 @@ public(package) fun destroy_reward_pool<T>(reward_pool: RewardPool): Balance<T> 
         last_update_time: _,
     } = reward_pool;
     
-    let remaining_balance = df::remove<RewardBalance, Balance<T>>(
-        &mut id,
-        RewardBalance(reward_token_type),
-    );
+    let reward_balance_key = RewardBalance(reward_token_type);
+    let remaining_balance = reward_balances.remove<RewardBalance, Balance<T>>(reward_balance_key);
     
     object::delete(id);
     remaining_balance

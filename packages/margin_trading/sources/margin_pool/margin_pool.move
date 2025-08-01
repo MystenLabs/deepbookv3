@@ -6,8 +6,9 @@ module margin_trading::margin_pool;
 use deepbook::math;
 use margin_trading::margin_state::{Self, State};
 use margin_trading::reward_pool::{Self, RewardPool, UserRewards};
-use std::type_name::{Self, TypeName};
+use std::type_name::Self;
 use sui::{
+    bag::{Self, Bag},
     balance::{Self, Balance}, 
     clock::Clock, 
     coin::Coin, 
@@ -45,6 +46,7 @@ public struct MarginPool<phantom Asset> has key, store {
     max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
     state: State,
     reward_pools: vector<RewardPool>, // stores all reward pools
+    reward_balances: Bag,
     user_rewards: Table<address, UserRewards>, // maps user address to their reward tracking
 }
 
@@ -160,6 +162,7 @@ public(package) fun create_margin_pool<Asset>(
         max_borrow_percentage,
         state: margin_state::default(clock),
         reward_pools: vector[],
+        reward_balances: bag::new(ctx),
         user_rewards: table::new(ctx),
     };
 
@@ -203,10 +206,11 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
             reward_coin,
             current_time,
             end_time,
-            clock
+            clock,
+            &mut self.reward_balances
         );
     } else {
-        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, ctx);
+        let reward_pool = reward_pool::create_reward_pool(reward_coin, self.id.to_inner(), current_time, end_time, clock, &mut self.reward_balances, ctx);
         self.reward_pools.push_back(reward_pool);
     };
 }
@@ -380,8 +384,9 @@ public fun claim_rewards<Asset, RewardToken>(
     
     self.reward_pools.do_mut!(|reward_pool| {
         if (reward_pool.reward_token_type() == reward_token_type) {
-            let claimed_balance = reward_pool.claim_from_pool<RewardToken>(
+            let claimed_balance = reward_pool::claim_from_pool<RewardToken>(
                 user_rewards_mut,
+                &mut self.reward_balances,
                 user_supply_amount,
                 ctx
             );
