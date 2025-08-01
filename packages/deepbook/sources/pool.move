@@ -787,52 +787,31 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
 public fun enable_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &DeepbookAdminCap,
+    enable: bool,
     ctx: &mut TxContext,
 ) {
+    let _ = self.load_inner_mut();
     let ewma_state = self.update_ewma_state(ctx);
-    ewma_state.enable();
+    if (enable) {
+        ewma_state.enable();
+    } else {
+        ewma_state.disable();
+    }
 }
 
-/// Disable the EWMA state for the pool.
-public fun disable_ewma_state<BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    _cap: &DeepbookAdminCap,
-    ctx: &mut TxContext,
-) {
-    let ewma_state = self.update_ewma_state(ctx);
-    ewma_state.disable();
-}
-
-/// Set the EWMA z-score threshold for the pool.
-public fun set_ewma_z_score_threshold<BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    z_score_threshold: u64,
-    _cap: &DeepbookAdminCap,
-    ctx: &mut TxContext,
-) {
-    let ewma_state = self.update_ewma_state(ctx);
-    ewma_state.set_z_score_threshold(z_score_threshold);
-}
-
-/// Set the EWMA alpha for the pool.
-public fun set_ewma_alpha<BaseAsset, QuoteAsset>(
+/// Set the EWMA parameters for the pool.
+/// Only admin can set the parameters.
+public fun set_ewma_params<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     alpha: u64,
-    _cap: &DeepbookAdminCap,
+    z_score_threshold: u64,
+    additional_taker_fee: u64,
     ctx: &mut TxContext,
 ) {
+    let _ = self.load_inner_mut();
     let ewma_state = self.update_ewma_state(ctx);
     ewma_state.set_alpha(alpha);
-}
-
-/// Set the additional taker fee for the pool.
-public fun set_ewma_additional_taker_fee<BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    additional_taker_fee: u64,
-    _cap: &DeepbookAdminCap,
-    ctx: &mut TxContext,
-) {
-    let ewma_state = self.update_ewma_state(ctx);
+    ewma_state.set_z_score_threshold(z_score_threshold);
     ewma_state.set_additional_taker_fee(additional_taker_fee);
 }
 

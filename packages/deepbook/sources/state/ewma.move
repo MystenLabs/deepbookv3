@@ -19,11 +19,12 @@ public struct EWMAState has copy, drop, store {
     alpha: u64,
     z_score_threshold: u64,
     additional_taker_fee: u64,
+    last_updated_timestamp: u64,
     enabled: bool,
 }
 
 public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
-    let gas_price = ctx.gas_price();
+    let gas_price = ctx.gas_price() * constants::float_scaling();
 
     EWMAState {
         mean: gas_price,
@@ -31,7 +32,8 @@ public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
         alpha: constants::default_ewma_alpha(),
         z_score_threshold: constants::default_z_score_threshold(),
         additional_taker_fee: constants::default_additional_taker_fee(),
-        enabled: true,
+        last_updated_timestamp: 0,
+        enabled: false,
     }
 }
 
@@ -41,14 +43,18 @@ public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
 /// The alpha parameter controls the weight of the current gas price in the calculation.
 /// The mean and variance are updated in the state.
 public(package) fun update(self: &mut EWMAState, ctx: &TxContext) {
+    let current_timestamp = ctx.epoch_timestamp_ms();
+    if (current_timestamp == self.last_updated_timestamp) {
+        return
+    };
+    self.last_updated_timestamp = current_timestamp;
+
     let alpha = self.alpha;
     let one_minute_alpha = constants::float_scaling() - alpha;
-    let gas_price = ctx.gas_price();
+    let gas_price = ctx.gas_price() * constants::float_scaling();
 
-    let mean_new = math::div(
-        alpha * gas_price + one_minute_alpha * self.mean,
-        constants::float_scaling(),
-    );
+    let mean_new = math::mul(alpha, gas_price) + math::mul(one_minute_alpha, self.mean);
+
     let diff = if (gas_price > mean_new) {
         gas_price - mean_new
     } else {
@@ -56,10 +62,8 @@ public(package) fun update(self: &mut EWMAState, ctx: &TxContext) {
     };
     let diff_squared = math::mul(diff, diff);
 
-    let variance_new = math::div(
-        alpha * diff_squared + one_minute_alpha * self.variance,
-        constants::float_scaling(),
-    );
+    let variance_new = math::mul(alpha, diff_squared) + math::mul(one_minute_alpha, self.variance);
+
     self.mean = mean_new;
     self.variance = variance_new;
 }
@@ -68,7 +72,11 @@ public(package) fun update(self: &mut EWMAState, ctx: &TxContext) {
 /// The Z-score is calculated as the difference between the current gas price and the mean,
 /// divided by the standard deviation (square root of variance).
 public(package) fun z_score(self: &EWMAState, ctx: &TxContext): u64 {
-    let gas_price = ctx.gas_price();
+    if (self.variance == 0) {
+        return 0
+    };
+
+    let gas_price = ctx.gas_price() * constants::float_scaling();
     let diff = if (gas_price > self.mean) {
         gas_price - self.mean
     } else {
@@ -124,4 +132,16 @@ public(package) fun apply_taker_penalty(self: &EWMAState, taker_fee: u64, ctx: &
 /// Returns true if the EWMA state is enabled, false otherwise.
 public(package) fun enabled(self: &EWMAState): bool {
     self.enabled
+}
+
+public(package) fun mean(self: &EWMAState): u64 {
+    self.mean
+}
+
+public(package) fun variance(self: &EWMAState): u64 {
+    self.variance
+}
+
+public(package) fun last_updated_timestamp(self: &EWMAState): u64 {
+    self.last_updated_timestamp
 }
