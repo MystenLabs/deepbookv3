@@ -81,9 +81,7 @@ public fun supply<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
     
-    let old_user_supply = self.user_supply(supplier, clock);
-    self.update_user_rewards_on_supply_change(supplier, old_user_supply, clock);
-    
+    self.update_user(supplier, clock);
     self.increase_user_supply(supplier, supply_amount);
     self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
@@ -100,12 +98,10 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     let supplier = ctx.sender();
-    let user_supply = self.user_supply(supplier, clock);
+    let user_supply = self.update_user(supplier, clock);
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    
-    self.update_user_rewards_on_supply_change(supplier, user_supply, clock);
     self.decrease_user_supply(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
 
@@ -373,9 +369,7 @@ public fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
-    let user_supply_amount = self.user_supply(user, clock);
-    
-    self.update_user_rewards_on_supply_change(user, user_supply_amount, clock);
+    let user_supply_amount = self.update_user(user, clock);
     
     let reward_token_type = type_name::get<RewardToken>();
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
@@ -453,12 +447,6 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
     self.supplies.add(supplier, supply);
 }
 
-fun user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, clock: &Clock): u64 {
-    self.update_state(clock);
-    self.update_user_supply(supplier);
-
-    self.supplies.borrow(supplier).supplied_amount
-}
 
 fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
     self.add_user_loan_entry(manager_id);
@@ -508,13 +496,13 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
     self.user_rewards.add(user, user_rewards);
 }
 
-/// Updates user rewards when their supply changes
-fun update_user_rewards_on_supply_change<Asset>(
-    self: &mut MarginPool<Asset>,
-    user: address,
-    user_supply: u64,
-    clock: &Clock,
-) {
+/// Updates user supply with interest and rewards, returns the user's supply amount before update
+fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Clock): u64 {
+    self.update_state(clock);
+    self.update_user_supply(user);
+    
+    let user_supply = self.supplies.borrow(user).supplied_amount;
+    
     self.update_user_rewards_entry(user);
     reward_pool::update_all_reward_pools(&mut self.reward_pools, clock, self.state.total_supply());
     
@@ -530,5 +518,7 @@ fun update_user_rewards_on_supply_change<Asset>(
             user_supply
         );
     });
+    
+    user_supply
 }
 
