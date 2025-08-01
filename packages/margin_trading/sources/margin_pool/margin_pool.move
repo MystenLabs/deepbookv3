@@ -9,16 +9,16 @@ use margin_trading::margin_state::{Self, State};
 use margin_trading::reward_pool::{
     RewardPool,
     UserRewards,
-    create_reward_pool,
     claim_from_pool,
+    create_reward_pool,
     emit_rewards_claimed,
     emit_reward_pool_added,
     create_user_rewards,
-    update_all_reward_pools,
     reward_token_type,
     update_user_accumulated_rewards_by_type,
+    update_reward_pool,
 };
-use std::type_name::Self;
+use std::type_name::{Self, TypeName, get};
 use sui::{
     bag::{Self, Bag},
     balance::{Self, Balance}, 
@@ -200,24 +200,29 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     clock: &Clock,
 ) {
     let reward_token_type = type_name::get<RewardToken>();
-    let current_time = clock.timestamp_ms() / 1000;
-    
     let existing_pool_index = self.reward_pools.find_index!(|pool| {
         pool.reward_token_type() == reward_token_type
     });
     
     if (existing_pool_index.is_some()) {
         let index = existing_pool_index.destroy_some();
-        self.reward_pools[index].add_rewards_and_reset_timing<RewardToken>(
-            &mut self.reward_balances,
-            reward_coin,
-            current_time,
+        let existing_balance = if (self.reward_balances.contains(reward_token_type)) {
+            self.reward_balances.borrow<TypeName, Balance<RewardToken>>(reward_token_type).value()
+        } else {
+            0
+        };
+
+        self.reward_pools[index].add_rewards_and_reset_timing(
+            existing_balance,
+            reward_coin.value(),
             end_time,
             clock
         );
+        add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
     } else {
         assert!(self.reward_pools.length() < margin_constants::max_reward_types(), EMaxRewardTypesExceeded);
-        let reward_pool = create_reward_pool(reward_coin, &mut self.reward_balances, end_time, clock);
+        let reward_pool = create_reward_pool<RewardToken>(reward_coin.value(), end_time, clock);   
+        add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
         emit_reward_pool_added(self.id.to_inner(), &reward_pool);
         self.reward_pools.push_back(reward_pool);
     };
@@ -381,33 +386,26 @@ public fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
-    let user_supply_amount = self.update_user(user, clock);
+    self.update_user(user, clock);
     
     let reward_token_type = type_name::get<RewardToken>();
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
-    let mut total_claimed_balance = balance::zero<RewardToken>();
-    let mut total_claimed_amount = 0;
+    let mut claimed_balance = balance::zero<RewardToken>();
     
     let reward_pool_index = self.reward_pools.find_index!(|pool| {
         pool.reward_token_type() == reward_token_type
     });
 
     if (reward_pool_index.is_some()) {
-        let claimed_balance = claim_from_pool<RewardToken>(
-            user_rewards_mut,
-            &mut self.reward_balances,
-            user_supply_amount,
-            ctx
-        );
-        total_claimed_amount = total_claimed_amount + claimed_balance.value();
-        total_claimed_balance.join(claimed_balance);
+        let claimed_amount = claim_from_pool<RewardToken>(user_rewards_mut,);
+        claimed_balance.join(withdraw_reward_balance_from_bag<RewardToken>(&mut self.reward_balances, claimed_amount));
     };
 
-    if (total_claimed_amount > 0) {
-        emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, total_claimed_amount);
+    if (claimed_balance.value() > 0) {
+        emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, claimed_balance.value());
     };
     
-    total_claimed_balance.into_coin(ctx)
+    claimed_balance.into_coin(ctx)
 }
 
 /// Returns all reward pools
@@ -416,6 +414,13 @@ public fun get_reward_pools<Asset>(self: &MarginPool<Asset>): &vector<RewardPool
 }
 
 // === Internal Functions ===
+fun update_all_reward_pools<Asset>(
+    self: &mut MarginPool<Asset>,
+    clock: &Clock,
+) {
+    self.reward_pools.do_mut!(|pool| update_reward_pool(pool, self.state.total_supply(), clock));
+}
+
 /// Updates the state
 fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.state.update(clock);
@@ -516,7 +521,7 @@ fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Cloc
     let user_supply = self.supplies.borrow(user).supplied_amount;
     
     self.update_user_rewards_entry(user);
-    update_all_reward_pools(&mut self.reward_pools, clock, self.state.total_supply());
+    self.update_all_reward_pools(clock);
     
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
@@ -534,3 +539,24 @@ fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Cloc
     user_supply
 }
 
+fun add_reward_balance_to_bag<RewardToken>(
+    reward_balances: &mut Bag,
+    reward_coin: Coin<RewardToken>,
+) {
+    let reward_type = type_name::get<RewardToken>();
+    if (reward_balances.contains(reward_type)) {
+        let existing_balance: &mut Balance<RewardToken> = reward_balances.borrow_mut<TypeName, Balance<RewardToken>>(reward_type);
+        existing_balance.join(reward_coin.into_balance());
+    } else {
+        reward_balances.add(reward_type, reward_coin.into_balance());
+    };
+}
+
+fun withdraw_reward_balance_from_bag<RewardToken>(
+    reward_balances: &mut Bag,
+    amount: u64,
+): Balance<RewardToken> {
+    let reward_type = type_name::get<RewardToken>();
+    let balance: &mut Balance<RewardToken> = reward_balances.borrow_mut(reward_type);
+    balance::split(balance, amount)
+}
