@@ -278,11 +278,11 @@ public(package) fun reward_token_type(reward_pool: &RewardPool): TypeName {
 /// and redistributed over the new time period
 public(package) fun add_rewards_and_reset_timing<RewardToken>(
     reward_pool: &mut RewardPool,
+    reward_balances: &mut Bag,
     new_reward_coin: Coin<RewardToken>,
     start_time: u64,
     end_time: u64,
     clock: &Clock,
-    reward_balances: &mut Bag,
 ) {
     let current_time_seconds = clock.timestamp_ms() / 1000;
     let new_reward_amount = new_reward_coin.value();

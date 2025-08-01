@@ -209,11 +209,11 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     if (existing_pool_index.is_some()) {
         let index = existing_pool_index.destroy_some();
         self.reward_pools[index].add_rewards_and_reset_timing<RewardToken>(
+            &mut self.reward_balances,
             reward_coin,
             current_time,
             end_time,
-            clock,
-            &mut self.reward_balances
+            clock
         );
     } else {
         assert!(self.reward_pools.length() < margin_constants::max_reward_types(), EMaxRewardTypesExceeded);
