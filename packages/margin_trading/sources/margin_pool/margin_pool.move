@@ -6,7 +6,17 @@ module margin_trading::margin_pool;
 use deepbook::math;
 use margin_trading::margin_constants;
 use margin_trading::margin_state::{Self, State};
-use margin_trading::reward_pool::{Self, RewardPool, UserRewards, create_reward_pool};
+use margin_trading::reward_pool::{
+    RewardPool,
+    UserRewards,
+    create_reward_pool,
+    claim_from_pool,
+    emit_rewards_claimed,
+    create_user_rewards,
+    update_all_reward_pools,
+    reward_token_type,
+    update_user_accumulated_rewards_by_type,
+};
 use std::type_name::Self;
 use sui::{
     bag::{Self, Bag},
@@ -380,7 +390,7 @@ public fun claim_rewards<Asset, RewardToken>(
     
     self.reward_pools.do_mut!(|reward_pool| {
         if (reward_pool.reward_token_type() == reward_token_type) {
-            let claimed_balance = reward_pool::claim_from_pool<RewardToken>(
+            let claimed_balance = claim_from_pool<RewardToken>(
                 user_rewards_mut,
                 &mut self.reward_balances,
                 user_supply_amount,
@@ -392,7 +402,7 @@ public fun claim_rewards<Asset, RewardToken>(
     });
     
     if (total_claimed_amount > 0) {
-        reward_pool::emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, total_claimed_amount);
+        emit_rewards_claimed(self.id.to_inner(), reward_token_type, user, total_claimed_amount);
     };
     
     total_claimed_balance.into_coin(ctx)
@@ -494,7 +504,7 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
         return
     };
     
-    let user_rewards = reward_pool::create_user_rewards();
+    let user_rewards = create_user_rewards();
     self.user_rewards.add(user, user_rewards);
 }
 
@@ -506,14 +516,14 @@ fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Cloc
     let user_supply = self.supplies.borrow(user).supplied_amount;
     
     self.update_user_rewards_entry(user);
-    reward_pool::update_all_reward_pools(&mut self.reward_pools, clock, self.state.total_supply());
+    update_all_reward_pools(&mut self.reward_pools, clock, self.state.total_supply());
     
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
-        let reward_type = reward_pool::reward_token_type(reward_pool);
+        let reward_type = reward_token_type(reward_pool);
         let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
         
-        reward_pool::update_user_accumulated_rewards_by_type(
+        update_user_accumulated_rewards_by_type(
             user_rewards_mut,
             reward_type,
             cumulative_reward_per_share,
