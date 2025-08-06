@@ -18,11 +18,26 @@ fun test_init_ewma_init_values() {
     let mut test = begin(@0xF);
     let alice = @0xA;
     test.next_tx(alice);
-    let ewma_state = test_init_ewma_state(test.ctx());
-    assert!(ewma_state.enabled() == true, 0);
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    assert!(ewma_state.enabled() == false, 0);
     assert!(ewma_state.mean() == test.ctx().gas_price(), 1);
     assert!(ewma_state.variance() == 0, 2);
     assert!(ewma_state.last_updated_timestamp() == 0, 3);
+    assert!(ewma_state.enabled() == false, 4);
+
+    test.next_tx(alice);
+    ewma_state.set_alpha(1_000_000_000);
+    ewma_state.set_z_score_threshold(100_000_000);
+    ewma_state.set_additional_taker_fee(100_000_000);
+    ewma_state.enable();
+    assert!(ewma_state.enabled() == true, 5);
+    assert!(ewma_state.alpha() == 1_000_000_000, 6);
+    assert!(ewma_state.z_score_threshold() == 100_000_000, 7);
+    assert!(ewma_state.additional_taker_fee() == 100_000_000, 8);
+
+    test.next_tx(alice);
+    ewma_state.disable();
+    assert!(ewma_state.enabled() == false, 9);
 
     end(test);
 }

@@ -129,17 +129,28 @@ public(package) fun apply_taker_penalty(self: &EWMAState, taker_fee: u64, ctx: &
     }
 }
 
-/// Returns true if the EWMA state is enabled, false otherwise.
-public(package) fun enabled(self: &EWMAState): bool {
-    self.enabled
-}
-
 public(package) fun mean(self: &EWMAState): u64 {
     self.mean
 }
 
 public(package) fun variance(self: &EWMAState): u64 {
     self.variance
+}
+
+public(package) fun alpha(self: &EWMAState): u64 {
+    self.alpha
+}
+
+public(package) fun z_score_threshold(self: &EWMAState): u64 {
+    self.z_score_threshold
+}
+
+public(package) fun additional_taker_fee(self: &EWMAState): u64 {
+    self.additional_taker_fee
+}
+
+public(package) fun enabled(self: &EWMAState): bool {
+    self.enabled
 }
 
 public(package) fun last_updated_timestamp(self: &EWMAState): u64 {
