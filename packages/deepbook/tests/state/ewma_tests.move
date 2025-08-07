@@ -55,12 +55,11 @@ fun test_update_ewma_state() {
     // default alpha is 0.01, so the mean should be 0.99 * 1_000_000 + 0.01 * 2_000_000 = 1_010_000
     // difference 2000 - 1010 = 990
     // diff squared = 980100
-    // variance = 0.99 * 0 + 0.01 * 980100 = 9801
     let gas_price2 = 2_000;
     advance_scenario_with_gas_price(&mut test, gas_price2);
     ewma_state.update(test.ctx());
     assert_eq!(ewma_state.mean(), 1_010 * constants::float_scaling());
-    assert_eq!(ewma_state.variance(), 9801 * constants::float_scaling());
+    assert_eq!(ewma_state.variance(), 980100 * constants::float_scaling());
 
     end(test);
 }

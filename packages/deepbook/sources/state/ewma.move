@@ -62,7 +62,11 @@ public(package) fun update(self: &mut EWMAState, ctx: &TxContext) {
     };
     let diff_squared = math::mul(diff, diff);
 
-    let variance_new = math::mul(alpha, diff_squared) + math::mul(one_minute_alpha, self.variance);
+    let variance_new = if (self.variance == 0) {
+        diff_squared
+    } else {
+        math::mul(self.variance, one_minute_alpha) + math::mul(alpha, diff_squared)
+    };
 
     self.mean = mean_new;
     self.variance = variance_new;
