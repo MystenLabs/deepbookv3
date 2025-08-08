@@ -71,7 +71,7 @@ where
     let temp_db = TempDb::new()?;
     let url = temp_db.database().url();
     let db = Arc::new(Db::for_write(url.clone(), DbArgs::default()).await?);
-    db.run_migrations(MIGRATIONS).await?;
+    db.run_migrations(Some(&MIGRATIONS)).await?;
     let mut conn = db.connect().await?;
 
     // Test setup based on provided test_name
@@ -135,9 +135,9 @@ async fn read_table(table_name: &str, db_url: &str) -> Result<Vec<Value>, anyhow
                 let value = if let Ok(v) = row.try_get::<String, _>(column_name) {
                     Value::String(v)
                 } else if let Ok(v) = row.try_get::<i32, _>(column_name) {
-                    Value::Number(v.into())
+                    Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<i64, _>(column_name) {
-                    Value::Number(v.into())
+                    Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<bool, _>(column_name) {
                     Value::Bool(v)
                 } else if let Ok(v) = row.try_get::<Value, _>(column_name) {
