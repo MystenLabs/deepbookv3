@@ -13,7 +13,7 @@ use token::deep::DEEP;
 const ECannotStakeWithDeepMarginManager: u64 = 1;
 const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
-const EIncorrectDeepbookPool: u64 = 4;
+const EIncorrectDeepBookPool: u64 = 4;
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
@@ -31,7 +31,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
     assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
@@ -64,7 +64,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
     assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
@@ -99,7 +99,7 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -150,7 +150,7 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -199,7 +199,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -221,7 +221,7 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -242,7 +242,7 @@ public fun cancel_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -262,7 +262,7 @@ public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -280,7 +280,7 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -297,7 +297,7 @@ public fun stake<BaseAsset, QuoteAsset>(
     amount: u64,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let base_asset_type = type_name::get<BaseAsset>();
     let quote_asset_type = type_name::get<QuoteAsset>();
     let deep_asset_type = type_name::get<DEEP>();
@@ -323,7 +323,7 @@ public fun unstake<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -343,7 +343,7 @@ public fun submit_proposal<BaseAsset, QuoteAsset>(
     stake_required: u64,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -364,7 +364,7 @@ public fun vote<BaseAsset, QuoteAsset>(
     proposal_id: ID,
     ctx: &TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
@@ -381,7 +381,7 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &mut TxContext,
 ) {
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
