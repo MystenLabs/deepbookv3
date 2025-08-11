@@ -181,7 +181,7 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     pool_config: PoolConfig,
     _cap: &MarginAdminCap,
 ) {
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     assert!(!self.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
 
     self.pool_registry.add(pool_id, pool_config);
@@ -260,7 +260,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     pool_config: PoolConfig,
     _cap: &MarginAdminCap,
 ) {
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
     let prev_config = self.pool_registry.remove(pool_id);
@@ -297,7 +297,7 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &MarginAdminCap,
 ) {
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
     let config = self.pool_registry.borrow_mut(pool_id);
@@ -313,7 +313,7 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &MarginAdminCap,
 ) {
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     assert!(self.pool_registry.contains(pool_id), EPoolNotRegistered);
 
     let config = self.pool_registry.borrow_mut(pool_id);
@@ -346,7 +346,7 @@ public fun pool_enabled<BaseAsset, QuoteAsset>(
     self: &MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
 ): bool {
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     if (self.pool_registry.contains(pool_id)) {
         let config = self.pool_registry.borrow(pool_id);
 

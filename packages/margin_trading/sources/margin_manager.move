@@ -112,7 +112,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
     let margin_manager = MarginManager<BaseAsset, QuoteAsset> {
         id,
         owner: ctx.sender(),
-        deepbook_pool: pool.pool_id(),
+        deepbook_pool: pool.id(),
         balance_manager,
         deposit_cap,
         withdraw_cap,
@@ -261,7 +261,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
     request: Request,
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-    assert!(margin_manager.deepbook_pool == pool.pool_id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
 
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset>(
@@ -274,7 +274,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
             clock,
         )
         .risk_ratio;
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
@@ -303,7 +303,7 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
-    assert!(margin_manager.deepbook_pool == pool.pool_id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
 
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
@@ -390,7 +390,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
     Option<RepaymentProof<BaseAsset>>,
     Option<RepaymentProof<QuoteAsset>>,
 ) {
-    assert!(margin_manager.deepbook_pool == pool.pool_id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
 
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
@@ -402,7 +402,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
 
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
@@ -681,7 +681,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    assert!(margin_manager.deepbook_pool == pool.pool_id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
 
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
@@ -693,7 +693,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let pool_id = pool.pool_id();
+    let pool_id = pool.id();
 
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
