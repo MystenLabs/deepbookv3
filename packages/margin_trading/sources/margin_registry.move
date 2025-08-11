@@ -320,7 +320,7 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     assert!(config.enabled == true, EPoolAlreadyDisabled);
     config.enabled = false;
 
-    pool.update_margin_trading<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, true);
+    pool.update_margin_trading<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, false);
 }
 
 /// Add Pyth Config to the MarginRegistry.
