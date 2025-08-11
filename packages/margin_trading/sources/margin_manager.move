@@ -91,12 +91,8 @@ public struct LiquidationEvent has copy, drop {
 }
 
 // === Public Functions - Margin Manager ===
-public fun new<BaseAsset, QuoteAsset>(
-    margin_registry: &MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    ctx: &mut TxContext,
-) {
-    assert!(margin_registry.pool_enabled(pool), EMarginPairNotAllowed);
+public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &mut TxContext) {
+    assert!(pool.margin_trading_enabled(), EMarginPairNotAllowed);
 
     let id = object::new(ctx);
 
