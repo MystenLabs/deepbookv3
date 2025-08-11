@@ -23,7 +23,7 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
-    dynamic_field::{Self as df, Self},
+    dynamic_field as df,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
@@ -1400,19 +1400,20 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ): &mut EWMAState {
-    if (!dynamic_field::exists_(&self.id, constants::ewma_df_key())) {
-        dynamic_field::add(&mut self.id, constants::ewma_df_key(), init_ewma_state(ctx));
+    if (!self.id.exists_(constants::ewma_df_key())) {
+        self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
     };
 
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state: &mut EWMAState = self
+        .id
+        .borrow_mut(
+            constants::ewma_df_key(),
+        );
     ewma_state.update(ctx);
 
     ewma_state
 }
 
 fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
-    *dynamic_field::borrow(&self.id, constants::ewma_df_key())
+    *self.id.borrow(constants::ewma_df_key())
 }
