@@ -32,7 +32,7 @@ use token::deep::DEEP;
 
 // === Errors ===
 const EInvalidDeposit: u64 = 0;
-const EMarginPairNotAllowed: u64 = 1;
+const EMarginTradingNotAllowedInPool: u64 = 1;
 const EInvalidMarginManager: u64 = 2;
 const EBorrowRiskRatioExceeded: u64 = 3;
 const EWithdrawRiskRatioExceeded: u64 = 4;
@@ -40,6 +40,7 @@ const ECannotLiquidate: u64 = 5;
 const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
 const ELiquidationSlippageExceeded: u64 = 8;
+const EIncorrectDeepBookPool: u64 = 9;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -50,6 +51,7 @@ const BORROW: u8 = 1;
 public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, store {
     id: UID,
     owner: address,
+    deepbook_pool: ID,
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
@@ -92,7 +94,7 @@ public struct LiquidationEvent has copy, drop {
 
 // === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &mut TxContext) {
-    assert!(pool.margin_trading_enabled(), EMarginPairNotAllowed);
+    assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
 
@@ -110,6 +112,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
     let margin_manager = MarginManager<BaseAsset, QuoteAsset> {
         id,
         owner: ctx.sender(),
+        deepbook_pool: pool.id(),
         balance_manager,
         deposit_cap,
         withdraw_cap,
@@ -258,6 +261,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
     request: Request,
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset>(
@@ -270,7 +274,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
             clock,
         )
         .risk_ratio;
-    let pool_id = object::id(pool);
+    let pool_id = pool.id();
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
     } else if (request.request_type == WITHDRAW) {
@@ -299,6 +303,8 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
         quote_margin_pool,
@@ -384,6 +390,8 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
     Option<RepaymentProof<BaseAsset>>,
     Option<RepaymentProof<QuoteAsset>>,
 ) {
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
         registry,
@@ -394,7 +402,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let pool_id = object::id(pool);
+    let pool_id = pool.id();
 
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
@@ -661,6 +669,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
 }
 
 /// Liquidates a margin manager
+/// TODO: remove this function?
 public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -672,6 +681,8 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
         registry,
@@ -682,7 +693,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let pool_id = object::id(pool);
+    let pool_id = pool.id();
 
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
@@ -1016,6 +1027,12 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     };
 
     (user_base_coin, user_quote_coin)
+}
+
+public fun deepbook_pool<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): ID {
+    margin_manager.deepbook_pool
 }
 
 // === Public-Package Functions ===

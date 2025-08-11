@@ -1226,7 +1226,15 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
     self.load_inner().state.governance().quorum()
 }
 
+public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
+    self.load_inner().pool_id
+}
+
 public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    if (!self.id.exists_(MarginTradingKey {})) {
+        return false
+    };
+
     *self.id.borrow<_, bool>(MarginTradingKey {})
 }
 
