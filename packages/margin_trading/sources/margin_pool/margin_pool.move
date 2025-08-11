@@ -28,7 +28,8 @@ use sui::{
     clock::Clock,
     coin::Coin,
     event,
-    table::{Self, Table}
+    table::{Self, Table},
+    vec_set::{Self, VecSet}
 };
 
 // === Errors ===
@@ -40,6 +41,8 @@ const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
 const EMaxRewardTypesExceeded: u64 = 8;
+const EDeepbookPoolAlreadyAllowed: u64 = 9;
+const EDeepbookPoolNotAllowed: u64 = 10;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -57,6 +60,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
     supplies: Table<address, Supply>, // maps address id to deposits
+    allowed_deepbook_pools: VecSet<ID>,
     state: State,
     reward_pools: vector<RewardPool>, // stores all reward pools
     reward_balances: Bag,
@@ -153,6 +157,11 @@ public fun verify_and_repay_liquidation<Asset>(
     } = repayment_proof;
 }
 
+// === Public-View Functions ===
+public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
+    self.allowed_deepbook_pools.contains(&deepbook_pool_id)
+}
+
 // === Public-Package Functions ===
 /// Creates a margin pool as the admin.
 public(package) fun create_margin_pool<Asset>(
@@ -168,6 +177,7 @@ public(package) fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         loans: table::new(ctx),
         supplies: table::new(ctx),
+        allowed_deepbook_pools: vec_set::empty(),
         state: margin_state::default(
             interest_params,
             supply_cap,
@@ -205,6 +215,19 @@ public(package) fun update_interest_params<Asset>(
     clock: &Clock,
 ) {
     self.state.update_interest_params(interest_params, clock);
+}
+
+public(package) fun allow_deepbook_pool<Asset>(self: &mut MarginPool<Asset>, deepbook_pool_id: ID) {
+    assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
+    self.allowed_deepbook_pools.insert(deepbook_pool_id);
+}
+
+public(package) fun disallow_deepbook_pool<Asset>(
+    self: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+) {
+    assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
+    self.allowed_deepbook_pools.remove(&deepbook_pool_id);
 }
 
 /// Adds a reward token to be distributed linearly over a specified time period.

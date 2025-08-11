@@ -41,6 +41,7 @@ const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
 const ELiquidationSlippageExceeded: u64 = 8;
 const EIncorrectDeepbookPool: u64 = 9;
+const EDeepbookPoolNotAllowedForLoan: u64 = 10;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -184,6 +185,10 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         user_loan(quote_margin_pool, margin_manager.id(), clock) == 0,
         ECannotHaveLoanInBothMarginPools,
     );
+    assert!(
+        base_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
+        EDeepbookPoolNotAllowedForLoan,
+    );
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
         base_margin_pool,
         loan_amount,
@@ -204,6 +209,10 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     assert!(
         user_loan(base_margin_pool, margin_manager.id(), clock) == 0,
         ECannotHaveLoanInBothMarginPools,
+    );
+    assert!(
+        quote_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
+        EDeepbookPoolNotAllowedForLoan,
     );
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
