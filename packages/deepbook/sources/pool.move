@@ -1191,7 +1191,6 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
     self.load_inner().state.governance().quorum()
 }
 
-// === Public Functions - Margin Trading ===
 public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     *self.id.borrow<_, bool>(MarginTradingKey {})
 }
