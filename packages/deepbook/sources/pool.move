@@ -11,6 +11,7 @@ use deepbook::{
     book::{Self, Book},
     constants,
     deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
+    ewma::{init_ewma_state, EWMAState},
     math,
     order::Order,
     order_info::{Self, OrderInfo},
@@ -23,6 +24,7 @@ use sui::{
     clock::Clock,
     coin::{Self, Coin},
     dynamic_field as df,
+    dynamic_field,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
@@ -814,6 +816,39 @@ public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
     self.id.remove(AppKey<App> {})
 }
 
+/// Enable the EWMA state for the pool. This allows the pool to use
+/// the EWMA state for volatility calculations and additional taker fees.
+public fun enable_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    enable: bool,
+    ctx: &mut TxContext,
+) {
+    let _ = self.load_inner_mut();
+    let ewma_state = self.update_ewma_state(ctx);
+    if (enable) {
+        ewma_state.enable();
+    } else {
+        ewma_state.disable();
+    }
+}
+
+/// Set the EWMA parameters for the pool.
+/// Only admin can set the parameters.
+public fun set_ewma_params<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    alpha: u64,
+    z_score_threshold: u64,
+    additional_taker_fee: u64,
+    ctx: &mut TxContext,
+) {
+    let _ = self.load_inner_mut();
+    let ewma_state = self.update_ewma_state(ctx);
+    ewma_state.set_alpha(alpha);
+    ewma_state.set_z_score_threshold(z_score_threshold);
+    ewma_state.set_additional_taker_fee(additional_taker_fee);
+}
+
 // === Public-Mutative Functions * MARGIN TRADING * ===
 public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1318,6 +1353,8 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     let whitelist = self.whitelisted();
+    self.update_ewma_state(ctx);
+    let ewma_state = self.load_ewma_state();
     let self = self.load_inner_mut();
 
     let order_deep_price = if (pay_with_deep) {
@@ -1348,6 +1385,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         .state
         .process_create(
             &mut order_info,
+            &ewma_state,
             self.pool_id,
             ctx,
         );
@@ -1356,4 +1394,25 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info.emit_orders_filled(clock.timestamp_ms());
 
     order_info
+}
+
+fun update_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+): &mut EWMAState {
+    if (!dynamic_field::exists_(&self.id, constants::ewma_df_key())) {
+        dynamic_field::add(&mut self.id, constants::ewma_df_key(), init_ewma_state(ctx));
+    };
+
+    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
+        &mut self.id,
+        constants::ewma_df_key(),
+    );
+    ewma_state.update(ctx);
+
+    ewma_state
+}
+
+fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
+    *dynamic_field::borrow(&self.id, constants::ewma_df_key())
 }

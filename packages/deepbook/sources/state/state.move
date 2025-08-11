@@ -11,6 +11,7 @@ use deepbook::{
     balance_manager::BalanceManager,
     balances::{Self, Balances},
     constants,
+    ewma::EWMAState,
     fill::Fill,
     governance::{Self, Governance},
     history::{Self, History},
@@ -98,6 +99,7 @@ public(package) fun empty(whitelisted: bool, stable_pool: bool, ctx: &mut TxCont
 public(package) fun process_create(
     self: &mut State,
     order_info: &mut OrderInfo,
+    ewma_state: &EWMAState,
     pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
@@ -127,12 +129,13 @@ public(package) fun process_create(
             math::mul_u128(account_volume, avg_executed_price as u128),
         );
 
-    // taker fee will almost be calculated as 0 for whitelisted pools by
+    // taker fee will always be calculated as 0 for whitelisted pools by
     // default, as account_volume_in_deep is 0
     let taker_fee = self
         .governance
         .trade_params()
         .taker_fee_for_user(account_stake, account_volume_in_deep);
+    let taker_fee = ewma_state.apply_taker_penalty(taker_fee, ctx);
     let maker_fee = self.governance.trade_params().maker_fee();
 
     if (order_info.order_inserted()) {
