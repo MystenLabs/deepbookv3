@@ -1,6 +1,7 @@
 {
-  "printWidth": 100,
-  "tabWidth": 4,
-  "useModuleLabel": true,
-  "autoGroupImports": "package"
+    "printWidth": 100,
+    "tabWidth": 4,
+    "useModuleLabel": true,
+    "autoGroupImports": "package",
+    "wrapComments": false
 }

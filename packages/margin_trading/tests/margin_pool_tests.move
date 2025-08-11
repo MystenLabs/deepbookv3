@@ -5,7 +5,7 @@
 module margin_trading::margin_pool_tests;
 
 use margin_trading::{margin_pool::{Self, MarginPool}, margin_state};
-use std::option::{Self, some};
+use std::option::some;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},

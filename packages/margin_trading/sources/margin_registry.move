@@ -62,6 +62,8 @@ public struct RiskRatios has copy, drop, store {
     target_liquidation_risk_ratio: u64,
 }
 
+public struct MarginApp has drop {}
+
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let registry = MarginRegistry {
         id: object::new(ctx),
@@ -289,10 +291,10 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     self.pool_registry.add(pool_id, pool_config);
 }
 
-/// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
+/// Enables a deepbook pool for margin trading.
 public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &MarginAdminCap,
 ) {
     let pool_id = object::id(pool);
@@ -301,12 +303,14 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     let config = self.pool_registry.borrow_mut(pool_id);
     assert!(config.enabled == false, EPoolAlreadyEnabled);
     config.enabled = true;
+
+    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, true);
 }
 
 /// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
 public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &MarginAdminCap,
 ) {
     let pool_id = object::id(pool);
@@ -315,6 +319,8 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     let config = self.pool_registry.borrow_mut(pool_id);
     assert!(config.enabled == true, EPoolAlreadyDisabled);
     config.enabled = false;
+
+    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, false);
 }
 
 /// Add Pyth Config to the MarginRegistry.

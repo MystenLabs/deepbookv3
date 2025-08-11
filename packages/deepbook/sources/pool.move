@@ -23,12 +23,18 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
-    dynamic_field,
+    dynamic_field as df,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
 };
 use token::deep::{DEEP, ProtectedTreasury};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -45,6 +51,7 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
+const EAppNotAuthorized: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -85,6 +92,14 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     pool_id: ID,
     deep_burned: u64,
 }
+
+/// An authorization Key kept in Pool - allows applications access
+/// protected features of Deepbook core.
+/// The `App` type parameter is a witness which should be defined in the
+/// original module.
+public struct AppKey<phantom App: drop> has copy, drop, store {}
+
+public struct MarginTradingKey has copy, drop, store {}
 
 // === Public-Mutative Functions * POOL CREATION * ===
 /// Create a new pool. The pool is registered in the registry.
@@ -782,6 +797,24 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     });
 }
 
+/// Authorize an application to access protected features of Deepbook core.
+public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+) {
+    let _ = self.load_inner_mut();
+    self.id.add(AppKey<App> {}, true);
+}
+
+/// Deauthorize an application by removing its authorization key.
+public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+): bool {
+    let _ = self.load_inner_mut();
+    self.id.remove(AppKey<App> {})
+}
+
 /// Enable the EWMA state for the pool. This allows the pool to use
 /// the EWMA state for volatility calculations and additional taker fees.
 public fun enable_ewma_state<BaseAsset, QuoteAsset>(
@@ -803,6 +836,7 @@ public fun enable_ewma_state<BaseAsset, QuoteAsset>(
 /// Only admin can set the parameters.
 public fun set_ewma_params<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
     alpha: u64,
     z_score_threshold: u64,
     additional_taker_fee: u64,
@@ -813,6 +847,28 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
     ewma_state.set_alpha(alpha);
     ewma_state.set_z_score_threshold(z_score_threshold);
     ewma_state.set_additional_taker_fee(additional_taker_fee);
+}
+
+// === Public-Mutative Functions * MARGIN TRADING * ===
+public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _: A,
+    enable: bool,
+) {
+    let _ = self.load_inner_mut();
+    self.assert_app_is_authorized<A, BaseAsset, QuoteAsset>();
+
+    if (!self.id.exists_(MarginTradingKey {})) {
+        self
+            .id
+            .add(
+                MarginTradingKey {},
+                enable,
+            );
+    } else {
+        let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
+        *margin_enabled = enable;
+    }
 }
 
 // === Public-View Functions ===
@@ -1170,6 +1226,25 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
     self.load_inner().state.governance().quorum()
 }
 
+public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    *self.id.borrow<_, bool>(MarginTradingKey {})
+}
+
+/// Check if an application is authorized to access protected features of DeepBook core.
+public fun is_app_authorized<App: drop, BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.id.exists_(AppKey<App> {})
+}
+
+/// Assert that an application is authorized to access protected features of
+/// DeepBook core. Aborts with `EAppNotAuthorized` if not.
+public fun assert_app_is_authorized<App: drop, BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+) {
+    assert!(self.is_app_authorized<App, BaseAsset, QuoteAsset>(), EAppNotAuthorized);
+}
+
 // === Public-Package Functions ===
 public(package) fun create_pool<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
@@ -1325,19 +1400,20 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ): &mut EWMAState {
-    if (!dynamic_field::exists_(&self.id, constants::ewma_df_key())) {
-        dynamic_field::add(&mut self.id, constants::ewma_df_key(), init_ewma_state(ctx));
+    if (!self.id.exists_(constants::ewma_df_key())) {
+        self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
     };
 
-    let ewma_state: &mut EWMAState = dynamic_field::borrow_mut(
-        &mut self.id,
-        constants::ewma_df_key(),
-    );
+    let ewma_state: &mut EWMAState = self
+        .id
+        .borrow_mut(
+            constants::ewma_df_key(),
+        );
     ewma_state.update(ctx);
 
     ewma_state
 }
 
 fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
-    *dynamic_field::borrow(&self.id, constants::ewma_df_key())
+    *self.id.borrow(constants::ewma_df_key())
 }

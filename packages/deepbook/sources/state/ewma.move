@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// The Exponentially Weighted Moving Average (EWMA) state for Deepbook
+/// The Exponentially Weighted Moving Average (EWMA) state for DeepBook
 /// This state is used to calculate the smoothed mean and variance of gas prices
 /// and apply a penalty to taker fees based on the Z-score of the current gas price
 /// relative to the smoothed mean and variance.
