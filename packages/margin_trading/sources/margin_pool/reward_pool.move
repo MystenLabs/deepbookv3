@@ -3,15 +3,10 @@
 
 module margin_trading::reward_pool;
 
-use std::type_name::{Self, TypeName};
-use sui::{
- 
-    clock::Clock, 
-    event,
-    vec_map::{Self, VecMap}
-};
-use margin_trading::margin_constants;
 use deepbook::math;
+use margin_trading::margin_constants;
+use std::type_name::{Self, TypeName};
+use sui::{clock::Clock, event, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const EInvalidRewardPeriod: u64 = 1;
@@ -62,11 +57,11 @@ public(package) fun create_reward_pool<RewardToken>(
     let start_time = clock.timestamp_ms() / 1000;
     assert!(start_time < end_time, EInvalidRewardPeriod);
 
-    let duration = end_time - start_time; 
+    let duration = end_time - start_time;
     let rewards_per_second = reward_amount / duration;
     assert!(rewards_per_second > 0, ERewardAmountTooSmall);
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
-    
+
     let reward_token_type = type_name::get<RewardToken>();
     let reward_pool = RewardPool {
         reward_token_type,
@@ -77,7 +72,7 @@ public(package) fun create_reward_pool<RewardToken>(
         cumulative_reward_per_share: 0,
         last_update_time: start_time,
     };
-    
+
     reward_pool
 }
 
@@ -93,10 +88,15 @@ public(package) fun initialize_user_reward_for_type(
     cumulative_reward_per_share: u64,
 ) {
     if (!user_rewards.rewards_by_token.contains(&reward_type)) {
-        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
-            accumulated_rewards: 0,
-            last_cumulative_reward_per_share: cumulative_reward_per_share,
-        });
+        user_rewards
+            .rewards_by_token
+            .insert(
+                reward_type,
+                UserRewardInfo {
+                    accumulated_rewards: 0,
+                    last_cumulative_reward_per_share: cumulative_reward_per_share,
+                },
+            );
     };
 }
 
@@ -108,21 +108,22 @@ public(package) fun update_reward_pool(
     if (total_supply == 0) {
         return
     };
-    
+
     let current_time = clock.timestamp_ms() / 1000;
     // Cap end_time at current_time, but it can be less than current_time if rewards have ended
     let end_time = reward_pool.end_time.min(current_time);
-    
+
     if (end_time <= reward_pool.last_update_time) {
         return
     };
-    
+
     let elapsed_time = end_time - reward_pool.last_update_time;
-    
+
     let rewards_to_distribute = reward_pool.rewards_per_second * elapsed_time;
     let reward_per_share = math::div(rewards_to_distribute, total_supply);
-    
-    reward_pool.cumulative_reward_per_share = reward_pool.cumulative_reward_per_share + reward_per_share;
+
+    reward_pool.cumulative_reward_per_share =
+        reward_pool.cumulative_reward_per_share + reward_per_share;
     reward_pool.last_update_time = current_time;
 }
 
@@ -131,21 +132,27 @@ public(package) fun update_user_accumulated_rewards_by_type(
     user_rewards: &mut UserRewards,
     reward_type: TypeName,
     cumulative_reward_per_share: u64,
-    user_supply: u64
+    user_supply: u64,
 ) {
     if (!user_rewards.rewards_by_token.contains(&reward_type)) {
-        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
-            accumulated_rewards: 0,
-            last_cumulative_reward_per_share: 0,
-        });
+        user_rewards
+            .rewards_by_token
+            .insert(
+                reward_type,
+                UserRewardInfo {
+                    accumulated_rewards: 0,
+                    last_cumulative_reward_per_share: 0,
+                },
+            );
     };
-    
+
     let reward_info = user_rewards.rewards_by_token.get_mut(&reward_type);
-    
+
     // Calculate rewards since last checkpoint
-    let reward_per_share_diff = cumulative_reward_per_share - reward_info.last_cumulative_reward_per_share;
+    let reward_per_share_diff =
+        cumulative_reward_per_share - reward_info.last_cumulative_reward_per_share;
     let incremental_rewards = math::mul(user_supply, reward_per_share_diff);
-    
+
     reward_info.accumulated_rewards = reward_info.accumulated_rewards + incremental_rewards;
     reward_info.last_cumulative_reward_per_share = cumulative_reward_per_share;
 }
@@ -160,11 +167,11 @@ public(package) fun add_rewards_and_reset_timing(
     end_time: u64,
     clock: &Clock,
 ) {
-    let start_time= clock.timestamp_ms() / 1000;
+    let start_time = clock.timestamp_ms() / 1000;
     let duration = end_time - start_time;
     assert!(new_reward_amount >= margin_constants::min_reward_amount(), ERewardAmountTooSmall);
     assert!(duration >= margin_constants::min_reward_duration_seconds(), ERewardPeriodTooShort);
-    
+
     let total_combined_rewards = existing_balance + new_reward_amount;
     reward_pool.total_rewards = total_combined_rewards;
     reward_pool.start_time = start_time;
@@ -187,10 +194,7 @@ public(package) fun destroy_reward_pool(reward_pool: RewardPool) {
 }
 
 /// Emits a RewardPoolAdded event
-public(package) fun emit_reward_pool_added(
-    pool_id: ID,
-    reward_pool: &RewardPool,
-) {
+public(package) fun emit_reward_pool_added(pool_id: ID, reward_pool: &RewardPool) {
     event::emit(RewardPoolAdded {
         pool_id,
         reward_token_type: reward_pool.reward_token_type,
@@ -215,17 +219,20 @@ public(package) fun emit_rewards_claimed(
     });
 }
 
-public(package) fun claim_from_pool<RewardToken>(
-    user_rewards: &mut UserRewards,
-): u64 {
+public(package) fun claim_from_pool<RewardToken>(user_rewards: &mut UserRewards): u64 {
     let reward_type = type_name::get<RewardToken>();
     if (!user_rewards.rewards_by_token.contains(&reward_type)) {
-        user_rewards.rewards_by_token.insert(reward_type, UserRewardInfo {
-            accumulated_rewards: 0,
-            last_cumulative_reward_per_share: 0,
-        });
+        user_rewards
+            .rewards_by_token
+            .insert(
+                reward_type,
+                UserRewardInfo {
+                    accumulated_rewards: 0,
+                    last_cumulative_reward_per_share: 0,
+                },
+            );
     };
-    
+
     let claimable_rewards = user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards;
     user_rewards.rewards_by_token.get_mut(&reward_type).accumulated_rewards = 0;
     claimable_rewards
@@ -238,12 +245,17 @@ public(package) fun cumulative_reward_per_share(reward_pool: &RewardPool): u64 {
 }
 
 /// Returns the user's rewards by token
-public(package) fun rewards_by_token(user_rewards: &UserRewards): &VecMap<TypeName, UserRewardInfo> {
+public(package) fun rewards_by_token(
+    user_rewards: &UserRewards,
+): &VecMap<TypeName, UserRewardInfo> {
     &user_rewards.rewards_by_token
 }
 
 /// Returns the user's accumulated rewards for a specific token type
-public(package) fun accumulated_rewards_for_token(user_rewards: &UserRewards, reward_type: TypeName): u64 {
+public(package) fun accumulated_rewards_for_token(
+    user_rewards: &UserRewards,
+    reward_type: TypeName,
+): u64 {
     if (user_rewards.rewards_by_token.contains(&reward_type)) {
         user_rewards.rewards_by_token.get(&reward_type).accumulated_rewards
     } else {
@@ -252,7 +264,10 @@ public(package) fun accumulated_rewards_for_token(user_rewards: &UserRewards, re
 }
 
 /// Returns the user's last cumulative reward per share checkpoint for a specific token type
-public(package) fun last_cumulative_reward_per_share_for_token(user_rewards: &UserRewards, reward_type: TypeName): u64 {
+public(package) fun last_cumulative_reward_per_share_for_token(
+    user_rewards: &UserRewards,
+    reward_type: TypeName,
+): u64 {
     if (user_rewards.rewards_by_token.contains(&reward_type)) {
         user_rewards.rewards_by_token.get(&reward_type).last_cumulative_reward_per_share
     } else {

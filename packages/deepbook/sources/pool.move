@@ -22,11 +22,18 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
+    dynamic_field as df,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
 };
 use token::deep::{DEEP, ProtectedTreasury};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -43,6 +50,7 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
+const EAppNotAuthorized: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -83,6 +91,14 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     pool_id: ID,
     deep_burned: u64,
 }
+
+/// An authorization Key kept in Pool - allows applications access
+/// protected features of Deepbook core.
+/// The `App` type parameter is a witness which should be defined in the
+/// original module.
+public struct AppKey<phantom App: drop> has copy, drop, store {}
+
+public struct MarginTradingKey has copy, drop, store {}
 
 // === Public-Mutative Functions * POOL CREATION * ===
 /// Create a new pool. The pool is registered in the registry.
@@ -1133,6 +1149,65 @@ public fun account<BaseAsset, QuoteAsset>(
 /// Returns the quorum needed to pass proposal in the current epoch
 public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u64 {
     self.load_inner().state.governance().quorum()
+}
+
+// === Public Functions - Margin Trading ===
+public fun is_margin_trading_enabled<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    *self.id.borrow<_, bool>(MarginTradingKey {})
+}
+
+public fun update_margin_trading<A: drop, BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _: A,
+    enable: bool,
+) {
+    self.assert_app_is_authorized<A, BaseAsset, QuoteAsset>();
+
+    if (!self.id.exists_(MarginTradingKey {})) {
+        self
+            .id
+            .add(
+                MarginTradingKey {},
+                enable,
+            );
+    } else {
+        let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
+        *margin_enabled = enable;
+    }
+}
+
+/// Authorize an application to access protected features of Deepbook core.
+public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
+    _: &DeepbookAdminCap,
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    self.id.add(AppKey<App> {}, true);
+}
+
+/// Deauthorize an application by removing its authorization key.
+public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
+    _: &DeepbookAdminCap,
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.id.remove(AppKey<App> {})
+}
+
+/// Check if an application is authorized to access protected features of
+/// Deepbook core.
+public fun is_app_authorized<App: drop, BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.id.exists_(AppKey<App> {})
+}
+
+/// Assert that an application is authorized to access protected features of
+/// Deepbook core. Aborts with `EAppNotAuthorized` if not.
+public fun assert_app_is_authorized<App: drop, BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+) {
+    assert!(self.is_app_authorized<App, BaseAsset, QuoteAsset>(), EAppNotAuthorized);
 }
 
 // === Public-Package Functions ===

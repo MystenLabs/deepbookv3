@@ -4,14 +4,13 @@
 #[test_only]
 module margin_trading::margin_pool_tests;
 
-use margin_trading::margin_pool::{Self, MarginPool};
-use margin_trading::margin_state;
-use std::option::{Self, some};
+use margin_trading::{margin_pool::{Self, MarginPool}, margin_state};
+use std::option::some;
 use sui::{
-    test_scenario::{Self as test, Scenario},
     clock::{Self, Clock},
     coin::{Self, Coin},
-    test_utils::destroy,
+    test_scenario::{Self as test, Scenario},
+    test_utils::destroy
 };
 
 // Test coin types
@@ -40,9 +39,9 @@ fun setup_test(): (Scenario, Clock, MarginPool<USDC>) {
         MAX_BORROW_PERCENTAGE,
         PROTOCOL_SPREAD,
         &clock,
-        scenario.ctx()
+        scenario.ctx(),
     );
-    
+
     scenario.next_tx(@0x0);
     let pool = scenario.take_shared<MarginPool<USDC>>();
     (scenario, clock, pool)
@@ -55,37 +54,37 @@ fun mint_coin<T>(amount: u64, ctx: &mut TxContext): Coin<T> {
 #[test]
 fun test_supply_and_withdraw_basic() {
     let (mut scenario, mut clock, mut pool) = setup_test();
-    
+
     // Set clock to avoid interest rate calculation issues
     clock.set_for_testing(1000);
-    
+
     // User supplies tokens
     scenario.next_tx(USER1);
     let supply_coin = mint_coin<USDC>(100000, scenario.ctx());
     pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
-    
+
     // User withdraws tokens
     let withdrawn = pool.withdraw<USDC>(some(50000), &clock, scenario.ctx());
     assert!(withdrawn.value() == 50000);
-    
+
     destroy(withdrawn);
     test::return_shared(pool);
     destroy(clock);
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = margin_pool::ESupplyCapExceeded)] 
+#[test, expected_failure(abort_code = margin_pool::ESupplyCapExceeded)]
 fun test_supply_cap_enforcement() {
     let (mut scenario, mut clock, mut pool) = setup_test();
-    
+
     clock.set_for_testing(1000);
-    
+
     scenario.next_tx(USER1);
     let supply_coin = mint_coin<USDC>(SUPPLY_CAP + 1, scenario.ctx());
-    
+
     // This should fail due to supply cap
     pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
-    
+
     destroy(pool);
     destroy(clock);
     scenario.end();
@@ -94,29 +93,29 @@ fun test_supply_cap_enforcement() {
 #[test]
 fun test_multiple_users_supply_withdraw() {
     let (mut scenario, mut clock, mut pool) = setup_test();
-    
+
     clock.set_for_testing(1000);
-    
+
     // User1 supplies
     scenario.next_tx(USER1);
     let supply_coin1 = mint_coin<USDC>(50000, scenario.ctx());
     pool.supply<USDC>(supply_coin1, &clock, scenario.ctx());
-    
+
     // User2 supplies
     scenario.next_tx(USER2);
     let supply_coin2 = mint_coin<USDC>(30000, scenario.ctx());
     pool.supply<USDC>(supply_coin2, &clock, scenario.ctx());
-    
+
     // User1 withdraws
     scenario.next_tx(USER1);
     let withdrawn1 = pool.withdraw<USDC>(option::some(25000), &clock, scenario.ctx());
     assert!(withdrawn1.value() == 25000);
-    
+
     // User2 withdraws
     scenario.next_tx(USER2);
     let withdrawn2 = pool.withdraw<USDC>(option::some(15000), &clock, scenario.ctx());
     assert!(withdrawn2.value() == 15000);
-    
+
     destroy(withdrawn1);
     destroy(withdrawn2);
     destroy(pool);
@@ -127,37 +126,37 @@ fun test_multiple_users_supply_withdraw() {
 #[test]
 fun test_withdraw_all() {
     let (mut scenario, mut clock, mut pool) = setup_test();
-    
+
     clock.set_for_testing(1000);
-    
+
     scenario.next_tx(USER1);
     let supply_amount = 100000;
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
     pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
-    
+
     // Withdraw all (using option::none())
     let withdrawn = pool.withdraw<USDC>(option::none(), &clock, scenario.ctx());
     assert!(withdrawn.value() == supply_amount);
-    
+
     destroy(withdrawn);
     destroy(pool);
     destroy(clock);
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = margin_pool::ECannotWithdrawMoreThanSupply)] 
+#[test, expected_failure(abort_code = margin_pool::ECannotWithdrawMoreThanSupply)]
 fun test_withdraw_more_than_supplied() {
     let (mut scenario, mut clock, mut pool) = setup_test();
-    
+
     clock.set_for_testing(1000);
-    
+
     scenario.next_tx(USER1);
     let supply_coin = mint_coin<USDC>(50000, scenario.ctx());
     pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
-    
+
     // Try to withdraw more than supplied
     let withdrawn = pool.withdraw<USDC>(option::some(60000), &clock, scenario.ctx());
-    
+
     destroy(withdrawn);
     destroy(pool);
     destroy(clock);
@@ -167,10 +166,10 @@ fun test_withdraw_more_than_supplied() {
 #[test]
 fun test_create_margin_pool() {
     let (scenario, clock, pool) = setup_test();
-    
+
     // Test that pool was created with correct parameters
     assert!(pool.supply_cap() == SUPPLY_CAP);
-    
+
     destroy(pool);
     destroy(clock);
     scenario.end();
