@@ -1227,6 +1227,10 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
 }
 
 public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
+    if (!self.id.exists_(MarginTradingKey {})) {
+        return false
+    };
+
     *self.id.borrow<_, bool>(MarginTradingKey {})
 }
 
