@@ -798,18 +798,42 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
 
 /// Authorize an application to access protected features of Deepbook core.
 public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
-    _cap: &DeepbookAdminCap,
     self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
 ) {
+    let _ = self.load_inner_mut();
     self.id.add(AppKey<App> {}, true);
 }
 
 /// Deauthorize an application by removing its authorization key.
 public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
-    _cap: &DeepbookAdminCap,
     self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
 ): bool {
+    let _ = self.load_inner_mut();
     self.id.remove(AppKey<App> {})
+}
+
+// === Public-Mutative Functions * MARGIN TRADING * ===
+public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _: A,
+    enable: bool,
+) {
+    let _ = self.load_inner_mut();
+    self.assert_app_is_authorized<A, BaseAsset, QuoteAsset>();
+
+    if (!self.id.exists_(MarginTradingKey {})) {
+        self
+            .id
+            .add(
+                MarginTradingKey {},
+                enable,
+            );
+    } else {
+        let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
+        *margin_enabled = enable;
+    }
 }
 
 // === Public-View Functions ===
@@ -1170,26 +1194,6 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
 // === Public Functions - Margin Trading ===
 public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     *self.id.borrow<_, bool>(MarginTradingKey {})
-}
-
-public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    _: A,
-    enable: bool,
-) {
-    self.assert_app_is_authorized<A, BaseAsset, QuoteAsset>();
-
-    if (!self.id.exists_(MarginTradingKey {})) {
-        self
-            .id
-            .add(
-                MarginTradingKey {},
-                enable,
-            );
-    } else {
-        let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
-        *margin_enabled = enable;
-    }
 }
 
 /// Check if an application is authorized to access protected features of
