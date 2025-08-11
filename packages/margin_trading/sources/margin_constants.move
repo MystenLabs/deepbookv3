@@ -15,7 +15,7 @@ const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 // === Reward Constraints ===
 const MIN_REWARD_AMOUNT: u64 = 1000;
 const MIN_REWARD_DURATION_SECONDS: u64 = 3600;
-const MAX_REWARD_TYPES: u64 = 10; 
+const MAX_REWARD_TYPES: u64 = 10;
 
 public fun max_risk_ratio(): u64 {
     MAX_RISK_RATIO
@@ -52,6 +52,7 @@ public fun min_reward_duration_seconds(): u64 {
 public fun max_reward_types(): u64 {
     MAX_REWARD_TYPES
 }
+
 public fun year_ms(): u64 {
     YEAR_MS
 }
