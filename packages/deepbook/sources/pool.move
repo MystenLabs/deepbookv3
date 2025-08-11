@@ -1230,7 +1230,7 @@ public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, 
     *self.id.borrow<_, bool>(MarginTradingKey {})
 }
 
-/// Check if an application is authorized to access protected features of Deepbook core.
+/// Check if an application is authorized to access protected features of DeepBook core.
 public fun is_app_authorized<App: drop, BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ): bool {
@@ -1238,7 +1238,7 @@ public fun is_app_authorized<App: drop, BaseAsset, QuoteAsset>(
 }
 
 /// Assert that an application is authorized to access protected features of
-/// Deepbook core. Aborts with `EAppNotAuthorized` if not.
+/// DeepBook core. Aborts with `EAppNotAuthorized` if not.
 public fun assert_app_is_authorized<App: drop, BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ) {
