@@ -32,7 +32,7 @@ use token::deep::DEEP;
 
 // === Errors ===
 const EInvalidDeposit: u64 = 0;
-const EMarginTradingNotAllowedOnPool: u64 = 1;
+const EMarginTradingNotAllowedInPool: u64 = 1;
 const EInvalidMarginManager: u64 = 2;
 const EBorrowRiskRatioExceeded: u64 = 3;
 const EWithdrawRiskRatioExceeded: u64 = 4;
@@ -40,7 +40,7 @@ const ECannotLiquidate: u64 = 5;
 const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
 const ELiquidationSlippageExceeded: u64 = 8;
-const EIncorrectDeepbookPool: u64 = 9;
+const EIncorrectDeepBookPool: u64 = 9;
 const EDeepbookPoolNotAllowedForLoan: u64 = 10;
 
 // === Constants ===
@@ -95,7 +95,7 @@ public struct LiquidationEvent has copy, drop {
 
 // === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &mut TxContext) {
-    assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedOnPool);
+    assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
 
@@ -270,7 +270,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset>(
     request: Request,
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
-    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset>(
@@ -312,7 +312,7 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
-    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
         base_margin_pool,
@@ -399,7 +399,7 @@ public fun liquidate_custom<BaseAsset, QuoteAsset>(
     Option<RepaymentProof<BaseAsset>>,
     Option<RepaymentProof<QuoteAsset>>,
 ) {
-    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
@@ -690,7 +690,7 @@ public fun liquidate_with_deepbook<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepbookPool);
+    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     // Step 1: We retrieve the manager info and check if liquidation is possible.
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset>(
