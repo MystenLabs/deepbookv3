@@ -796,6 +796,22 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     });
 }
 
+/// Authorize an application to access protected features of Deepbook core.
+public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
+    _cap: &DeepbookAdminCap,
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    self.id.add(AppKey<App> {}, true);
+}
+
+/// Deauthorize an application by removing its authorization key.
+public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
+    _cap: &DeepbookAdminCap,
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+): bool {
+    self.id.remove(AppKey<App> {})
+}
+
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
 public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
@@ -1174,22 +1190,6 @@ public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
         let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
         *margin_enabled = enable;
     }
-}
-
-/// Authorize an application to access protected features of Deepbook core.
-public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
-    _: &DeepbookAdminCap,
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-) {
-    self.id.add(AppKey<App> {}, true);
-}
-
-/// Deauthorize an application by removing its authorization key.
-public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
-    _: &DeepbookAdminCap,
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-): bool {
-    self.id.remove(AppKey<App> {})
 }
 
 /// Check if an application is authorized to access protected features of
