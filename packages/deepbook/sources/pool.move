@@ -23,8 +23,7 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
-    dynamic_field as df,
-    dynamic_field,
+    dynamic_field::{Self as df, Self},
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
@@ -837,6 +836,7 @@ public fun enable_ewma_state<BaseAsset, QuoteAsset>(
 /// Only admin can set the parameters.
 public fun set_ewma_params<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
     alpha: u64,
     z_score_threshold: u64,
     additional_taker_fee: u64,
