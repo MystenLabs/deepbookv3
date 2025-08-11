@@ -32,7 +32,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(pool.is_margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
+    assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -64,7 +64,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(pool.is_margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
+    assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
 
     pool.place_market_order(
         balance_manager,
