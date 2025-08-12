@@ -821,10 +821,11 @@ public fun enable_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     _cap: &DeepbookAdminCap,
     enable: bool,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let _ = self.load_inner_mut();
-    let ewma_state = self.update_ewma_state(ctx);
+    let ewma_state = self.update_ewma_state(clock, ctx);
     if (enable) {
         ewma_state.enable();
     } else {
@@ -840,10 +841,11 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
     alpha: u64,
     z_score_threshold: u64,
     additional_taker_fee: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     let _ = self.load_inner_mut();
-    let ewma_state = self.update_ewma_state(ctx);
+    let ewma_state = self.update_ewma_state(clock, ctx);
     ewma_state.set_alpha(alpha);
     ewma_state.set_z_score_threshold(z_score_threshold);
     ewma_state.set_additional_taker_fee(additional_taker_fee);
@@ -1361,7 +1363,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     let whitelist = self.whitelisted();
-    self.update_ewma_state(ctx);
+    self.update_ewma_state(clock, ctx);
     let ewma_state = self.load_ewma_state();
     let self = self.load_inner_mut();
 
@@ -1406,6 +1408,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
 
 fun update_ewma_state<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
     ctx: &TxContext,
 ): &mut EWMAState {
     if (!self.id.exists_(constants::ewma_df_key())) {
@@ -1417,7 +1420,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
         .borrow_mut(
             constants::ewma_df_key(),
         );
-    ewma_state.update(ctx);
+    ewma_state.update(clock, ctx);
 
     ewma_state
 }

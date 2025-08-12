@@ -9,6 +9,7 @@
 module deepbook::ewma;
 
 use deepbook::{constants, math};
+use sui::clock::Clock;
 
 /// The EWMA state structure
 /// It contains the smoothed mean, variance, alpha, Z-score threshold,
@@ -42,8 +43,8 @@ public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
 /// and the previous mean and variance using the EWMA formula.
 /// The alpha parameter controls the weight of the current gas price in the calculation.
 /// The mean and variance are updated in the state.
-public(package) fun update(self: &mut EWMAState, ctx: &TxContext) {
-    let current_timestamp = ctx.epoch_timestamp_ms();
+public(package) fun update(self: &mut EWMAState, clock: &Clock, ctx: &TxContext) {
+    let current_timestamp = clock.timestamp_ms();
     if (current_timestamp == self.last_updated_timestamp) {
         return
     };
