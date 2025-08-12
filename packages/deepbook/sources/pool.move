@@ -941,7 +941,7 @@ public fun get_quantity_out<BaseAsset, QuoteAsset>(
     let whitelist = self.whitelisted();
     let self = self.load_inner();
     let params = self.state.governance().trade_params();
-    let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    let taker_fee = params.taker_fee();
     let deep_price = self.deep_price.get_order_deep_price(whitelist);
     self
         .book
@@ -968,7 +968,7 @@ public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
 ): (u64, u64, u64) {
     let self = self.load_inner();
     let params = self.state.governance().trade_params();
-    let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    let taker_fee = params.taker_fee();
     let deep_price = self.deep_price.empty_deep_price();
     self
         .book

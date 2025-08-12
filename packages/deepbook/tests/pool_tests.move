@@ -467,6 +467,16 @@ fun test_swap_exact_amount_with_input_ask_bid() {
     test_swap_exact_amount_with_input(false);
 }
 
+#[test]
+fun test_get_quantity_out_input_fee_bid_ask_zero() {
+    test_get_quantity_out_zero(true);
+}
+
+#[test]
+fun test_get_quantity_out_input_fee_ask_bid_zero() {
+    test_get_quantity_out_zero(false);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
 fun test_cancel_all_orders_bid_e() {
     test_cancel_all_orders(true, true);
@@ -3606,6 +3616,100 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
     base_out.burn_for_testing();
     quote_out.burn_for_testing();
     deep_out.burn_for_testing();
+
+    end(test);
+}
+
+fun test_get_quantity_out_zero(is_bid: bool) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let alice_client_order_id = 1;
+    let alice_price = 2 * constants::float_scaling();
+    let alice_quantity = 2 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = false;
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price,
+        alice_quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    set_time(200, &mut test);
+
+    let base_in = if (is_bid) {
+        constants::min_size()
+    } else {
+        0
+    };
+    let quote_in = if (is_bid) {
+        0
+    } else {
+        2 * constants::min_size()
+    };
+
+    let (base, quote, deep_required) = get_quantity_out_input_fee<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+    let expected_base = if (is_bid) {
+        constants::min_size()
+    } else {
+        0
+    };
+    let expected_quote = if (is_bid) {
+        0
+    } else {
+        2 * constants::min_size()
+    };
+
+    assert!(base == expected_base, constants::e_order_info_mismatch());
+    assert!(quote == expected_quote, constants::e_order_info_mismatch());
+    assert!(deep_required == 0, constants::e_order_info_mismatch());
+
+    let (base, quote, _) = get_quantity_out<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+
+    let expected_base = if (is_bid) {
+        0
+    } else {
+        constants::min_size()
+    };
+    let expected_quote = if (is_bid) {
+        2 * constants::min_size()
+    } else {
+        0
+    };
+
+    assert!(base == expected_base, constants::e_order_info_mismatch());
+    assert!(quote == expected_quote, constants::e_order_info_mismatch());
 
     end(test);
 }
