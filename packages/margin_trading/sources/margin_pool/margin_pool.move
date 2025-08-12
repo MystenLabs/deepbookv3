@@ -610,20 +610,6 @@ public fun claim_referral_yield<Asset>(
     yield_balance.into_coin(ctx)
 }
 
-/// Distributes protocol profit to referral yield pool
-/// This should be called by admin after protocol has earned profit
-public(package) fun distribute_referral_yield<Asset>(
-    self: &mut MarginPool<Asset>,
-    coin: Coin<Asset>,
-) {
-    let amount = coin.value();
-    if (amount > 0) {
-        self.referral_yield_pool.join(coin.into_balance());
-    } else {
-        coin.destroy_zero();
-    };
-}
-
 /// Returns referral info for a code
 public fun get_referral_info<Asset>(
     self: &MarginPool<Asset>,
