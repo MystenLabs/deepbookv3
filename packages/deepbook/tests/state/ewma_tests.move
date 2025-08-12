@@ -6,7 +6,7 @@ module deepbook::ewma_tests;
 
 use deepbook::{constants, ewma::{Self, EWMAState}};
 use std::unit_test::assert_eq;
-use sui::test_scenario::{begin, end, Scenario};
+use sui::{clock, test_scenario::{begin, end, Scenario}, test_utils};
 
 #[test_only]
 public fun test_init_ewma_state(ctx: &TxContext): EWMAState {
@@ -57,10 +57,13 @@ fun test_update_ewma_state() {
     // diff squared = 980100
     let gas_price2 = 2_000;
     advance_scenario_with_gas_price(&mut test, gas_price2);
-    ewma_state.update(test.ctx());
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(&clock, test.ctx());
     assert_eq!(ewma_state.mean(), 1_010 * constants::float_scaling());
     assert_eq!(ewma_state.variance(), 980100 * constants::float_scaling());
 
+    test_utils::destroy(clock);
     end(test);
 }
 
