@@ -469,12 +469,12 @@ fun test_swap_exact_amount_with_input_ask_bid() {
 
 #[test]
 fun test_get_quantity_out_input_fee_bid_ask_zero() {
-    test_get_quantity_out_input_fee_zero(true);
+    test_get_quantity_out_zero(true);
 }
 
 #[test]
 fun test_get_quantity_out_input_fee_ask_bid_zero() {
-    test_get_quantity_out_input_fee_zero(false);
+    test_get_quantity_out_zero(false);
 }
 
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
@@ -3620,9 +3620,7 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
     end(test);
 }
 
-/// Alice places a bid order, Bob places a swap_exact_amount order
-/// Make sure the assets returned to Bob are correct
-fun test_get_quantity_out_input_fee_zero(is_bid: bool) {
+fun test_get_quantity_out_zero(is_bid: bool) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
     let balance_manager_id_alice = create_acct_and_share_with_funds(
@@ -3630,11 +3628,10 @@ fun test_get_quantity_out_input_fee_zero(is_bid: bool) {
         1000000 * constants::float_scaling(),
         &mut test,
     );
-    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
         ALICE,
         registry_id,
-        false,
-        false,
+        balance_manager_id_alice,
         &mut test,
     );
 
@@ -3692,6 +3689,27 @@ fun test_get_quantity_out_input_fee_zero(is_bid: bool) {
     assert!(base == expected_base, constants::e_order_info_mismatch());
     assert!(quote == expected_quote, constants::e_order_info_mismatch());
     assert!(deep_required == 0, constants::e_order_info_mismatch());
+
+    let (base, quote, _) = get_quantity_out<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+
+    let expected_base = if (is_bid) {
+        0
+    } else {
+        constants::min_size()
+    };
+    let expected_quote = if (is_bid) {
+        2 * constants::min_size()
+    } else {
+        0
+    };
+
+    assert!(base == expected_base, constants::e_order_info_mismatch());
+    assert!(quote == expected_quote, constants::e_order_info_mismatch());
 
     end(test);
 }
