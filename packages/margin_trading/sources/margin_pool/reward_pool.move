@@ -132,7 +132,7 @@ public(package) fun update_user_accumulated_rewards_by_type(
     user_rewards: &mut UserRewards,
     reward_type: TypeName,
     cumulative_reward_per_share: u64,
-    user_supply: u64,
+    user_supply_shares: u64,
 ) {
     if (!user_rewards.rewards_by_token.contains(&reward_type)) {
         user_rewards
@@ -151,7 +151,7 @@ public(package) fun update_user_accumulated_rewards_by_type(
     // Calculate rewards since last checkpoint
     let reward_per_share_diff =
         cumulative_reward_per_share - reward_info.last_cumulative_reward_per_share;
-    let incremental_rewards = math::mul(user_supply, reward_per_share_diff);
+    let incremental_rewards = math::mul(user_supply_shares, reward_per_share_diff);
 
     reward_info.accumulated_rewards = reward_info.accumulated_rewards + incremental_rewards;
     reward_info.last_cumulative_reward_per_share = cumulative_reward_per_share;

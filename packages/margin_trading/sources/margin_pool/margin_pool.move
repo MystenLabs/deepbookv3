@@ -47,16 +47,11 @@ public struct Loan has drop, store {
     last_index: u64, // 9 decimals
 }
 
-public struct Supply has drop, store {
-    supplied_amount: u64, // amount supplied in this transaction
-    last_index: u64, // 9 decimals
-}
-
 public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     loans: Table<ID, Loan>, // maps margin_manager id to Loan
-    supplies: Table<address, Supply>, // maps address id to deposits
+    supplies: Table<address, u64>, // maps address quantity of shares supplied
     state: State,
     reward_pools: vector<RewardPool>, // stores all reward pools
     reward_balances: Bag,
@@ -90,11 +85,15 @@ public fun supply<Asset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
+    self.update_state(clock);
+
     let supplier = ctx.sender();
     let supply_amount = coin.value();
+    let supply_index = self.state.supply_index();
+    let supply_shares = math::div(supply_amount, supply_index);
 
     self.update_user(supplier, clock);
-    self.increase_user_supply(supplier, supply_amount);
+    self.increase_user_supply_shares(supplier, supply_shares);
     self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -114,7 +113,7 @@ public fun withdraw<Asset>(
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    self.decrease_user_supply(ctx.sender(), withdrawal_amount);
+    self.decrease_user_supply_shares(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
@@ -159,7 +158,7 @@ public(package) fun create_margin_pool<Asset>(
     interest_params: InterestParams,
     supply_cap: u64,
     max_borrow_percentage: u64,
-    protocol_spread: u64, // protocol spread in 9 decimals
+    protocol_spread: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -410,7 +409,7 @@ public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, Loan> {
 }
 
 /// Returns the supplies table.
-public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, Supply> {
+public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, u64> {
     &self.supplies
 }
 
@@ -474,44 +473,22 @@ fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.state.update(clock);
 }
 
-/// Updates user's supply to include interest earned, supply index, and total supply. Returns Supply.
-fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
-    self.add_user_supply_entry(supplier);
-
+fun increase_user_supply_shares<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
-    let current_index = self.state.supply_index();
-    let interest_multiplier = math::div(
-        current_index,
-        supply.last_index,
-    );
-    let new_supply_amount = math::mul(
-        supply.supplied_amount,
-        interest_multiplier,
-    );
-    supply.supplied_amount = new_supply_amount;
-    supply.last_index = current_index;
+    *supply = *supply + amount;
 }
 
-fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
+fun decrease_user_supply_shares<Asset>(
+    self: &mut MarginPool<Asset>,
+    supplier: address,
+    amount: u64,
+) {
     let supply = self.supplies.borrow_mut(supplier);
-    supply.supplied_amount = supply.supplied_amount + amount;
-}
-
-fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
-    let supply = self.supplies.borrow_mut(supplier);
-    supply.supplied_amount = supply.supplied_amount - amount;
-}
-
-fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
-    if (self.supplies.contains(supplier)) {
-        return
-    };
-    let current_index = self.state.supply_index();
-    let supply = Supply {
-        supplied_amount: 0,
-        last_index: current_index,
-    };
-    self.supplies.add(supplier, supply);
+    *supply = *supply - amount;
 }
 
 fun update_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
@@ -560,7 +537,7 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
 
     let mut user_rewards = create_user_rewards();
     self.reward_pools.do_ref!(|reward_pool| {
-        let reward_type = reward_token_type(reward_pool);
+        let reward_type = reward_pool.reward_token_type();
         let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
         initialize_user_reward_for_type(
             &mut user_rewards,
@@ -573,27 +550,32 @@ fun update_user_rewards_entry<Asset>(self: &mut MarginPool<Asset>, user: address
 
 /// Updates user supply with interest and rewards, returns the user's supply amount before update
 fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address, clock: &Clock): u64 {
-    self.update_state(clock);
-    self.update_user_supply(user);
-    let user_supply = self.supplies.borrow(user).supplied_amount;
-
+    self.add_user_supply_entry(user);
     self.update_user_rewards_entry(user);
     self.update_all_reward_pools(clock);
 
+    let user_supply_shares = self.supplies.borrow(user);
     let user_rewards_mut = self.user_rewards.borrow_mut(user);
     self.reward_pools.do_ref!(|reward_pool| {
-        let reward_type = reward_token_type(reward_pool);
+        let reward_type = reward_pool.reward_token_type();
         let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
 
         update_user_accumulated_rewards_by_type(
             user_rewards_mut,
             reward_type,
             cumulative_reward_per_share,
-            user_supply,
+            *user_supply_shares,
         );
     });
 
-    user_supply
+    *user_supply_shares
+}
+
+fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, user: address) {
+    if (self.supplies.contains(user)) {
+        return
+    };
+    self.supplies.add(user, 0);
 }
 
 fun add_reward_balance_to_bag<RewardToken>(
