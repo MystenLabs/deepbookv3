@@ -154,7 +154,6 @@ public fun supply_with_referral<Asset>(
     let supplier = ctx.sender();
     let supply_amount = coin.value();
 
-    // Handle referral tracking before calling existing supply logic
     if (referral_code.is_some()) {
         let code = referral_code.destroy_some();
         self.process_referral_deposit(supplier, supply_amount, code, clock.timestamp_ms());
