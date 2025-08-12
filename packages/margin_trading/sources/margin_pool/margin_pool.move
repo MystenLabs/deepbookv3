@@ -21,12 +21,15 @@ use margin_trading::{
         update_reward_pool
     }
 };
-use std::type_name::{Self, TypeName};
+use std::{
+    string::String,
+    type_name::{Self, TypeName}
+};
 use sui::{
     bag::{Self, Bag},
     balance::{Self, Balance},
     clock::Clock,
-    coin::Coin,
+    coin::{Self, Coin},
     event,
     table::{Self, Table}
 };
@@ -40,6 +43,9 @@ const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
 const EMaxRewardTypesExceeded: u64 = 8;
+const EInvalidReferralCode: u64 = 9;
+const EReferralCodeAlreadyExists: u64 = 10;
+const EUnauthorizedReferralOperation: u64 = 12;
 
 // === Structs ===
 public struct Loan has drop, store {
@@ -48,8 +54,18 @@ public struct Loan has drop, store {
 }
 
 public struct Supply has drop, store {
-    supplied_amount: u64, // amount supplied in this transaction
+    supplied_amount: u64, // total current supply including accrued interest
+    principal_deposited: u64, // original principal deposited (excluding interest)
     last_index: u64, // 9 decimals
+}
+
+public struct ReferralInfo has store {
+    frontend_address: address, // owner of the referral code
+    yield_share_basis_points: u64, // 0-10000 (0-100%)
+    total_referred_deposits: u64, // total principal deposited by referrals
+    total_yield_accumulated: u64, // total yield accumulated for this referral code
+    total_yield_claimed: u64, // total yield claimed by the frontend
+    active: bool, 
 }
 
 public struct MarginPool<phantom Asset> has key, store {
@@ -61,6 +77,9 @@ public struct MarginPool<phantom Asset> has key, store {
     reward_pools: vector<RewardPool>, // stores all reward pools
     reward_balances: Bag,
     user_rewards: Table<address, UserRewards>, // maps user address to their reward tracking
+    referral_registry: Table<String, ReferralInfo>, // maps referral code to referral info
+    user_referrals: Table<address, String>, // maps user address to their referral code
+    referral_yield_pool: Balance<Asset>, // Accumulated yield for referrals
 }
 
 public struct RepaymentProof<phantom Asset> {
@@ -80,6 +99,28 @@ public struct PoolLiquidationReward has copy, drop {
     pool_id: ID,
     manager_id: ID, // id of the margin manager
     liquidation_reward: u64, // amount of the liquidation reward
+}
+
+public struct ReferralDeposit has copy, drop {
+    pool_id: ID,
+    user: address,
+    amount: u64,
+    referral_code: String,
+    timestamp: u64,
+}
+
+public struct ReferralYieldClaimed has copy, drop {
+    pool_id: ID,
+    referral_code: String,
+    frontend_address: address,
+    yield_amount: u64,
+}
+
+public struct ReferralCodeRegistered has copy, drop {
+    pool_id: ID,
+    referral_code: String,
+    frontend_address: address,
+    yield_share_basis_points: u64,
 }
 
 // === Public Functions * LENDING * ===
@@ -102,6 +143,27 @@ public fun supply<Asset>(
     assert!(self.state.total_supply() <= self.state.supply_cap(), ESupplyCapExceeded);
 }
 
+/// Allows anyone to supply the margin pool with an optional referral code.
+public fun supply_with_referral<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+    referral_code: Option<String>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let supplier = ctx.sender();
+    let supply_amount = coin.value();
+
+    // Handle referral tracking before calling existing supply logic
+    if (referral_code.is_some()) {
+        let code = referral_code.destroy_some();
+        self.process_referral_deposit(supplier, supply_amount, code, clock.timestamp_ms());
+    };
+
+    self.supply(coin, clock, ctx);
+    assert!(self.state.total_supply() <= self.state.supply_cap(), ESupplyCapExceeded);
+}
+
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
@@ -114,10 +176,27 @@ public fun withdraw<Asset>(
     let withdrawal_amount = amount.get_with_default(user_supply);
     assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
+    
+    let (referral_yield, _withdrawal_profit) = self.process_referral_yield(supplier, withdrawal_amount, user_supply);
+    if (referral_yield > 0) {
+        let yield_balance = self.vault.split(referral_yield);
+        self.referral_yield_pool.join(yield_balance);
+        
+        // Update the referral code's accumulated yield
+        if (self.user_referrals.contains(supplier)) {
+            let referral_code = *self.user_referrals.borrow(supplier);
+            if (self.referral_registry.contains(referral_code)) {
+                let referral_info = self.referral_registry.borrow_mut(referral_code);
+                referral_info.total_yield_accumulated = referral_info.total_yield_accumulated + referral_yield;
+            };
+        };
+    };
+    
     self.decrease_user_supply(ctx.sender(), withdrawal_amount);
     self.state.decrease_total_supply(withdrawal_amount);
 
-    self.vault.split(withdrawal_amount).into_coin(ctx)
+    let user_receives = withdrawal_amount - referral_yield;
+    self.vault.split(user_receives).into_coin(ctx)
 }
 
 /// Repays a loan for a margin manager being liquidated.
@@ -178,6 +257,9 @@ public(package) fun create_margin_pool<Asset>(
         reward_pools: vector[],
         reward_balances: bag::new(ctx),
         user_rewards: table::new(ctx),
+        referral_registry: table::new(ctx),
+        user_referrals: table::new(ctx),
+        referral_yield_pool: balance::zero<Asset>(),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -464,6 +546,111 @@ public fun get_reward_pools<Asset>(self: &MarginPool<Asset>): &vector<RewardPool
     &self.reward_pools
 }
 
+/// Registers a new referral code for a frontend
+public(package) fun register_referral_code<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral_code: String,
+    frontend_address: address,
+    yield_share_basis_points: u64,
+) {
+    assert!(!self.referral_registry.contains(referral_code), EReferralCodeAlreadyExists);
+    assert!(yield_share_basis_points <= 10000, EInvalidReferralCode);
+    
+    let referral_info = ReferralInfo {
+        frontend_address,
+        yield_share_basis_points,
+        total_referred_deposits: 0,
+        total_yield_accumulated: 0,
+        total_yield_claimed: 0,
+        active: true,
+    };
+    
+    self.referral_registry.add(referral_code, referral_info);
+    
+    event::emit(ReferralCodeRegistered {
+        pool_id: self.id.to_inner(),
+        referral_code,
+        frontend_address,
+        yield_share_basis_points,
+    });
+}
+
+/// Claims referral yield for a frontend
+public fun claim_referral_yield<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral_code: String,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    assert!(self.referral_registry.contains(referral_code), EInvalidReferralCode);
+    
+    let frontend_address = {
+        let referral_info = self.referral_registry.borrow(referral_code);
+        assert!(ctx.sender() == referral_info.frontend_address, EUnauthorizedReferralOperation);
+        referral_info.frontend_address
+    };
+    
+    let available_yield = self.calculate_referral_yield(referral_code);
+    if (available_yield == 0) {
+        return coin::zero<Asset>(ctx)
+    };
+    
+    {
+        let referral_info = self.referral_registry.borrow_mut(referral_code);
+        referral_info.total_yield_claimed = referral_info.total_yield_claimed + available_yield;
+    };
+    
+    let yield_balance = self.referral_yield_pool.split(available_yield);
+    
+    event::emit(ReferralYieldClaimed {
+        pool_id: self.id.to_inner(),
+        referral_code,
+        frontend_address,
+        yield_amount: available_yield,
+    });
+    
+    yield_balance.into_coin(ctx)
+}
+
+/// Distributes protocol profit to referral yield pool
+/// This should be called by admin after protocol has earned profit
+public(package) fun distribute_referral_yield<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+) {
+    let amount = coin.value();
+    if (amount > 0) {
+        self.referral_yield_pool.join(coin.into_balance());
+    } else {
+        coin.destroy_zero();
+    };
+}
+
+/// Returns referral info for a code
+public fun get_referral_info<Asset>(
+    self: &MarginPool<Asset>,
+    referral_code: String,
+): &ReferralInfo {
+    assert!(self.referral_registry.contains(referral_code), EInvalidReferralCode);
+    self.referral_registry.borrow(referral_code)
+}
+
+/// Returns user's referral code if any
+public fun get_user_referral_code<Asset>(
+    self: &MarginPool<Asset>,
+    user: address,
+): Option<String> {
+    if (self.user_referrals.contains(user)) {
+        option::some(*self.user_referrals.borrow(user))
+    } else {
+        option::none()
+    }
+}
+
+/// Returns total referred deposits for a referral info
+public fun referral_total_deposits(referral_info: &ReferralInfo): u64 {
+    referral_info.total_referred_deposits
+}
+
 // === Internal Functions ===
 fun update_all_reward_pools<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.reward_pools.do_mut!(|pool| update_reward_pool(pool, self.state.total_supply(), clock));
@@ -495,11 +682,29 @@ fun update_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
 fun increase_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount + amount;
+    supply.principal_deposited = supply.principal_deposited + amount;
 }
 
 fun decrease_user_supply<Asset>(self: &mut MarginPool<Asset>, supplier: address, amount: u64) {
     let supply = self.supplies.borrow_mut(supplier);
     supply.supplied_amount = supply.supplied_amount - amount;
+    
+    // Decrease principal proportionally if we're withdrawing from it
+    if (amount >= supply.principal_deposited) {
+        // Withdrawing all principal and some interest
+        supply.principal_deposited = 0;
+    } else {
+        // Only withdrawing part of principal
+        let total_before_withdrawal = supply.supplied_amount + amount;
+        if (total_before_withdrawal > supply.principal_deposited) {
+            // Have some interest, calculate proportional reduction
+            let principal_portion = (amount * supply.principal_deposited) / total_before_withdrawal;
+            supply.principal_deposited = supply.principal_deposited - principal_portion;
+        } else {
+            // Only principal, no interest yet
+            supply.principal_deposited = supply.principal_deposited - amount;
+        };
+    };
 }
 
 fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address) {
@@ -509,6 +714,7 @@ fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, supplier: address
     let current_index = self.state.supply_index();
     let supply = Supply {
         supplied_amount: 0,
+        principal_deposited: 0,
         last_index: current_index,
     };
     self.supplies.add(supplier, supply);
@@ -619,4 +825,97 @@ fun withdraw_reward_balance_from_bag<RewardToken>(
     let reward_type = type_name::get<RewardToken>();
     let balance: &mut Balance<RewardToken> = reward_balances.borrow_mut(reward_type);
     balance::split(balance, amount)
+}
+
+/// Processes referral deposit tracking
+fun process_referral_deposit<Asset>(
+    self: &mut MarginPool<Asset>,
+    user: address,
+    amount: u64,
+    referral_code: String,
+    timestamp: u64,
+) {
+    if (self.referral_registry.contains(referral_code)) {
+        let referral_info = self.referral_registry.borrow(referral_code);
+        if (referral_info.active) {
+            let referral_info_mut = self.referral_registry.borrow_mut(referral_code);
+            referral_info_mut.total_referred_deposits = referral_info_mut.total_referred_deposits + amount;
+            
+            // Only track the most recent referral per user
+            if (self.user_referrals.contains(user)) {
+                self.user_referrals.remove(user);
+                self.user_referrals.add(user, referral_code);
+            } else {
+                self.user_referrals.add(user, referral_code);
+            };
+            
+            event::emit(ReferralDeposit {
+                pool_id: self.id.to_inner(),
+                user,
+                amount,
+                referral_code,
+                timestamp,
+            });
+        };
+    }
+}
+
+/// Calculates referral yield amounts when a user withdraws
+/// Returns (referral_yield_amount, withdrawal_profit_amount)
+fun process_referral_yield<Asset>(
+    self: &MarginPool<Asset>,
+    user: address,
+    withdrawal_amount: u64,
+    user_total_supply: u64,
+): (u64, u64) {
+    if (!self.user_referrals.contains(user)) {
+        return (0, 0)
+    };
+    
+    let referral_code = *self.user_referrals.borrow(user);
+    
+    if (!self.referral_registry.contains(referral_code)) {
+        return (0, 0)
+    };
+    
+    let referral_info = self.referral_registry.borrow(referral_code);
+    if (!referral_info.active) {
+        return (0, 0)
+    };
+    
+    let user_supply = self.supplies.borrow(user);
+    let user_principal = user_supply.principal_deposited;
+    
+    if (user_total_supply <= user_principal) {
+        return (0, 0)
+    };
+    
+    let user_total_profit = user_total_supply - user_principal;
+    
+    let withdrawal_profit = if (withdrawal_amount >= user_total_supply) {
+        // Withdrawing everything, all profit goes
+        user_total_profit
+    } else {
+        // Proportional profit withdrawal
+        // If withdrawing X% of total supply, X% of profit is being withdrawn
+        (withdrawal_amount * user_total_profit) / user_total_supply
+    };
+    
+    if (withdrawal_profit == 0) {
+        return (0, 0)
+    };
+    
+    let referral_yield = (withdrawal_profit * referral_info.yield_share_basis_points) / 10000;
+    
+    (referral_yield, withdrawal_profit)
+}
+
+/// Calculates available referral yield for a referral code that can be claimed
+/// Returns the amount of yield accumulated for this referral code that hasn't been claimed yet
+fun calculate_referral_yield<Asset>(
+    self: &MarginPool<Asset>,
+    referral_code: String,
+): u64 {
+    let referral_info = self.referral_registry.borrow(referral_code);
+    referral_info.total_yield_accumulated - referral_info.total_yield_claimed
 }
