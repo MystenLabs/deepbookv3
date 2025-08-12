@@ -121,6 +121,7 @@ public fun revoke_maintainer_cap(
 
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 /// Returns a `MarginPoolCap` that can be used to update the margin pool.
+#[allow(lint(self_transfer))]
 public fun new_margin_pool<Asset>(
     self: &mut MarginRegistry,
     interest_params: InterestParams,
@@ -130,7 +131,7 @@ public fun new_margin_pool<Asset>(
     clock: &Clock,
     maintainer_cap: &MaintainerCap,
     ctx: &mut TxContext,
-): MarginPoolCap {
+) {
     assert!(
         self.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
         EMaintainerCapNotValid,
@@ -149,10 +150,12 @@ public fun new_margin_pool<Asset>(
     assert!(!self.margin_pools.contains(key), EMarginPoolAlreadyExists);
     self.margin_pools.add(key, margin_pool_id);
 
-    MarginPoolCap {
+    let margin_pool_cap = MarginPoolCap {
         id: object::new(ctx),
         margin_pool_id,
-    }
+    };
+
+    transfer::public_transfer(margin_pool_cap, ctx.sender());
 }
 
 public fun update_supply_cap<Asset>(
