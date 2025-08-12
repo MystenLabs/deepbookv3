@@ -108,12 +108,14 @@ public fun withdraw<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
+    self.update_state(clock);
     let supplier = ctx.sender();
-    let user_supply = self.update_user(supplier, clock);
-    let withdrawal_amount = amount.get_with_default(user_supply);
-    assert!(withdrawal_amount <= user_supply, ECannotWithdrawMoreThanSupply);
+    let user_supply_shares = self.update_user(supplier, clock);
+    let withdrawal_amount = amount.get_with_default(user_supply_shares);
+    let withdrawal_amount_shares = math::div(withdrawal_amount, self.state.supply_index());
+    assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    self.decrease_user_supply_shares(ctx.sender(), withdrawal_amount);
+    self.decrease_user_supply_shares(ctx.sender(), withdrawal_amount_shares);
     self.state.decrease_total_supply(withdrawal_amount);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
