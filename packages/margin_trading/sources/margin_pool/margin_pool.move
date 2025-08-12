@@ -464,6 +464,10 @@ public fun get_reward_pools<Asset>(self: &MarginPool<Asset>): &vector<RewardPool
     &self.reward_pools
 }
 
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
+}
+
 // === Internal Functions ===
 fun update_all_reward_pools<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.reward_pools.do_mut!(|pool| update_reward_pool(pool, self.state.total_supply(), clock));
