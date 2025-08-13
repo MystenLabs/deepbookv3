@@ -9,11 +9,11 @@ use std::type_name::TypeName;
 use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 public struct UserManager has store {
-    users: Table<address, User>,
+    supplies: Table<address, Supply>,
+    loans: Table<address, u64>,
 }
 
-public struct User has store {
-    loan_shares: u64,
+public struct Supply has store {
     supply_shares: u64,
     rewards: VecMap<TypeName, RewardTracker>,
 }
@@ -25,7 +25,8 @@ public struct RewardTracker has store {
 
 public(package) fun create_user_manager(ctx: &mut TxContext): UserManager {
     UserManager {
-        users: table::new(ctx),
+        supplies: table::new(ctx),
+        loans: table::new(ctx),
     }
 }
 
@@ -35,11 +36,11 @@ public(package) fun increase_user_supply_shares(
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
 ) {
-    self.add_user_entry(user);
-    let user = self.users.borrow_mut(user);
-    let supply_shares_before = user.supply_shares;
-    user.supply_shares = user.supply_shares + supply_shares;
-    user.update_user_reward_shares(reward_pools, supply_shares_before, supply_shares);
+    self.add_supply_entry(user);
+    let supply = self.supplies.borrow_mut(user);
+    let supply_shares_before = supply.supply_shares;
+    supply.supply_shares = supply.supply_shares + supply_shares;
+    supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
 public(package) fun decrease_user_supply_shares(
@@ -48,10 +49,10 @@ public(package) fun decrease_user_supply_shares(
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
 ) {
-    let user = self.users.borrow_mut(user);
-    let supply_shares_before = user.supply_shares;
-    user.supply_shares = user.supply_shares - supply_shares;
-    user.update_user_reward_shares(reward_pools, supply_shares_before, supply_shares);
+    let supply = self.supplies.borrow_mut(user);
+    let supply_shares_before = supply.supply_shares;
+    supply.supply_shares = supply.supply_shares - supply_shares;
+    supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
 public(package) fun increase_user_loan_shares(
@@ -59,9 +60,9 @@ public(package) fun increase_user_loan_shares(
     user: address,
     loan_shares: u64,
 ) {
-    self.add_user_entry(user);
-    let user = self.users.borrow_mut(user);
-    user.loan_shares = user.loan_shares + loan_shares;
+    self.add_loan_entry(user);
+    let loan = self.loans.borrow_mut(user);
+    *loan = *loan + loan_shares;
 }
 
 public(package) fun decrease_user_loan_shares(
@@ -69,16 +70,16 @@ public(package) fun decrease_user_loan_shares(
     user: address,
     loan_shares: u64,
 ) {
-    let user = self.users.borrow_mut(user);
-    user.loan_shares = user.loan_shares - loan_shares;
+    let loan = self.loans.borrow_mut(user);
+    *loan = *loan - loan_shares;
 }
 
 public(package) fun user_supply_shares(self: &UserManager, user: address): u64 {
-    self.users.borrow(user).supply_shares
+    self.supplies.borrow(user).supply_shares
 }
 
 public(package) fun user_loan_shares(self: &UserManager, user: address): u64 {
-    self.users.borrow(user).loan_shares
+    *self.loans.borrow(user)
 }
 
 public(package) fun reset_user_rewards_for_type(
@@ -88,22 +89,22 @@ public(package) fun reset_user_rewards_for_type(
     reward_pools: &VecMap<TypeName, RewardPool>,
     shares: u64,
 ): u64 {
-    self.add_user_entry(user);
-    let user = self.users.borrow_mut(user);
+    self.add_supply_entry(user);
+    let supply = self.supplies.borrow_mut(user);
     let reward_index = reward_pools[&reward_token_type].cumulative_reward_per_share();
-    user.user_reward_entry(shares, reward_index, reward_token_type);
+    supply.user_reward_entry(shares, reward_index, reward_token_type);
 
     let reward = math::mul(reward_index, shares);
     let returned_reward =
-        reward + user.rewards[&reward_token_type].negative - user.rewards[&reward_token_type].positive;
-    user.rewards[&reward_token_type].positive = reward;
-    user.rewards[&reward_token_type].negative = 0;
+        reward + supply.rewards[&reward_token_type].negative - supply.rewards[&reward_token_type].positive;
+    supply.rewards[&reward_token_type].positive = reward;
+    supply.rewards[&reward_token_type].negative = 0;
 
     returned_reward
 }
 
 fun user_reward_entry(
-    self: &mut User,
+    self: &mut Supply,
     current_shares: u64,
     current_index: u64,
     reward_token_type: TypeName,
@@ -121,8 +122,8 @@ fun user_reward_entry(
     }
 }
 
-fun update_user_reward_shares(
-    user: &mut User,
+fun update_supply_reward_shares(
+    supply: &mut Supply,
     reward_pools: &VecMap<TypeName, RewardPool>,
     shares_before: u64,
     shares_after: u64,
@@ -134,7 +135,7 @@ fun update_user_reward_shares(
         let key = keys[i];
         let reward_pool = &reward_pools[&key];
         let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
-        let reward_tracker = &mut user.rewards[&key];
+        let reward_tracker = &mut supply.rewards[&key];
         let reward_addition = &mut reward_tracker.positive;
         let reward_subtraction = &mut reward_tracker.negative;
         if (shares_after > shares_before) {
@@ -148,17 +149,22 @@ fun update_user_reward_shares(
     }
 }
 
-fun add_user_entry(self: &mut UserManager, user: address) {
-    if (!self.users.contains(user)) {
+fun add_supply_entry(self: &mut UserManager, user: address) {
+    if (!self.supplies.contains(user)) {
         self
-            .users
+            .supplies
             .add(
                 user,
-                User {
-                    loan_shares: 0,
+                Supply {
                     supply_shares: 0,
                     rewards: vec_map::empty(),
                 },
             );
+    }
+}
+
+fun add_loan_entry(self: &mut UserManager, user: address) {
+    if (!self.loans.contains(user)) {
+        self.loans.add(user, 0);
     }
 }

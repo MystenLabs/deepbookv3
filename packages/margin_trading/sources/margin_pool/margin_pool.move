@@ -3,7 +3,6 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
     reward_manager::{Self, RewardManager},
@@ -59,15 +58,13 @@ public fun supply<Asset>(
     ctx: &TxContext,
 ) {
     self.update_state(clock);
-    let supply_amount = coin.value();
-    self.state.increase_total_supply(supply_amount);
+    self.rewards.update(self.state.total_supply_shares(), clock);
 
+    let supply_amount = coin.value();
     let supplier = ctx.sender();
-    let supply_index = self.state.supply_index();
-    let supply_shares = math::div(supply_amount, supply_index);
-    let total_shares = math::div(self.state.total_supply(), supply_index);
-    self.rewards.update(total_shares, clock);
+    let supply_shares = self.state.to_supply_shares(supply_amount);
     let reward_pools = self.rewards.reward_pools();
+    self.state.increase_total_supply(supply_amount);
     self.users.increase_user_supply_shares(supplier, supply_shares, reward_pools);
 
     let balance = coin.into_balance();
@@ -84,19 +81,18 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     self.update_state(clock);
+    self.rewards.update(self.state.total_supply_shares(), clock);
 
     let supplier = ctx.sender();
     let user_supply_shares = self.users.user_supply_shares(supplier);
-    let user_supply_amount = math::mul(user_supply_shares, self.state.supply_index());
+    let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_amount_shares = math::div(withdrawal_amount, self.state.supply_index());
+    let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
+    let reward_pools = self.rewards.reward_pools();
     assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.state.decrease_total_supply(withdrawal_amount);
-    let total_shares = math::div(self.state.total_supply(), self.state.supply_index());
-    self.rewards.update(total_shares, clock);
-    let reward_pools = self.rewards.reward_pools();
     self.users.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
@@ -242,13 +238,12 @@ public(package) fun borrow<Asset>(
     assert!(amount > 0, EInvalidLoanQuantity);
 
     self.update_state(clock);
-    let borrow_shares = math::div(amount, self.state.borrow_index());
+    let borrow_shares = self.state.to_borrow_shares(amount);
     self.users.increase_user_loan_shares(manager_id.to_address(), borrow_shares);
     self.state.increase_total_borrow(amount);
 
-    let utilization_rate = self.state.utilization_rate();
     assert!(
-        utilization_rate <= self.state.max_utilization_rate(),
+        self.state.utilization_rate() <= self.state.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
 
@@ -266,7 +261,7 @@ public(package) fun repay<Asset>(
 ) {
     self.state.update(clock);
     let repay_amount = coin.value();
-    let repay_amount_shares = math::div(repay_amount, self.state.borrow_index());
+    let repay_amount_shares = self.state.to_borrow_shares(repay_amount);
     assert!(
         repay_amount_shares <= self.users.user_loan_shares(manager_id.to_address()),
         ECannotRepayMoreThanLoan,
@@ -286,7 +281,7 @@ public(package) fun default_loan<Asset>(
 ) {
     self.state.update(clock);
     let user_loan_shares = self.users.user_loan_shares(manager_id.to_address());
-    let user_loan_amount = math::mul(user_loan_shares, self.state.borrow_index());
+    let user_loan_amount = self.state.to_borrow_amount(user_loan_shares);
 
     // No loan to default
     if (user_loan_shares == 0) {
@@ -375,7 +370,7 @@ public(package) fun user_loan_amount<Asset>(
 ): u64 {
     self.update_state(clock);
     let loan_shares = self.users.user_loan_shares(manager_id.to_address());
-    math::mul(loan_shares, self.state.borrow_index())
+    self.state.to_borrow_amount(loan_shares)
 }
 
 // === Internal Functions ===

@@ -195,6 +195,22 @@ public(package) fun interest_rate(self: &State): u64 {
     }
 }
 
+public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
+    math::mul(amount, self.supply_index)
+}
+
+public(package) fun to_borrow_shares(self: &State, amount: u64): u64 {
+    math::mul(amount, self.borrow_index)
+}
+
+public(package) fun to_supply_amount(self: &State, shares: u64): u64 {
+    math::div(shares, self.supply_index)
+}
+
+public(package) fun to_borrow_amount(self: &State, shares: u64): u64 {
+    math::div(shares, self.borrow_index)
+}
+
 public(package) fun supply_index(self: &State): u64 {
     self.supply_index
 }
