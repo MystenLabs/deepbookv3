@@ -217,9 +217,7 @@ public(package) fun claim_rewards<Asset, RewardToken>(
     ctx: &mut TxContext,
 ): Coin<RewardToken> {
     let user = ctx.sender();
-    self.state.update(clock);
-    let total_shares = math::div(self.state.total_supply(), self.state.supply_index());
-    self.rewards.update(total_shares, clock);
+    self.rewards.update(self.state.total_supply_shares(), clock);
 
     let user_shares = self.users.user_supply_shares(user);
     let reward_token_type = type_name::get<RewardToken>();

@@ -48,7 +48,6 @@ public(package) fun decrease_user_supply_shares(
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
 ) {
-    self.add_user_entry(user);
     let user = self.users.borrow_mut(user);
     let supply_shares_before = user.supply_shares;
     user.supply_shares = user.supply_shares - supply_shares;

@@ -215,6 +215,10 @@ public(package) fun total_supply(self: &State): u64 {
     self.total_supply
 }
 
+public(package) fun total_supply_shares(self: &State): u64 {
+    math::mul(self.total_supply, self.supply_index)
+}
+
 public(package) fun total_borrow(self: &State): u64 {
     self.total_borrow
 }
