@@ -21,7 +21,7 @@ use deepbook::{
 };
 use margin_trading::{
     margin_constants,
-    margin_pool::{user_loan, MarginPool, create_repayment_proof, RepaymentProof},
+    margin_pool::{MarginPool, create_repayment_proof, RepaymentProof},
     margin_registry::MarginRegistry,
     oracle::{calculate_usd_price, calculate_target_amount, calculate_pair_usd_price}
 };
@@ -181,7 +181,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): Request {
     assert!(
-        user_loan(quote_margin_pool, margin_manager.id(), clock) == 0,
+        quote_margin_pool.user_loan(margin_manager.id()) == 0,
         ECannotHaveLoanInBothMarginPools,
     );
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
@@ -201,10 +201,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    assert!(
-        user_loan(base_margin_pool, margin_manager.id(), clock) == 0,
-        ECannotHaveLoanInBothMarginPools,
-    );
+    assert!(base_margin_pool.user_loan(margin_manager.id()) == 0, ECannotHaveLoanInBothMarginPools);
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
         loan_amount,
@@ -1126,33 +1123,20 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
-    let user_loan = margin_pool.user_loan(manager_id, clock);
+    let user_loan_shares = margin_pool.user_loan(manager_id);
+    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
 
-    let repay_amount = repay_amount.get_with_default(user_loan);
+    let repay_amount = repay_amount.get_with_default(user_loan_amount);
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
-
-    // if user tries to repay more than owed, just repay the loan amount
-    let repayment = if (repay_amount >= user_loan) {
-        user_loan
-    } else {
-        repay_amount
-    };
-
-    // if user tries to repay more than available balance, just repay the available balance
-    let repayment = if (repayment >= available_balance) {
-        available_balance
-    } else {
-        repayment
-    };
+    let repay_amount = repay_amount.min(user_loan_amount).min(available_balance);
 
     // Owner check is skipped if this is liquidation
     let coin = margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
-        repayment,
+        repay_amount,
         ctx,
     );
-
-    let repay_amount = coin.value();
 
     margin_pool.repay(
         manager_id,
@@ -1168,7 +1152,11 @@ fun debt<BaseAsset, QuoteAsset, Asset>(
     margin_pool: &mut MarginPool<Asset>,
     clock: &Clock,
 ): u64 {
-    margin_pool.user_loan(margin_manager.id(), clock)
+    margin_pool.update_state(clock);
+    let user_loan_shares = margin_pool.user_loan(margin_manager.id());
+    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
+
+    user_loan_amount
 }
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
@@ -1306,42 +1294,29 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
-    let user_loan = margin_pool.user_loan(manager_id, clock);
+    let user_loan_shares = margin_pool.user_loan(manager_id);
+    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
 
-    let repay_amount = repay_amount.get_with_default(user_loan);
+    let repay_amount = repay_amount.get_with_default(user_loan_amount);
     let manager_asset = margin_manager.balance_manager().balance<RepayAsset>();
 
     let available_balance_for_repayment = math::div(
         manager_asset,
         liquidation_multiplier,
     );
+    let repay_amount = repay_amount.min(user_loan_amount).min(available_balance_for_repayment);
 
-    // if user tries to repay more than owed, just repay the loan amount
-    let repayment = if (repay_amount >= user_loan) {
-        user_loan
-    } else {
-        repay_amount
-    };
-
-    // if user tries to repay more than available balance, just repay the available balance
-    let repayment = if (repayment >= available_balance_for_repayment) {
-        available_balance_for_repayment
-    } else {
-        repayment
-    };
-
-    if (repayment == 0) {
+    if (repay_amount == 0) {
         return 0 // Nothing to repay
     };
 
     // Owner check is skipped if this is liquidation
     let coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
-        repayment,
+        repay_amount,
         ctx,
     );
-
-    let repay_amount = coin.value();
 
     margin_pool.repay(
         manager_id,

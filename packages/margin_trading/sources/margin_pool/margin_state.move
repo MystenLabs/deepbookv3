@@ -13,7 +13,7 @@ public struct State has drop, store {
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
     interest_params: InterestParams,
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
-    max_borrow_percentage: u64, // maximum percentage of borrowable assets in the pool
+    max_utilization_rate: u64, // maximum percentage of borrowable assets in the pool
     protocol_spread: u64, // protocol spread in 9 decimals
     last_index_update_timestamp: u64,
 }
@@ -29,7 +29,7 @@ public struct InterestParams has drop, store {
 public(package) fun default(
     interest_params: InterestParams,
     supply_cap: u64,
-    max_borrow_percentage: u64,
+    max_utilization_rate: u64,
     protocol_spread: u64,
     clock: &Clock,
 ): State {
@@ -41,7 +41,7 @@ public(package) fun default(
         protocol_profit: 0,
         interest_params,
         supply_cap,
-        max_borrow_percentage,
+        max_utilization_rate,
         protocol_spread,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
@@ -105,16 +105,34 @@ public(package) fun new_interest_params(
     }
 }
 
-public(package) fun set_supply_index(self: &mut State, index: u64) {
-    self.supply_index = index;
-}
-
 public(package) fun increase_total_supply(self: &mut State, amount: u64) {
     self.total_supply = self.total_supply + amount;
 }
 
+public(package) fun increase_total_supply_with_index(self: &mut State, amount: u64) {
+    let current_supply = self.total_supply;
+    let new_supply = current_supply + amount;
+    let new_supply_index = math::mul(
+        self.supply_index,
+        math::div(new_supply, current_supply),
+    );
+    self.total_supply = new_supply;
+    self.supply_index = new_supply_index;
+}
+
 public(package) fun decrease_total_supply(self: &mut State, amount: u64) {
     self.total_supply = self.total_supply - amount;
+}
+
+public(package) fun decrease_total_supply_with_index(self: &mut State, amount: u64) {
+    let current_supply = self.total_supply;
+    let new_supply = current_supply - amount;
+    let new_supply_index = math::mul(
+        self.supply_index,
+        math::div(new_supply, current_supply),
+    );
+    self.total_supply = new_supply;
+    self.supply_index = new_supply_index;
 }
 
 public(package) fun increase_total_borrow(self: &mut State, amount: u64) {
@@ -129,8 +147,8 @@ public(package) fun set_supply_cap(self: &mut State, cap: u64) {
     self.supply_cap = cap;
 }
 
-public(package) fun set_max_borrow_percentage(self: &mut State, percentage: u64) {
-    self.max_borrow_percentage = percentage;
+public(package) fun set_max_utilization_rate(self: &mut State, rate: u64) {
+    self.max_utilization_rate = rate;
 }
 
 public(package) fun update_margin_pool_spread(self: &mut State, spread: u64, clock: &Clock) {
@@ -205,8 +223,8 @@ public(package) fun supply_cap(self: &State): u64 {
     self.supply_cap
 }
 
-public(package) fun max_borrow_percentage(self: &State): u64 {
-    self.max_borrow_percentage
+public(package) fun max_utilization_rate(self: &State): u64 {
+    self.max_utilization_rate
 }
 
 public(package) fun interest_params(self: &State): &InterestParams {

@@ -101,7 +101,7 @@ public(package) fun remaining_emission_for_type(
     clock: &Clock,
 ): u64 {
     let idx = self.type_index(reward_token_type);
-    
+
     self.reward_pools[idx].remaining_emission(clock)
 }
 
@@ -143,7 +143,7 @@ public(package) fun reset_user_shares_for_type(
     let returned_reward = reward + user_rewards.negative[idx] - user_rewards.positive[idx];
     insert_swap_remove(&mut user_rewards.positive, idx, reward);
     insert_swap_remove(&mut user_rewards.negative, idx, 0);
-    
+
     returned_reward
 }
 
@@ -166,7 +166,7 @@ fun type_index(self: &RewardManager, reward_token_type: TypeName): u64 {
         pool.reward_token_type == reward_token_type
     });
     assert!(idx.is_some(), ERewardPoolNotFound);
-    
+
     idx.destroy_some()
 }
 
