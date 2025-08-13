@@ -3,6 +3,7 @@
 
 module margin_trading::margin_pool;
 
+use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
     position_manager::{Self, PositionManager},
@@ -19,6 +20,8 @@ const ECannotRepayMoreThanLoan: u64 = 4;
 const EMaxPoolBorrowPercentageExceeded: u64 = 5;
 const EInvalidLoanQuantity: u64 = 6;
 const EInvalidRepaymentQuantity: u64 = 7;
+const EInvalidRewardEndTime: u64 = 8;
+const EInvalidRewardDuration: u64 = 9;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -201,7 +204,14 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     self.rewards.add_reward_pool_entry(reward_token_type);
     let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
     let total_emissions = remaining_emissions + reward_coin.value();
-    self.rewards.increase_emission(reward_token_type, end_time, total_emissions);
+
+    // Calculate rewards per second from total emissions and time duration
+    assert!(end_time > clock.timestamp_ms(), EInvalidRewardEndTime);
+    let time_duration_seconds = (end_time - clock.timestamp_ms()) / 1000;
+    assert!(time_duration_seconds > 0, EInvalidRewardDuration);
+    let rewards_per_second = math::div(total_emissions, time_duration_seconds);
+
+    self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
     add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
 }
 
