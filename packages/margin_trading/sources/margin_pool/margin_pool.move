@@ -211,7 +211,7 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     let time_duration_seconds = (end_time_ms - clock.timestamp_ms()) / 1000;
     let rewards_per_second = math::div(total_emissions, time_duration_seconds);
 
-    self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
+    self.rewards.increase_emission(reward_token_type, end_time_ms, rewards_per_second);
     add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
 }
 
