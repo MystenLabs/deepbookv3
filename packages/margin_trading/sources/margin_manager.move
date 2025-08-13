@@ -181,7 +181,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): Request {
     assert!(
-        quote_margin_pool.user_loan(margin_manager.id()) == 0,
+        quote_margin_pool.user_loan_amount(margin_manager.id(), clock) == 0,
         ECannotHaveLoanInBothMarginPools,
     );
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
@@ -201,7 +201,10 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    assert!(base_margin_pool.user_loan(margin_manager.id()) == 0, ECannotHaveLoanInBothMarginPools);
+    assert!(
+        base_margin_pool.user_loan_amount(margin_manager.id(), clock) == 0,
+        ECannotHaveLoanInBothMarginPools,
+    );
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
         loan_amount,
@@ -1125,7 +1128,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
 ): u64 {
     margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
-    let user_loan_shares = margin_pool.user_loan(manager_id);
+    let user_loan_shares = margin_pool.user_loan_amount(manager_id, clock);
     let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
 
     let repay_amount = repay_amount.get_with_default(user_loan_amount);
@@ -1153,7 +1156,7 @@ fun debt<BaseAsset, QuoteAsset, Asset>(
     clock: &Clock,
 ): u64 {
     margin_pool.update_state(clock);
-    let user_loan_shares = margin_pool.user_loan(margin_manager.id());
+    let user_loan_shares = margin_pool.user_loan_amount(margin_manager.id(), clock);
     let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
 
     user_loan_amount
@@ -1296,7 +1299,7 @@ fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 ): u64 {
     margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
-    let user_loan_shares = margin_pool.user_loan(manager_id);
+    let user_loan_shares = margin_pool.user_loan_amount(manager_id, clock);
     let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
 
     let repay_amount = repay_amount.get_with_default(user_loan_amount);

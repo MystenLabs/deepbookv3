@@ -6,17 +6,11 @@ module margin_trading::margin_pool;
 use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
-    reward_manager::{Self, RewardManager}
+    reward_manager::{Self, RewardManager},
+    user_manager::{Self, UserManager}
 };
 use std::type_name::{Self, TypeName};
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    table::{Self, Table}
-};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -31,10 +25,9 @@ const EInvalidRepaymentQuantity: u64 = 7;
 public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
-    loans: Table<ID, u64>, // maps margin_manager id to quantity of shares borrowed
-    supplies: Table<address, u64>, // maps address quantity of shares supplied
     state: State,
-    reward_manager: RewardManager,
+    users: UserManager,
+    rewards: RewardManager,
     reward_balances: Bag,
 }
 
@@ -66,15 +59,17 @@ public fun supply<Asset>(
     ctx: &TxContext,
 ) {
     self.update_state(clock);
+    let supply_amount = coin.value();
+    self.state.increase_total_supply(supply_amount);
 
     let supplier = ctx.sender();
-    let supply_amount = coin.value();
     let supply_index = self.state.supply_index();
     let supply_shares = math::div(supply_amount, supply_index);
+    let total_shares = math::div(self.state.total_supply(), supply_index);
+    self.rewards.update(total_shares, clock);
+    let reward_pools = self.rewards.reward_pools();
+    self.users.increase_user_supply_shares(supplier, supply_shares, reward_pools);
 
-    self.update_user(supplier);
-    self.increase_user_supply_shares(supplier, supply_shares);
-    self.state.increase_total_supply(supply_amount);
     let balance = coin.into_balance();
     self.vault.join(balance);
 
@@ -91,14 +86,18 @@ public fun withdraw<Asset>(
     self.update_state(clock);
 
     let supplier = ctx.sender();
-    let user_supply_shares = self.update_user(supplier);
+    let user_supply_shares = self.users.user_supply_shares(supplier);
     let user_supply_amount = math::mul(user_supply_shares, self.state.supply_index());
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
     let withdrawal_amount_shares = math::div(withdrawal_amount, self.state.supply_index());
     assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    self.decrease_user_supply_shares(ctx.sender(), withdrawal_amount_shares);
+
     self.state.decrease_total_supply(withdrawal_amount);
+    let total_shares = math::div(self.state.total_supply(), self.state.supply_index());
+    self.rewards.update(total_shares, clock);
+    let reward_pools = self.rewards.reward_pools();
+    self.users.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
@@ -149,8 +148,6 @@ public(package) fun create_margin_pool<Asset>(
     let margin_pool = MarginPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
-        loans: table::new(ctx),
-        supplies: table::new(ctx),
         state: margin_state::default(
             interest_params,
             supply_cap,
@@ -158,7 +155,8 @@ public(package) fun create_margin_pool<Asset>(
             protocol_spread,
             clock,
         ),
-        reward_manager: reward_manager::create_reward_manager(clock, ctx),
+        users: user_manager::create_user_manager(ctx),
+        rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
     };
     let margin_pool_id = margin_pool.id.to_inner();
@@ -204,12 +202,10 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     clock: &Clock,
 ) {
     let reward_token_type = type_name::get<RewardToken>();
-    self.reward_manager.add_reward_pool_entry(reward_token_type);
-    let remaining_emissions = self
-        .reward_manager
-        .remaining_emission_for_type(reward_token_type, clock);
+    self.rewards.add_reward_pool_entry(reward_token_type);
+    let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
     let total_emissions = remaining_emissions + reward_coin.value();
-    self.reward_manager.increase_emission(reward_token_type, end_time, total_emissions);
+    self.rewards.increase_emission(reward_token_type, end_time, total_emissions);
     add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
 }
 
@@ -223,13 +219,14 @@ public(package) fun claim_rewards<Asset, RewardToken>(
     let user = ctx.sender();
     self.state.update(clock);
     let total_shares = math::div(self.state.total_supply(), self.state.supply_index());
-    self.reward_manager.update(total_shares, clock);
+    self.rewards.update(total_shares, clock);
 
-    let user_shares = self.update_user(user);
+    let user_shares = self.users.user_supply_shares(user);
     let reward_token_type = type_name::get<RewardToken>();
+    let reward_pools = self.rewards.reward_pools();
     let user_rewards = self
-        .reward_manager
-        .reset_user_shares_for_type(user, reward_token_type, user_shares);
+        .users
+        .reset_user_rewards_for_type(user, reward_token_type, reward_pools, user_shares);
     let claimed_balance = withdraw_reward_balance_from_bag(&mut self.reward_balances, user_rewards);
 
     claimed_balance.into_coin(ctx)
@@ -248,7 +245,7 @@ public(package) fun borrow<Asset>(
 
     self.update_state(clock);
     let borrow_shares = math::div(amount, self.state.borrow_index());
-    self.increase_user_loan(manager_id, borrow_shares);
+    self.users.increase_user_loan_shares(manager_id.to_address(), borrow_shares);
     self.state.increase_total_borrow(amount);
 
     let utilization_rate = self.state.utilization_rate();
@@ -258,6 +255,7 @@ public(package) fun borrow<Asset>(
     );
 
     let balance = self.vault.split(amount);
+
     balance.into_coin(ctx)
 }
 
@@ -271,8 +269,11 @@ public(package) fun repay<Asset>(
     self.state.update(clock);
     let repay_amount = coin.value();
     let repay_amount_shares = math::div(repay_amount, self.state.borrow_index());
-    assert!(repay_amount_shares <= *self.loans.borrow(manager_id), ECannotRepayMoreThanLoan);
-    self.decrease_user_loan(manager_id, repay_amount_shares);
+    assert!(
+        repay_amount_shares <= self.users.user_loan_shares(manager_id.to_address()),
+        ECannotRepayMoreThanLoan,
+    );
+    self.users.decrease_user_loan_shares(manager_id.to_address(), repay_amount_shares);
     self.state.decrease_total_borrow(repay_amount);
 
     let balance = coin.into_balance();
@@ -286,7 +287,7 @@ public(package) fun default_loan<Asset>(
     clock: &Clock,
 ) {
     self.state.update(clock);
-    let user_loan_shares = *self.loans.borrow(manager_id);
+    let user_loan_shares = self.users.user_loan_shares(manager_id.to_address());
     let user_loan_amount = math::mul(user_loan_shares, self.state.borrow_index());
 
     // No loan to default
@@ -294,7 +295,7 @@ public(package) fun default_loan<Asset>(
         return
     };
 
-    self.decrease_user_loan(manager_id, user_loan_shares);
+    self.users.decrease_user_loan_shares(manager_id.to_address(), user_loan_shares);
     self.state.decrease_total_borrow(user_loan_amount);
     self.state.decrease_total_supply_with_index(user_loan_amount);
 
@@ -359,20 +360,6 @@ public(package) fun withdraw_protocol_profit<Asset>(
     balance.into_coin(ctx)
 }
 
-/// Returns the loans table.
-public(package) fun loans<Asset>(self: &MarginPool<Asset>): &Table<ID, u64> {
-    &self.loans
-}
-
-public(package) fun user_loan<Asset>(self: &MarginPool<Asset>, manager_id: ID): u64 {
-    *self.loans.borrow(manager_id)
-}
-
-/// Returns the supplies table.
-public(package) fun supplies<Asset>(self: &MarginPool<Asset>): &Table<address, u64> {
-    &self.supplies
-}
-
 /// Returns the supply cap.
 public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.supply_cap()
@@ -383,57 +370,17 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
     &self.state
 }
 
+public(package) fun user_loan_amount<Asset>(
+    self: &mut MarginPool<Asset>,
+    manager_id: ID,
+    clock: &Clock,
+): u64 {
+    self.update_state(clock);
+    let loan_shares = self.users.user_loan_shares(manager_id.to_address());
+    math::mul(loan_shares, self.state.borrow_index())
+}
+
 // === Internal Functions ===
-fun increase_user_supply_shares<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-    amount: u64,
-) {
-    let supply = self.supplies.borrow_mut(supplier);
-    *supply = *supply + amount;
-}
-
-fun decrease_user_supply_shares<Asset>(
-    self: &mut MarginPool<Asset>,
-    supplier: address,
-    amount: u64,
-) {
-    let supply = self.supplies.borrow_mut(supplier);
-    *supply = *supply - amount;
-}
-
-fun increase_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, shares: u64) {
-    self.add_user_loan_entry(manager_id);
-    let loan = self.loans.borrow_mut(manager_id);
-    *loan = *loan + shares;
-}
-
-fun decrease_user_loan<Asset>(self: &mut MarginPool<Asset>, manager_id: ID, shares: u64) {
-    let loan = self.loans.borrow_mut(manager_id);
-    *loan = *loan - shares;
-}
-
-fun add_user_loan_entry<Asset>(self: &mut MarginPool<Asset>, manager_id: ID) {
-    if (self.loans.contains(manager_id)) {
-        return
-    };
-    self.loans.add(manager_id, 0);
-}
-
-/// Updates user supply with interest and rewards, returns the user's supply amount before update
-fun update_user<Asset>(self: &mut MarginPool<Asset>, user: address): u64 {
-    self.add_user_supply_entry(user);
-
-    *self.supplies.borrow(user)
-}
-
-fun add_user_supply_entry<Asset>(self: &mut MarginPool<Asset>, user: address) {
-    if (self.supplies.contains(user)) {
-        return
-    };
-    self.supplies.add(user, 0);
-}
-
 fun add_reward_balance_to_bag<RewardToken>(
     reward_balances: &mut Bag,
     reward_coin: Coin<RewardToken>,
