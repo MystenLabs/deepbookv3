@@ -33,7 +33,7 @@ public(package) fun create_reward_manager(clock: &Clock): RewardManager {
     }
 }
 
-/// Given teh current total outstanding shares and time elapsed, calculate how much
+/// Given the current total outstanding shares and time elapsed, calculate how much
 /// of each reward token has accumulated. Add this amount to the cumulative reward per share.
 public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock) {
     let keys = self.reward_pools.keys();
@@ -52,9 +52,11 @@ public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock)
             reward_pool.emission.rewards_per_second,
             elapsed_time_seconds,
         );
-        let reward_per_share = math::div(rewards_to_distribute, shares);
-        reward_pool.cumulative_reward_per_share =
-            reward_pool.cumulative_reward_per_share + reward_per_share;
+        if (shares > 0) {
+            let reward_per_share = math::div(rewards_to_distribute, shares);
+            reward_pool.cumulative_reward_per_share =
+                reward_pool.cumulative_reward_per_share + reward_per_share;
+        };
 
         i = i + 1;
     };
@@ -100,6 +102,10 @@ public(package) fun remaining_emission_for_type(
     reward_token_type: TypeName,
     clock: &Clock,
 ): u64 {
+    if (!self.reward_pools.contains(&reward_token_type)) {
+        return 0
+    };
+
     let reward_pool = &self.reward_pools[&reward_token_type];
 
     reward_pool.remaining_emission(clock)
