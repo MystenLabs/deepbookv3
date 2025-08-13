@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Reward manager is responsible for managing the rewards per total shares.
 module margin_trading::reward_manager;
 
 use deepbook::math;
@@ -32,6 +33,8 @@ public(package) fun create_reward_manager(clock: &Clock): RewardManager {
     }
 }
 
+/// Given teh current total outstanding shares and time elapsed, calculate how much
+/// of each reward token has accumulated. Add this amount to the cumulative reward per share.
 public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock) {
     let keys = self.reward_pools.keys();
     let last_update_time = self.last_update_time;
@@ -59,6 +62,7 @@ public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock)
     self.last_update_time = clock.timestamp_ms();
 }
 
+/// Add a reward pool entry for a given reward token type.
 public(package) fun add_reward_pool_entry(self: &mut RewardManager, reward_token_type: TypeName) {
     if (self.reward_pools.contains(&reward_token_type)) {
         return
@@ -78,6 +82,7 @@ public(package) fun add_reward_pool_entry(self: &mut RewardManager, reward_token
     self.reward_pools.insert(reward_token_type, reward_pool);
 }
 
+/// Increase the emission of a given reward token type.
 public(package) fun increase_emission(
     self: &mut RewardManager,
     reward_token_type: TypeName,
@@ -89,6 +94,7 @@ public(package) fun increase_emission(
     reward_pool.emission.rewards_per_second = rewards_per_second;
 }
 
+/// Get the remaining emission for a given reward token type.
 public(package) fun remaining_emission_for_type(
     self: &RewardManager,
     reward_token_type: TypeName,

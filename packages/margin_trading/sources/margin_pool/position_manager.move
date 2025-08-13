@@ -1,6 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Position manager is responsible for managing the positions of the users.
+/// It is used to track the supply and loan shares of the users.
+/// It is also used to track the rewards of the users.
 module margin_trading::position_manager;
 
 use deepbook::math;
@@ -30,6 +33,7 @@ public(package) fun create_position_manager(ctx: &mut TxContext): PositionManage
     }
 }
 
+/// Increase the supply shares of the user. The rewards for this user are updated.
 public(package) fun increase_user_supply_shares(
     self: &mut PositionManager,
     user: address,
@@ -43,6 +47,7 @@ public(package) fun increase_user_supply_shares(
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
+/// Decrease the supply shares of the user. The rewards for this user are updated.
 public(package) fun decrease_user_supply_shares(
     self: &mut PositionManager,
     user: address,
@@ -55,6 +60,7 @@ public(package) fun decrease_user_supply_shares(
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
+/// Increase the loan shares of the user.
 public(package) fun increase_user_loan_shares(
     self: &mut PositionManager,
     user: ID,
@@ -65,6 +71,7 @@ public(package) fun increase_user_loan_shares(
     *loan = *loan + loan_shares;
 }
 
+/// Decrease the loan shares of the user.
 public(package) fun decrease_user_loan_shares(
     self: &mut PositionManager,
     user: ID,
@@ -74,14 +81,17 @@ public(package) fun decrease_user_loan_shares(
     *loan = *loan - loan_shares;
 }
 
+/// Get the supply shares of the user.
 public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
     self.supplies.borrow(user).supply_shares
 }
 
+/// Get the loan shares of the user.
 public(package) fun user_loan_shares(self: &PositionManager, user: ID): u64 {
     *self.loans.borrow(user)
 }
 
+/// Reset the rewards for the user for a given reward token type.
 public(package) fun reset_user_rewards_for_type(
     self: &mut PositionManager,
     user: address,
@@ -103,6 +113,7 @@ public(package) fun reset_user_rewards_for_type(
     returned_reward
 }
 
+/// Add a reward entry for the user for a given reward token type.
 fun user_reward_entry(
     self: &mut Supply,
     current_shares: u64,
@@ -122,6 +133,7 @@ fun user_reward_entry(
     }
 }
 
+/// Update the rewards for the user for a given reward token type.
 fun update_supply_reward_shares(
     supply: &mut Supply,
     reward_pools: &VecMap<TypeName, RewardPool>,
