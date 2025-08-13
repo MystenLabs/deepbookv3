@@ -34,12 +34,17 @@ public(package) fun create_reward_manager(clock: &Clock): RewardManager {
 
 public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock) {
     let keys = self.reward_pools.keys();
+    let last_update_time = self.last_update_time;
     let size = keys.length();
     let mut i = 0;
     while (i < size) {
         let key = keys[i];
         let reward_pool = &mut self.reward_pools[&key];
-        let elapsed_time_seconds = elapsed_distribution_time_seconds(reward_pool, clock);
+        let elapsed_time_seconds = elapsed_distribution_time_seconds(
+            last_update_time,
+            reward_pool.emission.end_time,
+            clock,
+        );
         let rewards_to_distribute = math::mul(
             reward_pool.emission.rewards_per_second,
             elapsed_time_seconds,
@@ -103,14 +108,18 @@ public(package) fun cumulative_reward_per_share(self: &RewardPool): u64 {
 }
 
 fun remaining_emission(self: &RewardPool, clock: &Clock): u64 {
-    let elapsed_time_seconds = elapsed_distribution_time_seconds(self, clock);
-    math::mul(self.emission.rewards_per_second, elapsed_time_seconds)
-}
-
-fun elapsed_distribution_time_seconds(reward_pool: &RewardPool, clock: &Clock): u64 {
-    if (reward_pool.emission.end_time <= clock.timestamp_ms()) {
+    if (self.emission.end_time <= clock.timestamp_ms()) {
         return 0
     };
 
-    (clock.timestamp_ms() - reward_pool.emission.end_time) / 1000
+    let remaining_time_seconds = (self.emission.end_time - clock.timestamp_ms()) / 1000;
+    math::mul(self.emission.rewards_per_second, remaining_time_seconds)
+}
+
+fun elapsed_distribution_time_seconds(last_update_time: u64, end_time: u64, clock: &Clock): u64 {
+    if (end_time <= clock.timestamp_ms()) {
+        return 0
+    };
+
+    (clock.timestamp_ms() - last_update_time) / 1000
 }
