@@ -120,7 +120,7 @@ public fun update_max_borrow_percentage<Asset>(
         EInvalidRiskParam,
     );
 
-    margin_pool.update_max_borrow_percentage<Asset>(max_borrow_percentage);
+    margin_pool.update_max_utilization_rate<Asset>(max_borrow_percentage);
 }
 
 public fun update_interest_params<Asset>(
@@ -130,7 +130,7 @@ public fun update_interest_params<Asset>(
     _cap: &MarginAdminCap,
 ) {
     assert!(
-        margin_pool.state().max_borrow_percentage() >= interest_params.optimal_utilization(),
+        margin_pool.state().max_utilization_rate() >= interest_params.optimal_utilization(),
         EInvalidRiskParam,
     );
     margin_pool.update_interest_params<Asset>(interest_params, clock);
