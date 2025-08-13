@@ -192,7 +192,6 @@ public(package) fun update_interest_params<Asset>(
 /// Adds a reward token to be distributed linearly over a specified time period.
 /// If a reward pool for the same token type already exists, adds the new rewards
 /// to the existing pool and resets the timing to end at the specified time.
-/// End time is specified in seconds.
 public(package) fun add_reward_pool<Asset, RewardToken>(
     self: &mut MarginPool<Asset>,
     reward_coin: Coin<RewardToken>,
@@ -204,8 +203,6 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
     let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
     let total_emissions = remaining_emissions + reward_coin.value();
 
-    // Calculate rewards per second from total emissions and time duration
-    // Convert end_time from seconds to milliseconds for proper comparison
     let end_time_ms = end_time * 1000;
     assert!(end_time_ms > clock.timestamp_ms(), EInvalidRewardEndTime);
     let time_duration_seconds = (end_time_ms - clock.timestamp_ms()) / 1000;
