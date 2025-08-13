@@ -239,7 +239,7 @@ public(package) fun borrow<Asset>(
 
     self.update_state(clock);
     let borrow_shares = self.state.to_borrow_shares(amount);
-    self.users.increase_user_loan_shares(manager_id.to_address(), borrow_shares);
+    self.users.increase_user_loan_shares(manager_id, borrow_shares);
     self.state.increase_total_borrow(amount);
 
     assert!(
@@ -263,10 +263,10 @@ public(package) fun repay<Asset>(
     let repay_amount = coin.value();
     let repay_amount_shares = self.state.to_borrow_shares(repay_amount);
     assert!(
-        repay_amount_shares <= self.users.user_loan_shares(manager_id.to_address()),
+        repay_amount_shares <= self.users.user_loan_shares(manager_id),
         ECannotRepayMoreThanLoan,
     );
-    self.users.decrease_user_loan_shares(manager_id.to_address(), repay_amount_shares);
+    self.users.decrease_user_loan_shares(manager_id, repay_amount_shares);
     self.state.decrease_total_borrow(repay_amount);
 
     let balance = coin.into_balance();
@@ -280,7 +280,7 @@ public(package) fun default_loan<Asset>(
     clock: &Clock,
 ) {
     self.state.update(clock);
-    let user_loan_shares = self.users.user_loan_shares(manager_id.to_address());
+    let user_loan_shares = self.users.user_loan_shares(manager_id);
     let user_loan_amount = self.state.to_borrow_amount(user_loan_shares);
 
     // No loan to default
@@ -288,7 +288,7 @@ public(package) fun default_loan<Asset>(
         return
     };
 
-    self.users.decrease_user_loan_shares(manager_id.to_address(), user_loan_shares);
+    self.users.decrease_user_loan_shares(manager_id, user_loan_shares);
     self.state.decrease_total_borrow(user_loan_amount);
     self.state.decrease_total_supply_with_index(user_loan_amount);
 
@@ -369,7 +369,7 @@ public(package) fun user_loan_amount<Asset>(
     clock: &Clock,
 ): u64 {
     self.update_state(clock);
-    let loan_shares = self.users.user_loan_shares(manager_id.to_address());
+    let loan_shares = self.users.user_loan_shares(manager_id);
     self.state.to_borrow_amount(loan_shares)
 }
 

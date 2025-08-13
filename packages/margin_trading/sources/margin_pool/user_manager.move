@@ -10,7 +10,7 @@ use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 public struct UserManager has store {
     supplies: Table<address, Supply>,
-    loans: Table<address, u64>,
+    loans: Table<ID, u64>,
 }
 
 public struct Supply has store {
@@ -55,21 +55,13 @@ public(package) fun decrease_user_supply_shares(
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
-public(package) fun increase_user_loan_shares(
-    self: &mut UserManager,
-    user: address,
-    loan_shares: u64,
-) {
+public(package) fun increase_user_loan_shares(self: &mut UserManager, user: ID, loan_shares: u64) {
     self.add_loan_entry(user);
     let loan = self.loans.borrow_mut(user);
     *loan = *loan + loan_shares;
 }
 
-public(package) fun decrease_user_loan_shares(
-    self: &mut UserManager,
-    user: address,
-    loan_shares: u64,
-) {
+public(package) fun decrease_user_loan_shares(self: &mut UserManager, user: ID, loan_shares: u64) {
     let loan = self.loans.borrow_mut(user);
     *loan = *loan - loan_shares;
 }
@@ -78,7 +70,7 @@ public(package) fun user_supply_shares(self: &UserManager, user: address): u64 {
     self.supplies.borrow(user).supply_shares
 }
 
-public(package) fun user_loan_shares(self: &UserManager, user: address): u64 {
+public(package) fun user_loan_shares(self: &UserManager, user: ID): u64 {
     *self.loans.borrow(user)
 }
 
@@ -163,7 +155,7 @@ fun add_supply_entry(self: &mut UserManager, user: address) {
     }
 }
 
-fun add_loan_entry(self: &mut UserManager, user: address) {
+fun add_loan_entry(self: &mut UserManager, user: ID) {
     if (!self.loans.contains(user)) {
         self.loans.add(user, 0);
     }
