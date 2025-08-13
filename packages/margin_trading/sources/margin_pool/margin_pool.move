@@ -3,7 +3,6 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
     position_manager::{Self, PositionManager},
@@ -205,7 +204,7 @@ public(package) fun add_reward_pool<Asset, RewardToken>(
 
     assert!(end_time > clock.timestamp_ms(), EInvalidRewardEndTime);
     let time_duration_seconds = (end_time - clock.timestamp_ms()) / 1000;
-    let rewards_per_second = math::div(total_emissions, time_duration_seconds);
+    let rewards_per_second = total_emissions / time_duration_seconds;
 
     self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
     add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);

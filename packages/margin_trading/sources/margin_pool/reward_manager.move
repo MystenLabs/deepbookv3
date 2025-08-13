@@ -48,10 +48,9 @@ public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock)
             reward_pool.emission.end_time,
             clock,
         );
-        let rewards_to_distribute = math::mul(
-            reward_pool.emission.rewards_per_second,
-            elapsed_time_seconds,
-        );
+        let rewards_to_distribute =
+            reward_pool.emission.rewards_per_second *
+            elapsed_time_seconds;
         if (shares > 0) {
             let reward_per_share = math::div(rewards_to_distribute, shares);
             reward_pool.cumulative_reward_per_share =
