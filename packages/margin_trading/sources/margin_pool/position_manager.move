@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::user_manager;
+module margin_trading::position_manager;
 
 use deepbook::math;
 use margin_trading::reward_manager::RewardPool;
 use std::type_name::TypeName;
 use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
-public struct UserManager has store {
+public struct PositionManager has store {
     supplies: Table<address, Supply>,
     loans: Table<ID, u64>,
 }
@@ -23,15 +23,15 @@ public struct RewardTracker has store {
     negative: u64,
 }
 
-public(package) fun create_user_manager(ctx: &mut TxContext): UserManager {
-    UserManager {
+public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
+    PositionManager {
         supplies: table::new(ctx),
         loans: table::new(ctx),
     }
 }
 
 public(package) fun increase_user_supply_shares(
-    self: &mut UserManager,
+    self: &mut PositionManager,
     user: address,
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
@@ -44,7 +44,7 @@ public(package) fun increase_user_supply_shares(
 }
 
 public(package) fun decrease_user_supply_shares(
-    self: &mut UserManager,
+    self: &mut PositionManager,
     user: address,
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
@@ -55,27 +55,35 @@ public(package) fun decrease_user_supply_shares(
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
-public(package) fun increase_user_loan_shares(self: &mut UserManager, user: ID, loan_shares: u64) {
+public(package) fun increase_user_loan_shares(
+    self: &mut PositionManager,
+    user: ID,
+    loan_shares: u64,
+) {
     self.add_loan_entry(user);
     let loan = self.loans.borrow_mut(user);
     *loan = *loan + loan_shares;
 }
 
-public(package) fun decrease_user_loan_shares(self: &mut UserManager, user: ID, loan_shares: u64) {
+public(package) fun decrease_user_loan_shares(
+    self: &mut PositionManager,
+    user: ID,
+    loan_shares: u64,
+) {
     let loan = self.loans.borrow_mut(user);
     *loan = *loan - loan_shares;
 }
 
-public(package) fun user_supply_shares(self: &UserManager, user: address): u64 {
+public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
     self.supplies.borrow(user).supply_shares
 }
 
-public(package) fun user_loan_shares(self: &UserManager, user: ID): u64 {
+public(package) fun user_loan_shares(self: &PositionManager, user: ID): u64 {
     *self.loans.borrow(user)
 }
 
 public(package) fun reset_user_rewards_for_type(
-    self: &mut UserManager,
+    self: &mut PositionManager,
     user: address,
     reward_token_type: TypeName,
     reward_pools: &VecMap<TypeName, RewardPool>,
@@ -141,7 +149,7 @@ fun update_supply_reward_shares(
     }
 }
 
-fun add_supply_entry(self: &mut UserManager, user: address) {
+fun add_supply_entry(self: &mut PositionManager, user: address) {
     if (!self.supplies.contains(user)) {
         self
             .supplies
@@ -155,7 +163,7 @@ fun add_supply_entry(self: &mut UserManager, user: address) {
     }
 }
 
-fun add_loan_entry(self: &mut UserManager, user: ID) {
+fun add_loan_entry(self: &mut PositionManager, user: ID) {
     if (!self.loans.contains(user)) {
         self.loans.add(user, 0);
     }

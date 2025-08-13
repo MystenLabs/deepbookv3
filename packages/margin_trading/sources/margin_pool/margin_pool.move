@@ -5,8 +5,8 @@ module margin_trading::margin_pool;
 
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
-    reward_manager::{Self, RewardManager},
-    user_manager::{Self, UserManager}
+    position_manager::{Self, PositionManager},
+    reward_manager::{Self, RewardManager}
 };
 use std::type_name::{Self, TypeName};
 use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
@@ -25,7 +25,7 @@ public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     state: State,
-    users: UserManager,
+    positions: PositionManager,
     rewards: RewardManager,
     reward_balances: Bag,
 }
@@ -65,7 +65,7 @@ public fun supply<Asset>(
     let supply_shares = self.state.to_supply_shares(supply_amount);
     let reward_pools = self.rewards.reward_pools();
     self.state.increase_total_supply(supply_amount);
-    self.users.increase_user_supply_shares(supplier, supply_shares, reward_pools);
+    self.positions.increase_user_supply_shares(supplier, supply_shares, reward_pools);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -84,7 +84,7 @@ public fun withdraw<Asset>(
     self.rewards.update(self.state.total_supply_shares(), clock);
 
     let supplier = ctx.sender();
-    let user_supply_shares = self.users.user_supply_shares(supplier);
+    let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
     let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
@@ -93,7 +93,7 @@ public fun withdraw<Asset>(
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.state.decrease_total_supply(withdrawal_amount);
-    self.users.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
+    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
@@ -151,7 +151,7 @@ public(package) fun create_margin_pool<Asset>(
             protocol_spread,
             clock,
         ),
-        users: user_manager::create_user_manager(ctx),
+        positions: position_manager::create_position_manager(ctx),
         rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
     };
@@ -215,11 +215,11 @@ public(package) fun claim_rewards<Asset, RewardToken>(
     let user = ctx.sender();
     self.rewards.update(self.state.total_supply_shares(), clock);
 
-    let user_shares = self.users.user_supply_shares(user);
+    let user_shares = self.positions.user_supply_shares(user);
     let reward_token_type = type_name::get<RewardToken>();
     let reward_pools = self.rewards.reward_pools();
     let user_rewards = self
-        .users
+        .positions
         .reset_user_rewards_for_type(user, reward_token_type, reward_pools, user_shares);
     let claimed_balance = withdraw_reward_balance_from_bag(&mut self.reward_balances, user_rewards);
 
@@ -239,7 +239,7 @@ public(package) fun borrow<Asset>(
 
     self.update_state(clock);
     let borrow_shares = self.state.to_borrow_shares(amount);
-    self.users.increase_user_loan_shares(manager_id, borrow_shares);
+    self.positions.increase_user_loan_shares(manager_id, borrow_shares);
     self.state.increase_total_borrow(amount);
 
     assert!(
@@ -263,10 +263,10 @@ public(package) fun repay<Asset>(
     let repay_amount = coin.value();
     let repay_amount_shares = self.state.to_borrow_shares(repay_amount);
     assert!(
-        repay_amount_shares <= self.users.user_loan_shares(manager_id),
+        repay_amount_shares <= self.positions.user_loan_shares(manager_id),
         ECannotRepayMoreThanLoan,
     );
-    self.users.decrease_user_loan_shares(manager_id, repay_amount_shares);
+    self.positions.decrease_user_loan_shares(manager_id, repay_amount_shares);
     self.state.decrease_total_borrow(repay_amount);
 
     let balance = coin.into_balance();
@@ -280,7 +280,7 @@ public(package) fun default_loan<Asset>(
     clock: &Clock,
 ) {
     self.state.update(clock);
-    let user_loan_shares = self.users.user_loan_shares(manager_id);
+    let user_loan_shares = self.positions.user_loan_shares(manager_id);
     let user_loan_amount = self.state.to_borrow_amount(user_loan_shares);
 
     // No loan to default
@@ -288,7 +288,7 @@ public(package) fun default_loan<Asset>(
         return
     };
 
-    self.users.decrease_user_loan_shares(manager_id, user_loan_shares);
+    self.positions.decrease_user_loan_shares(manager_id, user_loan_shares);
     self.state.decrease_total_borrow(user_loan_amount);
     self.state.decrease_total_supply_with_index(user_loan_amount);
 
@@ -369,7 +369,7 @@ public(package) fun user_loan_amount<Asset>(
     clock: &Clock,
 ): u64 {
     self.update_state(clock);
-    let loan_shares = self.users.user_loan_shares(manager_id);
+    let loan_shares = self.positions.user_loan_shares(manager_id);
     self.state.to_borrow_amount(loan_shares)
 }
 
