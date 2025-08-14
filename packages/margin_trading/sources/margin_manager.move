@@ -373,7 +373,7 @@ public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
 }
 
 /// Liquidates a margin manager. Can source liquidity from anywhere.
-public fun liquidate_custom<BaseAsset, QuoteAsset>(
+public fun liquidate<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
