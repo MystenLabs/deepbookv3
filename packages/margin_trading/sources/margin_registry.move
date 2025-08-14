@@ -8,7 +8,8 @@ use deepbook::{constants, math, pool::Pool};
 use margin_trading::{
     margin_constants,
     margin_pool::{Self, MarginPool},
-    margin_state::{Self, InterestParams}
+    margin_state::{Self, InterestParams},
+    referral_manager::ReferralCap
 };
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, coin::Coin, dynamic_field as df, table::{Self, Table}};
@@ -136,6 +137,14 @@ public fun update_interest_params<Asset>(
     margin_pool.update_interest_params<Asset>(interest_params, clock);
 }
 
+public fun mint_referral_cap<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): ReferralCap {
+    margin_pool.mint_referral_cap<Asset>(ctx)
+}
+
 /// Creates a new InterestParams object with the given parameters.
 public fun new_interest_params(
     base_rate: u64,
@@ -232,7 +241,8 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         EInvalidRiskParam,
     );
     assert!(
-        target_liquidation_risk_ratio > constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
+        target_liquidation_risk_ratio >
+        constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
         EInvalidRiskParam,
     );
     assert!(max_slippage <= constants::float_scaling(), EInvalidRiskParam);
@@ -265,22 +275,30 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
 
     let prev_config = self.pool_registry.remove(pool_id);
     assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config.risk_ratios.liquidation_risk_ratio,
+        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config
+            .risk_ratios
+            .liquidation_risk_ratio,
         EInvalidRiskParam,
     );
     assert!(prev_config.enabled, EPoolNotEnabled);
 
     // Validate new risk parameters
     assert!(
-        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config.risk_ratios.min_withdraw_risk_ratio,
+        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config
+            .risk_ratios
+            .min_withdraw_risk_ratio,
         EInvalidRiskParam,
     );
     assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config.risk_ratios.min_borrow_risk_ratio,
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .min_borrow_risk_ratio,
         EInvalidRiskParam,
     );
     assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config.risk_ratios.target_liquidation_risk_ratio,
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .target_liquidation_risk_ratio,
         EInvalidRiskParam,
     );
     assert!(
@@ -447,7 +465,9 @@ fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
     RiskRatios {
         min_withdraw_risk_ratio: constants::float_scaling() + 4 * leverage_factor, // 1 + 1 = 2x
         min_borrow_risk_ratio: constants::float_scaling() + leverage_factor, // 1 + 0.25 = 1.25x
-        liquidation_risk_ratio: constants::float_scaling() + leverage_factor / 2, // 1 + 0.125 = 1.125x
-        target_liquidation_risk_ratio: constants::float_scaling() + leverage_factor, // 1 + 0.25 = 1.25x
+        liquidation_risk_ratio: constants::float_scaling() +
+        leverage_factor / 2, // 1 + 0.125 = 1.125x
+        target_liquidation_risk_ratio: constants::float_scaling() +
+        leverage_factor, // 1 + 0.25 = 1.25x
     }
 }

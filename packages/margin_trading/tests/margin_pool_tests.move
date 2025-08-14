@@ -61,7 +61,7 @@ fun test_supply_and_withdraw_basic() {
     // User supplies tokens
     scenario.next_tx(USER1);
     let supply_coin = mint_coin<USDC>(100000, scenario.ctx());
-    pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin, option::none(), &clock, scenario.ctx());
 
     // User withdraws tokens
     let withdrawn = pool.withdraw<USDC>(some(50000), &clock, scenario.ctx());
@@ -83,7 +83,7 @@ fun test_supply_cap_enforcement() {
     let supply_coin = mint_coin<USDC>(SUPPLY_CAP + 1, scenario.ctx());
 
     // This should fail due to supply cap
-    pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin, option::none(), &clock, scenario.ctx());
 
     destroy(pool);
     destroy(clock);
@@ -99,12 +99,12 @@ fun test_multiple_users_supply_withdraw() {
     // User1 supplies
     scenario.next_tx(USER1);
     let supply_coin1 = mint_coin<USDC>(50000, scenario.ctx());
-    pool.supply<USDC>(supply_coin1, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin1, option::none(), &clock, scenario.ctx());
 
     // User2 supplies
     scenario.next_tx(USER2);
     let supply_coin2 = mint_coin<USDC>(30000, scenario.ctx());
-    pool.supply<USDC>(supply_coin2, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin2, option::none(), &clock, scenario.ctx());
 
     // User1 withdraws
     scenario.next_tx(USER1);
@@ -132,7 +132,7 @@ fun test_withdraw_all() {
     scenario.next_tx(USER1);
     let supply_amount = 100000;
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
-    pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin, option::none(), &clock, scenario.ctx());
 
     // Withdraw all (using option::none())
     let withdrawn = pool.withdraw<USDC>(option::none(), &clock, scenario.ctx());
@@ -152,7 +152,7 @@ fun test_withdraw_more_than_supplied() {
 
     scenario.next_tx(USER1);
     let supply_coin = mint_coin<USDC>(50000, scenario.ctx());
-    pool.supply<USDC>(supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(supply_coin, option::none(), &clock, scenario.ctx());
 
     // Try to withdraw more than supplied
     let withdrawn = pool.withdraw<USDC>(option::some(60000), &clock, scenario.ctx());

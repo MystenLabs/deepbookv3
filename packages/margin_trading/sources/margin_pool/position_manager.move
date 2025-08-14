@@ -18,6 +18,7 @@ public struct PositionManager has store {
 
 public struct Supply has store {
     supply_shares: u64,
+    referral: Option<ID>,
     rewards: VecMap<TypeName, RewardTracker>,
 }
 
@@ -39,12 +40,14 @@ public(package) fun increase_user_supply_shares(
     user: address,
     supply_shares: u64,
     reward_pools: &VecMap<TypeName, RewardPool>,
-) {
+): u64 {
     self.add_supply_entry(user);
     let supply = self.supplies.borrow_mut(user);
     let supply_shares_before = supply.supply_shares;
     supply.supply_shares = supply.supply_shares + supply_shares;
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
+
+    supply.supply_shares
 }
 
 /// Decrease the supply shares of the user. The rewards for this user are updated.
@@ -84,6 +87,20 @@ public(package) fun decrease_user_loan_shares(
 /// Get the supply shares of the user.
 public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
     self.supplies.borrow(user).supply_shares
+}
+
+/// Get the user's referred supply shares and reset the referral.
+public(package) fun reset_referral_supply_shares(
+    self: &mut PositionManager,
+    user: address,
+): (u64, Option<ID>) {
+    if (!self.supplies.contains(user)) {
+        return (0, option::none())
+    };
+    let supply = self.supplies.borrow_mut(user);
+    let referral = supply.referral;
+    supply.referral = option::none();
+    (supply.supply_shares, referral)
 }
 
 /// Get the loan shares of the user.
@@ -161,7 +178,7 @@ fun update_supply_reward_shares(
     }
 }
 
-fun add_supply_entry(self: &mut PositionManager, user: address) {
+public(package) fun add_supply_entry(self: &mut PositionManager, user: address) {
     if (!self.supplies.contains(user)) {
         self
             .supplies
@@ -170,6 +187,7 @@ fun add_supply_entry(self: &mut PositionManager, user: address) {
                 Supply {
                     supply_shares: 0,
                     rewards: vec_map::empty(),
+                    referral: option::none(),
                 },
             );
     }
