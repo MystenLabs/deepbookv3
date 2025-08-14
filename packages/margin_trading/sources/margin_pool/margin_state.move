@@ -195,6 +195,14 @@ public(package) fun interest_rate(self: &State): u64 {
     }
 }
 
+public(package) fun reduce_protocol_profit(self: &mut State, amount: u64) {
+    self.protocol_profit = self.protocol_profit - amount;
+}
+
+public(package) fun protocol_spread(self: &State): u64 {
+    self.protocol_spread
+}
+
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
     math::mul(amount, self.supply_index)
 }

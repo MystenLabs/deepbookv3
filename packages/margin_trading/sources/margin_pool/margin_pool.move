@@ -7,6 +7,7 @@ use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
     position_manager::{Self, PositionManager},
+    referral_manager::{Self, ReferralManager, ReferralCap},
     reward_manager::{Self, RewardManager}
 };
 use std::type_name::{Self, TypeName};
@@ -29,6 +30,7 @@ public struct MarginPool<phantom Asset> has key, store {
     state: State,
     positions: PositionManager,
     rewards: RewardManager,
+    referral_manager: ReferralManager,
     reward_balances: Bag,
 }
 
@@ -56,18 +58,29 @@ public struct PoolLiquidationReward has copy, drop {
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
+    referral: Option<ID>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
     self.update_state(clock);
     self.rewards.update(self.state.total_supply_shares(), clock);
 
-    let supply_amount = coin.value();
     let supplier = ctx.sender();
+    let (referred_supply_shares, previous_referral) = self
+        .positions
+        .reset_referral_supply_shares(supplier);
+    self
+        .referral_manager
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
+
+    let supply_amount = coin.value();
     let supply_shares = self.state.to_supply_shares(supply_amount);
     let reward_pools = self.rewards.reward_pools();
     self.state.increase_total_supply(supply_amount);
-    self.positions.increase_user_supply_shares(supplier, supply_shares, reward_pools);
+    let new_supply_shares = self
+        .positions
+        .increase_user_supply_shares(supplier, supply_shares, reward_pools);
+    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -86,6 +99,13 @@ public fun withdraw<Asset>(
     self.rewards.update(self.state.total_supply_shares(), clock);
 
     let supplier = ctx.sender();
+    let (referred_supply_shares, previous_referral) = self
+        .positions
+        .reset_referral_supply_shares(supplier);
+    self
+        .referral_manager
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
+
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
@@ -98,6 +118,30 @@ public fun withdraw<Asset>(
     self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
+}
+
+public(package) fun mint_referral_cap<Asset>(
+    self: &mut MarginPool<Asset>,
+    ctx: &mut TxContext,
+): ReferralCap {
+    let current_index = self.state.supply_index();
+    self.referral_manager.mint_referral_cap(current_index, ctx)
+}
+
+public(package) fun claim_referral_rewards<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral_cap: &ReferralCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    self.update_state(clock);
+    let share_value_appreciated = self
+        .referral_manager
+        .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
+    let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
+    self.state.reduce_protocol_profit(reward_amount);
+
+    self.vault.split(reward_amount).into_coin(ctx)
 }
 
 /// Repays a loan for a margin manager being liquidated.
@@ -156,6 +200,7 @@ public(package) fun create_margin_pool<Asset>(
         positions: position_manager::create_position_manager(ctx),
         rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
+        referral_manager: referral_manager::empty(),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -377,6 +422,10 @@ public(package) fun user_loan_amount<Asset>(
     self.update_state(clock);
     let loan_shares = self.positions.user_loan_shares(manager_id);
     self.state.to_borrow_amount(loan_shares)
+}
+
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
 }
 
 // === Internal Functions ===
