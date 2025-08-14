@@ -261,6 +261,26 @@ public fun add_reward_pool<Asset, RewardToken>(
     margin_pool.add_reward_pool<Asset, RewardToken>(reward_coin, end_time, clock);
 }
 
+/// Allow a margin manager tied to a deepbook pool to borrow from the margin pool.
+public fun enable_deepbook_pool_for_loan<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id == margin_pool.id(), EInvalidMarginPoolCap);
+    margin_pool.enable_deepbook_pool_for_loan<Asset>(deepbook_pool_id);
+}
+
+/// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
+public fun disable_deepbook_pool_for_loan<Asset>(
+    margin_pool: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id == margin_pool.id(), EInvalidMarginPoolCap);
+    margin_pool.disable_deepbook_pool_for_loan<Asset>(deepbook_pool_id);
+}
+
 /// Create a PoolConfig with margin pool IDs and risk parameters
 /// Enable is false by default, must be enabled after registration
 public fun new_pool_config<BaseAsset, QuoteAsset>(

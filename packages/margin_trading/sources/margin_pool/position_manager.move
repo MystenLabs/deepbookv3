@@ -174,6 +174,9 @@ fun update_supply_reward_shares(
             *reward_subtraction =
                 *reward_subtraction + math::mul(cumulative_reward_per_share, shares_before - shares_after);
         };
+        let offset = (*reward_addition).min(*reward_subtraction);
+        *reward_addition = *reward_addition - offset;
+        *reward_subtraction = *reward_subtraction - offset;
         i = i + 1;
     }
 }
