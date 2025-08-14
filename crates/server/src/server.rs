@@ -933,8 +933,14 @@ async fn trades(
                     ("taker_is_bid".to_string(), Value::from(taker_is_bid)),
                     ("taker_fee".to_string(), Value::from(scaled_taker_fee)),
                     ("maker_fee".to_string(), Value::from(scaled_maker_fee)),
-                    ("taker_fee_is_deep".to_string(), Value::from(taker_fee_is_deep)),
-                    ("maker_fee_is_deep".to_string(), Value::from(maker_fee_is_deep)),
+                    (
+                        "taker_fee_is_deep".to_string(),
+                        Value::from(taker_fee_is_deep),
+                    ),
+                    (
+                        "maker_fee_is_deep".to_string(),
+                        Value::from(maker_fee_is_deep),
+                    ),
                 ])
             },
         )

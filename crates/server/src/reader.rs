@@ -181,8 +181,24 @@ impl Reader {
         limit: i64,
         maker_balance_manager: Option<String>,
         taker_balance_manager: Option<String>,
-    ) -> Result<Vec<(String, String, i64, i64, i64, i64, bool, String, String, bool, bool, i64, i64)>, DeepBookError>
-    {
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            i64,
+            bool,
+            String,
+            String,
+            bool,
+            bool,
+            i64,
+            i64,
+        )>,
+        DeepBookError,
+    > {
         let mut connection = self.db.connect().await?;
         // Build the query dynamically
         let mut query = schema::order_fills::table
@@ -219,7 +235,21 @@ impl Reader {
                 schema::order_fills::taker_fee,
                 schema::order_fills::maker_fee,
             ))
-            .load::<(String, String, i64, i64, i64, i64, bool, String, String, bool, bool, i64, i64)>(&mut connection)
+            .load::<(
+                String,
+                String,
+                i64,
+                i64,
+                i64,
+                i64,
+                bool,
+                String,
+                String,
+                bool,
+                bool,
+                i64,
+                i64,
+            )>(&mut connection)
             .await
             .map_err(|_| {
                 DeepBookError::InternalError(format!(
