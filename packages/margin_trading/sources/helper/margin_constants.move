@@ -8,7 +8,6 @@ const CURRENT_VERSION: u64 = 1; // TODO: add version checks
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
 const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
-const DEFAULT_MAX_SLIPPAGE: u64 = 10_000_000; // 1%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
@@ -27,10 +26,6 @@ public fun default_user_liquidation_reward(): u64 {
 
 public fun default_pool_liquidation_reward(): u64 {
     DEFAULT_POOL_LIQUIDATION_REWARD
-}
-
-public fun default_max_slippage(): u64 {
-    DEFAULT_MAX_SLIPPAGE
 }
 
 public fun min_leverage(): u64 {
