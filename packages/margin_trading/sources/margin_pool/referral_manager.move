@@ -13,7 +13,7 @@ public struct ReferralManager has store {
 public struct Referral has store {
     referral_tvl: u64,
     last_claim_index: u64,
-    last_claim_tvl: u64,
+    min_claim_tvl: u64,
 }
 
 public struct ReferralCap has key, store {
@@ -37,7 +37,7 @@ public fun mint_referral_cap(
             Referral {
                 referral_tvl: 0,
                 last_claim_index: current_index,
-                last_claim_tvl: 0,
+                min_claim_tvl: 0,
             },
         );
 
@@ -73,6 +73,7 @@ public(package) fun decrease_referral_supply_shares(
         let referral_id = referral_id.destroy_some();
         let referral = self.referrals.get_mut(&referral_id);
         referral.referral_tvl = referral.referral_tvl - supply_shares;
+        referral.min_claim_tvl = referral.min_claim_tvl.min(referral.referral_tvl);
     };
 }
 
@@ -83,9 +84,9 @@ public(package) fun claim_referral_rewards(
 ): u64 {
     let referral = self.referrals.get_mut(&referral_id);
     let index_diff = current_index - referral.last_claim_index;
-    let counted_tvl = referral.last_claim_tvl.min(referral.referral_tvl);
+    let counted_tvl = referral.min_claim_tvl;
     referral.last_claim_index = current_index;
-    referral.last_claim_tvl = referral.referral_tvl;
+    referral.min_claim_tvl = referral.referral_tvl;
 
     math::mul(counted_tvl, index_diff)
 }
