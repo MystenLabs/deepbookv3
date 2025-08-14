@@ -857,6 +857,7 @@ async fn trades(
     // Conversion factors for decimals
     let base_factor = 10u64.pow(base_decimals as u32);
     let quote_factor = 10u64.pow(quote_decimals as u32);
+    let deep_factor = 10u64.pow(6 as u32);
     let price_factor = 10u64.pow((9 - base_decimals + quote_decimals) as u32);
 
     // Map trades to JSON format
@@ -873,9 +874,35 @@ async fn trades(
                 taker_is_bid,
                 maker_balance_manager_id,
                 taker_balance_manager_id,
+                taker_fee_is_deep,
+                maker_fee_is_deep,
+                taker_fee,
+                maker_fee,
             )| {
                 let trade_id = calculate_trade_id(&maker_order_id, &taker_order_id).unwrap_or(0);
                 let trade_type = if taker_is_bid { "buy" } else { "sell" };
+
+                // Scale taker_fee based on taker_is_bid and taker_fee_is_deep
+                let scaled_taker_fee = if taker_fee_is_deep {
+                    taker_fee as f64 / deep_factor as f64
+                } else if taker_is_bid {
+                    // taker is buying, fee paid in quote asset
+                    taker_fee as f64 / quote_factor as f64
+                } else {
+                    // taker is selling, fee paid in base asset
+                    taker_fee as f64 / base_factor as f64
+                };
+
+                // Scale maker_fee based on taker_is_bid and maker_fee_is_deep
+                let scaled_maker_fee = if maker_fee_is_deep {
+                    maker_fee as f64 / deep_factor as f64
+                } else if taker_is_bid {
+                    // taker is buying, maker is selling, fee paid in base asset
+                    maker_fee as f64 / base_factor as f64
+                } else {
+                    // taker is selling, maker is buying, fee paid in quote asset
+                    maker_fee as f64 / quote_factor as f64
+                };
 
                 HashMap::from([
                     ("trade_id".to_string(), Value::from(trade_id.to_string())),
@@ -903,6 +930,11 @@ async fn trades(
                     ),
                     ("timestamp".to_string(), Value::from(timestamp as u64)),
                     ("type".to_string(), Value::from(trade_type)),
+                    ("taker_is_bid".to_string(), Value::from(taker_is_bid)),
+                    ("taker_fee".to_string(), Value::from(scaled_taker_fee)),
+                    ("maker_fee".to_string(), Value::from(scaled_maker_fee)),
+                    ("taker_fee_is_deep".to_string(), Value::from(taker_fee_is_deep)),
+                    ("maker_fee_is_deep".to_string(), Value::from(maker_fee_is_deep)),
                 ])
             },
         )
