@@ -321,7 +321,6 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
         risk_ratios.target_liquidation_risk_ratio,
         margin_constants::default_user_liquidation_reward(),
         margin_constants::default_pool_liquidation_reward(),
-        margin_constants::default_max_slippage(),
     )
 }
 
