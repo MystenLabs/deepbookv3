@@ -39,8 +39,7 @@ const EWithdrawRiskRatioExceeded: u64 = 4;
 const ECannotLiquidate: u64 = 5;
 const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
-const ELiquidationSlippageExceeded: u64 = 8;
-const EIncorrectDeepBookPool: u64 = 9;
+const EIncorrectDeepBookPool: u64 = 8;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -855,118 +854,6 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     );
 
     coin
-}
-
-/// Repay all for the balance manager.
-/// Returns (base_repaid, quote_repaid)
-fun repay_all_liquidation<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    max_base_repay: Option<u64>, // if None, repay max
-    max_quote_repay: Option<u64>, // if None, repay max
-    liquidation_multiplier: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): (u64, u64) {
-    let base_repaid = margin_manager.repay_base_liquidate(
-        base_margin_pool,
-        max_base_repay,
-        liquidation_multiplier,
-        clock,
-        ctx,
-    );
-    let quote_repaid = margin_manager.repay_quote_liquidate(
-        quote_margin_pool,
-        max_quote_repay,
-        liquidation_multiplier,
-        clock,
-        ctx,
-    );
-
-    (base_repaid, quote_repaid)
-}
-
-/// Repay the base asset loan using the margin manager.
-/// Returns the total amount repaid
-fun repay_base_liquidate<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &mut MarginPool<BaseAsset>,
-    repay_amount: Option<u64>, // if None, repay max
-    liquidation_multiplier: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): u64 {
-    margin_manager.repay_liquidation<BaseAsset, QuoteAsset, BaseAsset>(
-        margin_pool,
-        repay_amount,
-        liquidation_multiplier,
-        clock,
-        ctx,
-    )
-}
-
-/// Repay the quote asset loan using the margin manager.
-/// Returns the total amount repaid
-fun repay_quote_liquidate<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &mut MarginPool<QuoteAsset>,
-    repay_amount: Option<u64>, // if None, repay max
-    liquidation_multiplier: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): u64 {
-    margin_manager.repay_liquidation<BaseAsset, QuoteAsset, QuoteAsset>(
-        margin_pool,
-        repay_amount,
-        liquidation_multiplier,
-        clock,
-        ctx,
-    )
-}
-
-/// Repays the loan using the margin manager.
-/// Returns the total amount repaid
-/// This is used for liquidation, where the repay amount is not specified.
-fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &mut MarginPool<RepayAsset>,
-    repay_amount: Option<u64>,
-    liquidation_multiplier: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): u64 {
-    margin_pool.update_state(clock);
-    let manager_id = margin_manager.id();
-    let user_loan_shares = margin_pool.user_loan_amount(manager_id, clock);
-    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
-
-    let repay_amount = repay_amount.get_with_default(user_loan_amount);
-    let manager_asset = margin_manager.balance_manager().balance<RepayAsset>();
-
-    let available_balance_for_repayment = math::div(
-        manager_asset,
-        liquidation_multiplier,
-    );
-    let repay_amount = repay_amount.min(user_loan_amount).min(available_balance_for_repayment);
-
-    if (repay_amount == 0) {
-        return 0 // Nothing to repay
-    };
-
-    // Owner check is skipped if this is liquidation
-    let coin = margin_manager.liquidation_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
-        repay_amount,
-        ctx,
-    );
-
-    margin_pool.repay(
-        manager_id,
-        coin,
-        clock,
-    );
-
-    repay_amount
 }
 
 fun in_default(risk_ratio: u64): bool {
