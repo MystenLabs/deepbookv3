@@ -424,6 +424,10 @@ public(package) fun user_loan_amount<Asset>(
     self.state.to_borrow_amount(loan_shares)
 }
 
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
+}
+
 // === Internal Functions ===
 fun add_reward_balance_to_bag<RewardToken>(
     reward_balances: &mut Bag,
