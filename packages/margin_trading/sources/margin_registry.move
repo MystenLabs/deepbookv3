@@ -61,7 +61,6 @@ public struct PoolConfig has copy, drop, store {
     risk_ratios: RiskRatios,
     user_liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
     pool_liquidation_reward: u64, // fractional reward for the pool, in 9 decimals
-    max_slippage: u64, // maximum slippage allowed during liquidation, in 9 decimals
     enabled: bool, // whether the pool is enabled for margin trading
 }
 
@@ -272,7 +271,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     target_liquidation_risk_ratio: u64,
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
-    max_slippage: u64,
 ): PoolConfig {
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
@@ -289,7 +287,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward,
         EInvalidRiskParam,
     );
-    assert!(max_slippage <= constants::float_scaling(), EInvalidRiskParam);
 
     PoolConfig {
         base_margin_pool_id: self.get_margin_pool_id<BaseAsset>(),
@@ -302,7 +299,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         },
         user_liquidation_reward,
         pool_liquidation_reward,
-        max_slippage,
         enabled: false,
     }
 }
@@ -325,7 +321,6 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
         risk_ratios.target_liquidation_risk_ratio,
         margin_constants::default_user_liquidation_reward(),
         margin_constants::default_pool_liquidation_reward(),
-        margin_constants::default_max_slippage(),
     )
 }
 
@@ -528,11 +523,6 @@ public(package) fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool
 public(package) fun pool_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
     let config = self.get_pool_config(deepbook_pool_id);
     config.pool_liquidation_reward
-}
-
-public(package) fun max_slippage(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.max_slippage
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
