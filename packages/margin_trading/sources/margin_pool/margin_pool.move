@@ -11,7 +11,13 @@ use margin_trading::{
     reward_manager::{Self, RewardManager}
 };
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    vec_set::{Self, VecSet}
+};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -20,6 +26,8 @@ const ECannotWithdrawMoreThanSupply: u64 = 3;
 const EMaxPoolBorrowPercentageExceeded: u64 = 4;
 const EInvalidLoanQuantity: u64 = 5;
 const EInvalidRewardEndTime: u64 = 8;
+const EDeepbookPoolAlreadyAllowed: u64 = 9;
+const EDeepbookPoolNotAllowed: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -30,6 +38,7 @@ public struct MarginPool<phantom Asset> has key, store {
     rewards: RewardManager,
     referral_manager: ReferralManager,
     reward_balances: Bag,
+    allowed_deepbook_pools: VecSet<ID>,
 }
 
 public struct RepayReceipt has drop {
@@ -152,6 +161,7 @@ public(package) fun create_margin_pool<Asset>(
         rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
         referral_manager: referral_manager::empty(),
+        allowed_deepbook_pools: vec_set::empty(),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -183,6 +193,22 @@ public(package) fun update_interest_params<Asset>(
     clock: &Clock,
 ) {
     self.state.update_interest_params(interest_params, clock);
+}
+
+public(package) fun enable_deepbook_pool_for_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+) {
+    assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
+    self.allowed_deepbook_pools.insert(deepbook_pool_id);
+}
+
+public(package) fun disable_deepbook_pool_for_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+) {
+    assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
+    self.allowed_deepbook_pools.remove(&deepbook_pool_id);
 }
 
 /// Adds a reward token to be distributed linearly over a specified time period.

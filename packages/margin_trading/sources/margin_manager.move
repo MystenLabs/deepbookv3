@@ -36,6 +36,7 @@ const EInvalidMarginManagerOwner: u64 = 6;
 const ECannotHaveLoanInBothMarginPools: u64 = 7;
 const EIncorrectDeepBookPool: u64 = 8;
 const EIncorrectRepayAmount: u64 = 9;
+const EDeepbookPoolNotAllowedForLoan: u64 = 10;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -179,6 +180,10 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
 ): Request {
     margin_manager.validate_owner(ctx);
     assert!(margin_manager.quote_borrowed_shares == 0, ECannotHaveLoanInBothMarginPools);
+    assert!(
+        base_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
+        EDeepbookPoolNotAllowedForLoan,
+    );
     base_margin_pool.update_state(clock);
     let loan_shares = base_margin_pool.state().to_borrow_shares(loan_amount);
     margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares + loan_shares;
@@ -201,6 +206,10 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 ): Request {
     margin_manager.validate_owner(ctx);
     assert!(margin_manager.base_borrowed_shares == 0, ECannotHaveLoanInBothMarginPools);
+    assert!(
+        quote_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
+        EDeepbookPoolNotAllowedForLoan,
+    );
     quote_margin_pool.update_state(clock);
     let loan_shares = quote_margin_pool.state().to_borrow_shares(loan_amount);
     margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares + loan_shares;
