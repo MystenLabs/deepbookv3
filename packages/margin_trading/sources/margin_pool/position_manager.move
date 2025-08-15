@@ -13,7 +13,6 @@ use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 public struct PositionManager has store {
     supplies: Table<address, Supply>,
-    loans: Table<ID, u64>,
 }
 
 public struct Supply has store {
@@ -30,7 +29,6 @@ public struct RewardTracker has store {
 public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
     PositionManager {
         supplies: table::new(ctx),
-        loans: table::new(ctx),
     }
 }
 
@@ -63,27 +61,6 @@ public(package) fun decrease_user_supply_shares(
     supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 }
 
-/// Increase the loan shares of the user.
-public(package) fun increase_user_loan_shares(
-    self: &mut PositionManager,
-    user: ID,
-    loan_shares: u64,
-) {
-    self.add_loan_entry(user);
-    let loan = self.loans.borrow_mut(user);
-    *loan = *loan + loan_shares;
-}
-
-/// Decrease the loan shares of the user.
-public(package) fun decrease_user_loan_shares(
-    self: &mut PositionManager,
-    user: ID,
-    loan_shares: u64,
-) {
-    let loan = self.loans.borrow_mut(user);
-    *loan = *loan - loan_shares;
-}
-
 /// Get the supply shares of the user.
 public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
     self.supplies.borrow(user).supply_shares
@@ -101,11 +78,6 @@ public(package) fun reset_referral_supply_shares(
     let referral = supply.referral;
     supply.referral = option::none();
     (supply.supply_shares, referral)
-}
-
-/// Get the loan shares of the user.
-public(package) fun user_loan_shares(self: &PositionManager, user: ID): u64 {
-    *self.loans.borrow(user)
 }
 
 /// Reset the rewards for the user for a given reward token type.
@@ -193,11 +165,5 @@ public(package) fun add_supply_entry(self: &mut PositionManager, user: address) 
                     referral: option::none(),
                 },
             );
-    }
-}
-
-fun add_loan_entry(self: &mut PositionManager, user: ID) {
-    if (!self.loans.contains(user)) {
-        self.loans.add(user, 0);
     }
 }
