@@ -11,16 +11,14 @@ use margin_trading::{
     reward_manager::{Self, RewardManager}
 };
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
 const ECannotWithdrawMoreThanSupply: u64 = 3;
-const ECannotRepayMoreThanLoan: u64 = 4;
-const EMaxPoolBorrowPercentageExceeded: u64 = 5;
-const EInvalidLoanQuantity: u64 = 6;
-const EInvalidRepaymentQuantity: u64 = 7;
+const EMaxPoolBorrowPercentageExceeded: u64 = 4;
+const EInvalidLoanQuantity: u64 = 5;
 const EInvalidRewardEndTime: u64 = 8;
 
 // === Structs ===
@@ -34,23 +32,9 @@ public struct MarginPool<phantom Asset> has key, store {
     reward_balances: Bag,
 }
 
-public struct RepaymentProof<phantom Asset> {
-    manager_id: ID,
-    repay_amount: u64,
-    pool_reward_amount: u64,
-    in_default: bool,
-}
-
-public struct LoanDefault has copy, drop {
-    pool_id: ID,
-    manager_id: ID, // id of the margin manager
-    loan_amount: u64, // amount of the loan that was defaulted
-}
-
-public struct PoolLiquidationReward has copy, drop {
-    pool_id: ID,
-    manager_id: ID, // id of the margin manager
-    liquidation_reward: u64, // amount of the liquidation reward
+public struct RepayReceipt has drop {
+    repaid_amount: u64,
+    reward_amount: u64,
 }
 
 // === Public Functions * LENDING * ===
@@ -142,39 +126,6 @@ public(package) fun claim_referral_rewards<Asset>(
     self.state.reduce_protocol_profit(reward_amount);
 
     self.vault.split(reward_amount).into_coin(ctx)
-}
-
-/// Repays a loan for a margin manager being liquidated.
-public fun verify_and_repay_liquidation<Asset>(
-    margin_pool: &mut MarginPool<Asset>,
-    mut coin: Coin<Asset>,
-    repayment_proof: RepaymentProof<Asset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(
-        coin.value() == repayment_proof.repay_amount + repayment_proof.pool_reward_amount,
-        EInvalidRepaymentQuantity,
-    );
-
-    let repay_coin = coin.split(repayment_proof.repay_amount, ctx);
-    margin_pool.repay<Asset>(
-        repayment_proof.manager_id,
-        repay_coin,
-        clock,
-    );
-    margin_pool.add_liquidation_reward(coin, repayment_proof.manager_id, clock);
-
-    if (repayment_proof.in_default) {
-        margin_pool.default_loan(repayment_proof.manager_id, clock);
-    };
-
-    let RepaymentProof {
-        manager_id: _,
-        repay_amount: _,
-        pool_reward_amount: _,
-        in_default: _,
-    } = repayment_proof;
 }
 
 // === Public-Package Functions ===
@@ -280,7 +231,6 @@ public(package) fun claim_rewards<Asset, RewardToken>(
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
-    manager_id: ID,
     amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -289,8 +239,6 @@ public(package) fun borrow<Asset>(
     assert!(amount > 0, EInvalidLoanQuantity);
 
     self.update_state(clock);
-    let borrow_shares = self.state.to_borrow_shares(amount);
-    self.positions.increase_user_loan_shares(manager_id, borrow_shares);
     self.state.increase_total_borrow(amount);
 
     assert!(
@@ -304,84 +252,38 @@ public(package) fun borrow<Asset>(
 }
 
 /// Allows repaying the loan.
-public(package) fun repay<Asset>(
-    self: &mut MarginPool<Asset>,
-    manager_id: ID,
-    coin: Coin<Asset>,
-    clock: &Clock,
-) {
+public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>, clock: &Clock) {
     self.state.update(clock);
-    let repay_amount = coin.value();
-    let repay_amount_shares = self.state.to_borrow_shares(repay_amount);
-    assert!(
-        repay_amount_shares <= self.positions.user_loan_shares(manager_id),
-        ECannotRepayMoreThanLoan,
-    );
-    self.positions.decrease_user_loan_shares(manager_id, repay_amount_shares);
-    self.state.decrease_total_borrow(repay_amount);
-
-    let balance = coin.into_balance();
-    self.vault.join(balance);
-}
-
-/// Marks a loan as defaulted.
-public(package) fun default_loan<Asset>(
-    self: &mut MarginPool<Asset>,
-    manager_id: ID,
-    clock: &Clock,
-) {
-    self.state.update(clock);
-    let user_loan_shares = self.positions.user_loan_shares(manager_id);
-    let user_loan_amount = self.state.to_borrow_amount(user_loan_shares);
-
-    // No loan to default
-    if (user_loan_shares == 0) {
-        return
-    };
-
-    self.positions.decrease_user_loan_shares(manager_id, user_loan_shares);
-    self.state.decrease_total_borrow(user_loan_amount);
-    self.state.decrease_total_supply_with_index(user_loan_amount);
-
-    event::emit(LoanDefault {
-        pool_id: self.id.to_inner(),
-        manager_id,
-        loan_amount: user_loan_amount,
-    });
-}
-
-/// Adds rewards in liquidation back to the protocol
-public(package) fun add_liquidation_reward<Asset>(
-    self: &mut MarginPool<Asset>,
-    coin: Coin<Asset>,
-    manager_id: ID,
-    clock: &Clock,
-) {
-    self.update_state(clock);
-    let liquidation_reward = coin.value();
-    self.state.increase_total_supply_with_index(liquidation_reward);
+    self.state.decrease_total_borrow(coin.value());
     self.vault.join(coin.into_balance());
-
-    event::emit(PoolLiquidationReward {
-        pool_id: self.id.to_inner(),
-        manager_id,
-        liquidation_reward,
-    });
 }
 
-/// Creates a RepaymentProof object for the margin pool.
-public(package) fun create_repayment_proof<Asset>(
-    manager_id: ID,
-    repay_amount: u64,
-    pool_reward_amount: u64,
-    in_default: bool,
-): RepaymentProof<Asset> {
-    RepaymentProof<Asset> {
-        manager_id,
-        repay_amount,
-        pool_reward_amount,
-        in_default,
+public(package) fun repay_with_reward<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+    reward: Coin<Asset>,
+    clock: &Clock,
+): RepayReceipt {
+    self.update_state(clock);
+    let coin_value = coin.value();
+    let reward_value = reward.value();
+    self.state.decrease_total_borrow(coin_value);
+    self.state.increase_total_supply_with_index(reward_value);
+    self.vault.join(coin.into_balance());
+    self.vault.join(reward.into_balance());
+
+    RepayReceipt {
+        repaid_amount: coin_value,
+        reward_amount: reward_value,
     }
+}
+
+public(package) fun paid_amount(repay_receipt: &RepayReceipt): u64 {
+    repay_receipt.repaid_amount
+}
+
+public(package) fun reward_amount(repay_receipt: &RepayReceipt): u64 {
+    repay_receipt.reward_amount
 }
 
 /// Updates the protocol spread
@@ -412,16 +314,6 @@ public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
 /// Returns the state.
 public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
     &self.state
-}
-
-public(package) fun user_loan_amount<Asset>(
-    self: &mut MarginPool<Asset>,
-    manager_id: ID,
-    clock: &Clock,
-): u64 {
-    self.update_state(clock);
-    let loan_shares = self.positions.user_loan_shares(manager_id);
-    self.state.to_borrow_amount(loan_shares)
 }
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
