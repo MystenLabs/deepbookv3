@@ -56,6 +56,8 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
     trade_cap: TradeCap,
+    has_base_loan: bool,
+    has_quote_loan: bool,
 }
 
 /// Request_type: 0 for withdraw, 1 for borrow
@@ -117,6 +119,8 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
         deposit_cap,
         withdraw_cap,
         trade_cap,
+        has_base_loan: false,
+        has_quote_loan: false,
     };
 
     transfer::share_object(margin_manager)
@@ -175,19 +179,17 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 public fun borrow_base<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    assert!(
-        quote_margin_pool.user_loan_amount(margin_manager.id(), clock) == 0,
-        ECannotHaveLoanInBothMarginPools,
-    );
+    assert!(!margin_manager.has_quote_loan, ECannotHaveLoanInBothMarginPools);
     assert!(
         base_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
+    margin_manager.has_base_loan = true;
+
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
         base_margin_pool,
         loan_amount,
@@ -199,20 +201,18 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
 /// Borrow the quote asset using the margin manager.
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    assert!(
-        base_margin_pool.user_loan_amount(margin_manager.id(), clock) == 0,
-        ECannotHaveLoanInBothMarginPools,
-    );
+    assert!(!margin_manager.has_base_loan, ECannotHaveLoanInBothMarginPools);
     assert!(
         quote_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
+    margin_manager.has_quote_loan = true;
+
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
         loan_amount,
@@ -222,20 +222,25 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 }
 
 /// Repay the base asset loan using the margin manager.
-/// Returns the total amount repaid
+/// Returns the (repay_amount, remaining amount)
 public fun repay_base<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BaseAsset>,
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
-): u64 {
-    margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
+): (u64, u64) {
+    let (repay_amount, remaining_amount) = margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
         repay_amount,
         clock,
         ctx,
-    )
+    );
+
+    if (remaining_amount == 0) {
+        margin_manager.has_base_loan = false;
+    };
+    (repay_amount, remaining_amount)
 }
 
 /// Repay the quote asset loan using the margin manager.
@@ -246,13 +251,18 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
-): u64 {
-    margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
+): (u64, u64) {
+    let (repay_amount, remaining_amount) = margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
         repay_amount,
         clock,
         ctx,
-    )
+    );
+
+    if (remaining_amount == 0) {
+        margin_manager.has_quote_loan = false;
+    };
+    (repay_amount, remaining_amount)
 }
 
 /// Destroys the request to borrow or withdraw if risk ratio conditions are met.
@@ -772,18 +782,19 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 }
 
 /// Repays the loan using the margin manager.
-/// Returns the total amount repaid
+/// Returns the (repay_amount, remaining amount)
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
     repay_amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
-): u64 {
+): (u64, u64) {
     margin_pool.update_state(clock);
     let manager_id = margin_manager.id();
     let user_loan_shares = margin_pool.user_loan_amount(manager_id, clock);
-    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
+    let borrow_index = margin_pool.state().borrow_index();
+    let user_loan_amount = math::mul(user_loan_shares, borrow_index);
 
     let repay_amount = repay_amount.get_with_default(user_loan_amount);
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
@@ -795,13 +806,16 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         ctx,
     );
 
-    margin_pool.repay(
-        manager_id,
-        coin,
-        clock,
+    let remaining_amount = math::mul(
+        margin_pool.repay(
+            manager_id,
+            coin,
+            clock,
+        ),
+        borrow_index,
     );
 
-    repay_amount
+    (repay_amount, remaining_amount)
 }
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(

@@ -335,25 +335,25 @@ public(package) fun borrow<Asset>(
     balance.into_coin(ctx)
 }
 
-/// Allows repaying the loan.
+/// Allows repaying the loan. Returns the remaining loan shares.
 public(package) fun repay<Asset>(
     self: &mut MarginPool<Asset>,
     manager_id: ID,
     coin: Coin<Asset>,
     clock: &Clock,
-) {
+): u64 {
     self.state.update(clock);
     let repay_amount = coin.value();
     let repay_amount_shares = self.state.to_borrow_shares(repay_amount);
-    assert!(
-        repay_amount_shares <= self.positions.user_loan_shares(manager_id),
-        ECannotRepayMoreThanLoan,
-    );
+    let current_loan_shares = self.positions.user_loan_shares(manager_id);
+    assert!(repay_amount_shares <= current_loan_shares, ECannotRepayMoreThanLoan);
     self.positions.decrease_user_loan_shares(manager_id, repay_amount_shares);
     self.state.decrease_total_borrow(repay_amount);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
+
+    current_loan_shares - repay_amount_shares
 }
 
 /// Marks a loan as defaulted.
