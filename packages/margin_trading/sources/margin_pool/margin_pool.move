@@ -137,6 +137,11 @@ public(package) fun claim_referral_rewards<Asset>(
     self.vault.split(reward_amount).into_coin(ctx)
 }
 
+// === Public-View Functions ===
+public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
+    self.allowed_deepbook_pools.contains(&deepbook_pool_id)
+}
+
 // === Public-Package Functions ===
 /// Creates a margin pool as the admin.
 public(package) fun create_margin_pool<Asset>(
