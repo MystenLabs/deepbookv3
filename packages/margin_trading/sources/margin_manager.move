@@ -244,7 +244,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
 }
 
 /// Repay the quote asset loan using the margin manager.
-/// Returns the total amount repaid
+/// Returns the (repay_amount, remaining amount)
 public fun repay_quote<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<QuoteAsset>,
