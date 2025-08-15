@@ -4,17 +4,7 @@
 module margin_trading::margin_manager;
 
 use deepbook::{
-    balance_manager::{
-        Self,
-        mint_deposit_cap,
-        mint_trade_cap,
-        mint_withdraw_cap,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof
-    },
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
     constants,
     math,
     pool::Pool
