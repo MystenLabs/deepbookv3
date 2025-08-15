@@ -110,6 +110,32 @@ public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceMa
     }
 }
 
+public fun new_with_custom_owner_and_caps(
+    owner: address,
+    ctx: &mut TxContext,
+): (BalanceManager, DepositCap, WithdrawCap, TradeCap) {
+    let id = object::new(ctx);
+    event::emit(BalanceManagerEvent {
+        balance_manager_id: id.to_inner(),
+        owner,
+    });
+
+    let mut balance_manager = BalanceManager {
+        id,
+        owner: ctx.sender(),
+        balances: bag::new(ctx),
+        allow_listed: vec_set::empty(),
+    };
+
+    let deposit_cap = mint_deposit_cap(&mut balance_manager, ctx);
+    let withdraw_cap = mint_withdraw_cap(&mut balance_manager, ctx);
+    let trade_cap = mint_trade_cap(&mut balance_manager, ctx);
+
+    balance_manager.owner = owner;
+
+    (balance_manager, deposit_cap, withdraw_cap, trade_cap)
+}
+
 /// Returns the balance of a Coin in a balance manager.
 public fun balance<T>(balance_manager: &BalanceManager): u64 {
     let key = BalanceKey<T> {};
