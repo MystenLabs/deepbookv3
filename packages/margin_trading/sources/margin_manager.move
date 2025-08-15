@@ -57,8 +57,6 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
 }
 
 public struct Fulfillment {
-    base_to_exit: u64,
-    quote_to_exit: u64,
     return_amount: u64,
     pool_reward_amount: u64,
 }
@@ -231,6 +229,8 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    // TODO: update margin manager borrowed shares
+
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
         repay_amount,
@@ -248,6 +248,8 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    // TODO: update margin manager borrowed shares
+
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
         repay_amount,
@@ -281,7 +283,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Fulfillment) {
+): (Fulfillment, Coin<BaseAsset>, Coin<QuoteAsset>) {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
     margin_pool.update_state(clock);
 
@@ -298,35 +300,18 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         pool.id(),
         clock,
+        ctx,
     )
 }
 
-public fun validate_fulfillment<BaseAsset, QuoteAsset>(
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    fulfillment: Fulfillment,
-    repay_receipt: RepayReceipt,
-    ctx: &mut TxContext,
-): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+public fun validate_fulfillment(fulfillment: Fulfillment, repay_receipt: RepayReceipt) {
     assert!(fulfillment.return_amount == repay_receipt.paid_amount(), EIncorrectRepayAmount);
     assert!(fulfillment.pool_reward_amount == repay_receipt.reward_amount(), EIncorrectRepayAmount);
 
-    let base = margin_manager.liquidation_withdraw_base(
-        fulfillment.base_to_exit,
-        ctx,
-    );
-    let quote = margin_manager.liquidation_withdraw_quote(
-        fulfillment.quote_to_exit,
-        ctx,
-    );
-
     let Fulfillment {
-        base_to_exit: _,
-        quote_to_exit: _,
         return_amount: _,
         pool_reward_amount: _,
     } = fulfillment;
-
-    (base, quote)
 }
 
 public fun deepbook_pool<BaseAsset, QuoteAsset>(
@@ -407,14 +392,15 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
 // D = debt, A = assets, T = target risk ratio, R = liquidation reward
 // amount_to_exit = (DT + TA - D) / (T + TR - 1)
 fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     pool_id: ID,
     clock: &Clock,
-): Fulfillment {
+    ctx: &mut TxContext,
+): (Fulfillment, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let borrowed_shares = margin_manager
         .base_borrowed_shares
         .max(margin_manager.quote_borrowed_shares);
@@ -500,12 +486,23 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
 
-    Fulfillment {
+    let base = margin_manager.liquidation_withdraw_base(
         base_to_exit,
+        ctx,
+    );
+    let quote = margin_manager.liquidation_withdraw_quote(
         quote_to_exit,
-        return_amount: quantity_to_return,
-        pool_reward_amount: debt_amount.max(quantity_to_return) - quantity_to_return,
-    }
+        ctx,
+    );
+
+    (
+        Fulfillment {
+            return_amount: quantity_to_return,
+            pool_reward_amount: debt_amount.max(quantity_to_return) - quantity_to_return,
+        },
+        base,
+        quote,
+    )
 }
 
 fun validate_owner<BaseAsset, QuoteAsset>(
