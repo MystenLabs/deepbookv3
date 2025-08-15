@@ -363,6 +363,23 @@ public(package) fun id<BaseAsset, QuoteAsset>(
     object::id(margin_manager)
 }
 
+/// Returns the (base_debt, quote_debt) for the margin manager
+public(package) fun total_debt<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    clock: &Clock,
+): (u64, u64) {
+    base_margin_pool.update_state(clock);
+    quote_margin_pool.update_state(clock);
+    let base_debt = base_margin_pool.state().to_borrow_amount(margin_manager.base_borrowed_shares);
+    let quote_debt = quote_margin_pool
+        .state()
+        .to_borrow_amount(margin_manager.quote_borrowed_shares);
+
+    (base_debt, quote_debt)
+}
+
 /// Returns (base_asset, quote_asset) for margin manager.
 public(package) fun total_assets<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
@@ -428,22 +445,21 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     // this is the amount that needs to exit the balance manager to reach the target risk ratio.
     // it may be greater than the total assets in the balance manager.
     let mut amount_to_exit_usd = math::div(numerator, denominator);
-    let (base_to_exit_usd, quote_to_exit_usd) = if (base_in_usd > quote_in_usd) {
-        let base_usd = amount_to_exit_usd.min(base_in_usd);
-        amount_to_exit_usd = amount_to_exit_usd - base_usd;
-        let quote_usd = amount_to_exit_usd.min(quote_in_usd);
-        (base_usd, quote_usd)
+    let mut base_to_exit_usd = amount_to_exit_usd.min(base_in_usd);
+    let mut quote_to_exit_usd = amount_to_exit_usd.min(quote_in_usd);
+    if (margin_manager.base_borrowed_shares > margin_manager.quote_borrowed_shares) {
+        amount_to_exit_usd = amount_to_exit_usd - base_to_exit_usd;
+        quote_to_exit_usd = amount_to_exit_usd.min(quote_in_usd);
     } else {
-        let quote_usd = amount_to_exit_usd.min(quote_in_usd);
-        amount_to_exit_usd = amount_to_exit_usd - quote_usd;
-        let base_usd = amount_to_exit_usd.min(base_in_usd);
-        (base_usd, quote_usd)
+        amount_to_exit_usd = amount_to_exit_usd - quote_to_exit_usd;
+        base_to_exit_usd = amount_to_exit_usd.min(base_in_usd);
     };
 
     // the amount that will leave the margin manager.
-    let total_to_give_up = base_to_exit_usd + quote_to_exit_usd;
+    let total_to_exit_usd = base_to_exit_usd + quote_to_exit_usd;
     // amount that will go to the margin pool.
-    let total_to_give_up = total_to_give_up - math::mul(total_to_give_up, user_liquidation_reward);
+    let total_to_exit_usd =
+        total_to_exit_usd - math::mul(total_to_exit_usd, user_liquidation_reward);
 
     let return_price_info_object = if (base_in_usd > quote_in_usd) {
         base_price_info_object
@@ -451,13 +467,15 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object
     };
 
+    // amount liquidator must return to the margin pool.
     let quantity_to_return = calculate_target_amount<DebtAsset>(
         return_price_info_object,
         registry,
-        total_to_give_up,
+        total_to_exit_usd,
         clock,
     );
 
+    // amount of base liquidator will receive.
     let base_to_exit = calculate_target_amount<BaseAsset>(
         base_price_info_object,
         registry,
@@ -465,6 +483,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
 
+    // amount of quote liquidator will receive.
     let quote_to_exit = calculate_target_amount<QuoteAsset>(
         quote_price_info_object,
         registry,
@@ -593,8 +612,4 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     );
 
     coin
-}
-
-fun in_default(risk_ratio: u64): bool {
-    risk_ratio < constants::float_scaling() // Risk ratio < 1.0 means the manager is in default.
 }
