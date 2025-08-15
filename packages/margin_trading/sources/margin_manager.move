@@ -32,11 +32,11 @@ use token::deep::DEEP;
 // === Errors ===
 const EInvalidDeposit: u64 = 0;
 const EMarginTradingNotAllowedInPool: u64 = 1;
-const EInvalidMarginManagerOwner: u64 = 6;
-const ECannotHaveLoanInBothMarginPools: u64 = 7;
-const EIncorrectDeepBookPool: u64 = 8;
-const EIncorrectRepayAmount: u64 = 9;
-const EDeepbookPoolNotAllowedForLoan: u64 = 10;
+const EInvalidMarginManagerOwner: u64 = 2;
+const ECannotHaveLoanInBothMarginPools: u64 = 3;
+const EIncorrectDeepBookPool: u64 = 4;
+const EIncorrectRepayAmount: u64 = 5;
+const EDeepbookPoolNotAllowedForLoan: u64 = 6;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -59,6 +59,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
 public struct Fulfillment {
     return_amount: u64,
     pool_reward_amount: u64,
+    default_amount: u64,
 }
 
 /// Request_type: 0 for withdraw, 1 for borrow
@@ -311,6 +312,7 @@ public fun validate_fulfillment(fulfillment: Fulfillment, repay_receipt: RepayRe
     let Fulfillment {
         return_amount: _,
         pool_reward_amount: _,
+        default_amount: _,
     } = fulfillment;
 }
 
@@ -499,6 +501,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         Fulfillment {
             return_amount: quantity_to_return,
             pool_reward_amount: debt_amount.max(quantity_to_return) - quantity_to_return,
+            default_amount: debt_amount.max(quantity_to_return) - quantity_to_return,
         },
         base,
         quote,

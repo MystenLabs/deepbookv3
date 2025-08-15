@@ -293,6 +293,7 @@ public(package) fun repay_with_reward<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
     reward: Coin<Asset>,
+    default_amount: u64,
     clock: &Clock,
 ): RepayReceipt {
     self.update_state(clock);
@@ -300,6 +301,7 @@ public(package) fun repay_with_reward<Asset>(
     let reward_value = reward.value();
     self.state.decrease_total_borrow(coin_value);
     self.state.increase_total_supply_with_index(reward_value);
+    self.state.decrease_total_supply(default_amount);
     self.vault.join(coin.into_balance());
     self.vault.join(reward.into_balance());
 
