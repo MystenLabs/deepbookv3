@@ -127,7 +127,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     coin: Coin<DepositAsset>,
     ctx: &mut TxContext,
 ) {
-    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
+    margin_manager.validate_owner(ctx);
 
     let deposit_asset_type = type_name::get<DepositAsset>();
     let base_asset_type = type_name::get<BaseAsset>();
@@ -151,7 +151,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): (Coin<WithdrawAsset>, Request) {
-    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
+    margin_manager.validate_owner(ctx);
 
     let balance_manager = &mut margin_manager.balance_manager;
     let withdraw_cap = &margin_manager.withdraw_cap;
@@ -717,8 +717,8 @@ public(package) fun total_debt<BaseAsset, QuoteAsset>(
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     clock: &Clock,
 ): (u64, u64) {
-    let base_debt = margin_manager.debt(base_margin_pool, clock);
-    let quote_debt = margin_manager.debt(quote_margin_pool, clock);
+    let base_debt = base_margin_pool.user_loan_amount(margin_manager.id(), clock);
+    let quote_debt = quote_margin_pool.user_loan_amount(margin_manager.id(), clock);
 
     (base_debt, quote_debt)
 }
@@ -737,6 +737,10 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
 }
 
 // === Private Functions ===
+fun validate_owner<BaseAsset, QuoteAsset>(margin_manager: &MarginManager<BaseAsset, QuoteAsset>, ctx: &TxContext) {
+    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
+}
+
 fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<BorrowAsset>,
@@ -788,17 +792,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     repay_amount
 }
 
-fun debt<BaseAsset, QuoteAsset, Asset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &mut MarginPool<Asset>,
-    clock: &Clock,
-): u64 {
-    margin_pool.update_state(clock);
-    let user_loan_shares = margin_pool.user_loan_amount(margin_manager.id(), clock);
-    let user_loan_amount = math::mul(user_loan_shares, margin_pool.state().borrow_index());
-
-    user_loan_amount
-}
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
