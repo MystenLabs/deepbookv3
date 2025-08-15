@@ -737,7 +737,10 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
 }
 
 // === Private Functions ===
-fun validate_owner<BaseAsset, QuoteAsset>(margin_manager: &MarginManager<BaseAsset, QuoteAsset>, ctx: &TxContext) {
+fun validate_owner<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    ctx: &TxContext,
+) {
     assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
 }
 
@@ -791,7 +794,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
 
     repay_amount
 }
-
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
