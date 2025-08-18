@@ -86,8 +86,8 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -154,8 +154,8 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
 public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
