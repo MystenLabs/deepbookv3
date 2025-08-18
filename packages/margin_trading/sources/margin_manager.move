@@ -4,17 +4,7 @@
 module margin_trading::margin_manager;
 
 use deepbook::{
-    balance_manager::{
-        Self,
-        mint_deposit_cap,
-        mint_trade_cap,
-        mint_withdraw_cap,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof
-    },
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
     constants,
     math,
     pool::Pool
@@ -190,7 +180,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     base_margin_pool.update_state(clock);
-    let loan_shares = base_margin_pool.state().to_borrow_shares(loan_amount);
+    let loan_shares = base_margin_pool.to_borrow_shares(loan_amount);
     margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares + loan_shares;
 
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
@@ -216,7 +206,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     quote_margin_pool.update_state(clock);
-    let loan_shares = quote_margin_pool.state().to_borrow_shares(loan_amount);
+    let loan_shares = quote_margin_pool.to_borrow_shares(loan_amount);
     margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares + loan_shares;
 
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
@@ -335,7 +325,7 @@ public fun manager_info<BaseAsset, QuoteAsset>(
         margin_manager.quote_borrowed_shares
     };
     let (base_debt, base_usd_debt) = if (debt_is_base) {
-        let base_debt = base_margin_pool.state().to_borrow_amount(debt_shares);
+        let base_debt = base_margin_pool.to_borrow_amount(debt_shares);
 
         (
             base_debt,
@@ -352,7 +342,7 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     let (quote_debt, quote_usd_debt) = if (debt_is_base) {
         (0, 0)
     } else {
-        let quote_debt = quote_margin_pool.state().to_borrow_amount(debt_shares);
+        let quote_debt = quote_margin_pool.to_borrow_amount(debt_shares);
 
         (
             quote_debt,
@@ -553,7 +543,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let borrowed_shares = margin_manager
         .base_borrowed_shares
         .max(margin_manager.quote_borrowed_shares);
-    let debt_amount = margin_pool.state().to_borrow_amount(borrowed_shares);
+    let debt_amount = margin_pool.to_borrow_amount(borrowed_shares);
     let base_in_manager = margin_manager.balance_manager().balance<BaseAsset>();
     let quote_in_manager = margin_manager.balance_manager().balance<QuoteAsset>();
 
@@ -696,14 +686,14 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount.destroy_some()
     } else {
         if (repay_is_base) {
-            margin_pool.state().to_borrow_amount(margin_manager.base_borrowed_shares)
+            margin_pool.to_borrow_amount(margin_manager.base_borrowed_shares)
         } else {
-            margin_pool.state().to_borrow_amount(margin_manager.quote_borrowed_shares)
+            margin_pool.to_borrow_amount(margin_manager.quote_borrowed_shares)
         }
     };
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
     let repay_amount = repay_amount.min(available_balance);
-    let repay_shares = margin_pool.state().to_borrow_shares(repay_amount);
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     if (repay_is_base) {
         margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;

@@ -109,14 +109,14 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     };
 
     let base_debt = if (debt_is_base) {
-        base_margin_pool.state().to_borrow_amount(debt_shares)
+        base_margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
     };
     let quote_debt = if (debt_is_base) {
         0
     } else {
-        quote_margin_pool.state().to_borrow_amount(debt_shares)
+        quote_margin_pool.to_borrow_amount(debt_shares)
     };
 
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
@@ -173,14 +173,14 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     };
 
     let base_debt = if (debt_is_base) {
-        base_margin_pool.state().to_borrow_amount(debt_shares)
+        base_margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
     };
     let quote_debt = if (debt_is_base) {
         0
     } else {
-        quote_margin_pool.state().to_borrow_amount(debt_shares)
+        quote_margin_pool.to_borrow_amount(debt_shares)
     };
 
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
