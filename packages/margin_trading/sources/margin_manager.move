@@ -234,7 +234,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    // TODO: update margin manager borrowed shares
+    margin_manager.validate_owner(ctx);
 
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
@@ -253,7 +253,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    // TODO: update margin manager borrowed shares
+    margin_manager.validate_owner(ctx);
 
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
@@ -687,18 +687,27 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    margin_manager.validate_owner(ctx);
     margin_pool.update_state(clock);
+
+    let repay_is_base = margin_manager.base_borrowed_shares > 0;
     let repay_amount = if (repay_amount.is_some()) {
         repay_amount.destroy_some()
     } else {
-        margin_pool.state().to_borrow_amount(margin_manager.base_borrowed_shares)
+        if (repay_is_base) {
+            margin_pool.state().to_borrow_amount(margin_manager.base_borrowed_shares)
+        } else {
+            margin_pool.state().to_borrow_amount(margin_manager.quote_borrowed_shares)
+        }
     };
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
     let repay_amount = repay_amount.min(available_balance);
     let repay_shares = margin_pool.state().to_borrow_shares(repay_amount);
-    margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
 
+    if (repay_is_base) {
+        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
+    } else {
+        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
+    };
     let coin = margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount,
         ctx,
@@ -754,8 +763,6 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
-    assert!(ctx.sender() == margin_manager.owner, EInvalidMarginManagerOwner);
-
     let balance_manager = &mut margin_manager.balance_manager;
     let withdraw_cap = &margin_manager.withdraw_cap;
 
