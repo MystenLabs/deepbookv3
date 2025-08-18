@@ -436,10 +436,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         clock,
     );
-    assert!(
-        manager_info.risk_ratio < registry.target_liquidation_risk_ratio(pool_id),
-        ECannotLiquidate,
-    );
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
     // cancel all orders. at this point, all available assets are in the balance manager.
     let trade_proof = margin_manager.trade_proof(ctx);
@@ -632,6 +629,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset>(
 
     (
         Fulfillment {
+            // margin_pool_id: ,
             return_amount: quantity_to_return,
             pool_reward_amount: debt.max(quantity_to_return) - quantity_to_return,
             default_amount: debt.max(quantity_to_return) - quantity_to_return,
