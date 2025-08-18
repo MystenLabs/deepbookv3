@@ -4,17 +4,7 @@
 module margin_trading::margin_manager;
 
 use deepbook::{
-    balance_manager::{
-        Self,
-        mint_deposit_cap,
-        mint_trade_cap,
-        mint_withdraw_cap,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof
-    },
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
     constants,
     math,
     pool::Pool
@@ -98,10 +88,12 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
 
     let id = object::new(ctx);
 
-    let mut balance_manager = balance_manager::new_with_custom_owner(id.to_address(), ctx);
-    let deposit_cap = mint_deposit_cap(&mut balance_manager, ctx);
-    let withdraw_cap = mint_withdraw_cap(&mut balance_manager, ctx);
-    let trade_cap = mint_trade_cap(&mut balance_manager, ctx);
+    let (
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        trade_cap,
+    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
 
     event::emit(MarginManagerEvent {
         margin_manager_id: id.to_inner(),
