@@ -332,32 +332,32 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     } else {
         margin_manager.quote_borrowed_shares
     };
-    let (base_debt_amount, base_usd_debt) = if (debt_is_base) {
-        let base_debt_amount = base_margin_pool.state().to_borrow_amount(debt_shares);
+    let (base_debt, base_usd_debt) = if (debt_is_base) {
+        let base_debt = base_margin_pool.state().to_borrow_amount(debt_shares);
 
         (
-            base_debt_amount,
+            base_debt,
             calculate_usd_price<BaseAsset>(
                 base_price_info_object,
                 registry,
-                base_debt_amount,
+                base_debt,
                 clock,
             ),
         )
     } else {
         (0, 0)
     };
-    let (quote_debt_amount, quote_usd_debt) = if (debt_is_base) {
+    let (quote_debt, quote_usd_debt) = if (debt_is_base) {
         (0, 0)
     } else {
-        let quote_debt_amount = quote_margin_pool.state().to_borrow_amount(debt_shares);
+        let quote_debt = quote_margin_pool.state().to_borrow_amount(debt_shares);
 
         (
-            quote_debt_amount,
+            quote_debt,
             calculate_usd_price<QuoteAsset>(
                 quote_price_info_object,
                 registry,
-                quote_debt_amount,
+                quote_debt,
                 clock,
             ),
         )
@@ -395,13 +395,13 @@ public fun manager_info<BaseAsset, QuoteAsset>(
     ManagerInfo {
         base: AssetInfo {
             asset: base_asset,
-            debt: base_debt_amount,
+            debt: base_debt,
             usd_asset: base_usd_asset,
             usd_debt: base_usd_debt,
         },
         quote: AssetInfo {
             asset: quote_asset,
-            debt: quote_debt_amount,
+            debt: quote_debt,
             usd_asset: quote_usd_asset,
             usd_debt: quote_usd_debt,
         },
@@ -493,6 +493,18 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     assert!(margin_manager.owner == ctx.sender(), EInvalidMarginManagerOwner);
 
     &mut margin_manager.balance_manager
+}
+
+public(package) fun base_borrowed_shares<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    margin_manager.base_borrowed_shares
+}
+
+public(package) fun quote_borrowed_shares<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    margin_manager.quote_borrowed_shares
 }
 
 /// Unwraps balance manager for trading in deepbook.

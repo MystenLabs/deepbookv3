@@ -100,11 +100,25 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
+
+    let debt_is_base = margin_manager.base_borrowed_shares() > 0;
+    let debt_shares = if (debt_is_base) {
+        margin_manager.base_borrowed_shares()
+    } else {
+        margin_manager.quote_borrowed_shares()
+    };
+
+    let base_debt = if (debt_is_base) {
+        base_margin_pool.state().to_borrow_amount(debt_shares)
+    } else {
+        0
+    };
+    let quote_debt = if (debt_is_base) {
+        0
+    } else {
+        quote_margin_pool.state().to_borrow_amount(debt_shares)
+    };
+
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
     );
@@ -151,11 +165,24 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
+    let debt_is_base = margin_manager.base_borrowed_shares() > 0;
+    let debt_shares = if (debt_is_base) {
+        margin_manager.base_borrowed_shares()
+    } else {
+        margin_manager.quote_borrowed_shares()
+    };
+
+    let base_debt = if (debt_is_base) {
+        base_margin_pool.state().to_borrow_amount(debt_shares)
+    } else {
+        0
+    };
+    let quote_debt = if (debt_is_base) {
+        0
+    } else {
+        quote_margin_pool.state().to_borrow_amount(debt_shares)
+    };
+
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
         pool,
     );
