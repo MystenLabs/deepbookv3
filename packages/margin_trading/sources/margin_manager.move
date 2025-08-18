@@ -32,6 +32,7 @@ const EInvalidMarginManager: u64 = 7;
 const EBorrowRiskRatioExceeded: u64 = 8;
 const EWithdrawRiskRatioExceeded: u64 = 9;
 const EInvalidDebtAsset: u64 = 10;
+const ECannotLiquidate: u64 = 11;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -423,7 +424,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment, Coin<BaseAsset>, Coin<QuoteAsset>) {
-    assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+    let pool_id = pool.id();
+    assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
     margin_pool.update_state(clock);
 
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -433,6 +435,10 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         clock,
+    );
+    assert!(
+        manager_info.risk_ratio < registry.target_liquidation_risk_ratio(pool_id),
+        ECannotLiquidate,
     );
 
     // cancel all orders. at this point, all available assets are in the balance manager.
@@ -446,7 +452,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         base_price_info_object,
         quote_price_info_object,
-        pool.id(),
+        pool_id,
         clock,
         ctx,
     )
