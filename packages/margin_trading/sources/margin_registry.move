@@ -192,7 +192,7 @@ public fun update_interest_params<Asset>(
     assert!(margin_pool_cap.margin_pool_id == margin_pool.id(), EInvalidMarginPoolCap);
 
     assert!(
-        margin_pool.state().max_utilization_rate() >= interest_params.optimal_utilization(),
+        margin_pool.max_utilization_rate() >= interest_params.optimal_utilization(),
         EInvalidRiskParam,
     );
     margin_pool.update_interest_params<Asset>(interest_params, clock);
