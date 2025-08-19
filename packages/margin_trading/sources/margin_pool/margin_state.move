@@ -81,7 +81,14 @@ public(package) fun update(self: &mut State, clock: &Clock) {
         total_interest_accrued - protocol_profit_accrued - referral_profit_accrued;
     let new_supply = self.total_supply + supply_interest_accrued;
     let new_borrow = self.total_borrow + total_interest_accrued;
-    let new_referral_shares = self.referral_profit = ERROR;
+    let new_supply_index = if (self.total_supply == 0) {
+        self.supply_index
+    } else {
+        math::mul(
+            self.supply_index,
+            math::div(new_supply, self.total_supply),
+        )
+    };
     let new_borrow_index = if (self.total_borrow == 0) {
         self.borrow_index
     } else {
