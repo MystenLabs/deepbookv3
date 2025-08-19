@@ -1,6 +1,7 @@
 module margin_trading::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use margin_trading::margin_constants;
 use sui::clock::Clock;
 
@@ -279,4 +280,12 @@ public(package) fun optimal_utilization(self: &InterestParams): u64 {
 
 public(package) fun excess_slope(self: &InterestParams): u64 {
     self.excess_slope
+}
+
+public(package) fun referral_profit(self: &State): u64 {
+    self.referral_profit
+}
+
+public(package) fun reduce_referral_profit(self: &mut State, amount: u64) {
+    self.referral_profit = self.referral_profit - amount;
 }

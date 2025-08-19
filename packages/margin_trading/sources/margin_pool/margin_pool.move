@@ -4,20 +4,16 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
-    margin_state::{Self, State, InterestParams},
-    position_manager::{Self, PositionManager},
-    referral_manager::{Self, ReferralManager, ReferralCap},
-    reward_manager::{Self, RewardManager}
-};
+use margin_trading::margin_state::{Self, State, InterestParams};
+use margin_trading::position_manager::{Self, PositionManager};
+use margin_trading::referral_manager::{Self, ReferralManager, ReferralCap};
+use margin_trading::reward_manager::{Self, RewardManager};
 use std::type_name::{Self, TypeName};
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    vec_set::{Self, VecSet}
-};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -64,7 +60,7 @@ public fun supply<Asset>(
         .reset_referral_supply_shares(supplier);
     self
         .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares, clock);
 
     let supply_amount = coin.value();
     let supply_shares = self.state.to_supply_shares(supply_amount);
@@ -73,7 +69,7 @@ public fun supply<Asset>(
     let new_supply_shares = self
         .positions
         .increase_user_supply_shares(supplier, supply_shares, reward_pools);
-    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
+    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares, clock);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -97,7 +93,7 @@ public fun withdraw<Asset>(
         .reset_referral_supply_shares(supplier);
     self
         .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares, clock);
 
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
@@ -128,11 +124,16 @@ public(package) fun claim_referral_rewards<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     self.update_state(clock);
-    let share_value_appreciated = self
-        .referral_manager
-        .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let total_reward = self.state.referral_profit();
-    self.state.reduce_protocol_profit(reward_amount);
+
+    // Add any new referral profits to the reward system for fair distribution
+    let available_referral_profit = self.state.referral_profit();
+    if (available_referral_profit > 0) {
+        self.referral_manager.add_rewards(available_referral_profit);
+        self.state.reduce_referral_profit(available_referral_profit); // Remove from state since now tracked in referral manager
+    };
+
+    // Claim rewards using the fair index-based system
+    let reward_amount = self.referral_manager.claim_referral_rewards(referral_cap.id(), clock);
 
     self.vault.split(reward_amount).into_coin(ctx)
 }
