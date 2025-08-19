@@ -132,9 +132,15 @@ public(package) fun claim_referral_rewards<Asset>(
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
     let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
-    self.state.reduce_protocol_profit(reward_amount);
+    
+    let available_referral_pool = self.state.referral_profit();
+    let max_reward = reward_amount.min(available_referral_pool);
+    
+    if (max_reward > 0) {
+        self.state.claim_from_referral_pool(max_reward);
+    };
 
-    self.vault.split(reward_amount).into_coin(ctx)
+    self.vault.split(max_reward).into_coin(ctx)
 }
 
 // === Public-View Functions ===
@@ -176,6 +182,7 @@ public(package) fun create_margin_pool<Asset>(
 
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.state.update(clock);
+    self.allocate_referral_profit();
 }
 
 /// Updates the supply cap for the margin pool.
@@ -351,6 +358,24 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
+}
+
+/// Allocates portion of protocol profit to referral pool based on referral activity
+fun allocate_referral_profit<Asset>(self: &mut MarginPool<Asset>) {
+    let total_referral_shares = self.referral_manager.total_referral_shares();
+    if (total_referral_shares > 0) {
+        let total_supply_shares = self.state.total_supply_shares();
+        if (total_supply_shares > 0) {
+            let referral_proportion = math::div(total_referral_shares, total_supply_shares);
+            let available_protocol_profit = self.state.protocol_profit();
+            let needed_referral_allocation = math::mul(available_protocol_profit, referral_proportion);
+            
+            if (needed_referral_allocation > 0) {
+                self.state.reduce_protocol_profit(needed_referral_allocation);
+                self.state.allocate_to_referral_pool(needed_referral_allocation);
+            };
+        };
+    };
 }
 
 // === Internal Functions ===

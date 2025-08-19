@@ -11,6 +11,7 @@ public struct State has drop, store {
     supply_index: u64,
     borrow_index: u64,
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
+    referral_profit: u64, // profit allocated to referral rewards, reserved from protocol_profit
     interest_params: InterestParams,
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_utilization_rate: u64, // maximum percentage of borrowable assets in the pool
@@ -39,6 +40,7 @@ public(package) fun default(
         supply_index: constants::float_scaling(),
         borrow_index: constants::float_scaling(),
         protocol_profit: 0,
+        referral_profit: 0,
         interest_params,
         supply_cap,
         max_utilization_rate,
@@ -172,6 +174,26 @@ public(package) fun reset_protocol_profit(self: &mut State): u64 {
     self.protocol_profit = 0;
 
     profit
+}
+
+/// Allocate protocol profit to referral rewards pool
+public(package) fun allocate_to_referral_pool(self: &mut State, amount: u64) {
+    self.referral_profit = self.referral_profit + amount;
+}
+
+/// Claim from referral profit pool (reduces the allocated amount)
+public(package) fun claim_from_referral_pool(self: &mut State, amount: u64) {
+    self.referral_profit = self.referral_profit - amount;
+}
+
+/// Get total referral profit pool
+public(package) fun referral_profit(self: &State): u64 {
+    self.referral_profit
+}
+
+/// Get current protocol profit
+public(package) fun protocol_profit(self: &State): u64 {
+    self.protocol_profit
 }
 
 /// Get current interest rate based on utilization and default rate.
