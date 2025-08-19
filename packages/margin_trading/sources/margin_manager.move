@@ -312,50 +312,38 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    // Calculate debt in USD
-    let debt_is_base = margin_manager.base_borrowed_shares > 0;
-    let debt_shares = if (debt_is_base) {
-        margin_manager.base_borrowed_shares
-    } else {
-        margin_manager.quote_borrowed_shares
-    };
-    let (base_debt, base_usd_debt) = if (debt_is_base) {
-        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
-        let base_debt = debt_margin_pool.to_borrow_amount(debt_shares);
-
-        (
-            base_debt,
-            calculate_usd_price<BaseAsset>(
-                base_price_info_object,
-                registry,
-                base_debt,
-                clock,
-            ),
-        )
-    } else {
-        (0, 0)
-    };
-    let (quote_debt, quote_usd_debt) = if (debt_is_base) {
-        (0, 0)
-    } else {
-        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
-        let quote_debt = debt_margin_pool.to_borrow_amount(debt_shares);
-
-        (
-            quote_debt,
-            calculate_usd_price<QuoteAsset>(
-                quote_price_info_object,
-                registry,
-                quote_debt,
-                clock,
-            ),
-        )
-    };
-
-    // Calculate assets in USD
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
+    // Use consolidated debt and asset calculation
+    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
+        BaseAsset,
+        QuoteAsset,
+        DebtAsset,
+    >(
+        margin_manager,
         pool,
+        debt_margin_pool,
     );
+
+    // Calculate debt in USD
+    let base_usd_debt = if (base_debt > 0) {
+        calculate_usd_price<BaseAsset>(
+            base_price_info_object,
+            registry,
+            base_debt,
+            clock,
+        )
+    } else {
+        0
+    };
+    let quote_usd_debt = if (quote_debt > 0) {
+        calculate_usd_price<QuoteAsset>(
+            quote_price_info_object,
+            registry,
+            quote_debt,
+            clock,
+        )
+    } else {
+        0
+    };
     let base_usd_asset = calculate_usd_price<BaseAsset>(
         base_price_info_object,
         registry,
@@ -664,7 +652,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset>(
 
     (
         Fulfillment {
-            // margin_pool_id: ,
+            // TODO: add margin_pool_id in another PR
             return_amount: quantity_to_return,
             pool_reward_amount: debt.max(quantity_to_return) - quantity_to_return,
             default_amount: debt.max(quantity_to_return) - quantity_to_return,
