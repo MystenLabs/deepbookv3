@@ -128,6 +128,7 @@ public fun new_margin_pool<Asset>(
     supply_cap: u64,
     max_borrow_percentage: u64,
     protocol_spread: u64,
+    referral_spread: u64,
     clock: &Clock,
     maintainer_cap: &MaintainerCap,
     ctx: &mut TxContext,
@@ -142,6 +143,7 @@ public fun new_margin_pool<Asset>(
         supply_cap,
         max_borrow_percentage,
         protocol_spread,
+        referral_spread,
         clock,
         ctx,
     );

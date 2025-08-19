@@ -88,7 +88,13 @@ public(package) fun claim_referral_rewards(
 ): u64 {
     let referral = self.referrals.get_mut(&referral_id);
     let index_diff = current_index - referral.last_claim_index;
-    let counted_shares = referral.min_claim_shares;
+    
+    let counted_shares = if (referral.min_claim_shares == 0) {
+        referral.referral_shares
+    } else {
+        referral.min_claim_shares
+    };
+    
     referral.last_claim_index = current_index;
     referral.min_claim_shares = referral.referral_shares;
 

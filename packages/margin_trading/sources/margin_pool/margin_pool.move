@@ -131,7 +131,7 @@ public(package) fun claim_referral_rewards<Asset>(
     let share_value_appreciated = self
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
+    let reward_amount = math::mul(share_value_appreciated, self.state.referral_spread());
     
     let available_referral_pool = self.state.referral_profit();
     let max_reward = reward_amount.min(available_referral_pool);
@@ -155,6 +155,7 @@ public(package) fun create_margin_pool<Asset>(
     supply_cap: u64,
     max_borrow_percentage: u64,
     protocol_spread: u64,
+    referral_spread: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -166,6 +167,7 @@ public(package) fun create_margin_pool<Asset>(
             supply_cap,
             max_borrow_percentage,
             protocol_spread,
+            referral_spread,
             clock,
         ),
         positions: position_manager::create_position_manager(ctx),
@@ -182,7 +184,6 @@ public(package) fun create_margin_pool<Asset>(
 
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     self.state.update(clock);
-    self.allocate_referral_profit();
 }
 
 /// Updates the supply cap for the margin pool.
@@ -335,6 +336,14 @@ public(package) fun update_margin_pool_spread<Asset>(
     self.state.update_margin_pool_spread(protocol_spread, clock);
 }
 
+/// Updates the referral spread
+public(package) fun update_referral_spread<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral_spread: u64,
+) {
+    self.state.set_referral_spread(referral_spread);
+}
+
 /// Resets the protocol profit and returns the coin.
 public(package) fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
@@ -360,23 +369,6 @@ public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
 
-/// Allocates portion of protocol profit to referral pool based on referral activity
-fun allocate_referral_profit<Asset>(self: &mut MarginPool<Asset>) {
-    let total_referral_shares = self.referral_manager.total_referral_shares();
-    if (total_referral_shares > 0) {
-        let total_supply_shares = self.state.total_supply_shares();
-        if (total_supply_shares > 0) {
-            let referral_proportion = math::div(total_referral_shares, total_supply_shares);
-            let available_protocol_profit = self.state.protocol_profit();
-            let needed_referral_allocation = math::mul(available_protocol_profit, referral_proportion);
-            
-            if (needed_referral_allocation > 0) {
-                self.state.reduce_protocol_profit(needed_referral_allocation);
-                self.state.allocate_to_referral_pool(needed_referral_allocation);
-            };
-        };
-    };
-}
 
 // === Internal Functions ===
 fun add_reward_balance_to_bag<RewardToken>(
