@@ -64,14 +64,21 @@ public struct Request {
     request_type: u8,
 }
 
-public struct AssetInfo has copy, drop, store {
+public struct AssetInfo has copy, drop {
     asset: u64,
     debt: u64,
     usd_asset: u64,
     usd_debt: u64,
 }
 
-public struct ManagerInfo has copy, drop, store {
+public struct PositionInfo has copy, drop {
+    base_asset: u64,
+    base_debt: u64,
+    quote_asset: u64,
+    quote_debt: u64,
+}
+
+public struct ManagerInfo has copy, drop {
     base: AssetInfo,
     quote: AssetInfo,
     risk_ratio: u64, // 9 decimals
@@ -321,7 +328,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         margin_manager,
         pool,
         debt_margin_pool,
-    );
+    ).position_info();
 
     // Calculate debt in USD
     let base_usd_debt = if (base_debt > 0) {
@@ -522,13 +529,23 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
+/// Returns the details in PositionInfo
+public(package) fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
+    (
+        position_info.base_debt,
+        position_info.quote_debt,
+        position_info.base_asset,
+        position_info.quote_asset,
+    )
+}
+
 /// General helper for debt calculation and asset totals.
 /// Returns (base_debt, quote_debt, base_asset, quote_asset)
 public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
-): (u64, u64, u64, u64) {
+): PositionInfo {
     let debt_is_base = margin_manager.base_borrowed_shares > 0;
     let debt_shares = if (debt_is_base) {
         margin_manager.base_borrowed_shares
@@ -554,7 +571,12 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    (base_debt, quote_debt, base_asset, quote_asset)
+    PositionInfo {
+        base_debt,
+        quote_debt,
+        base_asset,
+        quote_asset,
+    }
 }
 
 // === Private Functions ===
