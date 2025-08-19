@@ -14,6 +14,7 @@ const ECannotStakeWithDeepMarginManager: u64 = 1;
 const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
+const EInvalidDebtAsset: u64 = 5;
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
@@ -83,11 +84,10 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
+public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -109,14 +109,16 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     };
 
     let base_debt = if (debt_is_base) {
-        base_margin_pool.to_borrow_amount(debt_shares)
+        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
     };
     let quote_debt = if (debt_is_base) {
         0
     } else {
-        quote_margin_pool.to_borrow_amount(debt_shares)
+        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     };
 
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
@@ -151,11 +153,10 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only market order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
+public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -173,14 +174,16 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     };
 
     let base_debt = if (debt_is_base) {
-        base_margin_pool.to_borrow_amount(debt_shares)
+        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
     };
     let quote_debt = if (debt_is_base) {
         0
     } else {
-        quote_margin_pool.to_borrow_amount(debt_shares)
+        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     };
 
     let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
