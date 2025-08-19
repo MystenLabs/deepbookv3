@@ -64,7 +64,7 @@ public fun supply<Asset>(
         .reset_referral_supply_shares(supplier);
     self
         .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares, clock);
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
     let supply_amount = coin.value();
     let supply_shares = self.state.to_supply_shares(supply_amount);
@@ -73,7 +73,7 @@ public fun supply<Asset>(
     let new_supply_shares = self
         .positions
         .increase_user_supply_shares(supplier, supply_shares, reward_pools);
-    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares, clock);
+    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -97,7 +97,7 @@ public fun withdraw<Asset>(
         .reset_referral_supply_shares(supplier);
     self
         .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares, clock);
+        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
@@ -115,10 +115,9 @@ public fun withdraw<Asset>(
 
 public(package) fun mint_referral_cap<Asset>(
     self: &mut MarginPool<Asset>,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): ReferralCap {
-    self.referral_manager.mint_referral_cap(clock, ctx)
+    self.referral_manager.mint_referral_cap(ctx)
 }
 
 public(package) fun claim_referral_rewards<Asset>(
@@ -137,7 +136,7 @@ public(package) fun claim_referral_rewards<Asset>(
     };
 
     // Claim rewards using the fair index-based system
-    let reward_amount = self.referral_manager.claim_referral_rewards(referral_cap.id(), clock);
+    let reward_amount = self.referral_manager.claim_referral_rewards(referral_cap.id());
 
     self.vault.split(reward_amount).into_coin(ctx)
 }

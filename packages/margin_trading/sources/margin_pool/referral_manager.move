@@ -4,7 +4,7 @@
 module margin_trading::referral_manager;
 
 use deepbook::math;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::vec_map::{Self, VecMap};
 
 public struct ReferralManager has store {
     referrals: VecMap<ID, Referral>,
@@ -26,11 +26,7 @@ public fun id(referral_cap: &ReferralCap): ID {
     referral_cap.id.to_inner()
 }
 
-public fun mint_referral_cap(
-    self: &mut ReferralManager,
-    _clock: &Clock,
-    ctx: &mut TxContext,
-): ReferralCap {
+public fun mint_referral_cap(self: &mut ReferralManager, ctx: &mut TxContext): ReferralCap {
     let referral_id = object::new(ctx);
     self
         .referrals
@@ -60,7 +56,6 @@ public(package) fun increase_referral_supply_shares(
     self: &mut ReferralManager,
     referral_id: Option<ID>,
     supply_shares: u64,
-    _clock: &Clock,
 ) {
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
@@ -76,7 +71,6 @@ public(package) fun decrease_referral_supply_shares(
     self: &mut ReferralManager,
     referral_id: Option<ID>,
     supply_shares: u64,
-    _clock: &Clock,
 ) {
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
@@ -98,11 +92,7 @@ public(package) fun add_rewards(self: &mut ReferralManager, new_rewards: u64) {
 }
 
 /// Claims rewards - simple shares-based calculation
-public(package) fun claim_referral_rewards(
-    self: &mut ReferralManager,
-    referral_id: ID,
-    _clock: &Clock,
-): u64 {
+public(package) fun claim_referral_rewards(self: &mut ReferralManager, referral_id: ID): u64 {
     let referral = self.referrals.get_mut(&referral_id);
 
     // Calculate rewards based on shares * index_difference
