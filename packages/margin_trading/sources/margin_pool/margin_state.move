@@ -8,7 +8,6 @@ use sui::clock::Clock;
 public struct State has drop, store {
     total_supply: u64,
     total_borrow: u64,
-    total_referral_shares: u64,
     supply_index: u64,
     borrow_index: u64,
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
@@ -39,7 +38,6 @@ public(package) fun default(
     State {
         total_supply: 0,
         total_borrow: 0,
-        total_referral_shares: 0,
         supply_index: constants::float_scaling(),
         borrow_index: constants::float_scaling(),
         protocol_profit: 0,
