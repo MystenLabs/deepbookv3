@@ -4,8 +4,7 @@
 module margin_trading::referral_manager;
 
 use deepbook::math;
-use sui::clock::Clock;
-use sui::vec_map::{Self, VecMap};
+use sui::{clock::Clock, vec_map::{Self, VecMap}};
 
 public struct ReferralManager has store {
     referrals: VecMap<ID, Referral>,
