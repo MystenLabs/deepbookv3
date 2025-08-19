@@ -148,20 +148,3 @@ public(package) fun claim_referral_rewards(
 
     reward_amount
 }
-
-/// View function to check claimable rewards without claiming
-/// Useful for UI to show pending rewards
-public fun get_claimable_rewards(
-    self: &ReferralManager,
-    referral_id: &ID,
-    current_timestamp: u64,
-): u64 {
-    let referral = self.referrals.get(referral_id);
-    let time_diff = current_timestamp - referral.last_update_timestamp;
-    let score_increase = math::mul(time_diff, referral.referral_shares);
-    let total_score = referral.score + score_increase;
-
-    // Calculate rewards based on index difference
-    let index_diff = self.rewards_per_score_index - referral.last_rewards_index;
-    math::mul(total_score, index_diff)
-}
