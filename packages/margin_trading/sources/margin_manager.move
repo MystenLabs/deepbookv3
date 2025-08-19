@@ -319,7 +319,6 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    // Use consolidated debt and asset calculation
     let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
         BaseAsset,
         QuoteAsset,
