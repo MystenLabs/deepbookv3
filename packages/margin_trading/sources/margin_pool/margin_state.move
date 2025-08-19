@@ -1,6 +1,7 @@
 module margin_trading::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use margin_trading::margin_constants;
 use sui::clock::Clock;
 
@@ -11,10 +12,12 @@ public struct State has drop, store {
     supply_index: u64,
     borrow_index: u64,
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
+    referral_profit: u64, // profit accumulated for referrals, can be claimed by referrers
     interest_params: InterestParams,
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_utilization_rate: u64, // maximum percentage of borrowable assets in the pool
     protocol_spread: u64, // protocol spread in 9 decimals
+    referral_spread: u64, // referral spread in 9 decimals
     last_index_update_timestamp: u64,
 }
 
@@ -31,6 +34,7 @@ public(package) fun default(
     supply_cap: u64,
     max_utilization_rate: u64,
     protocol_spread: u64,
+    referral_spread: u64,
     clock: &Clock,
 ): State {
     State {
@@ -39,10 +43,12 @@ public(package) fun default(
         supply_index: constants::float_scaling(),
         borrow_index: constants::float_scaling(),
         protocol_profit: 0,
+        referral_profit: 0,
         interest_params,
         supply_cap,
         max_utilization_rate,
         protocol_spread,
+        referral_spread,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
@@ -62,9 +68,15 @@ public(package) fun update(self: &mut State, clock: &Clock) {
         total_interest_accrued,
         self.protocol_spread,
     );
+    let referral_profit_accrued = math::mul(
+        total_interest_accrued,
+        self.referral_spread,
+    );
     self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
+    self.referral_profit = self.referral_profit + referral_profit_accrued;
 
-    let supply_interest_accrued = total_interest_accrued - protocol_profit_accrued;
+    let supply_interest_accrued =
+        total_interest_accrued - protocol_profit_accrued - referral_profit_accrued;
     let new_supply = self.total_supply + supply_interest_accrued;
     let new_borrow = self.total_borrow + total_interest_accrued;
     let new_supply_index = if (self.total_supply == 0) {
@@ -157,6 +169,12 @@ public(package) fun update_margin_pool_spread(self: &mut State, spread: u64, clo
     self.protocol_spread = spread;
 }
 
+public(package) fun update_referral_spread(self: &mut State, spread: u64, clock: &Clock) {
+    // Update the state before spread is updated
+    self.update(clock);
+    self.referral_spread = spread;
+}
+
 public(package) fun update_interest_params(
     self: &mut State,
     interest_params: InterestParams,
@@ -170,6 +188,13 @@ public(package) fun update_interest_params(
 public(package) fun reset_protocol_profit(self: &mut State): u64 {
     let profit = self.protocol_profit;
     self.protocol_profit = 0;
+
+    profit
+}
+
+public(package) fun reset_referral_profit(self: &mut State): u64 {
+    let profit = self.referral_profit;
+    self.referral_profit = 0;
 
     profit
 }
@@ -199,8 +224,20 @@ public(package) fun reduce_protocol_profit(self: &mut State, amount: u64) {
     self.protocol_profit = self.protocol_profit - amount;
 }
 
+public(package) fun reduce_referral_profit(self: &mut State, amount: u64) {
+    self.referral_profit = self.referral_profit - amount;
+}
+
 public(package) fun protocol_spread(self: &State): u64 {
     self.protocol_spread
+}
+
+public(package) fun referral_spread(self: &State): u64 {
+    self.referral_spread
+}
+
+public(package) fun referral_profit(self: &State): u64 {
+    self.referral_profit
 }
 
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
