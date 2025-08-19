@@ -8,13 +8,16 @@ use sui::clock::Clock;
 public struct State has drop, store {
     total_supply: u64,
     total_borrow: u64,
+    total_referral_shares: u64,
     supply_index: u64,
     borrow_index: u64,
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
+    referral_profit: u64, // profit accumulated for referrals, can be claimed by referrers
     interest_params: InterestParams,
     supply_cap: u64, // maximum amount of assets that can be supplied to the pool
     max_utilization_rate: u64, // maximum percentage of borrowable assets in the pool
     protocol_spread: u64, // protocol spread in 9 decimals
+    referral_spread: u64, // referral spread in 9 decimals
     last_index_update_timestamp: u64,
 }
 
@@ -36,13 +39,16 @@ public(package) fun default(
     State {
         total_supply: 0,
         total_borrow: 0,
+        total_referral_shares: 0,
         supply_index: constants::float_scaling(),
         borrow_index: constants::float_scaling(),
         protocol_profit: 0,
+        referral_profit: 0,
         interest_params,
         supply_cap,
         max_utilization_rate,
         protocol_spread,
+        referral_spread: 0,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
@@ -64,17 +70,17 @@ public(package) fun update(self: &mut State, clock: &Clock) {
     );
     self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
 
-    let supply_interest_accrued = total_interest_accrued - protocol_profit_accrued;
+    let referral_profit_accrued = math::mul(
+        total_interest_accrued,
+        self.referral_spread,
+    );
+    self.referral_profit = self.referral_profit + referral_profit_accrued;
+
+    let supply_interest_accrued =
+        total_interest_accrued - protocol_profit_accrued - referral_profit_accrued;
     let new_supply = self.total_supply + supply_interest_accrued;
     let new_borrow = self.total_borrow + total_interest_accrued;
-    let new_supply_index = if (self.total_supply == 0) {
-        self.supply_index
-    } else {
-        math::mul(
-            self.supply_index,
-            math::div(new_supply, self.total_supply),
-        )
-    };
+    let new_referral_shares = self.referral_profit = ERROR;
     let new_borrow_index = if (self.total_borrow == 0) {
         self.borrow_index
     } else {

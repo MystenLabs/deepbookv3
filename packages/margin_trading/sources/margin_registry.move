@@ -200,10 +200,11 @@ public fun update_interest_params<Asset>(
 
 public fun mint_referral_cap<Asset>(
     margin_pool: &mut MarginPool<Asset>,
+    clock: &Clock,
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ): ReferralCap {
-    margin_pool.mint_referral_cap<Asset>(ctx)
+    margin_pool.mint_referral_cap<Asset>(clock, ctx)
 }
 
 /// Creates a new InterestParams object with the given parameters.

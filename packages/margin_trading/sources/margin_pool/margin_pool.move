@@ -115,10 +115,10 @@ public fun withdraw<Asset>(
 
 public(package) fun mint_referral_cap<Asset>(
     self: &mut MarginPool<Asset>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ReferralCap {
-    let current_index = self.state.supply_index();
-    self.referral_manager.mint_referral_cap(current_index, ctx)
+    self.referral_manager.mint_referral_cap(clock, ctx)
 }
 
 public(package) fun claim_referral_rewards<Asset>(
@@ -131,7 +131,7 @@ public(package) fun claim_referral_rewards<Asset>(
     let share_value_appreciated = self
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
+    let total_reward = self.state.referral_profit();
     self.state.reduce_protocol_profit(reward_amount);
 
     self.vault.split(reward_amount).into_coin(ctx)
