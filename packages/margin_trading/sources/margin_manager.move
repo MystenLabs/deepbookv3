@@ -534,6 +534,41 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
+/// General helper for debt calculation and asset totals.
+/// Returns (base_debt, quote_debt, base_asset, quote_asset)
+public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+): (u64, u64, u64, u64) {
+    let debt_is_base = margin_manager.base_borrowed_shares > 0;
+    let debt_shares = if (debt_is_base) {
+        margin_manager.base_borrowed_shares
+    } else {
+        margin_manager.quote_borrowed_shares
+    };
+
+    let base_debt = if (debt_is_base) {
+        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
+    } else {
+        0
+    };
+    let quote_debt = if (debt_is_base) {
+        0
+    } else {
+        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
+    };
+
+    let (base_asset, quote_asset) = total_assets<BaseAsset, QuoteAsset>(
+        margin_manager,
+        pool,
+    );
+
+    (base_debt, quote_debt, base_asset, quote_asset)
+}
+
 // === Private Functions ===
 // calculate quantity of debt that must be removed to reach target risk ratio.
 // D = debt, A = assets, T = target risk ratio, R = liquidation reward

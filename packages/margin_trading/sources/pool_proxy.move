@@ -14,7 +14,6 @@ const ECannotStakeWithDeepMarginManager: u64 = 1;
 const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
-const EInvalidDebtAsset: u64 = 5;
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
@@ -100,12 +99,11 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt, base_asset, quote_asset) = prepare_reduce_only_order<
+    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager.calculate_debt_and_assets<
         BaseAsset,
         QuoteAsset,
         DebtAsset,
     >(
-        margin_manager,
         pool,
         margin_pool,
     );
@@ -151,12 +149,11 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt, base_asset, quote_asset) = prepare_reduce_only_order<
+    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager.calculate_debt_and_assets<
         BaseAsset,
         QuoteAsset,
         DebtAsset,
     >(
-        margin_manager,
         pool,
         margin_pool,
     );
@@ -387,39 +384,4 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.claim_rebates(balance_manager, &trade_proof, ctx);
-}
-
-// === Internal Functions ===
-/// Helper for reduce-only orders
-/// Returns (base_debt, quote_debt, base_asset, quote_asset)
-fun prepare_reduce_only_order<BaseAsset, QuoteAsset, DebtAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
-): (u64, u64, u64, u64) {
-    let debt_is_base = margin_manager.base_borrowed_shares() > 0;
-    let debt_shares = if (debt_is_base) {
-        margin_manager.base_borrowed_shares()
-    } else {
-        margin_manager.quote_borrowed_shares()
-    };
-
-    let base_debt = if (debt_is_base) {
-        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
-        margin_pool.to_borrow_amount(debt_shares)
-    } else {
-        0
-    };
-    let quote_debt = if (debt_is_base) {
-        0
-    } else {
-        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
-        margin_pool.to_borrow_amount(debt_shares)
-    };
-
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
-
-    (base_debt, quote_debt, base_asset, quote_asset)
 }
