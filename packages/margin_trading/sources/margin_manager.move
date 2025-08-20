@@ -663,8 +663,8 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
     let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
     let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 base, 550 quote)
-    let max_base_to_exit = math::div(manager_info.base.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
-    let max_quote_to_exit = math::div(manager_info.quote.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
+    let max_base_for_repay = math::div(manager_info.base.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
+    let max_quote_for_repay = math::div(manager_info.quote.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
 
     let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
     let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
@@ -689,12 +689,12 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     // We divide what's in the manager by the liquidation reward ratio to get the max amount that can be repaid,
     // since the addition percentage is given as liquidation reward.
     let same_asset_to_repay = if (debt_is_base) {
-        let same_repay = quantity_to_repay.min(max_base_to_exit);
+        let same_repay = quantity_to_repay.min(max_base_for_repay);
         base_to_exit = base_to_exit + same_repay;
 
         same_repay
     } else {
-        let same_repay = quantity_to_repay.min(max_quote_to_exit);
+        let same_repay = quantity_to_repay.min(max_quote_for_repay);
         quote_to_exit = quote_to_exit + same_repay;
 
         same_repay
@@ -719,7 +719,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
                 clock,
             );
 
-            base_out.min(max_base_to_exit)
+            base_out.min(max_base_for_repay)
         }; // 0
         let quote_quantity_out = if (debt_is_base) {
             let quote_out = calculate_target_amount<QuoteAsset>(
@@ -729,7 +729,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
                 clock,
             );
 
-            quote_out.min(max_quote_to_exit)
+            quote_out.min(max_quote_for_repay)
         } else {
             0
         }; // 226.125. This is the additional amount needed, so liquidator can swap to base and repay.
