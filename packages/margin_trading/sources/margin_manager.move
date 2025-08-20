@@ -584,8 +584,20 @@ public fun pool_reward_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): 
     fulfillment.pool_reward_amount
 }
 
+public fun liquidator_reward_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.liquidator_reward_amount
+}
+
 public fun default_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
     fulfillment.default_amount
+}
+
+public fun base_exit_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.base_exit_amount
+}
+
+public fun quote_exit_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.quote_exit_amount
 }
 
 // === Public-Package Functions ===
