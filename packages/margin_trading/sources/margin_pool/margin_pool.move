@@ -41,11 +41,6 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
-public struct RepayReceipt<phantom Asset> has drop {
-    repaid_amount: u64,
-    reward_amount: u64,
-}
-
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(
@@ -292,31 +287,16 @@ public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>
 public(package) fun repay_with_reward<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
-    reward: Coin<Asset>,
+    repay_amount: u64,
+    reward_amount: u64,
     default_amount: u64,
     clock: &Clock,
-): RepayReceipt<Asset> {
+) {
     self.update_state(clock);
-    let repaid_amount = coin.value();
-    let reward_amount = reward.value();
-    self.state.decrease_total_borrow(repaid_amount);
+    self.state.decrease_total_borrow(repay_amount);
     self.state.increase_total_supply_with_index(reward_amount);
-    self.state.decrease_total_supply(default_amount);
+    self.state.decrease_total_supply_with_index(default_amount);
     self.vault.join(coin.into_balance());
-    self.vault.join(reward.into_balance());
-
-    RepayReceipt<Asset> {
-        repaid_amount,
-        reward_amount,
-    }
-}
-
-public(package) fun paid_amount<Asset>(repay_receipt: &RepayReceipt<Asset>): u64 {
-    repay_receipt.repaid_amount
-}
-
-public(package) fun reward_amount<Asset>(repay_receipt: &RepayReceipt<Asset>): u64 {
-    repay_receipt.reward_amount
 }
 
 /// Updates the protocol spread
