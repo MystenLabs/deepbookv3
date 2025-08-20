@@ -57,7 +57,7 @@ public struct Fulfillment<phantom DebtAsset> {
     manager_id: ID,
     repay_amount: u64,
     pool_reward_amount: u64,
-    liquidator_reward_amount: u64, // This is emitted as extra information
+    liquidator_reward_amount: u64, // This is emitted as extra information in an event
     default_amount: u64,
 }
 
