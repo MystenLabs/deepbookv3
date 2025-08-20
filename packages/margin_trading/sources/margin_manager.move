@@ -646,7 +646,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let usd_amount_to_repay = math::div(numerator, denominator); // 150 / 0.2 = 750
 
     // amount liquidator must return to the margin pool. This is excluding the liquidation rewards.
-    let quantity_to_repay = calculate_target_amount<DebtAsset>(
+    let mut quantity_to_repay = calculate_target_amount<DebtAsset>(
         debt_oracle,
         registry,
         usd_amount_to_repay,
@@ -724,6 +724,24 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
+    // Manager is in default if asset / debt < 1
+    let default_amount = if (manager_info.risk_ratio < constants::float_scaling()) {
+        // We calculate how much will be defaulted
+        // If 0.9 is the risk ratio, then the entire manager should be drained to repay as needed.
+        // The total loan repaid in this scenario will be 0.9 * loan / (1 + liquidation_reward)
+        // This is already being accounted for in base_out.min(max_base_to_exit) above for example
+        // Assume asset is 900, debt is 1000, liquidation reward is 5%
+
+        let debt = manager_info.base.debt.max(manager_info.quote.debt);
+        let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio);
+        quantity_to_repay = math::div(repay_with_liquidation_reward, liquidation_reward_ratio);
+
+        // Now we calculate the defaulted amount, which is the debt - quantity_to_repay
+        debt - quantity_to_repay
+    } else {
+        0
+    };
+
     (
         Fulfillment<DebtAsset> {
             repay_amount: quantity_to_repay, // 750
@@ -731,7 +749,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
                 quantity_to_repay,
                 pool_liquidation_reward,
             ), // 750 * 0.03 = 22.5
-            default_amount: 0,
+            default_amount,
         },
         base,
         quote,
