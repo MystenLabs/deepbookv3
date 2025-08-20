@@ -921,7 +921,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 }
 
 /// Repays the loan using the margin manager.
-/// Returns the (amount repaid, amount remaining)
+/// Returns the total amount repaid
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
