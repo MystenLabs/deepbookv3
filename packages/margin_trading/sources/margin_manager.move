@@ -737,6 +737,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         quantity_to_repay = math::div(repay_with_liquidation_reward, liquidation_reward_ratio);
 
         // Now we calculate the defaulted amount, which is the debt - quantity_to_repay
+        // This is the amount that will be defaulted. 1000 - 857.142 = 142.858
         debt - quantity_to_repay
     } else {
         0
