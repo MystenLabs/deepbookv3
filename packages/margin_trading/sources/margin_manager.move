@@ -643,7 +643,7 @@ public(package) fun position_info(position_info: &PositionInfo): (u64, u64, u64,
 }
 
 /// General helper for debt calculation and asset totals.
-/// Returns (base_debt, quote_debt, base_asset, quote_asset)
+/// Returns PositionInfo {base_debt, quote_debt, base_asset, quote_asset}
 public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
