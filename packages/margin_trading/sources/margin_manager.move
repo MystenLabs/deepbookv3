@@ -684,7 +684,7 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
 
 // === Private Functions ===
 /// calculate quantity of debt that must be removed to reach target risk ratio.
-/// D = debt, A = assets, T = target risk ratio, R = liquidation reward
+/// amount_to_repay is only for the loan, not including liquidation rewards.
 /// amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
 fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
