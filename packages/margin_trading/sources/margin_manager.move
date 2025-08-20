@@ -51,6 +51,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
     trade_cap: TradeCap,
     base_borrowed_shares: u64,
     quote_borrowed_shares: u64,
+    active_liquidation: bool, // without this, the margin manager can be liquidated multiple times within the same tx
 }
 
 public struct Fulfillment<phantom DebtAsset> {
@@ -149,6 +150,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
         trade_cap,
         base_borrowed_shares: 0,
         quote_borrowed_shares: 0,
+        active_liquidation: false,
     };
 
     transfer::share_object(margin_manager)
@@ -317,6 +319,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
+    assert!(!margin_manager.active_liquidation, ECannotLiquidate);
+    margin_manager.active_liquidation = true;
 
     // cancel all orders. at this point, all available assets are in the balance manager.
     let trade_proof = margin_manager.trade_proof(ctx);
@@ -349,6 +353,8 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 ): u64 {
     assert!(fulfillment.manager_id == margin_manager.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
+    assert!(margin_manager.active_liquidation, ECannotLiquidate);
+    margin_manager.active_liquidation = false;
 
     let margin_manager_id = margin_manager.id();
     let margin_pool_id = margin_pool.id();
