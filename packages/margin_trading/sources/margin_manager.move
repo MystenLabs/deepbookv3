@@ -714,6 +714,10 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     // User pays 750 + 22.5 = 772.5 to the pool (including liquidation rewards)
     // Liquidator receives 787.42125 - 772.5 = 14.92125
     // 14.92125 / 772.5 = 0.019315443627210615 (Around 2%)
+
+    // Manager: Now has base: 0. quote: 550-237.43125 = 312.56875
+    // 750 of the debt is repaid, so not remaining debt is 1000 - 750 = 250
+    // Risk ratio is 312.56875 / 250 = 1.25, which matches the target risk ratio
 }
 
 fun validate_owner<BaseAsset, QuoteAsset>(
