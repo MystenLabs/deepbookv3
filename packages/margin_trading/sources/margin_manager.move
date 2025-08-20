@@ -304,17 +304,17 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let pool_id = pool.id();
+    margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
+    // 100%, or liquidation to the target ratio is the default
     assert!(
         partial_liquidation_percentage.get_with_default(constants::float_scaling()) < constants::float_scaling(),
         EInvalidPartialLiquidationPercentage,
     );
-    // 100%, or liquidation to the target ratio is the default
     assert!(
         partial_liquidation_percentage.get_with_default(constants::float_scaling()) > margin_constants::min_partial_liquidation_percentage(),
         EInvalidPartialLiquidationPercentage,
     );
-    margin_pool.update_state(clock);
 
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
