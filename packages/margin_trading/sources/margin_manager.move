@@ -3,26 +3,21 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    constants,
+    math,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
-use margin_trading::margin_constants;
-use margin_trading::margin_pool::{MarginPool, RepayReceipt};
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
+use margin_trading::{
+    margin_constants,
+    margin_pool::{MarginPool, RepayReceipt},
+    margin_registry::MarginRegistry,
+    oracle::{calculate_usd_price, calculate_target_amount}
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -655,9 +650,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         let usd_perc_left_to_repay = math::div(
             quantity_to_repay - same_asset_to_repay,
             quantity_to_repay,
-        ); // (750 - 523.81) / 750 = 0.3
+        ); // (750 - 523.81) / 750 = 0.3015
 
-        let usd_remaining_to_repay = math::mul(usd_amount_to_repay, usd_perc_left_to_repay); // 750 * 0.3 = 225
+        let usd_remaining_to_repay = math::mul(usd_amount_to_repay, usd_perc_left_to_repay); // 750 * 0.3015 = 226.125
 
         let base_quantity_out = if (debt_is_base) {
             0
@@ -682,99 +677,43 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
             quote_out.min(max_quote_to_exit)
         } else {
             0
-        }; // 225
+        }; // 226.125. This is the additional amount needed, so liquidator can swap to base and repay.
 
         base_to_exit = base_to_exit + base_quantity_out; // 523.81
-        quote_to_exit = quote_to_exit + quote_quantity_out; // 225
+        quote_to_exit = quote_to_exit + quote_quantity_out; // 226.125
     };
 
+    // We now know the base and quote amount to exit without liquidation rewards.
+    // We need to calculate the amount of base and quote to exit with liquidation rewards.
+    let base_to_exit_with_rewards = math::mul(base_to_exit, liquidation_reward_ratio); // 523.81 * 1.05 = 549.99
+    let quote_to_exit_with_rewards = math::mul(quote_to_exit, liquidation_reward_ratio); // 226.125 * 1.05 = 237.43125
+
     let base = margin_manager.liquidation_withdraw_base(
-        base_to_exit,
+        base_to_exit_with_rewards,
         ctx,
     );
     let quote = margin_manager.liquidation_withdraw_quote(
-        quote_to_exit,
+        quote_to_exit_with_rewards,
         ctx,
     );
 
     (
         Fulfillment<DebtAsset> {
-            repay_amount: quantity_to_repay,
-            pool_reward_amount: 0,
+            repay_amount: quantity_to_repay, // 750
+            pool_reward_amount: math::mul(
+                quantity_to_repay,
+                pool_liquidation_reward,
+            ), // 750 * 0.03 = 22.5
             default_amount: 0,
         },
         base,
         quote,
     )
 
-    // let actual_repay_amount = usd_amount_to_repay.min(base_in_usd);
-    // let mut base_to_exit_usd = amount_to_exit_usd.min(base_in_usd);
-    // let mut quote_to_exit_usd = amount_to_exit_usd.min(quote_in_usd);
-    // if (debt_is_base) {
-    //     amount_to_exit_usd = amount_to_exit_usd - base_to_exit_usd;
-    //     quote_to_exit_usd = amount_to_exit_usd.min(quote_in_usd);
-    // } else {
-    //     amount_to_exit_usd = amount_to_exit_usd - quote_to_exit_usd;
-    //     base_to_exit_usd = amount_to_exit_usd.min(base_in_usd);
-    // };
-
-    // // the amount that will leave the margin manager.
-    // let total_to_exit_usd = base_to_exit_usd + quote_to_exit_usd;
-    // // amount that will go to the margin pool.
-    // let total_to_exit_usd =
-    //     total_to_exit_usd - math::mul(total_to_exit_usd, user_liquidation_reward);
-
-    // // amount liquidator must return to the margin pool.
-    // let quantity_to_return = if (debt_is_base) {
-    //     calculate_target_amount<BaseAsset>(
-    //         base_price_info_object,
-    //         registry,
-    //         total_to_exit_usd,
-    //         clock,
-    //     )
-    // } else {
-    //     calculate_target_amount<QuoteAsset>(
-    //         quote_price_info_object,
-    //         registry,
-    //         total_to_exit_usd,
-    //         clock,
-    //     )
-    // };
-
-    // // amount of base liquidator will receive.
-    // let base_to_exit = calculate_target_amount<BaseAsset>(
-    //     base_price_info_object,
-    //     registry,
-    //     base_to_exit_usd,
-    //     clock,
-    // );
-
-    // // amount of quote liquidator will receive.
-    // let quote_to_exit = calculate_target_amount<QuoteAsset>(
-    //     quote_price_info_object,
-    //     registry,
-    //     quote_to_exit_usd,
-    //     clock,
-    // );
-
-    // let base = margin_manager.liquidation_withdraw_base(
-    //     base_to_exit,
-    //     ctx,
-    // );
-    // let quote = margin_manager.liquidation_withdraw_quote(
-    //     quote_to_exit,
-    //     ctx,
-    // );
-
-    // (
-    //     Fulfillment<DebtAsset> {
-    //         repay_amount: quantity_to_return,
-    //         pool_reward_amount: debt.max(quantity_to_return) - quantity_to_return,
-    //         default_amount: debt.max(quantity_to_return) - quantity_to_return,
-    //     },
-    //     base,
-    //     quote,
-    // )
+    // We now see the total out is 549.99 base and 237.43125 quote = 787.42125
+    // User pays 750 + 22.5 = 772.5 to the pool (including liquidation rewards)
+    // Liquidator receives 787.42125 - 772.5 = 14.92125
+    // 14.92125 / 772.5 = 0.019315443627210615 (Around 2%)
 }
 
 fun validate_owner<BaseAsset, QuoteAsset>(

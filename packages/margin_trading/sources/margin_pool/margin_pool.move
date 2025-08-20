@@ -4,16 +4,20 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::margin_state::{Self, State, InterestParams};
-use margin_trading::position_manager::{Self, PositionManager};
-use margin_trading::referral_manager::{Self, ReferralManager, ReferralCap};
-use margin_trading::reward_manager::{Self, RewardManager};
+use margin_trading::{
+    margin_state::{Self, State, InterestParams},
+    position_manager::{Self, PositionManager},
+    referral_manager::{Self, ReferralManager, ReferralCap},
+    reward_manager::{Self, RewardManager}
+};
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::vec_set::{Self, VecSet};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    vec_set::{Self, VecSet}
+};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
