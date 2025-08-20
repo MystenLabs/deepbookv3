@@ -774,9 +774,11 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         let usd_remaining_to_repay = usd_amount_to_repay - same_asset_to_repay_usd; // 750 - 523.81 = 226.19
 
         if (debt_is_base) {
-            quote_to_exit_usd = quote_to_exit_usd + usd_remaining_to_repay; // 226.19
+            quote_to_exit_usd =
+                quote_to_exit_usd + usd_remaining_to_repay.min(max_quote_for_repay_usd); // 226.19
         } else {
-            base_to_exit_usd = base_to_exit_usd + usd_remaining_to_repay;
+            base_to_exit_usd =
+                base_to_exit_usd + usd_remaining_to_repay.min(max_base_for_repay_usd);
         };
     };
 
