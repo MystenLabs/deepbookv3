@@ -4,20 +4,16 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
-    margin_state::{Self, State, InterestParams},
-    position_manager::{Self, PositionManager},
-    referral_manager::{Self, ReferralManager, ReferralCap},
-    reward_manager::{Self, RewardManager}
-};
+use margin_trading::margin_state::{Self, State, InterestParams};
+use margin_trading::position_manager::{Self, PositionManager};
+use margin_trading::referral_manager::{Self, ReferralManager, ReferralCap};
+use margin_trading::reward_manager::{Self, RewardManager};
 use std::type_name::{Self, TypeName};
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    vec_set::{Self, VecSet}
-};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -41,7 +37,7 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
-public struct RepayReceipt has drop {
+public struct RepayReceipt<phantom Asset> has drop {
     repaid_amount: u64,
     reward_amount: u64,
 }
@@ -295,27 +291,27 @@ public(package) fun repay_with_reward<Asset>(
     reward: Coin<Asset>,
     default_amount: u64,
     clock: &Clock,
-): RepayReceipt {
+): RepayReceipt<Asset> {
     self.update_state(clock);
-    let coin_value = coin.value();
-    let reward_value = reward.value();
-    self.state.decrease_total_borrow(coin_value);
-    self.state.increase_total_supply_with_index(reward_value);
+    let repaid_amount = coin.value();
+    let reward_amount = reward.value();
+    self.state.decrease_total_borrow(repaid_amount);
+    self.state.increase_total_supply_with_index(reward_amount);
     self.state.decrease_total_supply(default_amount);
     self.vault.join(coin.into_balance());
     self.vault.join(reward.into_balance());
 
-    RepayReceipt {
-        repaid_amount: coin_value,
-        reward_amount: reward_value,
+    RepayReceipt<Asset> {
+        repaid_amount,
+        reward_amount,
     }
 }
 
-public(package) fun paid_amount(repay_receipt: &RepayReceipt): u64 {
+public(package) fun paid_amount<Asset>(repay_receipt: &RepayReceipt<Asset>): u64 {
     repay_receipt.repaid_amount
 }
 
-public(package) fun reward_amount(repay_receipt: &RepayReceipt): u64 {
+public(package) fun reward_amount<Asset>(repay_receipt: &RepayReceipt<Asset>): u64 {
     repay_receipt.reward_amount
 }
 
