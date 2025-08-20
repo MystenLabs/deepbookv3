@@ -509,6 +509,20 @@ public fun deepbook_pool<BaseAsset, QuoteAsset>(
     margin_manager.deepbook_pool
 }
 
+/// Returns fulfillment repay amount
+public fun repay_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.repay_amount
+}
+
+/// Returns fulfillment pool reward amount
+public fun pool_reward_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.pool_reward_amount
+}
+
+public fun default_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
+    fulfillment.default_amount
+}
+
 // === Public-Package Functions ===
 public(package) fun balance_manager<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
