@@ -349,6 +349,18 @@ public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
     &self.state
 }
 
+public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u64): u64 {
+    self.state.to_borrow_shares(amount)
+}
+
+public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
+    self.state.to_borrow_amount(shares)
+}
+
+public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.max_utilization_rate()
+}
+
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }

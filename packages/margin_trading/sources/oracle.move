@@ -86,33 +86,6 @@ public(package) fun calculate_usd_price<T>(
     )
 }
 
-/// Calculates the USD price of a given asset or debt amount.
-/// 9 decimals are used for USD representation.
-/// Returns a tuple of two amounts
-public(package) fun calculate_pair_usd_price<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    amount1: u64,
-    amount2: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let config = price_config<T>(
-        price_info_object,
-        registry,
-        true,
-        clock,
-    );
-
-    (
-        config.calculate_usd_currency_amount(
-            amount1,
-        ),
-        config.calculate_usd_currency_amount(
-            amount2,
-        ),
-    )
-}
-
 public(package) fun calculate_usd_currency_amount(
     config: ConversionConfig,
     base_currency_amount: u64,

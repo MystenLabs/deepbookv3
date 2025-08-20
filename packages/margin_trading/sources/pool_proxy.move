@@ -83,11 +83,10 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
+public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -100,14 +99,12 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
+    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager
+        .calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+            pool,
+            margin_pool,
+        )
+        .position_info();
 
     // The order is a bid, and quantity is less than the net base debt.
     // The order is a ask, and quote quantity is less than the net quote debt.
@@ -137,11 +134,10 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only market order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
+public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &mut MarginPool<BaseAsset>,
-    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -151,14 +147,12 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.total_debt<BaseAsset, QuoteAsset>(
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    );
-    let (base_asset, quote_asset) = margin_manager.total_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
+    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager
+        .calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+            pool,
+            margin_pool,
+        )
+        .position_info();
 
     let (_, quote_quantity, _) = if (pay_with_deep) {
         pool.get_quote_quantity_out(quantity, clock)
