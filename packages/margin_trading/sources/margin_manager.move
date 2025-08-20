@@ -33,6 +33,8 @@ const EBorrowRiskRatioExceeded: u64 = 8;
 const EWithdrawRiskRatioExceeded: u64 = 9;
 const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
+const EInvalidPartialLiquidationPercentage: u64 = 12;
+const ECannotPartiallyLiquidateManagerInDefault: u64 = 13;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -272,11 +274,21 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     quote_price_info_object: &PriceInfoObject,
     margin_pool: &mut MarginPool<DebtAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    partial_liquidation_percentage: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let pool_id = pool.id();
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
+    assert!(
+        partial_liquidation_percentage.get_with_default(constants::float_scaling()) < constants::float_scaling(),
+        EInvalidPartialLiquidationPercentage,
+    );
+    // Can update this number from 10%
+    assert!(
+        partial_liquidation_percentage.get_with_default(constants::float_scaling()) > 100_000_000,
+        EInvalidPartialLiquidationPercentage,
+    );
     margin_pool.update_state(clock);
 
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -301,6 +313,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         pool_id,
+        partial_liquidation_percentage,
         clock,
         ctx,
     )
@@ -619,6 +632,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     pool_id: ID,
+    partial_liquidation_percentage: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
@@ -710,17 +724,21 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         quote_to_exit = quote_to_exit + quote_quantity_out; // 226.125
     };
 
+    let partial_liquidation_percentage = partial_liquidation_percentage.get_with_default(
+        constants::float_scaling(),
+    );
+
     // We now know the base and quote amount to exit without liquidation rewards.
     // We need to calculate the amount of base and quote to exit with liquidation rewards.
     let base_to_exit_with_rewards = math::mul(base_to_exit, liquidation_reward_ratio); // 523.81 * 1.05 = 549.99
     let quote_to_exit_with_rewards = math::mul(quote_to_exit, liquidation_reward_ratio); // 226.125 * 1.05 = 237.43125
 
     let base = margin_manager.liquidation_withdraw_base(
-        base_to_exit_with_rewards,
+        math::mul(base_to_exit_with_rewards, partial_liquidation_percentage),
         ctx,
     );
     let quote = margin_manager.liquidation_withdraw_quote(
-        quote_to_exit_with_rewards,
+        math::mul(quote_to_exit_with_rewards, partial_liquidation_percentage),
         ctx,
     );
 
@@ -731,6 +749,10 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         // The total loan repaid in this scenario will be 0.9 * loan / (1 + liquidation_reward)
         // This is already being accounted for in base_out.min(max_base_to_exit) above for example
         // Assume asset is 900, debt is 1000, liquidation reward is 5%
+        assert!(
+            partial_liquidation_percentage == constants::float_scaling(),
+            ECannotPartiallyLiquidateManagerInDefault,
+        );
 
         let debt = manager_info.base.debt.max(manager_info.quote.debt);
         let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio);
@@ -745,9 +767,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 
     (
         Fulfillment<DebtAsset> {
-            repay_amount: quantity_to_repay, // 750
+            repay_amount: math::mul(quantity_to_repay, partial_liquidation_percentage), // 750
             pool_reward_amount: math::mul(
-                quantity_to_repay,
+                math::mul(quantity_to_repay, partial_liquidation_percentage),
                 pool_liquidation_reward,
             ), // 750 * 0.03 = 22.5
             default_amount,
