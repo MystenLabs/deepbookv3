@@ -720,15 +720,16 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     } else {
         quote_price_info_object
     };
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt
+
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDT (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
     let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
     let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
-    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 base, 550 quote)
-    let max_base_for_repay = math::div(manager_info.base.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
-    let max_quote_for_repay = math::div(manager_info.quote.asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
+    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 USDT, 550 USDC)
+    let max_base_for_repay_usd = math::div(manager_info.base.usd_asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
+    let max_quote_for_repay_usd = math::div(manager_info.quote.usd_asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
 
     let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
     let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
@@ -737,70 +738,48 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     // it may be greater than the total assets in the balance manager.
     let usd_amount_to_repay = math::div(numerator, denominator); // 150 / 0.2 = 750
 
-    // amount liquidator must return to the margin pool. This is excluding the liquidation rewards.
-    let mut quantity_to_repay = calculate_target_amount<DebtAsset>(
-        debt_oracle,
-        registry,
-        usd_amount_to_repay,
-        clock,
-    ); // 750
-
-    let mut base_to_exit = 0;
-    let mut quote_to_exit = 0;
+    let mut base_to_exit_usd = 0;
+    let mut quote_to_exit_usd = 0;
 
     // We repay as much as possible using the same asset.
     // We add this to base_to_exit and quote_to_exit accordingly.
     // We divide what's in the manager by the liquidation reward ratio to get the max amount that can be repaid,
     // since the addition percentage is given as liquidation reward.
-    let same_asset_to_repay = if (debt_is_base) {
-        let same_repay = quantity_to_repay.min(max_base_for_repay);
-        base_to_exit = base_to_exit + same_repay;
+    let same_asset_to_repay_usd = if (debt_is_base) {
+        let same_repay = usd_amount_to_repay.min(max_base_for_repay_usd);
+        base_to_exit_usd = base_to_exit_usd + same_repay;
 
         same_repay
     } else {
-        let same_repay = quantity_to_repay.min(max_quote_for_repay);
-        quote_to_exit = quote_to_exit + same_repay;
+        let same_repay = usd_amount_to_repay.min(max_quote_for_repay_usd);
+        quote_to_exit_usd = quote_to_exit_usd + same_repay;
 
         same_repay
     }; // base_to_exit = 523.81, quote_to_exit = 0
 
     // This means we need additional non-debt asset for liquidator to swap, and repay
-    if (quantity_to_repay > same_asset_to_repay) {
-        let usd_perc_left_to_repay = math::div(
-            quantity_to_repay - same_asset_to_repay,
-            quantity_to_repay,
-        ); // (750 - 523.81) / 750 = 0.3015
+    if (usd_amount_to_repay > same_asset_to_repay_usd) {
+        let usd_remaining_to_repay = usd_amount_to_repay - same_asset_to_repay_usd; // 750 - 523.81 = 226.19
 
-        let usd_remaining_to_repay = math::mul(usd_amount_to_repay, usd_perc_left_to_repay); // 750 * 0.3015 = 226.125
-
-        let base_quantity_out = if (debt_is_base) {
-            0
+        if (debt_is_base) {
+            quote_to_exit_usd = quote_to_exit_usd + usd_remaining_to_repay; // 226.19
         } else {
-            let base_out = calculate_target_amount<BaseAsset>(
-                base_price_info_object,
-                registry,
-                usd_remaining_to_repay,
-                clock,
-            );
-
-            base_out.min(max_base_for_repay)
-        }; // 0
-        let quote_quantity_out = if (debt_is_base) {
-            let quote_out = calculate_target_amount<QuoteAsset>(
-                quote_price_info_object,
-                registry,
-                usd_remaining_to_repay,
-                clock,
-            );
-
-            quote_out.min(max_quote_for_repay)
-        } else {
-            0
-        }; // 226.125. This is the additional amount needed, so liquidator can swap to base and repay.
-
-        base_to_exit = base_to_exit + base_quantity_out; // 523.81
-        quote_to_exit = quote_to_exit + quote_quantity_out; // 226.125
+            base_to_exit_usd = base_to_exit_usd + usd_remaining_to_repay;
+        };
     };
+
+    let base_to_exit = calculate_target_amount<BaseAsset>(
+        base_price_info_object,
+        registry,
+        base_to_exit_usd,
+        clock,
+    ); // 523.81 USDT
+    let quote_to_exit = calculate_target_amount<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        quote_to_exit_usd,
+        clock,
+    ); // 226.19 USDC
 
     // We now know the base and quote amount to exit without liquidation rewards.
     // We need to calculate the amount of base and quote to exit with liquidation rewards.
@@ -814,6 +793,13 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let quote = margin_manager.liquidation_withdraw_quote(
         quote_to_exit_with_rewards,
         ctx,
+    );
+
+    let mut quantity_to_repay = calculate_target_amount<DebtAsset>(
+        debt_oracle,
+        registry,
+        usd_amount_to_repay,
+        clock,
     );
 
     // Manager is in default if asset / debt < 1
