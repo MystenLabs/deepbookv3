@@ -593,26 +593,26 @@ fun produce_fulfillment<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): (Fulfillment, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let debt = manager_info.base.debt.max(manager_info.quote.debt);
-    let debt_is_base = manager_info.base.debt > 0;
+    let debt_is_base = manager_info.base.debt > 0; // True
 
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt);
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 base debt
     let base_in_usd = manager_info.base.usd_asset;
     let quote_in_usd = manager_info.quote.usd_asset;
 
-    let target_ratio = registry.target_liquidation_risk_ratio(pool_id);
-    let user_liquidation_reward = registry.user_liquidation_reward(pool_id);
-    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id);
-    let liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
+    let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
+    let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
+    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
+    let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
 
-    let assets_in_usd = base_in_usd + quote_in_usd;
+    let assets_in_usd = base_in_usd + quote_in_usd; // 1100. 550 base, 550 quote
     let numerator =
-        math::mul(debt_in_usd, target_ratio) + math::mul(assets_in_usd, target_ratio) - debt_in_usd;
+        math::mul(debt_in_usd, target_ratio) + math::mul(assets_in_usd, target_ratio) - debt_in_usd; // 1250 + 1375 - 1000 = 1625
     let denominator =
-        target_ratio + math::mul(target_ratio, liquidation_reward) - constants::float_scaling();
+        target_ratio + math::mul(target_ratio, liquidation_reward) - constants::float_scaling(); // 1.25 + 1.25 * 0.05 - 1 = 1.3125
 
     // this is the amount that needs to exit the balance manager to reach the target risk ratio.
     // it may be greater than the total assets in the balance manager.
-    let mut amount_to_exit_usd = math::div(numerator, denominator);
+    let mut amount_to_exit_usd = math::div(numerator, denominator); // 1240.24 (This is not correct, greater than all the assets)
     let mut base_to_exit_usd = amount_to_exit_usd.min(base_in_usd);
     let mut quote_to_exit_usd = amount_to_exit_usd.min(quote_in_usd);
     if (debt_is_base) {
