@@ -34,7 +34,6 @@ const EWithdrawRiskRatioExceeded: u64 = 9;
 const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
 const EInvalidPartialLiquidationPercentage: u64 = 12;
-const ECannotPartiallyLiquidateManagerInDefault: u64 = 13;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -55,8 +54,10 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
 }
 
 public struct Fulfillment<phantom DebtAsset> {
+    manager_id: ID,
     repay_amount: u64,
     pool_reward_amount: u64,
+    liquidator_reward_amount: u64, // This is emitted as extra information
     default_amount: u64,
 }
 
@@ -91,6 +92,30 @@ public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
     balance_manager_id: ID,
     owner: address,
+}
+
+/// Event emitted when loan is borrowed
+public struct LoanBorrowedEvent has copy, drop {
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    loan_amount: u64,
+}
+
+/// Event emitted when loan is repaid
+public struct LoanRepaidEvent has copy, drop {
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    repay_amount: u64,
+}
+
+/// Event emitted when margin manager is liquidated
+public struct LiquidationEvent has copy, drop {
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    liquidation_amount: u64,
+    pool_reward_amount: u64,
+    liquidator_reward_amount: u64,
+    default_amount: u64,
 }
 
 // === Public Functions - Margin Manager ===
@@ -284,9 +309,9 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         partial_liquidation_percentage.get_with_default(constants::float_scaling()) < constants::float_scaling(),
         EInvalidPartialLiquidationPercentage,
     );
-    // Can update this number from 10%. Will add to margin_constants later.
+    // 100%, or liquidation to the target ratio is the default
     assert!(
-        partial_liquidation_percentage.get_with_default(constants::float_scaling()) > 100_000_000,
+        partial_liquidation_percentage.get_with_default(constants::float_scaling()) > margin_constants::min_partial_liquidation_percentage(),
         EInvalidPartialLiquidationPercentage,
     );
     margin_pool.update_state(clock);
@@ -328,11 +353,16 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     fulfillment: Fulfillment<RepayAsset>,
     clock: &Clock,
 ): u64 {
+    assert!(fulfillment.manager_id == margin_manager.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
 
+    let margin_manager_id = margin_manager.id();
+    let margin_pool_id = margin_pool.id();
     let repay_is_base = margin_manager.base_borrowed_shares > 0;
     let repay_amount = fulfillment.repay_amount;
     let pool_reward_amount = fulfillment.pool_reward_amount;
+    let liquidator_reward_amount = fulfillment.liquidator_reward_amount;
+    let default_amount = fulfillment.default_amount;
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     if (repay_is_base) {
@@ -347,13 +377,30 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         coin,
         repay_amount,
         pool_reward_amount,
-        fulfillment.default_amount,
+        default_amount,
         clock,
     );
 
+    event::emit(LoanRepaidEvent {
+        margin_manager_id,
+        margin_pool_id,
+        repay_amount,
+    });
+
+    event::emit(LiquidationEvent {
+        margin_manager_id,
+        margin_pool_id,
+        liquidation_amount: repay_amount,
+        pool_reward_amount,
+        liquidator_reward_amount,
+        default_amount,
+    });
+
     let Fulfillment {
+        manager_id: _,
         repay_amount: _,
         pool_reward_amount: _,
+        liquidator_reward_amount: _,
         default_amount: _,
     } = fulfillment;
 
@@ -763,11 +810,6 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         // The total loan repaid in this scenario will be 0.9 * loan / (1 + liquidation_reward)
         // This is already being accounted for in base_out.min(max_base_to_exit) above for example
         // Assume asset is 900, debt is 1000, liquidation reward is 5%
-        assert!(
-            partial_liquidation_percentage == constants::float_scaling(),
-            ECannotPartiallyLiquidateManagerInDefault,
-        );
-
         let debt = manager_info.base.debt.max(manager_info.quote.debt);
         let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio);
         quantity_to_repay = math::div(repay_with_liquidation_reward, liquidation_reward_ratio);
@@ -781,12 +823,17 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 
     (
         Fulfillment<DebtAsset> {
+            manager_id: margin_manager.id(),
             repay_amount: math::mul(quantity_to_repay, partial_liquidation_percentage), // 750
             pool_reward_amount: math::mul(
                 math::mul(quantity_to_repay, partial_liquidation_percentage),
                 pool_liquidation_reward,
             ), // 750 * 0.03 = 22.5
-            default_amount,
+            liquidator_reward_amount: math::mul(
+                math::mul(quantity_to_repay, partial_liquidation_percentage),
+                user_liquidation_reward,
+            ), // 750 * 0.02 = 15
+            default_amount: math::mul(default_amount, partial_liquidation_percentage),
         },
         base,
         quote,
@@ -820,6 +867,12 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     let coin = margin_pool.borrow(loan_amount, clock, ctx);
 
     margin_manager.deposit<BaseAsset, QuoteAsset, BorrowAsset>(coin, ctx);
+
+    event::emit(LoanBorrowedEvent {
+        margin_manager_id: manager_id,
+        margin_pool_id: margin_pool.id(),
+        loan_amount,
+    });
 
     Request {
         margin_manager_id: manager_id,
@@ -867,6 +920,12 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         coin,
         clock,
     );
+
+    event::emit(LoanRepaidEvent {
+        margin_manager_id: margin_manager.id(),
+        margin_pool_id: margin_pool.id(),
+        repay_amount,
+    });
 
     repay_amount
 }
