@@ -284,7 +284,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         partial_liquidation_percentage.get_with_default(constants::float_scaling()) < constants::float_scaling(),
         EInvalidPartialLiquidationPercentage,
     );
-    // Can update this number from 10%
+    // Can update this number from 10%. Will add to margin_constants later.
     assert!(
         partial_liquidation_percentage.get_with_default(constants::float_scaling()) > 100_000_000,
         EInvalidPartialLiquidationPercentage,
