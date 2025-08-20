@@ -35,6 +35,7 @@ const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
 const EInvalidPartialLiquidationPercentage: u64 = 12;
 const EIncorrectMarginPool: u64 = 13;
+const EInvalidRepayAmount: u64 = 14;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -941,6 +942,8 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
             margin_pool.to_borrow_amount(margin_manager.quote_borrowed_shares)
         }
     };
+    assert!(repay_amount > 0, EInvalidRepayAmount);
+
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
     let repay_amount = repay_amount.min(available_balance);
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
