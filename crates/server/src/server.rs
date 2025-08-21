@@ -995,7 +995,14 @@ pub async fn assets(
         schema::assets::package_id,
         schema::assets::asset_type,
     ));
-    let assets: Vec<(String, String, Option<i32>, Option<String>, Option<String>, String)> =
+    let assets: Vec<(
+        String,
+        String,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> =
         state.reader.results(query).await.map_err(|err| {
             DeepBookError::InternalError(format!("Failed to query assets: {}", err))
         })?;
