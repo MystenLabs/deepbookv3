@@ -126,10 +126,16 @@ public(package) fun claim_referral_rewards<Asset>(
     let share_value_appreciated = self
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
-    self.state.reduce_protocol_profit(reward_amount);
+    let reward_amount = math::mul(share_value_appreciated, self.state.referral_spread());
+    
+    let available_referral_pool = self.state.referral_profit();
+    let max_reward = reward_amount.min(available_referral_pool);
+    
+    if (max_reward > 0) {
+        self.state.claim_from_referral_pool(max_reward);
+    };
 
-    self.vault.split(reward_amount).into_coin(ctx)
+    self.vault.split(max_reward).into_coin(ctx)
 }
 
 // === Public-View Functions ===
@@ -144,6 +150,7 @@ public(package) fun create_margin_pool<Asset>(
     supply_cap: u64,
     max_borrow_percentage: u64,
     protocol_spread: u64,
+    referral_spread: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
@@ -155,6 +162,7 @@ public(package) fun create_margin_pool<Asset>(
             supply_cap,
             max_borrow_percentage,
             protocol_spread,
+            referral_spread,
             clock,
         ),
         positions: position_manager::create_position_manager(ctx),
@@ -308,6 +316,14 @@ public(package) fun update_margin_pool_spread<Asset>(
     self.state.update_margin_pool_spread(protocol_spread, clock);
 }
 
+/// Updates the referral spread
+public(package) fun update_referral_spread<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral_spread: u64,
+) {
+    self.state.set_referral_spread(referral_spread);
+}
+
 /// Resets the protocol profit and returns the coin.
 public(package) fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
@@ -344,6 +360,7 @@ public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
+
 
 // === Internal Functions ===
 fun add_reward_balance_to_bag<RewardToken>(

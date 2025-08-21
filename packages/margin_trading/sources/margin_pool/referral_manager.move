@@ -8,6 +8,7 @@ use sui::vec_map::{Self, VecMap};
 
 public struct ReferralManager has store {
     referrals: VecMap<ID, Referral>,
+    total_referral_shares: u64,
 }
 
 public struct Referral has store {
@@ -49,6 +50,7 @@ public fun mint_referral_cap(
 public(package) fun empty(): ReferralManager {
     ReferralManager {
         referrals: vec_map::empty(),
+        total_referral_shares: 0,
     }
 }
 
@@ -61,6 +63,7 @@ public(package) fun increase_referral_supply_shares(
         let referral_id = referral_id.destroy_some();
         let referral = self.referrals.get_mut(&referral_id);
         referral.referral_shares = referral.referral_shares + supply_shares;
+        self.total_referral_shares = self.total_referral_shares + supply_shares;
     };
 }
 
@@ -74,6 +77,7 @@ public(package) fun decrease_referral_supply_shares(
         let referral = self.referrals.get_mut(&referral_id);
         referral.referral_shares = referral.referral_shares - supply_shares;
         referral.min_claim_shares = referral.min_claim_shares.min(referral.referral_shares);
+        self.total_referral_shares = self.total_referral_shares - supply_shares;
     };
 }
 
@@ -84,9 +88,20 @@ public(package) fun claim_referral_rewards(
 ): u64 {
     let referral = self.referrals.get_mut(&referral_id);
     let index_diff = current_index - referral.last_claim_index;
-    let counted_shares = referral.min_claim_shares;
+    
+    let counted_shares = if (referral.min_claim_shares == 0) {
+        referral.referral_shares
+    } else {
+        referral.min_claim_shares
+    };
+    
     referral.last_claim_index = current_index;
     referral.min_claim_shares = referral.referral_shares;
 
     math::mul(counted_shares, index_diff)
+}
+
+/// Get total referral shares across all referrals
+public(package) fun total_referral_shares(self: &ReferralManager): u64 {
+    self.total_referral_shares
 }
