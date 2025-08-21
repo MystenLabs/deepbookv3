@@ -834,21 +834,28 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         0
     };
 
+    let manager_id = margin_manager.id();
+    let repay_amount = quantity_to_repay;
+    let pool_reward_amount = math::mul(
+        quantity_to_repay,
+        pool_liquidation_reward,
+    );
+    let liquidator_reward_amount = math::mul(
+        quantity_to_repay,
+        user_liquidation_reward,
+    );
+    let base_exit_amount = base_to_exit_with_rewards;
+    let quote_exit_amount = quote_to_exit_with_rewards;
+
     (
         Fulfillment<DebtAsset> {
-            manager_id: margin_manager.id(),
-            repay_amount: quantity_to_repay, // 750
-            pool_reward_amount: math::mul(
-                quantity_to_repay,
-                pool_liquidation_reward,
-            ), // 750 * 0.03 = 22.5
-            liquidator_reward_amount: math::mul(
-                quantity_to_repay,
-                user_liquidation_reward,
-            ), // 750 * 0.02 = 15
+            manager_id,
+            repay_amount,
+            pool_reward_amount,
+            liquidator_reward_amount,
             default_amount,
-            base_exit_amount: base_to_exit_with_rewards,
-            quote_exit_amount: quote_to_exit_with_rewards,
+            base_exit_amount,
+            quote_exit_amount,
         },
         base,
         quote,
