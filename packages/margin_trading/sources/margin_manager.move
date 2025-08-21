@@ -130,6 +130,7 @@ public struct LiquidationEvent2 has copy, drop {
     margin_pool_id: ID,
     liquidation_amount: u64,
     pool_reward_amount: u64,
+    user_reward_usd: u64,
     default_amount: u64,
 }
 
@@ -375,7 +376,8 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         clock,
     );
-    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
+    let risk_ratio = manager_info.risk_ratio;
+    assert!(registry.can_liquidate(pool_id, risk_ratio), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
 
     // cancel all orders. at this point, all available assets are in the balance manager.
@@ -389,11 +391,11 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
     let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDC (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
-    let user_reward_ratio = constants::float_scaling() + user_liquidation_reward; // 1.02
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
     let pool_reward_ratio = constants::float_scaling() + pool_liquidation_reward; // 1.03
     let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
-    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 USDT, 550 USDC)
+    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
+    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // $1100 assets (550 USDT, 550 USDC)
 
     let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
     let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
@@ -412,10 +414,22 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         liquidation_coin.value(),
         clock,
-    ); // 700 USDC
-    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // 700 / 1.03 = $679.61
+    ); // $700 in USDC (assume this is what the liquidator sent in for liquidation)
+    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $700 / 1.03 = $679.61
 
-    let repay_usd_amount = max_usd_amount_to_repay.min(coin_in_usd_minus_pool_reward); // $679.61
+    // We account for default here. If RR < 1 (0.9 for example)
+    // then the max repay amount should be multiplied by 0.9.
+    // 0.1 of the loan should be defaulted as a result.
+
+    let in_default = risk_ratio < constants::float_scaling(); // false
+
+    let repay_usd_amount = if (in_default) {
+        // The repayment is lower of what's supplied and all assets in manager excluding rewards.
+        // TODO: restrict default to full liquidation only?
+        math::div(assets_in_usd, liquidation_reward_ratio).min(coin_in_usd_minus_pool_reward)
+    } else {
+        max_usd_amount_to_repay.min(coin_in_usd_minus_pool_reward)
+    }; // $679.61
     let repay_amount = calculate_target_amount<DebtAsset>(
         debt_oracle,
         registry,
@@ -424,9 +438,10 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
     ); // 679.61 USDC
     let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 679.61 * 1.03 = 699.99 USDC
     let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // $699.99 - $679.61 = 20.38 USDC
-    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx);
+    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx); // 699.99 USDC in coin
 
-    let max_usd_to_exit = math::mul(repay_usd_amount, user_reward_ratio); // 679.61 * 1.02 = $693.20
+    let user_reward_usd = math::mul(repay_usd_amount, user_liquidation_reward); // 679.61 * 0.02 = $13.59
+    let max_usd_to_exit = user_reward_usd + repay_usd_amount; // 13.59 + 679.61 = $693.20
     let usd_asset_in_same_type = if (debt_is_base) {
         manager_info.base.usd_asset
     } else {
@@ -500,13 +515,12 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
         repay_amount,
     });
 
-    event::emit(LiquidationEvent {
+    event::emit(LiquidationEvent2 {
         margin_manager_id,
         margin_pool_id,
         liquidation_amount: repay_amount,
         pool_reward_amount,
-        liquidator_base_reward,
-        liquidator_quote_reward,
+        user_reward_usd,
         default_amount,
     });
 
