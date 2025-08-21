@@ -340,17 +340,17 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 /// Repays the loan as the liquidator.
-/// Returns the total amount repaid
+/// Returns the extra base and quote assets
 public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
     repay_coin: Coin<RepayAsset>,
-    return_base: Coin<BaseAsset>,
-    return_quote: Coin<QuoteAsset>,
+    mut return_base: Coin<BaseAsset>,
+    mut return_quote: Coin<QuoteAsset>,
     fulfillment: Fulfillment<RepayAsset>,
     clock: &Clock,
-    ctx: &TxContext,
-): u64 {
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     assert!(fulfillment.manager_id == margin_manager.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(margin_manager.active_liquidation, ECannotLiquidate);
@@ -383,11 +383,18 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
     let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
-    assert!(return_base.value() == base_to_return, EInvalidReturnAmount);
-    assert!(return_quote.value() == quote_to_return, EInvalidReturnAmount);
 
-    margin_manager.liquidation_deposit_base(return_base, ctx);
-    margin_manager.liquidation_deposit_quote(return_quote, ctx);
+    if (base_to_return > 0) {
+        assert!(return_base.value() >= base_to_return, EInvalidReturnAmount);
+        let base_coin = return_base.split(base_to_return, ctx);
+        margin_manager.liquidation_deposit_base(base_coin, ctx);
+    };
+
+    if (quote_to_return > 0) {
+        assert!(return_quote.value() >= quote_to_return, EInvalidReturnAmount);
+        let quote_coin = return_quote.split(quote_to_return, ctx);
+        margin_manager.liquidation_deposit_quote(quote_coin, ctx);
+    };
 
     margin_pool.repay_with_reward(
         repay_coin,
@@ -422,7 +429,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         quote_exit_amount: _,
     } = fulfillment;
 
-    repay_amount
+    (return_base, return_quote)
 }
 
 /// Destroys the request to borrow or withdraw if risk ratio conditions are met.
