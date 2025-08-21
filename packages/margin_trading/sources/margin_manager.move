@@ -124,6 +124,15 @@ public struct LiquidationEvent has copy, drop {
     default_amount: u64,
 }
 
+/// Event emitted when margin manager is liquidated
+public struct LiquidationEvent2 has copy, drop {
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    liquidation_amount: u64,
+    pool_reward_amount: u64,
+    default_amount: u64,
+}
+
 // === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &mut TxContext) {
     assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
@@ -368,7 +377,6 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
     );
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
-    margin_manager.active_liquidation = true;
 
     // cancel all orders. at this point, all available assets are in the balance manager.
     let trade_proof = margin_manager.trade_proof(ctx);
@@ -445,98 +453,64 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
         debt_asset_usd_to_exit
     };
 
-    let base_coin = margin_manager.liquidation_withdraw_base(base_usd_amount, ctx);
-    let quote_coin = margin_manager.liquidation_withdraw_quote(quote_usd_amount, ctx);
+    let base_to_exit = calculate_target_amount<BaseAsset>(
+        base_price_info_object,
+        registry,
+        base_usd_amount,
+        clock,
+    );
+    let quote_to_exit = calculate_target_amount<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        quote_usd_amount,
+        clock,
+    );
 
-    (base_coin, quote_coin, liquidation_coin)
+    let base_coin = margin_manager.liquidation_withdraw_base(base_to_exit, ctx);
+    let quote_coin = margin_manager.liquidation_withdraw_quote(quote_to_exit, ctx);
 
     // Fulfillment is below
+    margin_pool.update_state(clock);
 
-    // assert!(fulfillment.manager_id == margin_manager.id(), EInvalidMarginManager);
-    // margin_pool.update_state(clock);
-    // assert!(margin_manager.active_liquidation, ECannotLiquidate);
-    // margin_manager.active_liquidation = false;
+    let margin_manager_id = margin_manager.id();
+    let margin_pool_id = margin_pool.id();
 
-    // let margin_manager_id = margin_manager.id();
-    // let margin_pool_id = margin_pool.id();
-    // let repay_coin_amount = repay_coin.value();
+    let repay_is_base = margin_manager.base_borrowed_shares > 0;
 
-    // let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
-    // let repay_percentage = math::div(repay_coin_amount, total_fulfillment_amount);
-    // assert!(repay_percentage <= constants::float_scaling(), ERepaymentExceedsTotal);
-    // let return_percentage = constants::float_scaling() - repay_percentage;
+    let default_amount = 0; //math::mul(fulfillment.default_amount, repay_percentage);
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
-    // let repay_is_base = margin_manager.base_borrowed_shares > 0;
-    // let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
-    // let pool_reward_amount = repay_coin_amount - repay_amount;
-    // let liquidator_base_reward = math::mul(
-    //     fulfillment.liquidator_base_reward,
-    //     repay_percentage,
-    // );
-    // let liquidator_quote_reward = math::mul(
-    //     fulfillment.liquidator_quote_reward,
-    //     repay_percentage,
-    // );
-    // let default_amount = math::mul(fulfillment.default_amount, repay_percentage);
-    // let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+    if (repay_is_base) {
+        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
+    } else {
+        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
+    };
 
-    // if (repay_is_base) {
-    //     margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
-    // } else {
-    //     margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
-    // };
+    margin_pool.repay_with_reward(
+        repay_coin,
+        repay_amount,
+        pool_reward_amount,
+        default_amount,
+        clock,
+    );
 
-    // let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
-    // let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
+    event::emit(LoanRepaidEvent {
+        margin_manager_id,
+        margin_pool_id,
+        repay_amount,
+    });
 
-    // if (base_to_return > 0) {
-    //     assert!(return_base.value() >= base_to_return, EInvalidReturnAmount);
-    //     let base_coin = return_base.split(base_to_return, ctx);
-    //     margin_manager.liquidation_deposit_base(base_coin, ctx);
-    // };
+    event::emit(LiquidationEvent {
+        margin_manager_id,
+        margin_pool_id,
+        liquidation_amount: repay_amount,
+        pool_reward_amount,
+        liquidator_base_reward,
+        liquidator_quote_reward,
+        default_amount,
+    });
 
-    // if (quote_to_return > 0) {
-    //     assert!(return_quote.value() >= quote_to_return, EInvalidReturnAmount);
-    //     let quote_coin = return_quote.split(quote_to_return, ctx);
-    //     margin_manager.liquidation_deposit_quote(quote_coin, ctx);
-    // };
-
-    // margin_pool.repay_with_reward(
-    //     repay_coin,
-    //     repay_amount,
-    //     pool_reward_amount,
-    //     default_amount,
-    //     clock,
-    // );
-
-    // event::emit(LoanRepaidEvent {
-    //     margin_manager_id,
-    //     margin_pool_id,
-    //     repay_amount,
-    // });
-
-    // event::emit(LiquidationEvent {
-    //     margin_manager_id,
-    //     margin_pool_id,
-    //     liquidation_amount: repay_amount,
-    //     pool_reward_amount,
-    //     liquidator_base_reward,
-    //     liquidator_quote_reward,
-    //     default_amount,
-    // });
-
-    // let Fulfillment {
-    //     manager_id: _,
-    //     repay_amount: _,
-    //     pool_reward_amount: _,
-    //     liquidator_base_reward: _,
-    //     liquidator_quote_reward: _,
-    //     default_amount: _,
-    //     base_exit_amount: _,
-    //     quote_exit_amount: _,
-    // } = fulfillment;
-
-    // (return_base, return_quote)
+    (base_coin, quote_coin, liquidation_coin)
 }
 
 /// Repays the loan as the liquidator.
