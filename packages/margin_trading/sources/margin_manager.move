@@ -534,7 +534,7 @@ public fun liquidate2_complete_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
 
-    // after depositing the coins liquidator provided, check that the usd value of margin manager is 
+    // after depositing the coins liquidator provided, check that the usd value of margin manager is
     // the same as it was before. Also check that the debt quantity meets requirements that fall within
     // partial liquidation thresholds.
     let margin_manager_value_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset;
@@ -561,7 +561,7 @@ public fun liquidate2_complete_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let liquidator_reward = registry.user_liquidation_reward(pool_id);
     let liquidation_reward_quantity = math::mul(max_debt_quantity, liquidator_reward);
     let liquidation_reward_coin = liquidation_coin.split(liquidation_reward_quantity, ctx);
-    
+
     // TODO: check default scenario
     margin_pool.repay(liquidation_coin, clock);
 
