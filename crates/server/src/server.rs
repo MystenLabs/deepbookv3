@@ -993,16 +993,25 @@ pub async fn assets(
         schema::assets::ucid,
         schema::assets::package_address_url,
         schema::assets::package_id,
+        schema::assets::asset_type,
     ));
-    let assets: Vec<(String, String, Option<i32>, Option<String>, Option<String>)> =
+    let assets: Vec<(
+        String,
+        String,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> =
         state.reader.results(query).await.map_err(|err| {
             DeepBookError::InternalError(format!("Failed to query assets: {}", err))
         })?;
     let mut response = HashMap::new();
 
-    for (symbol, name, ucid, package_address_url, package_id) in assets {
+    for (symbol, name, ucid, package_address_url, package_id, asset_type) in assets {
         let mut asset_info = HashMap::new();
         asset_info.insert("name".to_string(), Value::String(name));
+        asset_info.insert("asset_type".to_string(), Value::String(asset_type));
         asset_info.insert(
             "can_withdraw".to_string(),
             Value::String("true".to_string()),
