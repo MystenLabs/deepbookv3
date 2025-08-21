@@ -488,6 +488,9 @@ public fun liquidate2<BaseAsset, QuoteAsset, DebtAsset>(
     );
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
 
+    // Get the current usd value of the margin manager, the quantity of debt asset available in manager already,
+    // the quantity of debt asset needed total (including rewards). Just communicate that to the liquidator.
+    // Give liquidator all coins inside of manager. Let liquidator decide what coins to return.
     let margin_manager_value_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset;
     let debt_is_base = manager_info.base.debt > 0;
     let current_debt_quantity_available = manager_info.current_debt_quantity_available();
@@ -531,6 +534,9 @@ public fun liquidate2_complete_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
 
+    // after depositing the coins liquidator provided, check that the usd value of margin manager is 
+    // the same as it was before. Also check that the debt quantity meets requirements that fall within
+    // partial liquidation thresholds.
     let margin_manager_value_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset;
     assert!(
         margin_manager_value_usd == fulfillment.margin_manager_value_usd,
@@ -546,6 +552,7 @@ public fun liquidate2_complete_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     );
     assert!(current_debt_quantity_available <= max_debt_quantity, EIncorrectValueReturned);
 
+    // if the above asserts pass, that means we can withdraw up to max_debt_quantity from the margin manager.
     let pool_id = pool.id();
     let mut liquidation_coin: Coin<DebtAsset> = margin_manager.liquidation_withdraw(
         max_debt_quantity,
@@ -554,14 +561,9 @@ public fun liquidate2_complete_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let liquidator_reward = registry.user_liquidation_reward(pool_id);
     let liquidation_reward_quantity = math::mul(max_debt_quantity, liquidator_reward);
     let liquidation_reward_coin = liquidation_coin.split(liquidation_reward_quantity, ctx);
-
-    let debt = manager_info.base.debt.max(manager_info.quote.debt);
-    let (reward, penalty) = if (debt > liquidation_coin.value()) {
-        (0, debt - liquidation_coin.value())
-    } else {
-        (liquidation_coin.value() - debt, 0)
-    };
-    margin_pool.repay_absolute(liquidation_coin, reward, penalty, clock);
+    
+    // TODO: check default scenario
+    margin_pool.repay(liquidation_coin, clock);
 
     let Fulfillment2 {
         margin_manager_value_usd: _,
