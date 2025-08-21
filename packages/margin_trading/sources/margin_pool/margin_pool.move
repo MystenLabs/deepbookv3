@@ -289,6 +289,20 @@ public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>
     self.vault.join(coin.into_balance());
 }
 
+public(package) fun repay_absolute<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+    reward: u64,
+    penalty: u64,
+    clock: &Clock,
+) {
+    self.state.update(clock);
+    self.state.decrease_total_borrow(coin.value());
+    self.state.increase_total_supply_with_index(reward);
+    self.state.decrease_total_supply_with_index(penalty);
+    self.vault.join(coin.into_balance());
+}
+
 public(package) fun repay_with_reward<Asset>(
     self: &mut MarginPool<Asset>,
     coin: Coin<Asset>,
