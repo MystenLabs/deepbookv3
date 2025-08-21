@@ -444,7 +444,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 /// Repays the loan as the liquidator.
 /// Returns the extra base and quote assets
 /// TODO: working concept for full liquidation only.
-public fun repay_liquidation_2<BaseAsset, QuoteAsset, RepayAsset>(
+public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
     mut coin: Coin<RepayAsset>,
