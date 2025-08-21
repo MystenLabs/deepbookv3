@@ -342,6 +342,203 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     )
 }
 
+/// Liquidator submits a loan, and we return base and quote assets accordingly.
+public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    margin_pool: &mut MarginPool<DebtAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    mut liquidation_coin: Coin<DebtAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
+    let pool_id = pool.id();
+    margin_pool.update_state(clock);
+    assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
+
+    let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
+        registry,
+        margin_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
+    assert!(!margin_manager.active_liquidation, ECannotLiquidate);
+    margin_manager.active_liquidation = true;
+
+    // cancel all orders. at this point, all available assets are in the balance manager.
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_mut();
+    pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
+
+    // we start our liquidation logic here
+    let debt_is_base = manager_info.base.debt > 0; // true
+
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDC (USDT/USDC)
+    let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
+    let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
+    let user_reward_ratio = constants::float_scaling() + user_liquidation_reward; // 1.02
+    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
+    let pool_reward_ratio = constants::float_scaling() + pool_liquidation_reward; // 1.03
+    let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
+    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 USDT, 550 USDC)
+
+    let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
+    let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
+
+    // this is the maximum usd amount that needs to be repaid
+    // it may be greater than the total assets in the balance manager.
+    let max_usd_amount_to_repay = math::div(numerator, denominator); // 150 / 0.2 = 750
+
+    let debt_oracle = if (debt_is_base) {
+        base_price_info_object
+    } else {
+        quote_price_info_object
+    };
+    let coin_in_usd = calculate_usd_price<DebtAsset>(
+        debt_oracle,
+        registry,
+        liquidation_coin.value(),
+        clock,
+    ); // 700 USDC
+    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // 700 / 1.03 = $679.61
+
+    let repay_usd_amount = max_usd_amount_to_repay.min(coin_in_usd_minus_pool_reward); // $679.61
+    let repay_amount = calculate_target_amount<DebtAsset>(
+        debt_oracle,
+        registry,
+        repay_usd_amount,
+        clock,
+    ); // 679.61 USDC
+    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 679.61 * 1.03 = 699.99 USDC
+    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // $699.99 - $679.61 = 20.38 USDC
+    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx);
+
+    let max_usd_to_exit = math::mul(repay_usd_amount, user_reward_ratio); // 679.61 * 1.02 = $693.20
+    let usd_asset_in_same_type = if (debt_is_base) {
+        manager_info.base.usd_asset
+    } else {
+        manager_info.quote.usd_asset
+    }; // $550
+    let debt_asset_usd_to_exit = usd_asset_in_same_type.min(max_usd_to_exit); // $550
+
+    let remaining_usd_to_exit = max_usd_to_exit - debt_asset_usd_to_exit; // $693.20 - $550 = $143.20
+    let usd_asset_in_other_type = if (debt_is_base) {
+        manager_info.quote.usd_asset
+    } else {
+        manager_info.base.usd_asset
+    }; // $550
+    let other_asset_usd_to_exit = usd_asset_in_other_type.min(remaining_usd_to_exit); // $143.20
+
+    let base_usd_amount = if (debt_is_base) {
+        debt_asset_usd_to_exit
+    } else {
+        other_asset_usd_to_exit
+    };
+    let quote_usd_amount = if (debt_is_base) {
+        other_asset_usd_to_exit
+    } else {
+        debt_asset_usd_to_exit
+    };
+
+    let base_coin = margin_manager.liquidation_withdraw_base(base_usd_amount, ctx);
+    let quote_coin = margin_manager.liquidation_withdraw_quote(quote_usd_amount, ctx);
+
+    (base_coin, quote_coin, liquidation_coin)
+
+    // Fulfillment is below
+
+    // assert!(fulfillment.manager_id == margin_manager.id(), EInvalidMarginManager);
+    // margin_pool.update_state(clock);
+    // assert!(margin_manager.active_liquidation, ECannotLiquidate);
+    // margin_manager.active_liquidation = false;
+
+    // let margin_manager_id = margin_manager.id();
+    // let margin_pool_id = margin_pool.id();
+    // let repay_coin_amount = repay_coin.value();
+
+    // let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
+    // let repay_percentage = math::div(repay_coin_amount, total_fulfillment_amount);
+    // assert!(repay_percentage <= constants::float_scaling(), ERepaymentExceedsTotal);
+    // let return_percentage = constants::float_scaling() - repay_percentage;
+
+    // let repay_is_base = margin_manager.base_borrowed_shares > 0;
+    // let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
+    // let pool_reward_amount = repay_coin_amount - repay_amount;
+    // let liquidator_base_reward = math::mul(
+    //     fulfillment.liquidator_base_reward,
+    //     repay_percentage,
+    // );
+    // let liquidator_quote_reward = math::mul(
+    //     fulfillment.liquidator_quote_reward,
+    //     repay_percentage,
+    // );
+    // let default_amount = math::mul(fulfillment.default_amount, repay_percentage);
+    // let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+
+    // if (repay_is_base) {
+    //     margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
+    // } else {
+    //     margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
+    // };
+
+    // let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
+    // let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
+
+    // if (base_to_return > 0) {
+    //     assert!(return_base.value() >= base_to_return, EInvalidReturnAmount);
+    //     let base_coin = return_base.split(base_to_return, ctx);
+    //     margin_manager.liquidation_deposit_base(base_coin, ctx);
+    // };
+
+    // if (quote_to_return > 0) {
+    //     assert!(return_quote.value() >= quote_to_return, EInvalidReturnAmount);
+    //     let quote_coin = return_quote.split(quote_to_return, ctx);
+    //     margin_manager.liquidation_deposit_quote(quote_coin, ctx);
+    // };
+
+    // margin_pool.repay_with_reward(
+    //     repay_coin,
+    //     repay_amount,
+    //     pool_reward_amount,
+    //     default_amount,
+    //     clock,
+    // );
+
+    // event::emit(LoanRepaidEvent {
+    //     margin_manager_id,
+    //     margin_pool_id,
+    //     repay_amount,
+    // });
+
+    // event::emit(LiquidationEvent {
+    //     margin_manager_id,
+    //     margin_pool_id,
+    //     liquidation_amount: repay_amount,
+    //     pool_reward_amount,
+    //     liquidator_base_reward,
+    //     liquidator_quote_reward,
+    //     default_amount,
+    // });
+
+    // let Fulfillment {
+    //     manager_id: _,
+    //     repay_amount: _,
+    //     pool_reward_amount: _,
+    //     liquidator_base_reward: _,
+    //     liquidator_quote_reward: _,
+    //     default_amount: _,
+    //     base_exit_amount: _,
+    //     quote_exit_amount: _,
+    // } = fulfillment;
+
+    // (return_base, return_quote)
+}
+
 /// Repays the loan as the liquidator.
 /// Returns the extra base and quote assets
 public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
