@@ -509,11 +509,11 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    // Emit events
     let margin_manager_id = margin_manager.id();
     let margin_pool_id = margin_pool.id();
     let user_reward_usd = math::mul(repay_usd, user_liquidation_reward);
 
+    // Emit events
     event::emit(LoanRepaidEvent {
         margin_manager_id,
         margin_pool_id,
@@ -1331,68 +1331,52 @@ fun calculate_liquidation_amounts<DebtAsset>(
     pool_liquidation_reward: u64,
     clock: &Clock,
 ): LiquidationAmounts {
-    // we start our liquidation logic here
-    let debt_is_base = manager_info.base.debt > 0; // true
+    let debt_is_base = manager_info.base.debt > 0;
 
+    // Get debt and asset totals
     let debt = manager_info.base.debt.max(manager_info.quote.debt);
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDT (USDT/USDC)
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 USDT
+    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // $1100
+
+    // Calculate ratios once
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
-    let pool_reward_ratio = constants::float_scaling() + pool_liquidation_reward; // 1.03
-    let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
-    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
-    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // $1100 assets (550 USDT, 550 USDC)
-    let coin_value = liquidation_coin.value();
+    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
+    let float_scaling = constants::float_scaling();
+    let pool_reward_ratio = float_scaling + pool_liquidation_reward; // 1.03
+    let liquidation_reward_ratio = float_scaling + total_liquidation_reward; // 1.05
 
-    let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
-    let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
+    // Calculate maximum USD to repay for target ratio
+    let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 150
+    let denominator = target_ratio - liquidation_reward_ratio; // 0.2
+    let max_usd_amount_to_repay = math::div(numerator, denominator); // 750
 
-    // this is the maximum usd amount that needs to be repaid
-    // it may be greater than the total assets in the balance manager.
-    let max_usd_amount_to_repay = math::div(numerator, denominator); // 150 / 0.2 = 750
-
-    let debt_oracle = if (debt_is_base) {
-        base_price_info_object
-    } else {
-        quote_price_info_object
-    };
+    // Get liquidation coin value in USD
+    let debt_oracle = if (debt_is_base) base_price_info_object else quote_price_info_object;
     let coin_in_usd = calculate_usd_price<DebtAsset>(
         debt_oracle,
         registry,
-        coin_value,
+        liquidation_coin.value(),
         clock,
-    ); // $700 in USDT (assume this is what the liquidator sent in for liquidation)
+    ); // $700
+    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $679.61
 
-    // We have to take the pool reward from the input coin, since it's possible the manager has 0 assets in the debt asset.
-    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $700 / 1.03 = $679.61
-
-    // We account for default here. If RR < 1 (0.9 for example)
-    // then the max repay amount should be total debt amount by 0.9.
-    // We only default the loan if the liquidator has enough to repay the maximum.
-
-    let in_default = manager_info.risk_ratio < constants::float_scaling(); // false
+    // Handle default cases
+    let in_default = manager_info.risk_ratio < float_scaling;
     let max_repay_usd = if (in_default) {
-        // We take the asset in usd, then divide by the liquidation reward ratio.
-        // This is the maximum the repayment usd should be, while still giving out rewards accordingly
         math::div(assets_in_usd, liquidation_reward_ratio)
     } else {
         max_usd_amount_to_repay
     }; // $750
-    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // Accounts for partial liquidations. $679.61
-    let loan_defaulted = in_default && repay_usd == max_repay_usd; // If manager in default, and the maximum is being repaid, then default the rest of the loan after repayment.
-    let repay_amount = calculate_target_amount<DebtAsset>(
-        debt_oracle,
-        registry,
-        repay_usd,
-        clock,
-    ); // 679.61 USDT
-    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 679.61 * 1.03 = 699.99 USDT
-    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // $699.99 - $679.61 = 20.38 USDT
 
-    let default_amount = if (loan_defaulted) {
-        debt - repay_amount
-    } else {
-        0
-    };
+    // Calculate final repay amounts
+    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // $679.61
+    let loan_defaulted = in_default && repay_usd == max_repay_usd;
+
+    let repay_amount = calculate_target_amount<DebtAsset>(debt_oracle, registry, repay_usd, clock); // 679.61 USDT
+    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 699.99 USDT
+    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // 20.38 USDT
+
+    let default_amount = if (loan_defaulted) debt - repay_amount else 0;
 
     LiquidationAmounts {
         debt_is_base,
@@ -1446,47 +1430,40 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    // Calculate total USD to exit (repay amount + rewards)
+    // Calculate total USD to exit including all rewards
     let total_reward_ratio =
         constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward; // 1.05
     let total_usd_to_exit = math::mul(repay_usd, total_reward_ratio); // $713.59
 
-    // Get available assets in USD
-    let (debt_asset_usd, other_asset_usd) = if (debt_is_base) {
-        (manager_info.base.usd_asset, manager_info.quote.usd_asset) // ($550, $550)
+    // Get available assets and calculate exit amounts in one go
+    let (base_usd, quote_usd) = if (debt_is_base) {
+        let debt_exit = manager_info.base.usd_asset.min(total_usd_to_exit); // $550
+        let other_exit = manager_info.quote.usd_asset.min(total_usd_to_exit - debt_exit); // $163.59
+        (debt_exit, other_exit)
     } else {
-        (manager_info.quote.usd_asset, manager_info.base.usd_asset)
+        let debt_exit = manager_info.quote.usd_asset.min(total_usd_to_exit);
+        let other_exit = manager_info.base.usd_asset.min(total_usd_to_exit - debt_exit);
+        (other_exit, debt_exit)
     };
 
-    // Exit from debt asset first, then remaining from other asset
-    let debt_usd_to_exit = debt_asset_usd.min(total_usd_to_exit); // $550
-    let other_usd_to_exit = other_asset_usd.min(total_usd_to_exit - debt_usd_to_exit); // $163.59
-
-    // Determine base and quote USD amounts to exit
-    let (base_usd_amount, quote_usd_amount) = if (debt_is_base) {
-        (debt_usd_to_exit, other_usd_to_exit) // ($550, $163.59)
-    } else {
-        (other_usd_to_exit, debt_usd_to_exit)
-    };
-
-    // Convert USD amounts to asset amounts and withdraw
+    // Convert USD to asset amounts and withdraw in parallel
     let base_to_exit = calculate_target_amount<BaseAsset>(
         base_price_info_object,
         registry,
-        base_usd_amount,
+        base_usd,
         clock,
     );
     let quote_to_exit = calculate_target_amount<QuoteAsset>(
         quote_price_info_object,
         registry,
-        quote_usd_amount,
+        quote_usd,
         clock,
     );
 
-    let base_coin = margin_manager.liquidation_withdraw_base(base_to_exit, ctx);
-    let quote_coin = margin_manager.liquidation_withdraw_quote(quote_to_exit, ctx);
-
-    (base_coin, quote_coin)
+    (
+        margin_manager.liquidation_withdraw_base(base_to_exit, ctx),
+        margin_manager.liquidation_withdraw_quote(quote_to_exit, ctx),
+    )
 }
 
 /// This can only be called by the manager owner
