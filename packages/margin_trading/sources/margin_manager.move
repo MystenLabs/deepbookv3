@@ -92,6 +92,16 @@ public struct PositionInfo has copy, drop {
     quote_debt: u64,
 }
 
+public struct LiquidationAmounts<phantom DebtAsset> {
+    debt_is_base: bool,
+    repay_amount: u64,
+    pool_reward_amount: u64,
+    debt: u64,
+    loan_defaulted: bool,
+    repay_usd: u64,
+    repay_coin: Coin<DebtAsset>,
+}
+
 /// Event emitted when a new margin_manager is created.
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
@@ -386,7 +396,7 @@ public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
     // Step 1: Calculate liquidation amounts
-    let (
+    let LiquidationAmounts {
         debt_is_base,
         repay_amount,
         pool_reward_amount,
@@ -394,7 +404,7 @@ public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
         loan_defaulted,
         repay_usd,
         repay_coin,
-    ) = calculate_liquidation_amounts<DebtAsset>(
+    } = calculate_liquidation_amounts<DebtAsset>(
         &manager_info,
         registry,
         pool_id,
@@ -1257,12 +1267,12 @@ fun calculate_liquidation_amounts<DebtAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
     ctx: &mut TxContext,
-): (bool, u64, u64, u64, bool, u64, Coin<DebtAsset>) {
+): LiquidationAmounts<DebtAsset> {
     // we start our liquidation logic here
     let debt_is_base = manager_info.base.debt > 0; // true
 
     let debt = manager_info.base.debt.max(manager_info.quote.debt);
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDC (USDT/USDC)
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDT (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
@@ -1289,15 +1299,14 @@ fun calculate_liquidation_amounts<DebtAsset>(
         registry,
         coin_value,
         clock,
-    ); // $700 in USDC (assume this is what the liquidator sent in for liquidation)
+    ); // $700 in USDT (assume this is what the liquidator sent in for liquidation)
 
     // We have to take the pool reward from the input coin, since it's possible the manager has 0 assets in the debt asset.
     let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $700 / 1.03 = $679.61
 
     // We account for default here. If RR < 1 (0.9 for example)
     // then the max repay amount should be total debt amount by 0.9.
-    // We only execute the default if the liquidator has enough to repay the maximum.
-    // 0.1 of the loan should be defaulted as a result.
+    // We only default the loan if the liquidator has enough to repay the maximum.
 
     let in_default = manager_info.risk_ratio < constants::float_scaling(); // false
     let max_repay_usd = if (in_default) {
@@ -1306,20 +1315,28 @@ fun calculate_liquidation_amounts<DebtAsset>(
         math::div(assets_in_usd, liquidation_reward_ratio)
     } else {
         max_usd_amount_to_repay
-    };
-    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // Accounts for partial liquidations
-    let loan_defaulted = in_default && repay_usd == max_repay_usd; // If manager in default, and the maximum is being repaid, then default the rest of the loan
+    }; // $750
+    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // Accounts for partial liquidations. $679.61
+    let loan_defaulted = in_default && repay_usd == max_repay_usd; // If manager in default, and the maximum is being repaid, then default the rest of the loan after repayment.
     let repay_amount = calculate_target_amount<DebtAsset>(
         debt_oracle,
         registry,
         repay_usd,
         clock,
-    ); // 679.61 USDC
-    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 679.61 * 1.03 = 699.99 USDC
-    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // $699.99 - $679.61 = 20.38 USDC
-    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx); // 699.99 USDC in coin
+    ); // 679.61 USDT
+    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 679.61 * 1.03 = 699.99 USDT
+    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // $699.99 - $679.61 = 20.38 USDT
+    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx); // 699.99 USDT in coin
 
-    (debt_is_base, repay_amount, pool_reward_amount, debt, loan_defaulted, repay_usd, repay_coin)
+    LiquidationAmounts<DebtAsset> {
+        debt_is_base,
+        repay_amount,
+        pool_reward_amount,
+        debt,
+        loan_defaulted,
+        repay_usd,
+        repay_coin,
+    }
 }
 
 /// Helper function for Step 2: Repay the user's loan
