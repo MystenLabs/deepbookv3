@@ -436,8 +436,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
 
     // Step 1: Calculate liquidation amounts
-    let amounts = calculate_liquidation_amounts<DebtAsset>(
-        &manager_info,
+    let amounts = manager_info.calculate_liquidation_amounts<DebtAsset>(
         registry,
         pool_id,
         &liquidation_coin,
@@ -1216,31 +1215,6 @@ fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         &margin_manager.withdraw_cap,
         withdraw_amount,
         ctx,
-    )
-}
-
-/// Helper function for Step 1: Calculate liquidation amounts
-/// Delegates to margin_info module for all USD calculations
-fun calculate_liquidation_amounts<DebtAsset>(
-    manager_info: &ManagerInfo,
-    registry: &MarginRegistry,
-    pool_id: ID,
-    liquidation_coin: &Coin<DebtAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    user_liquidation_reward: u64,
-    pool_liquidation_reward: u64,
-    clock: &Clock,
-): LiquidationAmounts {
-    manager_info.calculate_liquidation_amounts<DebtAsset>(
-        registry,
-        pool_id,
-        liquidation_coin,
-        base_price_info_object,
-        quote_price_info_object,
-        user_liquidation_reward,
-        pool_liquidation_reward,
-        clock,
     )
 }
 
