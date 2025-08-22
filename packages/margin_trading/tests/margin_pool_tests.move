@@ -105,7 +105,6 @@ fun test_multiple_users_supply_withdraw() {
     scenario.next_tx(USER2);
     let supply_coin2 = mint_coin<USDC>(30000, scenario.ctx());
     pool.supply<USDC>(supply_coin2, option::none(), &clock, scenario.ctx());
-
     // User1 withdraws
     scenario.next_tx(USER1);
     let withdrawn1 = pool.withdraw<USDC>(option::some(25000), &clock, scenario.ctx());
