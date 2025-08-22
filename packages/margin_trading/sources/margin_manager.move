@@ -3,21 +3,27 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof
 };
-use margin_trading::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_usd_price, calculate_target_amount}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use margin_trading::margin_constants;
+use margin_trading::margin_info::{Self, AssetInfo, ManagerInfo};
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
 use token::deep::DEEP;
 
 // === Errors ===
@@ -70,19 +76,6 @@ public struct Fulfillment<phantom DebtAsset> {
 public struct Request {
     margin_manager_id: ID,
     request_type: u8,
-}
-
-public struct AssetInfo has copy, drop {
-    asset: u64,
-    debt: u64,
-    usd_asset: u64,
-    usd_debt: u64,
-}
-
-public struct ManagerInfo has copy, drop {
-    base: AssetInfo,
-    quote: AssetInfo,
-    risk_ratio: u64, // 9 decimals
 }
 
 public struct PositionInfo has copy, drop {
@@ -340,7 +333,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         clock,
     );
-    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio()), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
     margin_manager.active_liquidation = true;
 
@@ -453,7 +446,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         clock,
     );
-    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio()), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
 
     // Cancel all orders to make assets available for liquidation
@@ -726,16 +719,15 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     margin_pool.update_state(clock);
-    let risk_ratio = margin_manager
-        .manager_info<BaseAsset, QuoteAsset, DebtAsset>(
-            registry,
-            margin_pool,
-            pool,
-            base_price_info_object,
-            quote_price_info_object,
-            clock,
-        )
-        .risk_ratio;
+    let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
+        registry,
+        margin_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+    let risk_ratio = margin_info::risk_ratio(&manager_info);
     let pool_id = pool.id();
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);
@@ -822,36 +814,21 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         math::div(total_usd_asset, total_usd_debt) // 9 decimals
     };
 
-    ManagerInfo {
-        base: AssetInfo {
-            asset: base_asset,
-            debt: base_debt,
-            usd_asset: base_usd_asset,
-            usd_debt: base_usd_debt,
-        },
-        quote: AssetInfo {
-            asset: quote_asset,
-            debt: quote_debt,
-            usd_asset: quote_usd_asset,
-            usd_debt: quote_usd_debt,
-        },
+    margin_info::new_manager_info(
+        margin_info::new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
+        margin_info::new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
         risk_ratio,
-    }
-}
-
-/// Returns the risk ratio from the ManagerInfo
-public fun risk_ratio(manager_info: &ManagerInfo): u64 {
-    manager_info.risk_ratio
+    )
 }
 
 /// Returns the base and quote AssetInfo from the ManagerInfo
 public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
-    (manager_info.base, manager_info.quote)
+    margin_info::asset_info(manager_info)
 }
 
 /// Returns (asset, debt, usd_asset, usd_debt) given AssetInfo
 public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
-    (asset_info.asset, asset_info.debt, asset_info.usd_asset, asset_info.usd_debt)
+    margin_info::asset_debt_amount(asset_info)
 }
 
 public fun deepbook_pool<BaseAsset, QuoteAsset>(
@@ -1016,22 +993,31 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let debt_is_base = manager_info.base.debt > 0; // true
+    let base_info = manager_info.base_info();
+    let quote_info = manager_info.quote_info();
+
+    let debt_is_base = base_info.debt_amount() > 0; // true
     let debt_oracle = if (debt_is_base) {
         base_price_info_object
     } else {
         quote_price_info_object
     };
 
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDT (USDT/USDC)
+    let debt_in_usd = base_info.usd_debt_amount().max(quote_info.usd_debt_amount()); // 1000 debt, USDT (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
     let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
     let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
-    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100 assets (550 USDT, 550 USDC)
-    let max_base_for_repay_usd = math::div(manager_info.base.usd_asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
-    let max_quote_for_repay_usd = math::div(manager_info.quote.usd_asset, liquidation_reward_ratio); // 550 / 1.05 = 523.81
+    let assets_in_usd = base_info.usd_asset_amount() + quote_info.usd_asset_amount(); // 1100 assets (550 USDT, 550 USDC)
+    let max_base_for_repay_usd = math::div(
+        base_info.usd_asset_amount(),
+        liquidation_reward_ratio,
+    ); // 550 / 1.05 = 523.81
+    let max_quote_for_repay_usd = math::div(
+        quote_info.usd_asset_amount(),
+        liquidation_reward_ratio,
+    ); // 550 / 1.05 = 523.81
 
     let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
     let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - (1 + 0.05) = 0.2
@@ -1107,14 +1093,16 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     );
 
     // Manager is in default if asset / debt < 1
-    let default_amount = if (manager_info.risk_ratio < constants::float_scaling()) {
+    let default_amount = if (margin_info::risk_ratio(manager_info) < constants::float_scaling()) {
         // We calculate how much will be defaulted. Note this is an isolated example, in the primary example there are no defaults.
         // If 0.9 is the risk ratio, then the entire manager should be drained to repay as needed.
         // The total loan repaid in this scenario will be 0.9 * loan / (1 + liquidation_reward)
         // This is already being accounted for in base_out.min(max_base_to_exit) above for example
         // Assume asset is 900, debt is 1000, liquidation reward is 5%
-        let debt = manager_info.base.debt.max(manager_info.quote.debt);
-        let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio);
+        let base_info = manager_info.base_info();
+        let quote_info = manager_info.quote_info();
+        let debt = base_info.debt_amount().max(quote_info.debt_amount());
+        let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio());
         quantity_to_repay = math::div(repay_with_liquidation_reward, liquidation_reward_ratio);
 
         // Now we calculate the defaulted amount, which is the debt - quantity_to_repay
@@ -1333,12 +1321,16 @@ fun calculate_liquidation_amounts<DebtAsset>(
     pool_liquidation_reward: u64,
     clock: &Clock,
 ): LiquidationAmounts {
-    let debt_is_base = manager_info.base.debt > 0;
+    let base_info = manager_info.base_info();
+    let quote_info = manager_info.quote_info();
+
+    let debt_is_base = base_info.debt_amount() > 0;
 
     // Get debt and asset totals
-    let debt = manager_info.base.debt.max(manager_info.quote.debt);
-    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 USDT
-    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // $1100
+    let debt = base_info.debt_amount().max(quote_info.debt_amount());
+    let debt_in_usd = base_info.usd_debt_amount().max(quote_info.usd_debt_amount()); // 1000 USDT
+    let assets_in_usd =
+        margin_info::usd_asset_amount(&base_info) + margin_info::usd_asset_amount(&quote_info); // $1100
 
     // Calculate ratios once
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
@@ -1363,7 +1355,7 @@ fun calculate_liquidation_amounts<DebtAsset>(
     let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $679.61
 
     // Handle default cases
-    let in_default = manager_info.risk_ratio < float_scaling;
+    let in_default = manager_info.risk_ratio() < float_scaling;
     let max_repay_usd = if (in_default) {
         math::div(assets_in_usd, liquidation_reward_ratio)
     } else {
@@ -1438,13 +1430,24 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     let total_usd_to_exit = math::mul(repay_usd, total_reward_ratio); // $713.59
 
     // Get available assets and calculate exit amounts in one go
+    let base_info = manager_info.base_info();
+    let quote_info = manager_info.quote_info();
+
     let (base_usd, quote_usd) = if (debt_is_base) {
-        let debt_exit = manager_info.base.usd_asset.min(total_usd_to_exit); // $550
-        let other_exit = manager_info.quote.usd_asset.min(total_usd_to_exit - debt_exit); // $163.59
+        let debt_exit = base_info.usd_asset_amount().min(total_usd_to_exit); // $550
+        let other_exit = quote_info
+            .usd_asset_amount()
+            .min(
+                total_usd_to_exit - debt_exit,
+            ); // $163.59
         (debt_exit, other_exit)
     } else {
-        let debt_exit = manager_info.quote.usd_asset.min(total_usd_to_exit);
-        let other_exit = manager_info.base.usd_asset.min(total_usd_to_exit - debt_exit);
+        let debt_exit = quote_info.usd_asset_amount().min(total_usd_to_exit);
+        let other_exit = base_info
+            .usd_asset_amount()
+            .min(
+                total_usd_to_exit - debt_exit,
+            );
         (other_exit, debt_exit)
     };
 
