@@ -1,8 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Module containing data structures for margin trading information
-#[allow(duplicate_alias)]
 module margin_trading::margin_info;
 
 use deepbook::{constants, math};
@@ -12,7 +10,7 @@ use margin_trading::{
     oracle::{calculate_usd_price, calculate_target_amount}
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{clock::Clock, coin::Coin, object::ID};
+use sui::{clock::Clock, coin::Coin};
 
 // === Structs ===
 
