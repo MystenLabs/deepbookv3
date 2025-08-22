@@ -5,7 +5,8 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{
-    margin_state::{Self, State, InterestParams},
+    interest::InterestParams,
+    margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{Self, ProtocolConfig},
     referral_manager::{Self, ReferralManager, ReferralCap},
@@ -130,7 +131,7 @@ public(package) fun claim_referral_rewards<Asset>(
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
     let reward_amount = math::mul(share_value_appreciated, self.config.protocol_spread());
-    self.state.reduce_protocol_profit(reward_amount);
+    self.protocol_profit = self.protocol_profit - reward_amount;
 
     self.vault.split(reward_amount).into_coin(ctx)
 }
@@ -316,7 +317,8 @@ public(package) fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let profit = self.state.reset_protocol_profit();
+    let profit = self.protocol_profit;
+    self.protocol_profit = 0;
     let balance = self.vault.split(profit);
 
     balance.into_coin(ctx)

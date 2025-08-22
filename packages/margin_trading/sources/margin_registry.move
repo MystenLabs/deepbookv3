@@ -6,9 +6,9 @@ module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
 use margin_trading::{
+    interest::{Self, InterestParams},
     margin_constants,
     margin_pool::{Self, MarginPool},
-    margin_state::{Self, InterestParams},
     referral_manager::ReferralCap
 };
 use std::type_name::{Self, TypeName};
@@ -216,7 +216,7 @@ public fun new_interest_params(
     assert!(base_rate <= constants::float_scaling(), EInvalidBaseRate);
     assert!(optimal_utilization <= constants::float_scaling(), EInvalidOptimalUtilization);
 
-    margin_state::new_interest_params(
+    interest::new_interest_params(
         base_rate,
         base_slope,
         optimal_utilization,

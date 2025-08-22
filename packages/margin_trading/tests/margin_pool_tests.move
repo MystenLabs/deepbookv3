@@ -4,7 +4,7 @@
 #[test_only]
 module margin_trading::margin_pool_tests;
 
-use margin_trading::{margin_pool::{Self, MarginPool}, margin_state};
+use margin_trading::{interest, margin_pool::{Self, MarginPool}};
 use std::option::some;
 use sui::{
     clock::{Self, Clock},
@@ -27,7 +27,7 @@ const PROTOCOL_SPREAD: u64 = 100_000_000; // 10% with 9 decimals
 fun setup_test(): (Scenario, Clock, MarginPool<USDC>) {
     let mut scenario = test::begin(@0x0);
     let clock = clock::create_for_testing(scenario.ctx());
-    let interest_params = margin_state::new_interest_params(
+    let interest_params = interest::new_interest_params(
         50_000_000, // base_rate: 5% with 9 decimals
         100_000_000, // base_slope: 10% with 9 decimals
         800_000_000, // optimal_utilization: 80% with 9 decimals
