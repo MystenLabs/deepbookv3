@@ -10,7 +10,6 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    margin_constants,
     margin_info::{Self, AssetInfo, ManagerInfo},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
@@ -753,66 +752,39 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
-        BaseAsset,
-        QuoteAsset,
-        DebtAsset,
-    >(
-        margin_manager,
-        pool,
-        margin_pool,
-    ).position_info();
+    let debt_is_base = margin_manager.base_borrowed_shares > 0;
+    let debt_shares = if (debt_is_base) {
+        margin_manager.base_borrowed_shares
+    } else {
+        margin_manager.quote_borrowed_shares
+    };
 
-    // Calculate debt in USD
-    let base_usd_debt = if (base_debt > 0) {
-        calculate_usd_price<BaseAsset>(
-            base_price_info_object,
-            registry,
-            base_debt,
-            clock,
-        )
+    let base_debt = if (debt_is_base) {
+        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
     };
-    let quote_usd_debt = if (quote_debt > 0) {
-        calculate_usd_price<QuoteAsset>(
-            quote_price_info_object,
-            registry,
-            quote_debt,
-            clock,
-        )
-    } else {
+
+    let quote_debt = if (debt_is_base) {
         0
+    } else {
+        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
+        margin_pool.to_borrow_amount(debt_shares)
     };
-    let base_usd_asset = calculate_usd_price<BaseAsset>(
-        base_price_info_object,
-        registry,
+
+    let (base_asset, quote_asset) = total_assets<BaseAsset, QuoteAsset>(margin_manager, pool);
+
+    // Delegate all calculations to margin_info module
+    margin_info::calculate_manager_info<BaseAsset, QuoteAsset>(
         base_asset,
-        clock,
-    );
-    let quote_usd_asset = calculate_usd_price<QuoteAsset>(
-        quote_price_info_object,
-        registry,
         quote_asset,
+        base_debt,
+        quote_debt,
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
         clock,
-    );
-
-    let total_usd_debt = base_usd_debt + quote_usd_debt;
-    let total_usd_asset = base_usd_asset + quote_usd_asset;
-    let max_risk_ratio = margin_constants::max_risk_ratio();
-
-    let risk_ratio = if (
-        total_usd_debt == 0 || total_usd_asset > math::mul(total_usd_debt, max_risk_ratio)
-    ) {
-        max_risk_ratio
-    } else {
-        math::div(total_usd_asset, total_usd_debt) // 9 decimals
-    };
-
-    margin_info::new_manager_info(
-        margin_info::new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
-        margin_info::new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
-        risk_ratio,
     )
 }
 
