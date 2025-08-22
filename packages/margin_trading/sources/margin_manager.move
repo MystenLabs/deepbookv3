@@ -329,7 +329,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let pool_id = pool.id();
-    margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
 
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -442,7 +441,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
     let pool_id = pool.id();
-    margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
 
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -724,7 +722,6 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
-    margin_pool.update_state(clock);
 
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -755,16 +752,16 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
 /// Risk ratio between 1.1 and 1.25 allows for trading only
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
-/// WARNING: Function assumes margin pool is updated prior to calling this function.
 public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    debt_margin_pool: &MarginPool<DebtAsset>,
+    margin_pool: &mut MarginPool<DebtAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
+    margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
@@ -774,7 +771,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     >(
         margin_manager,
         pool,
-        debt_margin_pool,
+        margin_pool,
     ).position_info();
 
     // Calculate debt in USD
