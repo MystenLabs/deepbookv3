@@ -10,7 +10,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo, LiquidationAmounts},
+    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
@@ -324,7 +324,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         &manager_info,
         registry,
         pool_id,
-        clock,
         ctx,
     )
 }
@@ -440,7 +439,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         &liquidation_coin,
         user_liquidation_reward,
         pool_liquidation_reward,
-        clock,
     );
     let (
         debt_is_base,
@@ -896,7 +894,6 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     manager_info: &ManagerInfo,
     registry: &MarginRegistry,
     pool_id: ID,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let base_info = manager_info.base_info();

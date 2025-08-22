@@ -7,7 +7,7 @@ use deepbook::{constants, math};
 use margin_trading::{
     margin_constants,
     margin_registry::MarginRegistry,
-    oracle::{calculate_usd_price, calculate_target_amount}
+    oracle::calculate_target_amount
 };
 use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, coin::Coin};
@@ -243,7 +243,6 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     liquidation_coin: &Coin<DebtAsset>,
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
-    clock: &Clock,
 ): LiquidationAmounts {
     let base_info = manager_info.base_info();
     let quote_info = manager_info.quote_info();
