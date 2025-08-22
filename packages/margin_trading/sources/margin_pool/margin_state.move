@@ -12,9 +12,6 @@ public struct State has drop, store {
     borrow_index: u64,
     protocol_profit: u64, // profit accumulated by the protocol, can be withdrawn by the admin
     interest_params: InterestParams,
-    supply_cap: u64, // maximum amount of assets that can be supplied to the pool
-    max_utilization_rate: u64, // maximum percentage of borrowable assets in the pool
-    protocol_spread: u64, // protocol spread in 9 decimals
     last_index_update_timestamp: u64,
 }
 
@@ -26,13 +23,7 @@ public struct InterestParams has drop, store {
     excess_slope: u64, // 9 decimals. This is the multiplier applied based on the utilization rate, in the second part of the curve.
 }
 
-public(package) fun default(
-    interest_params: InterestParams,
-    supply_cap: u64,
-    max_utilization_rate: u64,
-    protocol_spread: u64,
-    clock: &Clock,
-): State {
+public(package) fun default(interest_params: InterestParams, clock: &Clock): State {
     State {
         total_supply: 0,
         total_borrow: 0,
@@ -40,16 +31,13 @@ public(package) fun default(
         borrow_index: constants::float_scaling(),
         protocol_profit: 0,
         interest_params,
-        supply_cap,
-        max_utilization_rate,
-        protocol_spread,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
 
 // === Public-Package Functions ===
 /// Updates the index for the margin pool.
-public(package) fun update(self: &mut State, clock: &Clock) {
+public(package) fun update(self: &mut State, clock: &Clock): u64 {
     let current_timestamp = clock.timestamp_ms();
     let ms_elapsed = current_timestamp - self.last_index_update_timestamp;
     let interest_rate = self.interest_rate();
@@ -58,14 +46,8 @@ public(package) fun update(self: &mut State, clock: &Clock) {
         margin_constants::year_ms(),
     );
     let total_interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
-    let protocol_profit_accrued = math::mul(
-        total_interest_accrued,
-        self.protocol_spread,
-    );
-    self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
 
-    let supply_interest_accrued = total_interest_accrued - protocol_profit_accrued;
-    let new_supply = self.total_supply + supply_interest_accrued;
+    let new_supply = self.total_supply + total_interest_accrued;
     let new_borrow = self.total_borrow + total_interest_accrued;
     let new_supply_index = if (self.total_supply == 0) {
         self.supply_index
@@ -89,6 +71,8 @@ public(package) fun update(self: &mut State, clock: &Clock) {
     self.total_supply = new_supply;
     self.total_borrow = new_borrow;
     self.last_index_update_timestamp = current_timestamp;
+
+    total_interest_accrued
 }
 
 public(package) fun new_interest_params(
@@ -143,20 +127,6 @@ public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
     self.total_borrow = self.total_borrow - amount;
 }
 
-public(package) fun set_supply_cap(self: &mut State, cap: u64) {
-    self.supply_cap = cap;
-}
-
-public(package) fun set_max_utilization_rate(self: &mut State, rate: u64) {
-    self.max_utilization_rate = rate;
-}
-
-public(package) fun update_margin_pool_spread(self: &mut State, spread: u64, clock: &Clock) {
-    // Update the state before spread is updated
-    self.update(clock);
-    self.protocol_spread = spread;
-}
-
 public(package) fun update_interest_params(
     self: &mut State,
     interest_params: InterestParams,
@@ -197,10 +167,6 @@ public(package) fun interest_rate(self: &State): u64 {
 
 public(package) fun reduce_protocol_profit(self: &mut State, amount: u64) {
     self.protocol_profit = self.protocol_profit - amount;
-}
-
-public(package) fun protocol_spread(self: &State): u64 {
-    self.protocol_spread
 }
 
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
@@ -245,14 +211,6 @@ public(package) fun total_supply_shares(self: &State): u64 {
 
 public(package) fun total_borrow(self: &State): u64 {
     self.total_borrow
-}
-
-public(package) fun supply_cap(self: &State): u64 {
-    self.supply_cap
-}
-
-public(package) fun max_utilization_rate(self: &State): u64 {
-    self.max_utilization_rate
 }
 
 public(package) fun interest_params(self: &State): &InterestParams {

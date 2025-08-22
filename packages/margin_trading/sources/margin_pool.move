@@ -7,6 +7,7 @@ use deepbook::math;
 use margin_trading::{
     margin_state::{Self, State, InterestParams},
     position_manager::{Self, PositionManager},
+    protocol_config::{Self, ProtocolConfig},
     referral_manager::{Self, ReferralManager, ReferralCap},
     reward_manager::{Self, RewardManager}
 };
@@ -34,6 +35,8 @@ public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     state: State,
+    config: ProtocolConfig,
+    protocol_profit: u64,
     positions: PositionManager,
     rewards: RewardManager,
     referral_manager: ReferralManager,
@@ -73,7 +76,7 @@ public fun supply<Asset>(
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    assert!(self.state.total_supply() <= self.state.supply_cap(), ESupplyCapExceeded);
+    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
 }
 
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
@@ -126,7 +129,7 @@ public(package) fun claim_referral_rewards<Asset>(
     let share_value_appreciated = self
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.state.protocol_spread());
+    let reward_amount = math::mul(share_value_appreciated, self.config.protocol_spread());
     self.state.reduce_protocol_profit(reward_amount);
 
     self.vault.split(reward_amount).into_coin(ctx)
@@ -150,13 +153,9 @@ public(package) fun create_margin_pool<Asset>(
     let margin_pool = MarginPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
-        state: margin_state::default(
-            interest_params,
-            supply_cap,
-            max_borrow_percentage,
-            protocol_spread,
-            clock,
-        ),
+        state: margin_state::default(interest_params, clock),
+        config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
+        protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
         rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
@@ -170,12 +169,15 @@ public(package) fun create_margin_pool<Asset>(
 }
 
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    self.state.update(clock);
+    let interest_accrued = self.state.update(clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
+    self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
+    self.state.decrease_total_supply_with_index(interest_accrued);
 }
 
 /// Updates the supply cap for the margin pool.
 public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
-    self.state.set_supply_cap(supply_cap);
+    self.config.set_supply_cap(supply_cap);
 }
 
 /// Updates the maximum borrow percentage for the margin pool.
@@ -183,7 +185,7 @@ public(package) fun update_max_utilization_rate<Asset>(
     self: &mut MarginPool<Asset>,
     max_utilization_rate: u64,
 ) {
-    self.state.set_max_utilization_rate(max_utilization_rate);
+    self.config.set_max_utilization_rate(max_utilization_rate);
 }
 
 /// Updates the interest parameters for the margin pool.
@@ -268,7 +270,7 @@ public(package) fun borrow<Asset>(
     self.state.increase_total_borrow(amount);
 
     assert!(
-        self.state.utilization_rate() <= self.state.max_utilization_rate(),
+        self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
 
@@ -279,7 +281,7 @@ public(package) fun borrow<Asset>(
 
 /// Allows repaying the loan.
 public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>, clock: &Clock) {
-    self.state.update(clock);
+    self.update_state(clock);
     self.state.decrease_total_borrow(coin.value());
     self.vault.join(coin.into_balance());
 }
@@ -305,7 +307,7 @@ public(package) fun update_margin_pool_spread<Asset>(
     protocol_spread: u64,
     clock: &Clock,
 ) {
-    self.state.update_margin_pool_spread(protocol_spread, clock);
+    self.config.set_protocol_spread(protocol_spread);
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -321,7 +323,7 @@ public(package) fun withdraw_protocol_profit<Asset>(
 
 /// Returns the supply cap.
 public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
-    self.state.supply_cap()
+    self.config.supply_cap()
 }
 
 /// Returns the state.
@@ -338,7 +340,7 @@ public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u6
 }
 
 public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
-    self.state.max_utilization_rate()
+    self.config.max_utilization_rate()
 }
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
