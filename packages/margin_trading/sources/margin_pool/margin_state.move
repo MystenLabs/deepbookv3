@@ -1,7 +1,7 @@
 module margin_trading::margin_state;
 
 use deepbook::{constants, math};
-use margin_trading::interest::InterestParams;
+use margin_trading::interest_params::InterestParams;
 use sui::clock::Clock;
 
 // === Constants ===

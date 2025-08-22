@@ -6,7 +6,7 @@ module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
 use margin_trading::{
-    interest::{Self, InterestParams},
+    interest_params::{Self, InterestParams},
     margin_constants,
     margin_pool::{Self, MarginPool},
     referral_manager::ReferralCap

@@ -5,7 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{
-    interest::InterestParams,
+    interest_params::InterestParams,
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{Self, ProtocolConfig},

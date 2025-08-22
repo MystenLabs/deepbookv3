@@ -1,4 +1,4 @@
-module margin_trading::interest;
+module margin_trading::interest_params;
 
 use deepbook::math;
 use margin_trading::margin_constants;
