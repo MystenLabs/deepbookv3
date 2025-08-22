@@ -735,7 +735,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     let (base_debt, quote_debt, base_asset, quote_asset) = position_info.position_info();
 
     // Delegate all USD calculations and risk ratio computation to margin_info module
-    margin_info::calculate_manager_info<BaseAsset, QuoteAsset>(
+    margin_info::new_manager_info<BaseAsset, QuoteAsset>(
         base_asset,
         quote_asset,
         base_debt,

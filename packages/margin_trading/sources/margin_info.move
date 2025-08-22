@@ -118,7 +118,7 @@ public(package) fun new_asset_info(
 }
 
 /// Create a new ManagerInfo struct
-public(package) fun new_manager_info(
+public(package) fun manager_info(
     base: AssetInfo,
     quote: AssetInfo,
     risk_ratio: u64,
@@ -170,7 +170,7 @@ public(package) fun new_liquidation_amounts(
 
 /// Calculate ManagerInfo from raw asset/debt data and oracle information
 /// This centralizes all USD calculation and risk ratio computation logic
-public(package) fun calculate_manager_info<BaseAsset, QuoteAsset>(
+public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
     base_asset: u64,
     quote_asset: u64,
     base_debt: u64,
@@ -225,7 +225,7 @@ public(package) fun calculate_manager_info<BaseAsset, QuoteAsset>(
     };
 
     // Construct and return ManagerInfo
-    new_manager_info(
+    manager_info(
         new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
         new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
         risk_ratio,
