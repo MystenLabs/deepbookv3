@@ -215,7 +215,7 @@ public fun new_interest_params(
     assert!(base_rate <= constants::float_scaling(), EInvalidBaseRate);
     assert!(optimal_utilization <= constants::float_scaling(), EInvalidOptimalUtilization);
 
-    interest::new_interest_params(
+    interest_params::new_interest_params(
         base_rate,
         base_slope,
         optimal_utilization,
