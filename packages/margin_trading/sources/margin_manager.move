@@ -388,6 +388,7 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
     // we start our liquidation logic here
     let debt_is_base = manager_info.base.debt > 0; // true
 
+    let debt = manager_info.base.debt.max(manager_info.quote.debt);
     let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDC (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
@@ -427,15 +428,14 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
 
     let in_default = risk_ratio < constants::float_scaling(); // false
     let max_repay_usd = if (in_default) {
-        // We take the debt in usd, multiply by the risk ratio, and then divide by the liquidation reward ratio.
+        // We take the asset in usd, then divide by the liquidation reward ratio.
         // This is the maximum the repayment usd should be, while still giving out rewards accordingly
-        let asset_equivalent_usd = math::mul(debt_in_usd, risk_ratio);
-
-        math::div(asset_equivalent_usd, liquidation_reward_ratio)
+        math::div(assets_in_usd, liquidation_reward_ratio)
     } else {
         max_usd_amount_to_repay
     };
-    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward);
+    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // Accounts for partial liquidations
+    let loan_defaulted = in_default && repay_usd == max_repay_usd; // If manager in default, and the maximum is being repaid, then default the rest of the loan
     let repay_amount = calculate_target_amount<DebtAsset>(
         debt_oracle,
         registry,
@@ -448,12 +448,12 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
 
     let user_reward_usd = math::mul(repay_usd, user_liquidation_reward); // 679.61 * 0.02 = $13.59
     let max_usd_to_exit = user_reward_usd + repay_usd; // 13.59 + 679.61 = $693.20
-    let usd_asset_in_same_type = if (debt_is_base) {
+    let usd_asset_in_debt_type = if (debt_is_base) {
         manager_info.base.usd_asset
     } else {
         manager_info.quote.usd_asset
     }; // $550
-    let debt_asset_usd_to_exit = usd_asset_in_same_type.min(max_usd_to_exit); // $550
+    let debt_asset_usd_to_exit = usd_asset_in_debt_type.min(max_usd_to_exit); // $550
 
     let remaining_usd_to_exit = max_usd_to_exit - debt_asset_usd_to_exit; // $693.20 - $550 = $143.20
     let usd_asset_in_other_type = if (debt_is_base) {
@@ -497,14 +497,18 @@ public fun repay_liquidation_test<BaseAsset, QuoteAsset, DebtAsset>(
     let margin_pool_id = margin_pool.id();
 
     let repay_is_base = margin_manager.base_borrowed_shares > 0;
-
-    let default_amount = 0; //math::mul(fulfillment.default_amount, repay_percentage);
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     if (repay_is_base) {
         margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
     } else {
         margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
+    };
+
+    let default_amount = if (loan_defaulted) {
+        debt - repay_amount
+    } else {
+        0
     };
 
     margin_pool.repay_with_reward(
