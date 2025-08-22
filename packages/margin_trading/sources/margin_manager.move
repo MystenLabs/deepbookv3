@@ -92,7 +92,7 @@ public struct PositionInfo has copy, drop {
     quote_debt: u64,
 }
 
-public struct LiquidationAmounts<phantom DebtAsset> {
+public struct LiquidationAmounts {
     debt_is_base: bool,
     repay_amount: u64,
     pool_reward_amount: u64,
@@ -361,8 +361,68 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     )
 }
 
+public fun liquidate_base_loan<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    margin_pool: &mut MarginPool<BaseAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    liquidation_coin: Coin<BaseAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let (mut base_coin, quote_coin, liquidation_coin) = margin_manager.liquidate_loan<
+        BaseAsset,
+        QuoteAsset,
+        BaseAsset,
+    >(
+        registry,
+        margin_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        liquidation_coin,
+        clock,
+        ctx,
+    );
+    base_coin.join(liquidation_coin);
+
+    (base_coin, quote_coin)
+}
+
+public fun liquidate_quote_loan<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    margin_pool: &mut MarginPool<QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    liquidation_coin: Coin<QuoteAsset>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let (base_coin, mut quote_coin, liquidation_coin) = margin_manager.liquidate_loan<
+        BaseAsset,
+        QuoteAsset,
+        QuoteAsset,
+    >(
+        registry,
+        margin_pool,
+        pool,
+        base_price_info_object,
+        quote_price_info_object,
+        liquidation_coin,
+        clock,
+        ctx,
+    );
+    quote_coin.join(liquidation_coin);
+
+    (base_coin, quote_coin)
+}
+
 /// Liquidator submits a coin, repays on the manager's behalf, and we return base and quote assets accordingly.
-public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
+public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<DebtAsset>,
@@ -1264,7 +1324,7 @@ fun calculate_liquidation_amounts<DebtAsset>(
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
     clock: &Clock,
-): LiquidationAmounts<DebtAsset> {
+): LiquidationAmounts {
     // we start our liquidation logic here
     let debt_is_base = manager_info.base.debt > 0; // true
 
@@ -1328,7 +1388,7 @@ fun calculate_liquidation_amounts<DebtAsset>(
         0
     };
 
-    LiquidationAmounts<DebtAsset> {
+    LiquidationAmounts {
         debt_is_base,
         repay_amount,
         pool_reward_amount,
