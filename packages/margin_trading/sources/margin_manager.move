@@ -3,25 +3,20 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    constants,
+    math,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
-use margin_trading::margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo, LiquidationAmounts};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::{
+    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo, LiquidationAmounts},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -927,11 +922,6 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     let quote_info = manager_info.quote_info();
 
     let debt_is_base = base_info.debt_amount() > 0; // true
-    let debt_oracle = if (debt_is_base) {
-        base_price_info_object
-    } else {
-        quote_price_info_object
-    };
 
     let debt_in_usd = base_info.usd_debt_amount().max(quote_info.usd_debt_amount()); // 1000 debt, USDT (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
@@ -1013,7 +1003,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 
     let mut quantity_to_repay = margin_info::calculate_debt_repay_amount<DebtAsset>(
         registry,
-        debt_oracle,
+        base_price_info_object,
+        quote_price_info_object,
+        debt_is_base,
         usd_amount_to_repay,
         clock,
     );

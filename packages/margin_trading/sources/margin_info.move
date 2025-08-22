@@ -5,15 +5,14 @@
 #[allow(duplicate_alias)]
 module margin_trading::margin_info;
 
-use deepbook::constants;
-use deepbook::math;
-use margin_trading::margin_constants;
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
+use deepbook::{constants, math};
+use margin_trading::{
+    margin_constants,
+    margin_registry::MarginRegistry,
+    oracle::{calculate_usd_price, calculate_target_amount}
+};
 use pyth::price_info::PriceInfoObject;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::object::ID;
+use sui::{clock::Clock, coin::Coin, object::ID};
 
 // === Structs ===
 
@@ -309,9 +308,8 @@ public fun liquidation_amounts_info(amounts: &LiquidationAmounts): (bool, u64, u
         amounts.repay_usd,
         amounts.repay_amount_with_pool_reward,
     )
-}
+} /// Convert USD amounts to asset amounts using oracle pricing
 
-/// Convert USD amounts to asset amounts using oracle pricing
 public fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,
@@ -329,12 +327,20 @@ public fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
 /// Convert USD amount to debt asset amount using oracle pricing
 public fun calculate_debt_repay_amount<DebtAsset>(
     registry: &MarginRegistry,
-    debt_price_info_object: &PriceInfoObject,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    debt_is_base: bool,
     usd_amount: u64,
     clock: &Clock,
 ): u64 {
+    let debt_oracle = if (debt_is_base) {
+        base_price_info_object
+    } else {
+        quote_price_info_object
+    };
+
     calculate_target_amount<DebtAsset>(
-        debt_price_info_object,
+        debt_oracle,
         registry,
         usd_amount,
         clock,
