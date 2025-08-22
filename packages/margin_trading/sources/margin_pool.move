@@ -5,7 +5,8 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{
-    margin_state::{Self, State, InterestParams},
+    interest_params::InterestParams,
+    margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{Self, ProtocolConfig},
     referral_manager::{Self, ReferralManager, ReferralCap},
@@ -35,6 +36,7 @@ public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     state: State,
+    interest: InterestParams,
     config: ProtocolConfig,
     protocol_profit: u64,
     positions: PositionManager,
@@ -130,7 +132,7 @@ public(package) fun claim_referral_rewards<Asset>(
         .referral_manager
         .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
     let reward_amount = math::mul(share_value_appreciated, self.config.protocol_spread());
-    self.state.reduce_protocol_profit(reward_amount);
+    self.protocol_profit = self.protocol_profit - reward_amount;
 
     self.vault.split(reward_amount).into_coin(ctx)
 }
@@ -153,7 +155,8 @@ public(package) fun create_margin_pool<Asset>(
     let margin_pool = MarginPool<Asset> {
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
-        state: margin_state::default(interest_params, clock),
+        state: margin_state::default(clock),
+        interest: interest_params,
         config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
@@ -169,7 +172,7 @@ public(package) fun create_margin_pool<Asset>(
 }
 
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let interest_accrued = self.state.update(clock);
+    let interest_accrued = self.state.update(&self.interest, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
     if (protocol_profit_accrued > 0) {
         self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
@@ -194,9 +197,8 @@ public(package) fun update_max_utilization_rate<Asset>(
 public(package) fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
     interest_params: InterestParams,
-    clock: &Clock,
 ) {
-    self.state.update_interest_params(interest_params, clock);
+    self.interest = interest_params;
 }
 
 public(package) fun enable_deepbook_pool_for_loan<Asset>(
@@ -316,7 +318,8 @@ public(package) fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let profit = self.state.reset_protocol_profit();
+    let profit = self.protocol_profit;
+    self.protocol_profit = 0;
     let balance = self.vault.split(profit);
 
     balance.into_coin(ctx)
@@ -346,6 +349,10 @@ public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
+}
+
+public(package) fun interest<Asset>(self: &MarginPool<Asset>): &InterestParams {
+    &self.interest
 }
 
 // === Internal Functions ===

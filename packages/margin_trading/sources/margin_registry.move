@@ -6,9 +6,9 @@ module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
 use margin_trading::{
+    interest_params::{Self, InterestParams},
     margin_constants,
     margin_pool::{Self, MarginPool},
-    margin_state::{Self, InterestParams},
     referral_manager::ReferralCap
 };
 use std::type_name::{Self, TypeName};
@@ -176,7 +176,7 @@ public fun update_max_borrow_percentage<Asset>(
 
     assert!(max_borrow_percentage <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
-        max_borrow_percentage >= margin_pool.state().interest_params().optimal_utilization(),
+        max_borrow_percentage >= margin_pool.interest().optimal_utilization(),
         EInvalidRiskParam,
     );
 
@@ -186,7 +186,6 @@ public fun update_max_borrow_percentage<Asset>(
 public fun update_interest_params<Asset>(
     margin_pool: &mut MarginPool<Asset>,
     interest_params: InterestParams,
-    clock: &Clock,
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id == margin_pool.id(), EInvalidMarginPoolCap);
@@ -195,7 +194,7 @@ public fun update_interest_params<Asset>(
         margin_pool.max_utilization_rate() >= interest_params.optimal_utilization(),
         EInvalidRiskParam,
     );
-    margin_pool.update_interest_params<Asset>(interest_params, clock);
+    margin_pool.update_interest_params<Asset>(interest_params);
 }
 
 public fun mint_referral_cap<Asset>(
@@ -216,7 +215,7 @@ public fun new_interest_params(
     assert!(base_rate <= constants::float_scaling(), EInvalidBaseRate);
     assert!(optimal_utilization <= constants::float_scaling(), EInvalidOptimalUtilization);
 
-    margin_state::new_interest_params(
+    interest_params::new_interest_params(
         base_rate,
         base_slope,
         optimal_utilization,
