@@ -331,6 +331,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let pool_id = pool.id();
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
 
+    margin_pool.update_state(clock);
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         margin_pool,
@@ -443,6 +444,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     let pool_id = pool.id();
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
 
+    margin_pool.update_state(clock);
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         margin_pool,
@@ -723,6 +725,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
+    margin_pool.update_state(clock);
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset, DebtAsset>(
             registry,
@@ -755,13 +758,12 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
 public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    margin_pool: &mut MarginPool<DebtAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
-    margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
