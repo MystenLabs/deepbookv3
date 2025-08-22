@@ -171,8 +171,10 @@ public(package) fun create_margin_pool<Asset>(
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let interest_accrued = self.state.update(clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
-    self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
-    self.state.decrease_total_supply_with_index(interest_accrued);
+    if (protocol_profit_accrued > 0) {
+        self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
+        self.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    }
 }
 
 /// Updates the supply cap for the margin pool.
@@ -305,7 +307,6 @@ public(package) fun repay_with_reward<Asset>(
 public(package) fun update_margin_pool_spread<Asset>(
     self: &mut MarginPool<Asset>,
     protocol_spread: u64,
-    clock: &Clock,
 ) {
     self.config.set_protocol_spread(protocol_spread);
 }

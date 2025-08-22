@@ -228,13 +228,12 @@ public fun new_interest_params(
 public fun update_margin_pool_spread<Asset>(
     margin_pool: &mut MarginPool<Asset>,
     protocol_spread: u64,
-    clock: &Clock,
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id == margin_pool.id(), EInvalidMarginPoolCap);
 
     assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
-    margin_pool.update_margin_pool_spread(protocol_spread, clock);
+    margin_pool.update_margin_pool_spread(protocol_spread);
 }
 
 /// Withdraws the protocol profit from the margin pool as the admin.
