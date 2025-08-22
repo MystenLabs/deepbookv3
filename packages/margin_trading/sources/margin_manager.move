@@ -725,7 +725,11 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
+        BaseAsset,
+        QuoteAsset,
+        DebtAsset,
+    >(
         margin_manager,
         pool,
         margin_pool,
