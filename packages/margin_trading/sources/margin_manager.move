@@ -1380,48 +1380,42 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let user_reward_usd = math::mul(repay_usd, user_liquidation_reward); // 679.61 * 0.02 = $13.59
-    let pool_reward_usd = math::mul(repay_usd, pool_liquidation_reward); // 679.61 * 0.03 = $20.39
+    // Calculate total USD to exit (repay amount + rewards)
+    let total_reward_ratio =
+        constants::float_scaling() + user_liquidation_reward + pool_liquidation_reward; // 1.05
+    let total_usd_to_exit = math::mul(repay_usd, total_reward_ratio); // $713.59
 
-    let max_usd_to_exit = repay_usd + user_reward_usd + pool_reward_usd; // 679.61 + 13.59 + 20.39 = $713.59
-    let usd_asset_in_debt_type = if (debt_is_base) {
-        manager_info.base.usd_asset
+    // Get available assets in USD
+    let (debt_asset_usd, other_asset_usd) = if (debt_is_base) {
+        (manager_info.base.usd_asset, manager_info.quote.usd_asset) // ($550, $550)
     } else {
-        manager_info.quote.usd_asset
-    }; // $550
-    let debt_asset_usd_to_exit = usd_asset_in_debt_type.min(max_usd_to_exit); // $550
-
-    let remaining_usd_to_exit = max_usd_to_exit - debt_asset_usd_to_exit; // $713.59 - $550 = $163.59
-    let usd_asset_in_other_type = if (debt_is_base) {
-        manager_info.quote.usd_asset
-    } else {
-        manager_info.base.usd_asset
-    }; // $550
-    let other_asset_usd_to_exit = usd_asset_in_other_type.min(remaining_usd_to_exit); // $163.59
-
-    let base_usd_amount = if (debt_is_base) {
-        debt_asset_usd_to_exit
-    } else {
-        other_asset_usd_to_exit
-    };
-    let quote_usd_amount = if (debt_is_base) {
-        other_asset_usd_to_exit
-    } else {
-        debt_asset_usd_to_exit
+        (manager_info.quote.usd_asset, manager_info.base.usd_asset)
     };
 
+    // Exit from debt asset first, then remaining from other asset
+    let debt_usd_to_exit = debt_asset_usd.min(total_usd_to_exit); // $550
+    let other_usd_to_exit = other_asset_usd.min(total_usd_to_exit - debt_usd_to_exit); // $163.59
+
+    // Determine base and quote USD amounts to exit
+    let (base_usd_amount, quote_usd_amount) = if (debt_is_base) {
+        (debt_usd_to_exit, other_usd_to_exit) // ($550, $163.59)
+    } else {
+        (other_usd_to_exit, debt_usd_to_exit)
+    };
+
+    // Convert USD amounts to asset amounts and withdraw
     let base_to_exit = calculate_target_amount<BaseAsset>(
         base_price_info_object,
         registry,
         base_usd_amount,
         clock,
-    ); // 550 USDT
+    );
     let quote_to_exit = calculate_target_amount<QuoteAsset>(
         quote_price_info_object,
         registry,
         quote_usd_amount,
         clock,
-    ); // 163.59 USDC
+    );
 
     let base_coin = margin_manager.liquidation_withdraw_base(base_to_exit, ctx);
     let quote_coin = margin_manager.liquidation_withdraw_quote(quote_to_exit, ctx);
