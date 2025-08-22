@@ -3,21 +3,25 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof
 };
-use margin_trading::{
-    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo, LiquidationAmounts},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::calculate_target_amount
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use margin_trading::margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo, LiquidationAmounts};
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
 use token::deep::DEEP;
 
 // === Errors ===
@@ -984,18 +988,14 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         };
     };
 
-    let base_to_exit = calculate_target_amount<BaseAsset>(
+    let (base_to_exit, quote_to_exit) = margin_info::calculate_asset_amounts<BaseAsset, QuoteAsset>(
+        registry,
         base_price_info_object,
-        registry,
-        base_to_exit_usd,
-        clock,
-    ); // 523.81 USDT
-    let quote_to_exit = calculate_target_amount<QuoteAsset>(
         quote_price_info_object,
-        registry,
+        base_to_exit_usd,
         quote_to_exit_usd,
         clock,
-    ); // 226.19 USDC
+    ); // 523.81 USDT, 226.19 USDC
 
     // We now know the base and quote amount to exit without liquidation rewards.
     // We need to calculate the amount of base and quote to exit with liquidation rewards.
@@ -1011,9 +1011,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    let mut quantity_to_repay = calculate_target_amount<DebtAsset>(
-        debt_oracle,
+    let mut quantity_to_repay = margin_info::calculate_debt_repay_amount<DebtAsset>(
         registry,
+        debt_oracle,
         usd_amount_to_repay,
         clock,
     );
@@ -1330,15 +1330,11 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     };
 
     // Convert USD to asset amounts and withdraw in parallel
-    let base_to_exit = calculate_target_amount<BaseAsset>(
+    let (base_to_exit, quote_to_exit) = margin_info::calculate_asset_amounts<BaseAsset, QuoteAsset>(
+        registry,
         base_price_info_object,
-        registry,
-        base_usd,
-        clock,
-    );
-    let quote_to_exit = calculate_target_amount<QuoteAsset>(
         quote_price_info_object,
-        registry,
+        base_usd,
         quote_usd,
         clock,
     );
