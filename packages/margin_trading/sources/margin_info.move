@@ -4,7 +4,7 @@
 /// Module containing data structures for margin trading information
 module margin_trading::margin_info;
 
-use deepbook::{constants, math};
+use deepbook::math;
 use margin_trading::{
     margin_constants,
     margin_registry::MarginRegistry,
@@ -30,6 +30,14 @@ public struct ManagerInfo has copy, drop {
     risk_ratio: u64, // Risk ratio with 9 decimals
 }
 
+/// Raw position data without USD calculations
+public struct PositionInfo has copy, drop {
+    base_debt: u64,
+    quote_debt: u64,
+    base_asset: u64,
+    quote_asset: u64,
+}
+
 // === Public Functions ===
 
 /// Create a new AssetInfo struct
@@ -48,6 +56,21 @@ public fun new_manager_info(base: AssetInfo, quote: AssetInfo, risk_ratio: u64):
         base,
         quote,
         risk_ratio,
+    }
+}
+
+/// Create a new PositionInfo struct
+public fun new_position_info(
+    base_debt: u64,
+    quote_debt: u64,
+    base_asset: u64,
+    quote_asset: u64,
+): PositionInfo {
+    PositionInfo {
+        base_debt,
+        quote_debt,
+        base_asset,
+        quote_asset,
     }
 }
 
@@ -89,6 +112,16 @@ public fun usd_asset_amount(asset_info: &AssetInfo): u64 {
 /// Get USD debt value from AssetInfo
 public fun usd_debt_amount(asset_info: &AssetInfo): u64 {
     asset_info.usd_debt
+}
+
+/// Returns the details in PositionInfo as a tuple
+public fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
+    (
+        position_info.base_debt,
+        position_info.quote_debt,
+        position_info.base_asset,
+        position_info.quote_asset,
+    )
 }
 
 /// Calculate ManagerInfo from raw asset/debt data and oracle information

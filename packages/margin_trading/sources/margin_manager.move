@@ -10,7 +10,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    margin_info::{Self, AssetInfo, ManagerInfo},
+    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
     oracle::{calculate_usd_price, calculate_target_amount}
@@ -70,13 +70,6 @@ public struct Fulfillment<phantom DebtAsset> {
 public struct Request {
     margin_manager_id: ID,
     request_type: u8,
-}
-
-public struct PositionInfo has copy, drop {
-    base_asset: u64,
-    base_debt: u64,
-    quote_asset: u64,
-    quote_debt: u64,
 }
 
 public struct LiquidationAmounts {
@@ -877,16 +870,6 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
-/// Returns the details in PositionInfo
-public(package) fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
-    (
-        position_info.base_debt,
-        position_info.quote_debt,
-        position_info.base_asset,
-        position_info.quote_asset,
-    )
-}
-
 /// General helper for debt calculation and asset totals.
 /// Returns PositionInfo {base_debt, quote_debt, base_asset, quote_asset}
 public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
@@ -919,12 +902,7 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    PositionInfo {
-        base_debt,
-        quote_debt,
-        base_asset,
-        quote_asset,
-    }
+    margin_info::new_position_info(base_debt, quote_debt, base_asset, quote_asset)
 }
 
 // === Private Functions ===
