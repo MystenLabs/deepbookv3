@@ -396,6 +396,9 @@ public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
     let balance_manager = margin_manager.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
+    let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
+    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
+
     // Step 1: Calculate liquidation amounts
     let LiquidationAmounts {
         debt_is_base,
@@ -411,6 +414,8 @@ public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
         &liquidation_coin,
         base_price_info_object,
         quote_price_info_object,
+        user_liquidation_reward,
+        pool_liquidation_reward,
         clock,
     );
 
@@ -430,11 +435,12 @@ public fun liquidation_single_function<BaseAsset, QuoteAsset, DebtAsset>(
     let (base_coin, quote_coin) = margin_manager.calculate_exit_assets<BaseAsset, QuoteAsset>(
         &manager_info,
         registry,
-        pool_id,
         base_price_info_object,
         quote_price_info_object,
         repay_usd,
         debt_is_base,
+        user_liquidation_reward,
+        pool_liquidation_reward,
         clock,
         ctx,
     );
@@ -1255,6 +1261,8 @@ fun calculate_liquidation_amounts<DebtAsset>(
     liquidation_coin: &Coin<DebtAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
+    user_liquidation_reward: u64,
+    pool_liquidation_reward: u64,
     clock: &Clock,
 ): LiquidationAmounts<DebtAsset> {
     // we start our liquidation logic here
@@ -1263,8 +1271,6 @@ fun calculate_liquidation_amounts<DebtAsset>(
     let debt = manager_info.base.debt.max(manager_info.quote.debt);
     let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000 debt, USDT (USDT/USDC)
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
-    let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
-    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
     let pool_reward_ratio = constants::float_scaling() + pool_liquidation_reward; // 1.03
     let liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
     let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
@@ -1365,16 +1371,15 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     manager_info: &ManagerInfo,
     registry: &MarginRegistry,
-    pool_id: ID,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     repay_usd: u64,
     debt_is_base: bool,
+    user_liquidation_reward: u64,
+    pool_liquidation_reward: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
-    let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
     let user_reward_usd = math::mul(repay_usd, user_liquidation_reward); // 679.61 * 0.02 = $13.59
     let pool_reward_usd = math::mul(repay_usd, pool_liquidation_reward); // 679.61 * 0.03 = $20.39
 
