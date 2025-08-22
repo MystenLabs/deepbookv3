@@ -6,7 +6,6 @@ use sui::clock::Clock;
 
 // === Constants ===
 public struct State has drop, store {
-    interest_params: InterestParams,
     total_supply: u64,
     total_borrow: u64,
     supply_index: u64,
@@ -14,29 +13,26 @@ public struct State has drop, store {
     last_index_update_timestamp: u64,
 }
 
-public(package) fun default(interest_params: InterestParams, clock: &Clock): State {
+public(package) fun default(clock: &Clock): State {
     State {
         total_supply: 0,
         total_borrow: 0,
         supply_index: constants::float_scaling(),
         borrow_index: constants::float_scaling(),
-        interest_params,
         last_index_update_timestamp: clock.timestamp_ms(),
     }
 }
 
 // === Public-Package Functions ===
 /// Updates the index for the margin pool.
-public(package) fun update(self: &mut State, clock: &Clock): u64 {
+public(package) fun update(self: &mut State, interest_params: &InterestParams, clock: &Clock): u64 {
     let current_timestamp = clock.timestamp_ms();
     if (self.last_index_update_timestamp == current_timestamp) return 0;
 
-    let time_adjusted_rate = self
-        .interest_params
-        .time_adjusted_rate(
-            self.utilization_rate(),
-            current_timestamp - self.last_index_update_timestamp,
-        );
+    let time_adjusted_rate = interest_params.time_adjusted_rate(
+        self.utilization_rate(),
+        current_timestamp - self.last_index_update_timestamp,
+    );
     let total_interest_accrued = math::mul(self.total_borrow, time_adjusted_rate);
 
     let new_supply = self.total_supply + total_interest_accrued;
@@ -86,16 +82,6 @@ public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
     self.total_borrow = self.total_borrow - amount;
 }
 
-public(package) fun update_interest_params(
-    self: &mut State,
-    interest_params: InterestParams,
-    clock: &Clock,
-) {
-    // Update the state before interest params are updated
-    self.update(clock);
-    self.interest_params = interest_params;
-}
-
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
     math::mul(amount, self.supply_index)
 }
@@ -138,10 +124,6 @@ public(package) fun total_supply_shares(self: &State): u64 {
 
 public(package) fun total_borrow(self: &State): u64 {
     self.total_borrow
-}
-
-public(package) fun interest_params(self: &State): &InterestParams {
-    &self.interest_params
 }
 
 fun update_supply_index(self: &mut State, new_supply: u64) {
