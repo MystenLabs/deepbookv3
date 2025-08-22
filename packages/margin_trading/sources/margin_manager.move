@@ -725,14 +725,12 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<
-        BaseAsset,
-        QuoteAsset,
-        DebtAsset,
-    >(
-        margin_manager,
-        pool,
+    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
+    );
+
+    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
+        pool,
     );
 
     // Delegate all USD calculations and risk ratio computation to margin_info module
@@ -839,7 +837,7 @@ public(package) fun id<BaseAsset, QuoteAsset>(
 }
 
 /// Returns (base_asset, quote_asset) for margin manager.
-public(package) fun total_assets<BaseAsset, QuoteAsset>(
+public(package) fun calculate_assets<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
 ): (u64, u64) {
@@ -852,12 +850,11 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
 }
 
 /// General helper for debt calculation and asset totals.
-/// Returns (base_debt, quote_debt, base_asset, quote_asset)
-public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+/// Returns (base_debt, quote_debt)
+public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
-): (u64, u64, u64, u64) {
+): (u64, u64) {
     let debt_is_base = margin_manager.has_base_debt();
     let debt_shares = if (debt_is_base) {
         margin_manager.base_borrowed_shares
@@ -878,12 +875,7 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool.to_borrow_amount(debt_shares)
     };
 
-    let (base_asset, quote_asset) = total_assets<BaseAsset, QuoteAsset>(
-        margin_manager,
-        pool,
-    );
-
-    (base_debt, quote_debt, base_asset, quote_asset)
+    (base_debt, quote_debt)
 }
 
 // === Private Functions ===
