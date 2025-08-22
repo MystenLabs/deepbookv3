@@ -422,6 +422,14 @@ public fun liquidate_quote_loan<BaseAsset, QuoteAsset>(
 }
 
 /// Liquidator submits a coin, repays on the manager's behalf, and we return base and quote assets accordingly.
+///
+/// Example calculation flow:
+/// - USDT loan is repaid: 679 USDT
+/// - User inputs: $700, receives: $713.59, profit = 13.59 / 679 = 2%
+/// - Pool receives liquidation reward: 21 USDT (3%)
+/// - Remaining manager assets: 1100 - 713.59 = 386.41
+/// - Remaining debt: 1000 - 679 = 321
+/// - New risk ratio: 386.41 / 321 = 1.203 (partial liquidation, not fully to 1.25)
 public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -434,8 +442,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
     let pool_id = pool.id();
-    let margin_manager_id = margin_manager.id();
-    let margin_pool_id = margin_pool.id();
     margin_pool.update_state(clock);
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
 
@@ -447,15 +453,15 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         quote_price_info_object,
         clock,
     );
-    let risk_ratio = manager_info.risk_ratio;
-    assert!(registry.can_liquidate(pool_id, risk_ratio), ECannotLiquidate);
+    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
 
-    // cancel all orders. at this point, all available assets are in the balance manager.
+    // Cancel all orders to make assets available for liquidation
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
+    // Get liquidation reward rates once
     let user_liquidation_reward = registry.user_liquidation_reward(pool_id); // 2%
     let pool_liquidation_reward = registry.pool_liquidation_reward(pool_id); // 3%
 
@@ -480,7 +486,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     );
 
     // Step 2: Repay the user's loan
-    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx); // 699.99 USDT in coin
+    let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx);
     margin_manager.repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
         repay_coin,
@@ -491,7 +497,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
 
-    // Step 3: Calculate assets that exit the manager
+    // Step 3: Calculate and withdraw exit assets
     let (base_coin, quote_coin) = margin_manager.calculate_exit_assets<BaseAsset, QuoteAsset>(
         &manager_info,
         registry,
@@ -505,8 +511,9 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    // Calculate user reward for event emission
-    let user_liquidation_reward = registry.user_liquidation_reward(pool_id);
+    // Emit events
+    let margin_manager_id = margin_manager.id();
+    let margin_pool_id = margin_pool.id();
     let user_reward_usd = math::mul(repay_usd, user_liquidation_reward);
 
     event::emit(LoanRepaidEvent {
@@ -525,13 +532,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     });
 
     (base_coin, quote_coin, liquidation_coin)
-
-    // 679 of the USDT loan is repaid.
-    // User inputs $700, receives, $713.59, profit = 13.59 / 679 = 2%
-    // Pool receives the liquidation reward of 21 USDT, 3%
-    // Total assets in manager = 1100 - 713.59 = 386.41
-    // Total debt = 1000 - 679 = 321
-    // Risk ratio = 386.41 / 321 = 1.203 (This makes sense, since the liquidator did not fully liquidate to 1.25)
 }
 
 /// Repays the loan as the liquidator.
@@ -715,7 +715,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
 public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    debt_margin_pool: &MarginPool<DebtAsset>,
+    margin_pool: &mut MarginPool<DebtAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
@@ -724,11 +724,12 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
 ) {
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+    margin_pool.update_state(clock);
 
     let risk_ratio = margin_manager
         .manager_info<BaseAsset, QuoteAsset, DebtAsset>(
             registry,
-            debt_margin_pool,
+            margin_pool,
             pool,
             base_price_info_object,
             quote_price_info_object,
@@ -754,6 +755,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
 /// Risk ratio between 1.1 and 1.25 allows for trading only
 /// Risk ratio below 1.1 allows for liquidation
 /// These numbers can be updated by the admin. 1.25 is the default borrow risk ratio, this is equivalent to 5x leverage.
+/// WARNING: Function assumes margin pool is updated prior to calling this function.
 public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
