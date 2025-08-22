@@ -99,13 +99,11 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager.calculate_debt_and_assets<
-        BaseAsset,
-        QuoteAsset,
-        DebtAsset,
-    >(
-        pool,
+    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
+    );
+    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
+        pool,
     );
 
     // The order is a bid, and quantity is less than the net base debt.
@@ -149,13 +147,11 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt, base_asset, quote_asset) = margin_manager.calculate_debt_and_assets<
-        BaseAsset,
-        QuoteAsset,
-        DebtAsset,
-    >(
-        pool,
+    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
+    );
+    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
+        pool,
     );
 
     let (_, quote_quantity, _) = if (pay_with_deep) {
