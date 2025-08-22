@@ -117,23 +117,6 @@ public(package) fun new_asset_info(
     }
 }
 
-/// Create a new ManagerInfo struct
-public(package) fun manager_info(
-    base: AssetInfo,
-    quote: AssetInfo,
-    risk_ratio: u64,
-    base_per_dollar: u64,
-    quote_per_dollar: u64,
-): ManagerInfo {
-    ManagerInfo {
-        base,
-        quote,
-        risk_ratio,
-        base_per_dollar,
-        quote_per_dollar,
-    }
-}
-
 /// Create a new PositionInfo struct
 public(package) fun new_position_info(
     base_debt: u64,
@@ -146,25 +129,6 @@ public(package) fun new_position_info(
         quote_debt,
         base_asset,
         quote_asset,
-    }
-}
-
-/// Create a new LiquidationAmounts struct
-public(package) fun new_liquidation_amounts(
-    debt_is_base: bool,
-    repay_amount: u64,
-    pool_reward_amount: u64,
-    default_amount: u64,
-    repay_usd: u64,
-    repay_amount_with_pool_reward: u64,
-): LiquidationAmounts {
-    LiquidationAmounts {
-        debt_is_base,
-        repay_amount,
-        pool_reward_amount,
-        default_amount,
-        repay_usd,
-        repay_amount_with_pool_reward,
     }
 }
 
@@ -225,13 +189,13 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
     };
 
     // Construct and return ManagerInfo
-    manager_info(
-        new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
-        new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
+    ManagerInfo {
+        base: new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
+        quote: new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
         risk_ratio,
         base_per_dollar,
         quote_per_dollar,
-    )
+    }
 }
 
 /// Calculate liquidation amounts with USD pricing logic
@@ -290,14 +254,14 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
 
     let default_amount = if (loan_defaulted) debt - repay_amount else 0;
 
-    new_liquidation_amounts(
+    LiquidationAmounts {
         debt_is_base,
         repay_amount,
         pool_reward_amount,
         default_amount,
         repay_usd,
         repay_amount_with_pool_reward,
-    )
+    }
 }
 
 public(package) fun calculate_asset_amounts(
