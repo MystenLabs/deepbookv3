@@ -735,7 +735,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    // Delegate all USD calculations and risk ratio computation to margin_info module
+    // Delegate all USD calculations and risk ratio computation to manager_info module
     manager_info::new_manager_info<BaseAsset, QuoteAsset>(
         base_asset,
         quote_asset,
