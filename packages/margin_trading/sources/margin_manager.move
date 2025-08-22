@@ -10,7 +10,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    margin_info::{Self, AssetInfo, ManagerInfo, PositionInfo},
+    margin_info::{Self, AssetInfo, ManagerInfo},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
@@ -725,14 +725,11 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    // Reuse existing debt and asset calculation logic
-    let position_info = calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+    let (base_debt, quote_debt, base_asset, quote_asset) = calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
         margin_manager,
         pool,
         margin_pool,
     );
-
-    let (base_debt, quote_debt, base_asset, quote_asset) = position_info.position_info();
 
     // Delegate all USD calculations and risk ratio computation to margin_info module
     margin_info::new_manager_info<BaseAsset, QuoteAsset>(
@@ -851,12 +848,12 @@ public(package) fun total_assets<BaseAsset, QuoteAsset>(
 }
 
 /// General helper for debt calculation and asset totals.
-/// Returns PositionInfo {base_debt, quote_debt, base_asset, quote_asset}
+/// Returns (base_debt, quote_debt, base_asset, quote_asset)
 public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
-): PositionInfo {
+): (u64, u64, u64, u64) {
     let debt_is_base = margin_manager.has_base_debt();
     let debt_shares = if (debt_is_base) {
         margin_manager.base_borrowed_shares
@@ -882,7 +879,7 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    margin_info::new_position_info(base_debt, quote_debt, base_asset, quote_asset)
+    (base_debt, quote_debt, base_asset, quote_asset)
 }
 
 // === Private Functions ===

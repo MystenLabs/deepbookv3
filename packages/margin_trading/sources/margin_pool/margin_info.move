@@ -30,14 +30,6 @@ public struct ManagerInfo has copy, drop {
     quote_per_dollar: u64, // Quote asset per dollar with 9 decimals
 }
 
-/// Position data without USD calculations
-public struct PositionInfo has copy, drop {
-    base_debt: u64,
-    quote_debt: u64,
-    base_asset: u64,
-    quote_asset: u64,
-}
-
 /// Liquidation calculation results
 public struct LiquidationAmounts has drop {
     debt_is_base: bool,
@@ -81,15 +73,6 @@ public fun usd_debt_amount(asset_info: &AssetInfo): u64 {
     asset_info.usd_debt
 }
 
-public fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
-    (
-        position_info.base_debt,
-        position_info.quote_debt,
-        position_info.base_asset,
-        position_info.quote_asset,
-    )
-}
-
 public fun liquidation_amounts_info(amounts: &LiquidationAmounts): (bool, u64, u64, u64, u64, u64) {
     (
         amounts.debt_is_base,
@@ -114,21 +97,6 @@ public(package) fun new_asset_info(
         debt,
         usd_asset,
         usd_debt,
-    }
-}
-
-/// Create a new PositionInfo struct
-public(package) fun new_position_info(
-    base_debt: u64,
-    quote_debt: u64,
-    base_asset: u64,
-    quote_asset: u64,
-): PositionInfo {
-    PositionInfo {
-        base_debt,
-        quote_debt,
-        base_asset,
-        quote_asset,
     }
 }
 
