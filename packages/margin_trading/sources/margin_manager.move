@@ -3,27 +3,22 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    constants,
+    math,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
-use margin_trading::margin_constants;
-use margin_trading::margin_info::{Self, AssetInfo, ManagerInfo};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::oracle::{calculate_usd_price, calculate_target_amount};
+use margin_trading::{
+    margin_constants,
+    margin_info::{Self, AssetInfo, ManagerInfo},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    oracle::{calculate_usd_price, calculate_target_amount}
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -824,11 +819,6 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 /// Returns the base and quote AssetInfo from the ManagerInfo
 public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
     margin_info::asset_info(manager_info)
-}
-
-/// Returns (asset, debt, usd_asset, usd_debt) given AssetInfo
-public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
-    margin_info::asset_debt_amount(asset_info)
 }
 
 public fun deepbook_pool<BaseAsset, QuoteAsset>(

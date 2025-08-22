@@ -62,11 +62,6 @@ public fun quote_info(manager_info: &ManagerInfo): AssetInfo {
     manager_info.quote
 }
 
-/// Returns (asset, debt, usd_asset, usd_debt) from AssetInfo
-public fun asset_debt_amount(asset_info: &AssetInfo): (u64, u64, u64, u64) {
-    (asset_info.asset, asset_info.debt, asset_info.usd_asset, asset_info.usd_debt)
-}
-
 /// Get asset amount from AssetInfo
 public fun asset_amount(asset_info: &AssetInfo): u64 {
     asset_info.asset
