@@ -13,7 +13,6 @@ use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, coin::Coin};
 
 // === Structs ===
-
 /// Information about a single asset (base or quote)
 public struct AssetInfo has copy, drop {
     asset: u64, // Asset amount in native units
@@ -29,7 +28,7 @@ public struct ManagerInfo has copy, drop {
     risk_ratio: u64, // Risk ratio with 9 decimals
 }
 
-/// Raw position data without USD calculations
+/// Position data without USD calculations
 public struct PositionInfo has copy, drop {
     base_debt: u64,
     quote_debt: u64,
@@ -48,9 +47,66 @@ public struct LiquidationAmounts has drop {
 }
 
 // === Public Functions ===
+public fun risk_ratio(manager_info: &ManagerInfo): u64 {
+    manager_info.risk_ratio
+}
 
+public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
+    (manager_info.base, manager_info.quote)
+}
+
+public fun base_info(manager_info: &ManagerInfo): AssetInfo {
+    manager_info.base
+}
+
+public fun quote_info(manager_info: &ManagerInfo): AssetInfo {
+    manager_info.quote
+}
+
+public fun asset_amount(asset_info: &AssetInfo): u64 {
+    asset_info.asset
+}
+
+public fun debt_amount(asset_info: &AssetInfo): u64 {
+    asset_info.debt
+}
+
+public fun usd_asset_amount(asset_info: &AssetInfo): u64 {
+    asset_info.usd_asset
+}
+
+public fun usd_debt_amount(asset_info: &AssetInfo): u64 {
+    asset_info.usd_debt
+}
+
+public fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
+    (
+        position_info.base_debt,
+        position_info.quote_debt,
+        position_info.base_asset,
+        position_info.quote_asset,
+    )
+}
+
+public fun liquidation_amounts_info(amounts: &LiquidationAmounts): (bool, u64, u64, u64, u64, u64) {
+    (
+        amounts.debt_is_base,
+        amounts.repay_amount,
+        amounts.pool_reward_amount,
+        amounts.default_amount,
+        amounts.repay_usd,
+        amounts.repay_amount_with_pool_reward,
+    )
+}
+
+/// === Public(package) Functions ===
 /// Create a new AssetInfo struct
-public fun new_asset_info(asset: u64, debt: u64, usd_asset: u64, usd_debt: u64): AssetInfo {
+public(package) fun new_asset_info(
+    asset: u64,
+    debt: u64,
+    usd_asset: u64,
+    usd_debt: u64,
+): AssetInfo {
     AssetInfo {
         asset,
         debt,
@@ -60,7 +116,11 @@ public fun new_asset_info(asset: u64, debt: u64, usd_asset: u64, usd_debt: u64):
 }
 
 /// Create a new ManagerInfo struct
-public fun new_manager_info(base: AssetInfo, quote: AssetInfo, risk_ratio: u64): ManagerInfo {
+public(package) fun new_manager_info(
+    base: AssetInfo,
+    quote: AssetInfo,
+    risk_ratio: u64,
+): ManagerInfo {
     ManagerInfo {
         base,
         quote,
@@ -69,7 +129,7 @@ public fun new_manager_info(base: AssetInfo, quote: AssetInfo, risk_ratio: u64):
 }
 
 /// Create a new PositionInfo struct
-public fun new_position_info(
+public(package) fun new_position_info(
     base_debt: u64,
     quote_debt: u64,
     base_asset: u64,
@@ -84,7 +144,7 @@ public fun new_position_info(
 }
 
 /// Create a new LiquidationAmounts struct
-public fun new_liquidation_amounts(
+public(package) fun new_liquidation_amounts(
     debt_is_base: bool,
     repay_amount: u64,
     pool_reward_amount: u64,
@@ -102,59 +162,9 @@ public fun new_liquidation_amounts(
     }
 }
 
-/// Returns the risk ratio from the ManagerInfo
-public fun risk_ratio(manager_info: &ManagerInfo): u64 {
-    manager_info.risk_ratio
-}
-
-/// Returns the base and quote AssetInfo from the ManagerInfo
-public fun asset_info(manager_info: &ManagerInfo): (AssetInfo, AssetInfo) {
-    (manager_info.base, manager_info.quote)
-}
-
-/// Returns the base AssetInfo from the ManagerInfo
-public fun base_info(manager_info: &ManagerInfo): AssetInfo {
-    manager_info.base
-}
-
-/// Returns the quote AssetInfo from the ManagerInfo
-public fun quote_info(manager_info: &ManagerInfo): AssetInfo {
-    manager_info.quote
-}
-
-/// Get asset amount from AssetInfo
-public fun asset_amount(asset_info: &AssetInfo): u64 {
-    asset_info.asset
-}
-
-/// Get debt amount from AssetInfo
-public fun debt_amount(asset_info: &AssetInfo): u64 {
-    asset_info.debt
-}
-
-/// Get USD asset value from AssetInfo
-public fun usd_asset_amount(asset_info: &AssetInfo): u64 {
-    asset_info.usd_asset
-}
-
-/// Get USD debt value from AssetInfo
-public fun usd_debt_amount(asset_info: &AssetInfo): u64 {
-    asset_info.usd_debt
-}
-
-/// Returns the details in PositionInfo as a tuple
-public fun position_info(position_info: &PositionInfo): (u64, u64, u64, u64) {
-    (
-        position_info.base_debt,
-        position_info.quote_debt,
-        position_info.base_asset,
-        position_info.quote_asset,
-    )
-}
-
 /// Calculate ManagerInfo from raw asset/debt data and oracle information
 /// This centralizes all USD calculation and risk ratio computation logic
-public fun calculate_manager_info<BaseAsset, QuoteAsset>(
+public(package) fun calculate_manager_info<BaseAsset, QuoteAsset>(
     base_asset: u64,
     quote_asset: u64,
     base_debt: u64,
@@ -225,7 +235,7 @@ public fun calculate_manager_info<BaseAsset, QuoteAsset>(
 
 /// Calculate liquidation amounts with USD pricing logic
 /// This centralizes all oracle-dependent calculations for liquidation
-public fun calculate_liquidation_amounts<DebtAsset>(
+public(package) fun calculate_liquidation_amounts<DebtAsset>(
     manager_info: &ManagerInfo,
     registry: &MarginRegistry,
     pool_id: ID,
@@ -296,19 +306,7 @@ public fun calculate_liquidation_amounts<DebtAsset>(
     )
 }
 
-/// Destructure LiquidationAmounts for use outside the module
-public fun liquidation_amounts_info(amounts: &LiquidationAmounts): (bool, u64, u64, u64, u64, u64) {
-    (
-        amounts.debt_is_base,
-        amounts.repay_amount,
-        amounts.pool_reward_amount,
-        amounts.default_amount,
-        amounts.repay_usd,
-        amounts.repay_amount_with_pool_reward,
-    )
-} /// Convert USD amounts to asset amounts using oracle pricing
-
-public fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
+public(package) fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
@@ -323,7 +321,7 @@ public fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
 }
 
 /// Convert USD amount to debt asset amount using oracle pricing
-public fun calculate_debt_repay_amount<DebtAsset>(
+public(package) fun calculate_debt_repay_amount<DebtAsset>(
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
