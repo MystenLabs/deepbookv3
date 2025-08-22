@@ -323,8 +323,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         margin_manager,
         &manager_info,
         registry,
-        base_price_info_object,
-        quote_price_info_object,
         pool_id,
         clock,
         ctx,
@@ -440,8 +438,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         pool_id,
         &liquidation_coin,
-        base_price_info_object,
-        quote_price_info_object,
         user_liquidation_reward,
         pool_liquidation_reward,
         clock,
@@ -470,14 +466,10 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     // Step 3: Calculate and withdraw exit assets
     let (base_coin, quote_coin) = margin_manager.calculate_exit_assets<BaseAsset, QuoteAsset>(
         &manager_info,
-        registry,
-        base_price_info_object,
-        quote_price_info_object,
         repay_usd,
         debt_is_base,
         user_liquidation_reward,
         pool_liquidation_reward,
-        clock,
         ctx,
     );
 
@@ -903,8 +895,6 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     manager_info: &ManagerInfo,
     registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
     pool_id: ID,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -969,13 +959,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         };
     };
 
-    let (base_to_exit, quote_to_exit) = margin_info::calculate_asset_amounts<BaseAsset, QuoteAsset>(
-        registry,
-        base_price_info_object,
-        quote_price_info_object,
+    let (base_to_exit, quote_to_exit) = manager_info.calculate_asset_amounts(
         base_to_exit_usd,
         quote_to_exit_usd,
-        clock,
     ); // 523.81 USDT, 226.19 USDC
 
     // We now know the base and quote amount to exit without liquidation rewards.
@@ -992,13 +978,9 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    let mut quantity_to_repay = margin_info::calculate_debt_repay_amount<DebtAsset>(
-        registry,
-        base_price_info_object,
-        quote_price_info_object,
+    let mut quantity_to_repay = manager_info.calculate_debt_repay_amount(
         debt_is_base,
         usd_amount_to_repay,
-        clock,
     );
 
     // Manager is in default if asset / debt < 1
@@ -1250,14 +1232,10 @@ fun repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
 fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     manager_info: &ManagerInfo,
-    registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
     repay_usd: u64,
     debt_is_base: bool,
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     // Calculate total USD to exit including all rewards
@@ -1288,13 +1266,9 @@ fun calculate_exit_assets<BaseAsset, QuoteAsset>(
     };
 
     // Convert USD to asset amounts and withdraw in parallel
-    let (base_to_exit, quote_to_exit) = margin_info::calculate_asset_amounts<BaseAsset, QuoteAsset>(
-        registry,
-        base_price_info_object,
-        quote_price_info_object,
+    let (base_to_exit, quote_to_exit) = manager_info.calculate_asset_amounts(
         base_usd,
         quote_usd,
-        clock,
     );
 
     (

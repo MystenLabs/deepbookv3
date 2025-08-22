@@ -26,6 +26,8 @@ public struct ManagerInfo has copy, drop {
     base: AssetInfo, // Base asset information
     quote: AssetInfo, // Quote asset information
     risk_ratio: u64, // Risk ratio with 9 decimals
+    base_per_dollar: u64, // Base asset per dollar with 9 decimals
+    quote_per_dollar: u64, // Quote asset per dollar with 9 decimals
 }
 
 /// Position data without USD calculations
@@ -120,11 +122,15 @@ public(package) fun new_manager_info(
     base: AssetInfo,
     quote: AssetInfo,
     risk_ratio: u64,
+    base_per_dollar: u64,
+    quote_per_dollar: u64,
 ): ManagerInfo {
     ManagerInfo {
         base,
         quote,
         risk_ratio,
+        base_per_dollar,
+        quote_per_dollar,
     }
 }
 
@@ -174,43 +180,36 @@ public(package) fun calculate_manager_info<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): ManagerInfo {
+    let base_per_dollar = calculate_target_amount<BaseAsset>(
+        base_price_info_object,
+        registry,
+        constants::float_scaling(),
+        clock,
+    );
+
+    let quote_per_dollar = calculate_target_amount<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        constants::float_scaling(),
+        clock,
+    );
+
     // Calculate debt in USD
     let base_usd_debt = if (base_debt > 0) {
-        calculate_usd_price<BaseAsset>(
-            base_price_info_object,
-            registry,
-            base_debt,
-            clock,
-        )
+        math::div(base_debt, base_per_dollar)
     } else {
         0
     };
 
     let quote_usd_debt = if (quote_debt > 0) {
-        calculate_usd_price<QuoteAsset>(
-            quote_price_info_object,
-            registry,
-            quote_debt,
-            clock,
-        )
+        math::div(quote_debt, quote_per_dollar)
     } else {
         0
     };
 
     // Calculate asset values in USD
-    let base_usd_asset = calculate_usd_price<BaseAsset>(
-        base_price_info_object,
-        registry,
-        base_asset,
-        clock,
-    );
-
-    let quote_usd_asset = calculate_usd_price<QuoteAsset>(
-        quote_price_info_object,
-        registry,
-        quote_asset,
-        clock,
-    );
+    let base_usd_asset = math::div(base_asset, base_per_dollar);
+    let quote_usd_asset = math::div(quote_asset, quote_per_dollar);
 
     // Calculate risk ratio
     let total_usd_debt = base_usd_debt + quote_usd_debt;
@@ -230,6 +229,8 @@ public(package) fun calculate_manager_info<BaseAsset, QuoteAsset>(
         new_asset_info(base_asset, base_debt, base_usd_asset, base_usd_debt),
         new_asset_info(quote_asset, quote_debt, quote_usd_asset, quote_usd_debt),
         risk_ratio,
+        base_per_dollar,
+        quote_per_dollar,
     )
 }
 
@@ -240,8 +241,6 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     registry: &MarginRegistry,
     pool_id: ID,
     liquidation_coin: &Coin<DebtAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
     clock: &Clock,
@@ -269,13 +268,9 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     let max_usd_amount_to_repay = math::div(numerator, denominator); // 750
 
     // Get liquidation coin value in USD
-    let debt_oracle = if (debt_is_base) base_price_info_object else quote_price_info_object;
-    let coin_in_usd = calculate_usd_price<DebtAsset>(
-        debt_oracle,
-        registry,
-        liquidation_coin.value(),
-        clock,
-    ); // $700
+    let debt_per_dollar = if (debt_is_base) manager_info.base_per_dollar
+    else manager_info.quote_per_dollar;
+    let coin_in_usd = math::div(liquidation_coin.value(), debt_per_dollar); // $700
     let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $679.61
 
     // Handle default cases
@@ -290,7 +285,7 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // $679.61
     let loan_defaulted = in_default && repay_usd == max_repay_usd;
 
-    let repay_amount = calculate_target_amount<DebtAsset>(debt_oracle, registry, repay_usd, clock); // 679.61 USDT
+    let repay_amount = math::mul(repay_usd, debt_per_dollar); // 679.61 USDT
     let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 699.99 USDT
     let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // 20.38 USDT
 
@@ -306,39 +301,28 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     )
 }
 
-public(package) fun calculate_asset_amounts<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+public(package) fun calculate_asset_amounts(
+    manager_info: &ManagerInfo,
     base_usd: u64,
     quote_usd: u64,
-    clock: &Clock,
 ): (u64, u64) {
     (
-        calculate_target_amount<BaseAsset>(base_price_info_object, registry, base_usd, clock),
-        calculate_target_amount<QuoteAsset>(quote_price_info_object, registry, quote_usd, clock),
+        math::mul(base_usd, manager_info.base_per_dollar),
+        math::mul(quote_usd, manager_info.quote_per_dollar),
     )
 }
 
 /// Convert USD amount to debt asset amount using oracle pricing
-public(package) fun calculate_debt_repay_amount<DebtAsset>(
-    registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+public(package) fun calculate_debt_repay_amount(
+    manager_info: &ManagerInfo,
     debt_is_base: bool,
     usd_amount: u64,
-    clock: &Clock,
 ): u64 {
-    let debt_oracle = if (debt_is_base) {
-        base_price_info_object
+    let debt_per_dollar = if (debt_is_base) {
+        manager_info.base_per_dollar
     } else {
-        quote_price_info_object
+        manager_info.quote_per_dollar
     };
 
-    calculate_target_amount<DebtAsset>(
-        debt_oracle,
-        registry,
-        usd_amount,
-        clock,
-    )
+    math::mul(usd_amount, debt_per_dollar)
 }
