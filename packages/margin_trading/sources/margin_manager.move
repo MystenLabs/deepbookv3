@@ -10,7 +10,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    margin_info::{Self, AssetInfo, ManagerInfo},
+    manager_info::{Self, AssetInfo, ManagerInfo},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
@@ -309,6 +309,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         clock,
+        pool_id,
     );
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio()), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
@@ -419,6 +420,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         clock,
+        pool_id,
     );
     assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio()), ECannotLiquidate);
     assert!(!margin_manager.active_liquidation, ECannotLiquidate);
@@ -437,8 +439,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         registry,
         pool_id,
         &liquidation_coin,
-        user_liquidation_reward,
-        pool_liquidation_reward,
     );
     let (
         debt_is_base,
@@ -693,6 +693,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         clock,
+        pool.id(),
     );
     let risk_ratio = manager_info.risk_ratio();
     let pool_id = pool.id();
@@ -722,6 +723,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
+    pool_id: ID,
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
@@ -734,7 +736,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     );
 
     // Delegate all USD calculations and risk ratio computation to margin_info module
-    margin_info::new_manager_info<BaseAsset, QuoteAsset>(
+    manager_info::new_manager_info<BaseAsset, QuoteAsset>(
         base_asset,
         quote_asset,
         base_debt,
@@ -743,6 +745,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
         base_price_info_object,
         quote_price_info_object,
         clock,
+        pool_id,
     )
 }
 

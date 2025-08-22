@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::margin_info;
+module margin_trading::manager_info;
 
 use deepbook::{constants, math};
 use margin_trading::{
@@ -28,6 +28,8 @@ public struct ManagerInfo has copy, drop {
     risk_ratio: u64, // Risk ratio with 9 decimals
     base_per_dollar: u64, // Base asset per dollar with 9 decimals
     quote_per_dollar: u64, // Quote asset per dollar with 9 decimals
+    user_liquidation_reward: u64, // User liquidation reward with 9 decimals
+    pool_liquidation_reward: u64, // Pool liquidation reward with 9 decimals
 }
 
 /// Liquidation calculation results
@@ -111,6 +113,7 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
+    pool_id: ID,
 ): ManagerInfo {
     let base_per_dollar = calculate_target_amount<BaseAsset>(
         base_price_info_object,
@@ -163,6 +166,8 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
         risk_ratio,
         base_per_dollar,
         quote_per_dollar,
+        user_liquidation_reward: registry.user_liquidation_reward(pool_id),
+        pool_liquidation_reward: registry.pool_liquidation_reward(pool_id),
     }
 }
 
@@ -173,8 +178,6 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     registry: &MarginRegistry,
     pool_id: ID,
     liquidation_coin: &Coin<DebtAsset>,
-    user_liquidation_reward: u64,
-    pool_liquidation_reward: u64,
 ): LiquidationAmounts {
     let base_info = manager_info.base_info();
     let quote_info = manager_info.quote_info();
@@ -188,9 +191,10 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
 
     // Calculate ratios once
     let target_ratio = registry.target_liquidation_risk_ratio(pool_id); // 1.25
-    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward; // 5%
+    let total_liquidation_reward =
+        manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward; // 5%
     let float_scaling = constants::float_scaling();
-    let pool_reward_ratio = float_scaling + pool_liquidation_reward; // 1.03
+    let pool_reward_ratio = float_scaling + manager_info.pool_liquidation_reward; // 1.03
     let liquidation_reward_ratio = float_scaling + total_liquidation_reward; // 1.05
 
     // Calculate maximum USD to repay for target ratio
