@@ -134,7 +134,7 @@ public struct LiquidationEvent has copy, drop {
 }
 
 /// Event emitted when margin manager is liquidated
-public struct LiquidationEvent2 has copy, drop {
+public struct LiquidationLoanEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     liquidation_amount: u64,
@@ -515,7 +515,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         repay_amount,
     });
 
-    event::emit(LiquidationEvent2 {
+    event::emit(LiquidationLoanEvent {
         margin_manager_id,
         margin_pool_id,
         liquidation_amount: repay_amount,
@@ -525,6 +525,13 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     });
 
     (base_coin, quote_coin, liquidation_coin)
+
+    // 679 of the USDT loan is repaid.
+    // User inputs $700, receives, $713.59, profit = 13.59 / 679 = 2%
+    // Pool receives the liquidation reward of 21 USDT, 3%
+    // Total assets in manager = 1100 - 713.59 = 386.41
+    // Total debt = 1000 - 679 = 321
+    // Risk ratio = 386.41 / 321 = 1.203 (This makes sense, since the liquidator did not fully liquidate to 1.25)
 }
 
 /// Repays the loan as the liquidator.
