@@ -547,7 +547,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     assert!(repay_percentage <= constants::float_scaling(), ERepaymentExceedsTotal);
     let return_percentage = constants::float_scaling() - repay_percentage;
 
-    let repay_is_base = margin_manager.base_borrowed_shares > 0;
+    let repay_is_base = has_base_debt(margin_manager);
     let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
     let pool_reward_amount = repay_coin_amount - repay_amount;
     let liquidator_base_reward = math::mul(
@@ -645,7 +645,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let total_fulfillment_amount = repay_amount + pool_reward_amount;
     assert!(coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
 
-    let repay_is_base = margin_manager.base_borrowed_shares > 0;
+    let repay_is_base = has_base_debt(margin_manager);
     let default_amount = fulfillment.default_amount;
     let liquidator_base_reward = fulfillment.liquidator_base_reward;
     let liquidator_quote_reward = fulfillment.liquidator_quote_reward;
@@ -752,30 +752,16 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 ): ManagerInfo {
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
-    let debt_is_base = margin_manager.base_borrowed_shares > 0;
-    let debt_shares = if (debt_is_base) {
-        margin_manager.base_borrowed_shares
-    } else {
-        margin_manager.quote_borrowed_shares
-    };
+    // Reuse existing debt and asset calculation logic
+    let position_info = calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
+        margin_manager,
+        pool,
+        margin_pool,
+    );
 
-    let base_debt = if (debt_is_base) {
-        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
-        margin_pool.to_borrow_amount(debt_shares)
-    } else {
-        0
-    };
+    let (base_debt, quote_debt, base_asset, quote_asset) = position_info.position_info();
 
-    let quote_debt = if (debt_is_base) {
-        0
-    } else {
-        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
-        margin_pool.to_borrow_amount(debt_shares)
-    };
-
-    let (base_asset, quote_asset) = total_assets<BaseAsset, QuoteAsset>(margin_manager, pool);
-
-    // Delegate all calculations to margin_info module
+    // Delegate all USD calculations and risk ratio computation to margin_info module
     margin_info::calculate_manager_info<BaseAsset, QuoteAsset>(
         base_asset,
         quote_asset,
@@ -908,7 +894,7 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
 ): PositionInfo {
-    let debt_is_base = margin_manager.base_borrowed_shares > 0;
+    let debt_is_base = has_base_debt(margin_manager);
     let debt_shares = if (debt_is_base) {
         margin_manager.base_borrowed_shares
     } else {
@@ -942,6 +928,14 @@ public(package) fun calculate_debt_and_assets<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 // === Private Functions ===
+
+/// Helper function to check if margin manager has debt in base asset
+fun has_base_debt<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+): bool {
+    margin_manager.base_borrowed_shares > 0
+}
+
 /// calculate quantity of debt that must be removed to reach target risk ratio.
 /// amount_to_repay is only for the loan, not including liquidation rewards.
 /// amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
@@ -1158,7 +1152,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
 ): u64 {
     margin_pool.update_state(clock);
 
-    let repay_is_base = margin_manager.base_borrowed_shares > 0;
+    let repay_is_base = has_base_debt(margin_manager);
     let repay_amount = if (repay_amount.is_some()) {
         repay_amount.destroy_some()
     } else {
