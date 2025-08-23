@@ -13,6 +13,7 @@ const EMaxRewardTypesExceeded: u64 = 0;
 
 public struct RewardManager has store {
     reward_pools: VecMap<TypeName, RewardPool>,
+    last_update_shares: u64,
     last_update_time: u64,
 }
 
@@ -52,8 +53,8 @@ public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock)
             reward_pool.emission.rewards_per_second,
             elapsed_time_seconds,
         );
-        if (shares > 0) {
-            let reward_per_share = math::div(rewards_to_distribute, shares);
+        if (self.last_update_shares > 0) {
+            let reward_per_share = math::div(rewards_to_distribute, self.last_update_shares);
             reward_pool.cumulative_reward_per_share =
                 reward_pool.cumulative_reward_per_share + reward_per_share;
         };
@@ -62,6 +63,7 @@ public(package) fun update(self: &mut RewardManager, shares: u64, clock: &Clock)
     };
 
     self.last_update_time = clock.timestamp_ms();
+    self.last_update_shares = shares;
 }
 
 /// Add a reward pool entry for a given reward token type.
