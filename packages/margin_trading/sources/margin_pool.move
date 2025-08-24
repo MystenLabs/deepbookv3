@@ -5,7 +5,7 @@ module margin_trading::margin_pool;
 
 use deepbook::{constants, math};
 use margin_trading::{
-    interest_params::InterestParams,
+    interest_params::{Self, InterestParams},
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
@@ -55,7 +55,10 @@ public struct MarginPool<phantom Asset> has key, store {
 /// Returns a `MarginPoolCap` that can be used to update the margin pool.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
-    interest_params: InterestParams,
+    base_rate: u64,
+    base_slope: u64,
+    optimal_utilization: u64,
+    excess_slope: u64,
     supply_cap: u64,
     max_borrow_percentage: u64,
     protocol_spread: u64,
@@ -67,7 +70,12 @@ public fun create_margin_pool<Asset>(
         id: object::new(ctx),
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
-        interest: interest_params,
+        interest: interest_params::new_interest_params(
+            base_rate,
+            base_slope,
+            optimal_utilization,
+            excess_slope,
+        ),
         config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
@@ -144,9 +152,18 @@ public fun mint_referral_cap<Asset>(
 
 public fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
-    interest_params: InterestParams,
+    base_rate: u64,
+    base_slope: u64,
+    optimal_utilization: u64,
+    excess_slope: u64,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    let interest_params = interest_params::new_interest_params(
+        base_rate,
+        base_slope,
+        optimal_utilization,
+        excess_slope,
+    );
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(
         self.max_utilization_rate() >= interest_params.optimal_utilization(),
@@ -155,37 +172,18 @@ public fun update_interest_params<Asset>(
     self.interest = interest_params;
 }
 
-/// Updates the spread for the margin pool as the admin.
-public fun update_margin_pool_spread<Asset>(
+public fun update_protocol_config<Asset>(
     self: &mut MarginPool<Asset>,
+    supply_cap: u64,
+    max_utilization_rate: u64,
     protocol_spread: u64,
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
-    self.config.set_protocol_spread(protocol_spread);
-}
-
-/// Updates the maximum utilization rate for the margin pool.
-public fun update_max_utilization_rate<Asset>(
-    self: &mut MarginPool<Asset>,
-    max_borrow_percentage: u64,
-    margin_pool_cap: &MarginPoolCap,
-) {
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(max_borrow_percentage <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(max_borrow_percentage >= self.interest.optimal_utilization(), EInvalidRiskParam);
-    self.config.set_max_utilization_rate(max_borrow_percentage);
-}
-
-/// Updates the supply cap for the margin pool.
-public fun update_supply_cap<Asset>(
-    self: &mut MarginPool<Asset>,
-    supply_cap: u64,
-    margin_pool_cap: &MarginPoolCap,
-) {
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    self.config.set_supply_cap(supply_cap);
+    assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(max_utilization_rate >= self.interest.optimal_utilization(), EInvalidRiskParam);
+    self.config = protocol_config::default(supply_cap, max_utilization_rate, protocol_spread);
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -372,11 +370,6 @@ public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.supply_cap()
 }
 
-/// Returns the state.
-public(package) fun state<Asset>(self: &MarginPool<Asset>): &State {
-    &self.state
-}
-
 public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u64): u64 {
     self.state.to_borrow_shares(amount)
 }
@@ -391,10 +384,6 @@ public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
-}
-
-public(package) fun interest<Asset>(self: &MarginPool<Asset>): &InterestParams {
-    &self.interest
 }
 
 // === Internal Functions ===

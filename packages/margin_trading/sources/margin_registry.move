@@ -5,7 +5,7 @@
 module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::{interest_params::{Self, InterestParams}, margin_constants};
+use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
 use sui::{dynamic_field as df, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -22,9 +22,7 @@ const EPoolAlreadyEnabled: u64 = 5;
 const EPoolAlreadyDisabled: u64 = 6;
 const EMarginPoolAlreadyExists: u64 = 7;
 const EMarginPoolDoesNotExists: u64 = 8;
-const EInvalidOptimalUtilization: u64 = 9;
-const EInvalidBaseRate: u64 = 10;
-const EMaintainerCapNotValid: u64 = 11;
+const EMaintainerCapNotValid: u64 = 9;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -127,24 +125,6 @@ public(package) fun register_margin_pool(
     };
 
     transfer::public_transfer(margin_pool_cap, ctx.sender());
-}
-
-/// Creates a new InterestParams object with the given parameters.
-public fun new_interest_params(
-    base_rate: u64,
-    base_slope: u64,
-    optimal_utilization: u64,
-    excess_slope: u64,
-): InterestParams {
-    assert!(base_rate <= constants::float_scaling(), EInvalidBaseRate);
-    assert!(optimal_utilization <= constants::float_scaling(), EInvalidOptimalUtilization);
-
-    interest_params::new_interest_params(
-        base_rate,
-        base_slope,
-        optimal_utilization,
-        excess_slope,
-    )
 }
 
 /// Create a PoolConfig with margin pool IDs and risk parameters
@@ -356,18 +336,6 @@ public fun get_deepbook_pool_margin_pool_ids(
 public(package) fun get_pool_config(self: &MarginRegistry, deepbook_pool_id: ID): &PoolConfig {
     assert!(self.pool_registry.contains(deepbook_pool_id), EPoolNotRegistered);
     self.pool_registry.borrow(deepbook_pool_id)
-}
-
-/// Get the base margin pool ID for a deepbook pool
-public(package) fun get_base_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.base_margin_pool_id
-}
-
-/// Get the quote margin pool ID for a deepbook pool
-public(package) fun get_quote_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.quote_margin_pool_id
 }
 
 public(package) fun can_withdraw(
