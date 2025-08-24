@@ -3,9 +3,10 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use margin_trading::{
     interest_params::InterestParams,
+    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{Self, ProtocolConfig},
@@ -30,6 +31,9 @@ const EInvalidLoanQuantity: u64 = 5;
 const EInvalidRewardEndTime: u64 = 8;
 const EDeepbookPoolAlreadyAllowed: u64 = 9;
 const EDeepbookPoolNotAllowed: u64 = 10;
+const EInvalidMarginPoolCap: u64 = 11;
+const EInvalidRiskParam: u64 = 12;
+const EInvalidProtocolSpread: u64 = 13;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -44,6 +48,159 @@ public struct MarginPool<phantom Asset> has key, store {
     referral_manager: ReferralManager,
     reward_balances: Bag,
     allowed_deepbook_pools: VecSet<ID>,
+}
+
+// === Public Functions * ADMIN *===
+/// Creates and registers a new margin pool. If a same asset pool already exists, abort.
+/// Returns a `MarginPoolCap` that can be used to update the margin pool.
+public fun create_margin_pool<Asset>(
+    registry: &mut MarginRegistry,
+    interest_params: InterestParams,
+    supply_cap: u64,
+    max_borrow_percentage: u64,
+    protocol_spread: u64,
+    maintainer_cap: &MaintainerCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    let margin_pool = MarginPool<Asset> {
+        id: object::new(ctx),
+        vault: balance::zero<Asset>(),
+        state: margin_state::default(clock),
+        interest: interest_params,
+        config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
+        protocol_profit: 0,
+        positions: position_manager::create_position_manager(ctx),
+        rewards: reward_manager::create_reward_manager(clock),
+        reward_balances: bag::new(ctx),
+        referral_manager: referral_manager::empty(),
+        allowed_deepbook_pools: vec_set::empty(),
+    };
+    let margin_pool_id = margin_pool.id.to_inner();
+    transfer::share_object(margin_pool);
+
+    let key = type_name::get<Asset>();
+    registry.register_margin_pool(maintainer_cap, key, margin_pool_id, ctx);
+
+    margin_pool_id
+}
+
+/// Adds a reward to the margin pool as the pool admin.
+/// Adds a reward token to be distributed linearly over a specified time period.
+/// If a reward pool for the same token type already exists, adds the new rewards
+/// to the existing pool and resets the timing to end at the specified time.
+public fun add_reward_pool<Asset, RewardToken>(
+    self: &mut MarginPool<Asset>,
+    reward_coin: Coin<RewardToken>,
+    end_time: u64,
+    margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+
+    let reward_token_type = type_name::get<RewardToken>();
+    self.rewards.add_reward_pool_entry(reward_token_type);
+    let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
+    let total_emissions = remaining_emissions + reward_coin.value();
+
+    assert!(end_time > clock.timestamp_ms(), EInvalidRewardEndTime);
+    let time_duration_seconds = (end_time - clock.timestamp_ms()) / 1000;
+    let rewards_per_second = math::div(total_emissions, time_duration_seconds);
+
+    self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
+    add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
+}
+
+/// Allow a margin manager tied to a deepbook pool to borrow from the margin pool.
+public fun enable_deepbook_pool_for_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
+    self.allowed_deepbook_pools.insert(deepbook_pool_id);
+}
+
+/// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
+public fun disable_deepbook_pool_for_loan<Asset>(
+    self: &mut MarginPool<Asset>,
+    deepbook_pool_id: ID,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
+    self.allowed_deepbook_pools.remove(&deepbook_pool_id);
+}
+
+public fun mint_referral_cap<Asset>(
+    self: &mut MarginPool<Asset>,
+    _cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): ReferralCap {
+    let current_index = self.state.supply_index();
+    self.referral_manager.mint_referral_cap(current_index, ctx)
+}
+
+public fun update_interest_params<Asset>(
+    self: &mut MarginPool<Asset>,
+    interest_params: InterestParams,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    assert!(
+        self.max_utilization_rate() >= interest_params.optimal_utilization(),
+        EInvalidRiskParam,
+    );
+    self.interest = interest_params;
+}
+
+/// Updates the spread for the margin pool as the admin.
+public fun update_margin_pool_spread<Asset>(
+    self: &mut MarginPool<Asset>,
+    protocol_spread: u64,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
+    self.config.set_protocol_spread(protocol_spread);
+}
+
+/// Updates the maximum utilization rate for the margin pool.
+public fun update_max_utilization_rate<Asset>(
+    self: &mut MarginPool<Asset>,
+    max_borrow_percentage: u64,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    assert!(max_borrow_percentage <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(max_borrow_percentage >= self.interest.optimal_utilization(), EInvalidRiskParam);
+    self.config.set_max_utilization_rate(max_borrow_percentage);
+}
+
+/// Updates the supply cap for the margin pool.
+public fun update_supply_cap<Asset>(
+    self: &mut MarginPool<Asset>,
+    supply_cap: u64,
+    margin_pool_cap: &MarginPoolCap,
+) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    self.config.set_supply_cap(supply_cap);
+}
+
+/// Resets the protocol profit and returns the coin.
+public fun withdraw_protocol_profit<Asset>(
+    self: &mut MarginPool<Asset>,
+    margin_pool_cap: &MarginPoolCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+
+    let profit = self.protocol_profit;
+    self.protocol_profit = 0;
+    let balance = self.vault.split(profit);
+
+    balance.into_coin(ctx)
 }
 
 // === Public Functions * LENDING * ===
@@ -113,14 +270,6 @@ public fun withdraw<Asset>(
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
-public(package) fun mint_referral_cap<Asset>(
-    self: &mut MarginPool<Asset>,
-    ctx: &mut TxContext,
-): ReferralCap {
-    let current_index = self.state.supply_index();
-    self.referral_manager.mint_referral_cap(current_index, ctx)
-}
-
 public(package) fun claim_referral_rewards<Asset>(
     self: &mut MarginPool<Asset>,
     referral_cap: &ReferralCap,
@@ -143,34 +292,6 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 }
 
 // === Public-Package Functions ===
-/// Creates a margin pool as the admin.
-public(package) fun create_margin_pool<Asset>(
-    interest_params: InterestParams,
-    supply_cap: u64,
-    max_borrow_percentage: u64,
-    protocol_spread: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): ID {
-    let margin_pool = MarginPool<Asset> {
-        id: object::new(ctx),
-        vault: balance::zero<Asset>(),
-        state: margin_state::default(clock),
-        interest: interest_params,
-        config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
-        protocol_profit: 0,
-        positions: position_manager::create_position_manager(ctx),
-        rewards: reward_manager::create_reward_manager(clock),
-        reward_balances: bag::new(ctx),
-        referral_manager: referral_manager::empty(),
-        allowed_deepbook_pools: vec_set::empty(),
-    };
-    let margin_pool_id = margin_pool.id.to_inner();
-    transfer::share_object(margin_pool);
-
-    margin_pool_id
-}
-
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let interest_accrued = self.state.update(&self.interest, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
@@ -178,65 +299,6 @@ public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Cl
         self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
         self.state.decrease_total_supply_with_index(protocol_profit_accrued);
     }
-}
-
-/// Updates the supply cap for the margin pool.
-public(package) fun update_supply_cap<Asset>(self: &mut MarginPool<Asset>, supply_cap: u64) {
-    self.config.set_supply_cap(supply_cap);
-}
-
-/// Updates the maximum borrow percentage for the margin pool.
-public(package) fun update_max_utilization_rate<Asset>(
-    self: &mut MarginPool<Asset>,
-    max_utilization_rate: u64,
-) {
-    self.config.set_max_utilization_rate(max_utilization_rate);
-}
-
-/// Updates the interest parameters for the margin pool.
-public(package) fun update_interest_params<Asset>(
-    self: &mut MarginPool<Asset>,
-    interest_params: InterestParams,
-) {
-    self.interest = interest_params;
-}
-
-public(package) fun enable_deepbook_pool_for_loan<Asset>(
-    self: &mut MarginPool<Asset>,
-    deepbook_pool_id: ID,
-) {
-    assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
-    self.allowed_deepbook_pools.insert(deepbook_pool_id);
-}
-
-public(package) fun disable_deepbook_pool_for_loan<Asset>(
-    self: &mut MarginPool<Asset>,
-    deepbook_pool_id: ID,
-) {
-    assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
-    self.allowed_deepbook_pools.remove(&deepbook_pool_id);
-}
-
-/// Adds a reward token to be distributed linearly over a specified time period.
-/// If a reward pool for the same token type already exists, adds the new rewards
-/// to the existing pool and resets the timing to end at the specified time.
-public(package) fun add_reward_pool<Asset, RewardToken>(
-    self: &mut MarginPool<Asset>,
-    reward_coin: Coin<RewardToken>,
-    end_time: u64,
-    clock: &Clock,
-) {
-    let reward_token_type = type_name::get<RewardToken>();
-    self.rewards.add_reward_pool_entry(reward_token_type);
-    let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
-    let total_emissions = remaining_emissions + reward_coin.value();
-
-    assert!(end_time > clock.timestamp_ms(), EInvalidRewardEndTime);
-    let time_duration_seconds = (end_time - clock.timestamp_ms()) / 1000;
-    let rewards_per_second = math::div(total_emissions, time_duration_seconds);
-
-    self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
-    add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
 }
 
 /// Allows users to claim their accumulated rewards for a specific reward token type.
@@ -303,26 +365,6 @@ public(package) fun repay_with_reward<Asset>(
     self.state.increase_total_supply_with_index(reward_amount);
     self.state.decrease_total_supply_with_index(default_amount);
     self.vault.join(coin.into_balance());
-}
-
-/// Updates the protocol spread
-public(package) fun update_margin_pool_spread<Asset>(
-    self: &mut MarginPool<Asset>,
-    protocol_spread: u64,
-) {
-    self.config.set_protocol_spread(protocol_spread);
-}
-
-/// Resets the protocol profit and returns the coin.
-public(package) fun withdraw_protocol_profit<Asset>(
-    self: &mut MarginPool<Asset>,
-    ctx: &mut TxContext,
-): Coin<Asset> {
-    let profit = self.protocol_profit;
-    self.protocol_profit = 0;
-    let balance = self.vault.split(profit);
-
-    balance.into_coin(ctx)
 }
 
 /// Returns the supply cap.
