@@ -499,10 +499,13 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let repay_is_base = margin_manager.has_base_debt();
     let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
-    let pool_reward_amount = repay_coin_amount - repay_amount;
-
-    let default_amount = math::mul(fulfillment.default_amount, repay_percentage);
+    let mut pool_reward_amount = repay_coin_amount - repay_amount;
+    let mut default_amount = math::mul(fulfillment.default_amount, repay_percentage);
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+
+    let cancel_amount = pool_reward_amount.min(default_amount);
+    pool_reward_amount = pool_reward_amount - cancel_amount;
+    default_amount = default_amount - cancel_amount;
 
     if (repay_is_base) {
         margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
@@ -583,13 +586,15 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_pool_id = margin_pool.id();
     let coin_amount = coin.value();
     let repay_amount = fulfillment.repay_amount;
-    let pool_reward_amount = fulfillment.pool_reward_amount;
 
-    let total_fulfillment_amount = repay_amount + pool_reward_amount;
+    let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount;
     assert!(coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
 
+    let cancel_amount = fulfillment.pool_reward_amount.min(fulfillment.default_amount);
+    let pool_reward_amount = fulfillment.pool_reward_amount - cancel_amount;
+    let default_amount = fulfillment.default_amount - cancel_amount;
+
     let repay_is_base = margin_manager.has_base_debt();
-    let default_amount = fulfillment.default_amount;
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     if (repay_is_base) {
