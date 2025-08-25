@@ -851,7 +851,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let in_default = manager_info.risk_ratio() < constants::float_scaling(); // false
     // Manager is in default if asset / debt < 1
-    let (quantity_to_repay, default_amount) = manager_info.default_info(in_default); // (0, 0)
+    let (default_amount_to_repay, default_amount) = manager_info.default_info(in_default); // (0, 0)
 
     let usd_amount_to_repay = if (in_default) {
         manager_info.calculate_usd_amount_to_repay_in_default()
@@ -874,7 +874,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 
     // If manager is in default, we repay as much as possible
     let repay_amount = if (in_default) {
-        quantity_to_repay
+        default_amount_to_repay
     } else {
         manager_info.calculate_debt_repay_amount(
             margin_manager.has_base_debt(),
@@ -901,6 +901,11 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
 
     // User receives 550 USDT, 237.5 USDC. User has to repay 750 USDT, and 22.5 USDT to the pool.
     // User reward at the end is 550 + 237.5 - 750 - 22.5 = 15
+    // Manager now has:
+    // - 0 USDT
+    // - 550 - 237.5 = 312.5 USDC
+    // - 250 USDT debt
+    // Risk ratio is 312.5 / 250 = 1.25
 }
 
 fun validate_owner<BaseAsset, QuoteAsset>(
