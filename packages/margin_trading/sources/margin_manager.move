@@ -23,7 +23,7 @@ use token::deep::DEEP;
 const EInvalidDeposit: u64 = 0;
 const EMarginTradingNotAllowedInPool: u64 = 1;
 const EInvalidMarginManagerOwner: u64 = 2;
-const ECannotHaveLoanInBothMarginPools: u64 = 3;
+const ECannotHaveLoanInMoreThanOneMarginPool: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
 const ERepaymentExceedsTotal: u64 = 5;
 const EDeepbookPoolNotAllowedForLoan: u64 = 6;
@@ -34,6 +34,8 @@ const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
 const EInvalidReturnAmount: u64 = 12;
 const ERepaymentNotEnough: u64 = 13;
+const EIncorrectMarginPool: u64 = 14;
+const EInvalidRepayAmount: u64 = 15;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -45,6 +47,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
     id: UID,
     owner: address,
     deepbook_pool: ID,
+    margin_pool_id: Option<ID>, // If none, margin manager has no current loans in any margin pool
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
@@ -124,6 +127,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
         id,
         owner: ctx.sender(),
         deepbook_pool: pool.id(),
+        margin_pool_id: option::none(),
         balance_manager,
         deposit_cap,
         withdraw_cap,
@@ -194,7 +198,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): Request {
     margin_manager.validate_owner(ctx);
-    assert!(margin_manager.quote_borrowed_shares == 0, ECannotHaveLoanInBothMarginPools);
+    assert!(margin_manager.can_borrow(base_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
         base_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
@@ -202,6 +206,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     base_margin_pool.update_state(clock);
     let loan_shares = base_margin_pool.to_borrow_shares(loan_amount);
     margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares + loan_shares;
+    margin_manager.margin_pool_id = option::some(base_margin_pool.id());
 
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
         base_margin_pool,
@@ -220,7 +225,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): Request {
     margin_manager.validate_owner(ctx);
-    assert!(margin_manager.base_borrowed_shares == 0, ECannotHaveLoanInBothMarginPools);
+    assert!(margin_manager.can_borrow(quote_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
         quote_margin_pool.deepbook_pool_allowed(margin_manager.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
@@ -228,6 +233,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     quote_margin_pool.update_state(clock);
     let loan_shares = quote_margin_pool.to_borrow_shares(loan_amount);
     margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares + loan_shares;
+    margin_manager.margin_pool_id = option::some(quote_margin_pool.id());
 
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
@@ -247,6 +253,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): u64 {
     margin_manager.validate_owner(ctx);
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
     margin_manager.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
@@ -266,6 +273,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): u64 {
     margin_manager.validate_owner(ctx);
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
     margin_manager.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
@@ -287,7 +295,9 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let pool_id = pool.id();
+    let margin_pool_id = margin_pool.id();
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
 
     margin_pool.update_state(clock);
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -396,7 +406,9 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
     let pool_id = pool.id();
+    let margin_pool_id = margin_pool.id();
     assert!(margin_manager.deepbook_pool == pool_id, EIncorrectDeepBookPool);
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
 
     margin_pool.update_state(clock);
     let manager_info = margin_manager.manager_info<BaseAsset, QuoteAsset, DebtAsset>(
@@ -650,6 +662,8 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     request: Request,
 ) {
+    let margin_pool_id = margin_pool.id();
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(request.margin_manager_id == margin_manager.id(), EInvalidMarginManager);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
@@ -693,6 +707,8 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     pool_id: ID,
 ): ManagerInfo {
+    let margin_pool_id = margin_pool.id();
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(margin_manager.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
 
     let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
@@ -817,6 +833,9 @@ public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
 ): (u64, u64) {
+    let margin_pool_id = margin_pool.id();
+    assert!(margin_manager.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
+
     let debt_is_base = margin_manager.has_base_debt();
     let debt_shares = if (debt_is_base) {
         margin_manager.base_borrowed_shares
@@ -1137,4 +1156,14 @@ fun has_base_debt<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
 ): bool {
     margin_manager.base_borrowed_shares > 0
+}
+
+/// Helper function to determine if margin manager can borrow from a margin pool
+fun can_borrow<BaseAsset, QuoteAsset, BorrowAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<BorrowAsset>,
+): bool {
+    let no_current_loan = margin_manager.margin_pool_id.is_none();
+
+    margin_manager.margin_pool_id.contains(&margin_pool.id()) || no_current_loan
 }
