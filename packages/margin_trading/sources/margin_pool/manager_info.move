@@ -346,9 +346,11 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
     let mut pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // 20.38 USDT
     let mut default_amount = if (loan_defaulted) debt - repay_amount else 0;
 
-    let cancel_amount = pool_reward_amount.min(default_amount);
-    pool_reward_amount = pool_reward_amount - cancel_amount;
-    default_amount = default_amount - cancel_amount;
+    if (loan_defaulted) {
+        let cancel_amount = pool_reward_amount.min(default_amount);
+        pool_reward_amount = pool_reward_amount - cancel_amount;
+        default_amount = default_amount - cancel_amount;
+    };
 
     LiquidationAmounts {
         debt_is_base,
