@@ -1118,14 +1118,12 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     coin
 }
 
-/// Helper function to check if margin manager has debt in base asset
 fun has_base_debt<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
 ): bool {
     margin_manager.base_borrowed_shares > 0
 }
 
-/// Helper function to add borrowed shares based on debt type
 fun increase_borrowed_shares<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     debt_is_base: bool,
@@ -1138,7 +1136,6 @@ fun increase_borrowed_shares<BaseAsset, QuoteAsset>(
     };
 }
 
-/// Helper function to subtract borrowed shares based on debt type
 fun decrease_borrowed_shares<BaseAsset, QuoteAsset>(
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     debt_is_base: bool,
