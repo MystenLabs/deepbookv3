@@ -499,14 +499,15 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let repay_is_base = margin_manager.has_base_debt();
     let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
+    let full_repayment = repay_percentage == constants::float_scaling();
+    let mut default_amount = if (full_repayment) fulfillment.default_amount else 0;
     let mut pool_reward_amount = repay_coin_amount - repay_amount;
-    let mut default_amount = math::mul(fulfillment.default_amount, repay_percentage);
-    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     let cancel_amount = pool_reward_amount.min(default_amount);
     pool_reward_amount = pool_reward_amount - cancel_amount;
     default_amount = default_amount - cancel_amount;
 
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
     if (repay_is_base) {
         margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
     } else {
