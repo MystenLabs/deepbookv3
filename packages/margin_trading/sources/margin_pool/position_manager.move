@@ -6,10 +6,7 @@
 /// It is also used to track the rewards of the users.
 module margin_trading::position_manager;
 
-use deepbook::math;
-use margin_trading::reward_manager::RewardPool;
-use std::type_name::TypeName;
-use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
+use sui::table::{Self, Table};
 
 public struct PositionManager has store {
     supplies: Table<address, Supply>,
@@ -18,12 +15,6 @@ public struct PositionManager has store {
 public struct Supply has store {
     supply_shares: u64,
     referral: Option<ID>,
-    rewards: VecMap<TypeName, RewardTracker>,
-}
-
-public struct RewardTracker has store {
-    positive: u64,
-    negative: u64,
 }
 
 public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
@@ -37,13 +28,10 @@ public(package) fun increase_user_supply_shares(
     self: &mut PositionManager,
     user: address,
     supply_shares: u64,
-    reward_pools: &VecMap<TypeName, RewardPool>,
 ): u64 {
     self.add_supply_entry(user);
     let supply = self.supplies.borrow_mut(user);
-    let supply_shares_before = supply.supply_shares;
     supply.supply_shares = supply.supply_shares + supply_shares;
-    supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
 
     supply.supply_shares
 }
@@ -53,12 +41,11 @@ public(package) fun decrease_user_supply_shares(
     self: &mut PositionManager,
     user: address,
     supply_shares: u64,
-    reward_pools: &VecMap<TypeName, RewardPool>,
-) {
+): u64 {
     let supply = self.supplies.borrow_mut(user);
-    let supply_shares_before = supply.supply_shares;
     supply.supply_shares = supply.supply_shares - supply_shares;
-    supply.update_supply_reward_shares(reward_pools, supply_shares_before, supply_shares);
+
+    supply.supply_shares
 }
 
 /// Get the supply shares of the user.
@@ -80,79 +67,6 @@ public(package) fun reset_referral_supply_shares(
     (supply.supply_shares, referral)
 }
 
-/// Reset the rewards for the user for a given reward token type.
-public(package) fun reset_user_rewards_for_type(
-    self: &mut PositionManager,
-    user: address,
-    reward_token_type: TypeName,
-    reward_pools: &VecMap<TypeName, RewardPool>,
-    shares: u64,
-): u64 {
-    self.add_supply_entry(user);
-    let supply = self.supplies.borrow_mut(user);
-    let reward_index = reward_pools[&reward_token_type].cumulative_reward_per_share();
-    supply.user_reward_entry(shares, reward_index, reward_token_type);
-
-    let reward = math::mul(reward_index, shares);
-    let returned_reward =
-        reward + supply.rewards[&reward_token_type].negative - supply.rewards[&reward_token_type].positive;
-    supply.rewards[&reward_token_type].positive = reward;
-    supply.rewards[&reward_token_type].negative = 0;
-
-    returned_reward
-}
-
-/// Add a reward entry for the user for a given reward token type.
-fun user_reward_entry(
-    self: &mut Supply,
-    current_shares: u64,
-    current_index: u64,
-    reward_token_type: TypeName,
-) {
-    if (!self.rewards.contains(&reward_token_type)) {
-        self
-            .rewards
-            .insert(
-                reward_token_type,
-                RewardTracker {
-                    positive: math::mul(current_index, current_shares),
-                    negative: 0,
-                },
-            );
-    }
-}
-
-/// Update the rewards for the user for a given reward token type.
-fun update_supply_reward_shares(
-    supply: &mut Supply,
-    reward_pools: &VecMap<TypeName, RewardPool>,
-    shares_before: u64,
-    shares_after: u64,
-) {
-    let keys = reward_pools.keys();
-    let size = keys.length();
-    let mut i = 0;
-    while (i < size) {
-        let key = keys[i];
-        let reward_pool = &reward_pools[&key];
-        let cumulative_reward_per_share = reward_pool.cumulative_reward_per_share();
-        let reward_tracker = &mut supply.rewards[&key];
-        let reward_addition = &mut reward_tracker.positive;
-        let reward_subtraction = &mut reward_tracker.negative;
-        if (shares_after > shares_before) {
-            *reward_addition =
-                *reward_addition + math::mul(cumulative_reward_per_share, shares_after - shares_before);
-        } else {
-            *reward_subtraction =
-                *reward_subtraction + math::mul(cumulative_reward_per_share, shares_before - shares_after);
-        };
-        let offset = (*reward_addition).min(*reward_subtraction);
-        *reward_addition = *reward_addition - offset;
-        *reward_subtraction = *reward_subtraction - offset;
-        i = i + 1;
-    }
-}
-
 public(package) fun add_supply_entry(self: &mut PositionManager, user: address) {
     if (!self.supplies.contains(user)) {
         self
@@ -161,7 +75,6 @@ public(package) fun add_supply_entry(self: &mut PositionManager, user: address) 
                 user,
                 Supply {
                     supply_shares: 0,
-                    rewards: vec_map::empty(),
                     referral: option::none(),
                 },
             );

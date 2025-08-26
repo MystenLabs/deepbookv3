@@ -10,10 +10,9 @@ use margin_trading::{
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{Self, ProtocolConfig},
-    referral_manager::{Self, ReferralManager, ReferralCap},
-    reward_manager::{Self, RewardManager}
+    referral_manager::{Self, ReferralManager, ReferralCap}
 };
-use std::type_name::{Self, TypeName};
+use std::type_name;
 use sui::{
     bag::{Self, Bag},
     balance::{Self, Balance},
@@ -28,12 +27,11 @@ const ESupplyCapExceeded: u64 = 2;
 const ECannotWithdrawMoreThanSupply: u64 = 3;
 const EMaxPoolBorrowPercentageExceeded: u64 = 4;
 const EInvalidLoanQuantity: u64 = 5;
-const EInvalidRewardEndTime: u64 = 8;
-const EDeepbookPoolAlreadyAllowed: u64 = 9;
-const EDeepbookPoolNotAllowed: u64 = 10;
-const EInvalidMarginPoolCap: u64 = 11;
-const EInvalidRiskParam: u64 = 12;
-const EInvalidProtocolSpread: u64 = 13;
+const EDeepbookPoolAlreadyAllowed: u64 = 6;
+const EDeepbookPoolNotAllowed: u64 = 7;
+const EInvalidMarginPoolCap: u64 = 8;
+const EInvalidRiskParam: u64 = 9;
+const EInvalidProtocolSpread: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -44,7 +42,6 @@ public struct MarginPool<phantom Asset> has key, store {
     config: ProtocolConfig,
     protocol_profit: u64,
     positions: PositionManager,
-    rewards: RewardManager,
     referral_manager: ReferralManager,
     reward_balances: Bag,
     allowed_deepbook_pools: VecSet<ID>,
@@ -79,7 +76,6 @@ public fun create_margin_pool<Asset>(
         config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
-        rewards: reward_manager::create_reward_manager(clock),
         reward_balances: bag::new(ctx),
         referral_manager: referral_manager::empty(),
         allowed_deepbook_pools: vec_set::empty(),
@@ -91,32 +87,6 @@ public fun create_margin_pool<Asset>(
     registry.register_margin_pool(maintainer_cap, key, margin_pool_id, ctx);
 
     margin_pool_id
-}
-
-/// Adds a reward to the margin pool as the pool admin.
-/// Adds a reward token to be distributed linearly over a specified time period.
-/// If a reward pool for the same token type already exists, adds the new rewards
-/// to the existing pool and resets the timing to end at the specified time.
-public fun add_reward_pool<Asset, RewardToken>(
-    self: &mut MarginPool<Asset>,
-    reward_coin: Coin<RewardToken>,
-    end_time: u64,
-    margin_pool_cap: &MarginPoolCap,
-    clock: &Clock,
-) {
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-
-    let reward_token_type = type_name::get<RewardToken>();
-    self.rewards.add_reward_pool_entry(reward_token_type);
-    let remaining_emissions = self.rewards.remaining_emission_for_type(reward_token_type, clock);
-    let total_emissions = remaining_emissions + reward_coin.value();
-
-    assert!(end_time > clock.timestamp_ms(), EInvalidRewardEndTime);
-    let time_duration_seconds = (end_time - clock.timestamp_ms()) / 1000;
-    let rewards_per_second = math::div(total_emissions, time_duration_seconds);
-
-    self.rewards.increase_emission(reward_token_type, end_time, rewards_per_second);
-    add_reward_balance_to_bag(&mut self.reward_balances, reward_coin);
 }
 
 /// Allow a margin manager tied to a deepbook pool to borrow from the margin pool.
@@ -211,7 +181,6 @@ public fun supply<Asset>(
     ctx: &TxContext,
 ) {
     self.update_state(clock);
-    self.rewards.update(self.state.total_supply_shares(), clock);
 
     let supplier = ctx.sender();
     let (referred_supply_shares, previous_referral) = self
@@ -223,11 +192,8 @@ public fun supply<Asset>(
 
     let supply_amount = coin.value();
     let supply_shares = self.state.to_supply_shares(supply_amount);
-    let reward_pools = self.rewards.reward_pools();
     self.state.increase_total_supply(supply_amount);
-    let new_supply_shares = self
-        .positions
-        .increase_user_supply_shares(supplier, supply_shares, reward_pools);
+    let new_supply_shares = self.positions.increase_user_supply_shares(supplier, supply_shares);
     self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
 
     let balance = coin.into_balance();
@@ -244,7 +210,6 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     self.update_state(clock);
-    self.rewards.update(self.state.total_supply_shares(), clock);
 
     let supplier = ctx.sender();
     let (referred_supply_shares, previous_referral) = self
@@ -258,12 +223,11 @@ public fun withdraw<Asset>(
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
     let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
-    let reward_pools = self.rewards.reward_pools();
     assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.state.decrease_total_supply(withdrawal_amount);
-    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares, reward_pools);
+    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares);
 
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
@@ -297,27 +261,6 @@ public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Cl
         self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
         self.state.decrease_total_supply_with_index(protocol_profit_accrued);
     }
-}
-
-/// Allows users to claim their accumulated rewards for a specific reward token type.
-/// Claims from all active reward pools of that token type.
-public(package) fun claim_rewards<Asset, RewardToken>(
-    self: &mut MarginPool<Asset>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<RewardToken> {
-    let user = ctx.sender();
-    self.rewards.update(self.state.total_supply_shares(), clock);
-
-    let user_shares = self.positions.user_supply_shares(user);
-    let reward_token_type = type_name::get<RewardToken>();
-    let reward_pools = self.rewards.reward_pools();
-    let user_rewards = self
-        .positions
-        .reset_user_rewards_for_type(user, reward_token_type, reward_pools, user_shares);
-    let claimed_balance = withdraw_reward_balance_from_bag(&mut self.reward_balances, user_rewards);
-
-    claimed_balance.into_coin(ctx)
 }
 
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
@@ -384,30 +327,4 @@ public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
-}
-
-// === Internal Functions ===
-fun add_reward_balance_to_bag<RewardToken>(
-    reward_balances: &mut Bag,
-    reward_coin: Coin<RewardToken>,
-) {
-    let reward_type = type_name::get<RewardToken>();
-    if (reward_balances.contains(reward_type)) {
-        let existing_balance: &mut Balance<RewardToken> = reward_balances.borrow_mut<
-            TypeName,
-            Balance<RewardToken>,
-        >(reward_type);
-        existing_balance.join(reward_coin.into_balance());
-    } else {
-        reward_balances.add(reward_type, reward_coin.into_balance());
-    };
-}
-
-fun withdraw_reward_balance_from_bag<RewardToken>(
-    reward_balances: &mut Bag,
-    amount: u64,
-): Balance<RewardToken> {
-    let reward_type = type_name::get<RewardToken>();
-    let balance: &mut Balance<RewardToken> = reward_balances.borrow_mut(reward_type);
-    balance::split(balance, amount)
 }
