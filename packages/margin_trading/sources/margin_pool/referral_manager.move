@@ -24,7 +24,7 @@ public fun id(referral_cap: &ReferralCap): ID {
     referral_cap.id.to_inner()
 }
 
-public fun mint_referral_cap(
+public(package) fun mint_referral_cap(
     self: &mut ReferralManager,
     current_index: u64,
     ctx: &mut TxContext,
