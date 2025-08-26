@@ -527,6 +527,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
     let default_shares = margin_pool.to_borrow_shares(default_amount);
     margin_manager.decrease_borrowed_shares(repay_is_base, default_shares);
+    margin_manager.reset_margin_pool_id();
 
     let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
     let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
@@ -609,6 +610,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
     let default_shares = margin_pool.to_borrow_shares(fulfillment.default_amount);
     margin_manager.decrease_borrowed_shares(repay_is_base, default_shares);
+    margin_manager.reset_margin_pool_id();
 
     let cancel_amount = fulfillment.pool_reward_amount.min(fulfillment.default_amount);
     let pool_reward_amount = fulfillment.pool_reward_amount - cancel_amount;
@@ -988,9 +990,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     let repay_amount = repay_amount.min(available_balance);
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
     margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
-    if (margin_manager.base_borrowed_shares == 0 && margin_manager.quote_borrowed_shares == 0) {
-        margin_manager.margin_pool_id = option::none();
-    };
+    margin_manager.reset_margin_pool_id();
 
     let coin = margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount,
@@ -1009,6 +1009,14 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     });
 
     repay_amount
+}
+
+fun reset_margin_pool_id<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+) {
+    if (margin_manager.base_borrowed_shares == 0 && margin_manager.quote_borrowed_shares == 0) {
+        margin_manager.margin_pool_id = option::none();
+    };
 }
 
 /// Deposit base asset to margin manager during liquidation
@@ -1100,6 +1108,7 @@ fun repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
     margin_manager.decrease_borrowed_shares(debt_is_base, repay_shares);
     let default_shares = margin_pool.to_borrow_shares(default_amount);
     margin_manager.decrease_borrowed_shares(debt_is_base, default_shares);
+    margin_manager.reset_margin_pool_id();
 
     margin_pool.repay_with_reward(
         repay_coin,
