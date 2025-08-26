@@ -1,7 +1,7 @@
 module margin_trading::margin_state;
 
 use deepbook::{constants, math};
-use margin_trading::interest_params::InterestParams;
+use margin_trading::protocol_config::ProtocolConfig;
 use sui::clock::Clock;
 
 // === Constants ===
@@ -25,11 +25,11 @@ public(package) fun default(clock: &Clock): State {
 
 // === Public-Package Functions ===
 /// Updates the index for the margin pool.
-public(package) fun update(self: &mut State, interest_params: &InterestParams, clock: &Clock): u64 {
+public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let current_timestamp = clock.timestamp_ms();
     if (self.last_index_update_timestamp == current_timestamp) return 0;
 
-    let time_adjusted_rate = interest_params.time_adjusted_rate(
+    let time_adjusted_rate = config.time_adjusted_rate(
         self.utilization_rate(),
         current_timestamp - self.last_index_update_timestamp,
     );

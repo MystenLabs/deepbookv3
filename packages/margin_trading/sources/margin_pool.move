@@ -3,13 +3,12 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::{constants, math};
+use deepbook::math;
 use margin_trading::{
-    interest_params::{Self, InterestParams},
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{Self, ProtocolConfig},
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
     referral_manager::{Self, ReferralManager, ReferralCap}
 };
 use std::type_name;
@@ -24,15 +23,12 @@ const EInvalidLoanQuantity: u64 = 5;
 const EDeepbookPoolAlreadyAllowed: u64 = 6;
 const EDeepbookPoolNotAllowed: u64 = 7;
 const EInvalidMarginPoolCap: u64 = 8;
-const EInvalidRiskParam: u64 = 9;
-const EInvalidProtocolSpread: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
     id: UID,
     vault: Balance<Asset>,
     state: State,
-    interest: InterestParams,
     config: ProtocolConfig,
     protocol_profit: u64,
     positions: PositionManager,
@@ -45,38 +41,27 @@ public struct MarginPool<phantom Asset> has key, store {
 /// Returns a `MarginPoolCap` that can be used to update the margin pool.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
-    base_rate: u64,
-    base_slope: u64,
-    optimal_utilization: u64,
-    excess_slope: u64,
-    supply_cap: u64,
-    max_borrow_percentage: u64,
-    protocol_spread: u64,
+    protocol_config: ProtocolConfig,
     maintainer_cap: &MaintainerCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
+    let id = object::new(ctx);
+    let margin_pool_id = id.to_inner();
     let margin_pool = MarginPool<Asset> {
-        id: object::new(ctx),
+        id,
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
-        interest: interest_params::new_interest_params(
-            base_rate,
-            base_slope,
-            optimal_utilization,
-            excess_slope,
-        ),
-        config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
+        config: protocol_config,
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
         referral_manager: referral_manager::empty(),
         allowed_deepbook_pools: vec_set::empty(),
     };
-    let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
 
     let key = type_name::get<Asset>();
-    registry.register_margin_pool(maintainer_cap, key, margin_pool_id, ctx);
+    registry.register_margin_pool(key, margin_pool_id, maintainer_cap, ctx);
 
     margin_pool_id
 }
@@ -114,38 +99,20 @@ public fun mint_referral_cap<Asset>(
 
 public fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
-    base_rate: u64,
-    base_slope: u64,
-    optimal_utilization: u64,
-    excess_slope: u64,
+    interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    let interest_params = interest_params::new_interest_params(
-        base_rate,
-        base_slope,
-        optimal_utilization,
-        excess_slope,
-    );
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(
-        self.max_utilization_rate() >= interest_params.optimal_utilization(),
-        EInvalidRiskParam,
-    );
-    self.interest = interest_params;
+    self.config.set_interest_config(interest_config);
 }
 
 public fun update_protocol_config<Asset>(
     self: &mut MarginPool<Asset>,
-    supply_cap: u64,
-    max_utilization_rate: u64,
-    protocol_spread: u64,
+    margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
-    assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(max_utilization_rate >= self.interest.optimal_utilization(), EInvalidRiskParam);
-    self.config = protocol_config::default(supply_cap, max_utilization_rate, protocol_spread);
+    self.config.set_margin_pool_config(margin_pool_config);
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -247,7 +214,7 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 
 // === Public-Package Functions ===
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let interest_accrued = self.state.update(&self.interest, clock);
+    let interest_accrued = self.state.update(&self.config, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
     if (protocol_profit_accrued > 0) {
         self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
@@ -311,10 +278,6 @@ public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u6
 
 public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
     self.state.to_borrow_amount(shares)
-}
-
-public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.max_utilization_rate()
 }
 
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
