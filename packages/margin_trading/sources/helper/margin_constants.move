@@ -3,8 +3,7 @@
 
 module margin_trading::margin_constants;
 
-#[allow(unused_const)]
-const MARGIN_VERSION: u64 = 1;
+const MARGIN_VERSION: u64 = 1_000_000_000 + 1; // Margin version will have an offset of 1_000_000_000
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
 const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
