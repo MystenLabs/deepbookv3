@@ -109,7 +109,7 @@ public fun new<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     ctx: &mut TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
@@ -151,7 +151,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     coin: Coin<DepositAsset>,
     ctx: &mut TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
 
     let deposit_asset_type = type_name::get<DepositAsset>();
@@ -177,7 +177,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): (Coin<WithdrawAsset>, Request) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
 
     let balance_manager = &mut self.balance_manager;
@@ -206,7 +206,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.can_borrow(base_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
@@ -236,7 +236,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.can_borrow(quote_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
@@ -267,7 +267,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
@@ -289,7 +289,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
@@ -518,7 +518,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);
@@ -613,7 +613,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<RepayAsset>) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);

@@ -199,7 +199,7 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     self: &MarginRegistry,
     leverage: u64,
 ): PoolConfig {
-    let _ = self.load_inner();
+    self.load_inner();
     assert!(leverage > margin_constants::min_leverage(), EInvalidRiskParam);
     assert!(leverage <= margin_constants::max_leverage(), EInvalidRiskParam);
 
@@ -317,7 +317,7 @@ public fun add_config<Config: store + drop>(
     _cap: &MarginAdminCap,
     config: Config,
 ) {
-    let _ = self.load_inner();
+    self.load_inner();
     self.id.add(ConfigKey<Config> {}, config);
 }
 
@@ -326,7 +326,7 @@ public fun remove_config<Config: store + drop>(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
 ): Config {
-    let _ = self.load_inner();
+    self.load_inner();
     self.id.remove(ConfigKey<Config> {})
 }
 
@@ -361,7 +361,7 @@ public fun get_deepbook_pool_margin_pool_ids(
     self: &MarginRegistry,
     deepbook_pool_id: ID,
 ): (ID, ID) {
-    let _ = self.load_inner();
+    self.load_inner();
     let config = self.get_pool_config(deepbook_pool_id);
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }

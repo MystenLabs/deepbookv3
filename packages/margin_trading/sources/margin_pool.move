@@ -73,7 +73,7 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
     self.allowed_deepbook_pools.insert(deepbook_pool_id);
@@ -86,7 +86,7 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
@@ -98,7 +98,7 @@ public fun mint_referral_cap<Asset>(
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ): ReferralCap {
-    let _ = registry.load_inner();
+    registry.load_inner();
     let current_index = self.state.supply_index();
     self.referral_manager.mint_referral_cap(current_index, ctx)
 }
@@ -109,7 +109,7 @@ public fun update_interest_params<Asset>(
     interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_interest_config(interest_config);
 }
@@ -120,7 +120,7 @@ public fun update_protocol_config<Asset>(
     margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_margin_pool_config(margin_pool_config);
 }
@@ -132,7 +132,7 @@ public fun withdraw_protocol_profit<Asset>(
     margin_pool_cap: &MarginPoolCap,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
 
     let profit = self.protocol_profit;
@@ -152,7 +152,7 @@ public fun supply<Asset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.update_state(clock);
 
     let supplier = ctx.sender();
@@ -183,7 +183,7 @@ public fun withdraw<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let _ = registry.load_inner();
+    registry.load_inner();
     self.update_state(clock);
 
     let supplier = ctx.sender();

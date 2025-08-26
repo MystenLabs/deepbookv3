@@ -36,7 +36,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -71,7 +71,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -107,7 +107,7 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
@@ -157,7 +157,7 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
@@ -206,7 +206,7 @@ public fun modify_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -230,7 +230,7 @@ public fun cancel_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -253,7 +253,7 @@ public fun cancel_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -275,7 +275,7 @@ public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -295,7 +295,7 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -314,7 +314,7 @@ public fun stake<BaseAsset, QuoteAsset>(
     amount: u64,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let base_asset_type = type_name::get<BaseAsset>();
     let quote_asset_type = type_name::get<QuoteAsset>();
@@ -342,7 +342,7 @@ public fun unstake<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -364,7 +364,7 @@ public fun submit_proposal<BaseAsset, QuoteAsset>(
     stake_required: u64,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -387,7 +387,7 @@ public fun vote<BaseAsset, QuoteAsset>(
     proposal_id: ID,
     ctx: &TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -406,7 +406,7 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     ctx: &mut TxContext,
 ) {
-    let _ = registry.load_inner();
+    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
