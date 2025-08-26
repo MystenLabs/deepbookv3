@@ -23,7 +23,7 @@ public(package) fun create_position_manager(ctx: &mut TxContext): PositionManage
     }
 }
 
-/// Increase the supply shares of the user. The rewards for this user are updated.
+/// Increase the supply shares of the user
 public(package) fun increase_user_supply_shares(
     self: &mut PositionManager,
     user: address,
@@ -36,7 +36,7 @@ public(package) fun increase_user_supply_shares(
     supply.supply_shares
 }
 
-/// Decrease the supply shares of the user. The rewards for this user are updated.
+/// Decrease the supply shares of the user
 public(package) fun decrease_user_supply_shares(
     self: &mut PositionManager,
     user: address,
