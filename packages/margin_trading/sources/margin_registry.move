@@ -107,9 +107,9 @@ public fun revoke_maintainer_cap(
 #[allow(lint(self_transfer))]
 public(package) fun register_margin_pool(
     self: &mut MarginRegistry,
-    maintainer_cap: &MaintainerCap,
     key: TypeName,
     margin_pool_id: ID,
+    maintainer_cap: &MaintainerCap,
     ctx: &mut TxContext,
 ) {
     assert!(
