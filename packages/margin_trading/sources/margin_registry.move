@@ -4,15 +4,15 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
+use deepbook::{constants, math, pool::Pool};
 use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
-use sui::dynamic_field as df;
-use sui::table::{Self, Table};
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{
+    dynamic_field as df,
+    table::{Self, Table},
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -29,6 +29,9 @@ const EMarginPoolAlreadyExists: u64 = 7;
 const EMarginPoolDoesNotExists: u64 = 8;
 const EMaintainerCapNotValid: u64 = 9;
 const EPackageVersionDisabled: u64 = 10;
+const EVersionAlreadyEnabled: u64 = 11;
+const ECannotDisableCurrentVersion: u64 = 12;
+const EVersionNotEnabled: u64 = 13;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -101,11 +104,11 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 // === Public Functions * ADMIN * ===
 /// Mint a `MaintainerCap`, only admin can mint a `MaintainerCap`.
 public fun mint_maintainer_cap(
-    registry: &mut MarginRegistry,
+    self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ): MaintainerCap {
-    let self = registry.load_inner_mut();
+    let self = self.load_inner_mut();
     let id = object::new(ctx);
     self.allowed_maintainers.insert(id.to_inner());
 
@@ -116,11 +119,11 @@ public fun mint_maintainer_cap(
 
 /// Revoke a `MaintainerCap`. Only the admin can revoke a `MaintainerCap`.
 public fun revoke_maintainer_cap(
-    registry: &mut MarginRegistry,
+    self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
     maintainer_cap_id: &ID,
 ) {
-    let self = registry.load_inner_mut();
+    let self = self.load_inner_mut();
     assert!(self.allowed_maintainers.contains(maintainer_cap_id), EMaintainerCapNotValid);
     self.allowed_maintainers.remove(maintainer_cap_id);
 }
@@ -160,6 +163,7 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
 ): PoolConfig {
+    let _ = self.load_inner();
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
@@ -196,6 +200,7 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     self: &MarginRegistry,
     leverage: u64,
 ): PoolConfig {
+    let _ = self.load_inner();
     assert!(leverage > margin_constants::min_leverage(), EInvalidRiskParam);
     assert!(leverage <= margin_constants::max_leverage(), EInvalidRiskParam);
 
@@ -313,6 +318,7 @@ public fun add_config<Config: store + drop>(
     _cap: &MarginAdminCap,
     config: Config,
 ) {
+    let _ = self.load_inner();
     self.id.add(ConfigKey<Config> {}, config);
 }
 
@@ -321,6 +327,7 @@ public fun remove_config<Config: store + drop>(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
 ): Config {
+    let _ = self.load_inner();
     self.id.remove(ConfigKey<Config> {})
 }
 
@@ -352,11 +359,31 @@ public fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
 
 /// Get the margin pool IDs for a deepbook pool
 public fun get_deepbook_pool_margin_pool_ids(
-    registry: &MarginRegistry,
+    self: &MarginRegistry,
     deepbook_pool_id: ID,
 ): (ID, ID) {
-    let config = registry.get_pool_config(deepbook_pool_id);
+    let _ = self.load_inner();
+    let config = self.get_pool_config(deepbook_pool_id);
     (config.base_margin_pool_id, config.quote_margin_pool_id)
+}
+
+/// Enables a package version
+/// Only Admin can enable a package version
+/// This function does not have version restrictions
+public fun enable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
+    self.allowed_versions.insert(version);
+}
+
+/// Disables a package version
+/// Only Admin can disable a package version
+/// This function does not have version restrictions
+public fun disable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(version != margin_constants::margin_version(), ECannotDisableCurrentVersion);
+    assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
+    self.allowed_versions.remove(&version);
 }
 
 // === Public-Package Functions ===
