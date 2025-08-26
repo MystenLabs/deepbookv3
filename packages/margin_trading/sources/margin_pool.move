@@ -13,13 +13,7 @@ use margin_trading::{
     referral_manager::{Self, ReferralManager, ReferralCap}
 };
 use std::type_name;
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    vec_set::{Self, VecSet}
-};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::{Self, VecSet}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -43,7 +37,6 @@ public struct MarginPool<phantom Asset> has key, store {
     protocol_profit: u64,
     positions: PositionManager,
     referral_manager: ReferralManager,
-    reward_balances: Bag,
     allowed_deepbook_pools: VecSet<ID>,
 }
 
@@ -76,7 +69,6 @@ public fun create_margin_pool<Asset>(
         config: protocol_config::default(supply_cap, max_borrow_percentage, protocol_spread),
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
-        reward_balances: bag::new(ctx),
         referral_manager: referral_manager::empty(),
         allowed_deepbook_pools: vec_set::empty(),
     };

@@ -3,7 +3,6 @@
 
 /// Position manager is responsible for managing the positions of the users.
 /// It is used to track the supply and loan shares of the users.
-/// It is also used to track the rewards of the users.
 module margin_trading::position_manager;
 
 use sui::table::{Self, Table};
