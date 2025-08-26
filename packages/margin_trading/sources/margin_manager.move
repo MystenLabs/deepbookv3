@@ -104,7 +104,12 @@ public struct LiquidationEvent has copy, drop {
 }
 
 // === Public Functions - Margin Manager ===
-public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &mut TxContext) {
+public fun new<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    let _ = registry.load_inner();
     assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
@@ -142,9 +147,11 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     coin: Coin<DepositAsset>,
     ctx: &mut TxContext,
 ) {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
 
     let deposit_asset_type = type_name::get<DepositAsset>();
@@ -166,9 +173,11 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
 /// The withdrawal is subject to the risk ratio limit. This is restricted through the Request.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     withdraw_amount: u64,
     ctx: &mut TxContext,
 ): (Coin<WithdrawAsset>, Request) {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
 
     let balance_manager = &mut self.balance_manager;
@@ -191,11 +200,13 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 /// Borrow the base asset using the margin manager.
 public fun borrow_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.can_borrow(base_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
@@ -208,6 +219,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self.margin_pool_id = option::some(base_margin_pool.id());
 
     self.borrow<BaseAsset, QuoteAsset, BaseAsset>(
+        registry,
         base_margin_pool,
         loan_amount,
         clock,
@@ -218,11 +230,13 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
 /// Borrow the quote asset using the margin manager.
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Request {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.can_borrow(quote_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
@@ -235,6 +249,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     self.margin_pool_id = option::some(quote_margin_pool.id());
 
     self.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
+        registry,
         quote_margin_pool,
         loan_amount,
         clock,
@@ -246,11 +261,13 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 /// Returns the total amount repaid
 public fun repay_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     margin_pool: &mut MarginPool<BaseAsset>,
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
@@ -266,11 +283,13 @@ public fun repay_base<BaseAsset, QuoteAsset>(
 /// Returns the total amount repaid
 public fun repay_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     margin_pool: &mut MarginPool<QuoteAsset>,
     repay_amount: Option<u64>, // if None, repay all
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    let _ = registry.load_inner();
     self.validate_owner(ctx);
     assert!(self.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
 
@@ -293,6 +312,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let _ = registry.load_inner();
     let pool_id = pool.id();
     let margin_pool_id = margin_pool.id();
     assert!(self.deepbook_pool == pool_id, EIncorrectDeepBookPool);
@@ -335,6 +355,7 @@ public fun liquidate_base_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let _ = registry.load_inner();
     let (mut base_coin, quote_coin, liquidation_coin) = self.liquidate_loan<
         BaseAsset,
         QuoteAsset,
@@ -365,6 +386,7 @@ public fun liquidate_quote_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let _ = registry.load_inner();
     let (base_coin, mut quote_coin, liquidation_coin) = self.liquidate_loan<
         BaseAsset,
         QuoteAsset,
@@ -404,6 +426,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
+    let _ = registry.load_inner();
     let pool_id = pool.id();
     let margin_pool_id = margin_pool.id();
     assert!(self.deepbook_pool == pool_id, EIncorrectDeepBookPool);
@@ -490,6 +513,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
 /// Returns the extra base and quote assets
 public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
     repay_coin: Coin<RepayAsset>,
     mut return_base: Coin<BaseAsset>,
@@ -498,6 +522,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let _ = registry.load_inner();
     assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);
@@ -585,12 +610,14 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 /// Returns the extra base and quote assets
 public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
     mut coin: Coin<RepayAsset>,
     fulfillment: Fulfillment<RepayAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<RepayAsset>) {
+    let _ = registry.load_inner();
     assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);
@@ -667,6 +694,7 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     request: Request,
 ) {
+    let _ = registry.load_inner();
     let margin_pool_id = margin_pool.id();
     assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(request.margin_manager_id == self.id(), EInvalidMarginManager);
@@ -712,6 +740,7 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     pool_id: ID,
 ): ManagerInfo {
+    let _ = registry.load_inner();
     let margin_pool_id = margin_pool.id();
     assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
@@ -937,6 +966,7 @@ fun validate_owner<BaseAsset, QuoteAsset>(
 
 fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
     margin_pool: &mut MarginPool<BorrowAsset>,
     loan_amount: u64,
     clock: &Clock,
@@ -945,7 +975,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     let manager_id = self.id();
     let coin = margin_pool.borrow(loan_amount, clock, ctx);
 
-    self.deposit<BaseAsset, QuoteAsset, BorrowAsset>(coin, ctx);
+    self.deposit<BaseAsset, QuoteAsset, BorrowAsset>(registry, coin, ctx);
 
     event::emit(LoanBorrowedEvent {
         margin_manager_id: manager_id,
