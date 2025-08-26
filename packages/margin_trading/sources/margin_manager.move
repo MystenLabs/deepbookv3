@@ -35,7 +35,6 @@ const ECannotLiquidate: u64 = 11;
 const EInvalidReturnAmount: u64 = 12;
 const ERepaymentNotEnough: u64 = 13;
 const EIncorrectMarginPool: u64 = 14;
-const EInvalidRepayAmount: u64 = 15;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
