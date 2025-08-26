@@ -6,7 +6,7 @@ public struct ProtocolConfig has drop, store {
     protocol_spread: u64,
 }
 
-public fun default(
+public(package) fun default(
     supply_cap: u64,
     max_utilization_rate: u64,
     protocol_spread: u64,
