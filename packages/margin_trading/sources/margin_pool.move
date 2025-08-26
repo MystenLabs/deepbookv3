@@ -3,7 +3,7 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::{constants, math};
+use deepbook::math;
 use margin_trading::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -23,8 +23,6 @@ const EInvalidLoanQuantity: u64 = 5;
 const EDeepbookPoolAlreadyAllowed: u64 = 6;
 const EDeepbookPoolNotAllowed: u64 = 7;
 const EInvalidMarginPoolCap: u64 = 8;
-const EInvalidRiskParam: u64 = 9;
-const EInvalidProtocolSpread: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -104,12 +102,8 @@ public fun update_interest_params<Asset>(
     interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    self.config.set_interest_config(interest_config);
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(
-        self.config.max_utilization_rate() >= self.config.optimal_utilization(),
-        EInvalidRiskParam,
-    );
+    self.config.set_interest_config(interest_config);
 }
 
 public fun update_protocol_config<Asset>(
@@ -117,14 +111,8 @@ public fun update_protocol_config<Asset>(
     margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
-    self.config.set_margin_pool_config(margin_pool_config);
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(self.config.protocol_spread() <= constants::float_scaling(), EInvalidProtocolSpread);
-    assert!(self.config.max_utilization_rate() <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(
-        self.config.max_utilization_rate() >= self.config.optimal_utilization(),
-        EInvalidRiskParam,
-    );
+    self.config.set_margin_pool_config(margin_pool_config);
 }
 
 /// Resets the protocol profit and returns the coin.

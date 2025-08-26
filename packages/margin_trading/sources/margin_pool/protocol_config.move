@@ -1,7 +1,10 @@
 module margin_trading::protocol_config;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use margin_trading::margin_constants;
+
+const EInvalidRiskParam: u64 = 1;
+const EInvalidProtocolSpread: u64 = 2;
 
 public struct ProtocolConfig has drop, store {
     margin_pool_config: MarginPoolConfig,
@@ -57,18 +60,22 @@ public fun new_interest_config(
     }
 }
 
-public(package) fun set_interest_config(
-    self: &mut ProtocolConfig,
-    interest_config: InterestConfig,
-) {
-    self.interest_config = interest_config;
+public(package) fun set_interest_config(self: &mut ProtocolConfig, config: InterestConfig) {
+    assert!(
+        self.margin_pool_config.max_utilization_rate >= config.optimal_utilization,
+        EInvalidRiskParam,
+    );
+    self.interest_config = config;
 }
 
-public(package) fun set_margin_pool_config(
-    self: &mut ProtocolConfig,
-    margin_pool_config: MarginPoolConfig,
-) {
-    self.margin_pool_config = margin_pool_config;
+public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: MarginPoolConfig) {
+    assert!(config.protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
+    assert!(config.max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(
+        config.max_utilization_rate >= self.interest_config.optimal_utilization,
+        EInvalidRiskParam,
+    );
+    self.margin_pool_config = config;
 }
 
 public(package) fun time_adjusted_rate(
