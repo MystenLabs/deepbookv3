@@ -6,6 +6,7 @@ module margin_trading::margin_pool;
 use deepbook::{constants, math};
 use margin_trading::{
     interest_params::{Self, InterestParams},
+    margin_constants,
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
@@ -13,7 +14,13 @@ use margin_trading::{
     referral_manager::{Self, ReferralManager, ReferralCap}
 };
 use std::type_name;
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::{Self, VecSet}};
+use sui::{
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -26,10 +33,16 @@ const EDeepbookPoolNotAllowed: u64 = 7;
 const EInvalidMarginPoolCap: u64 = 8;
 const EInvalidRiskParam: u64 = 9;
 const EInvalidProtocolSpread: u64 = 10;
+const EPackageVersionDisabled: u64 = 11;
 
 // === Structs ===
-public struct MarginPool<phantom Asset> has key, store {
+public struct MarginPool<phantom Asset> has key {
     id: UID,
+    inner: Versioned,
+}
+
+public struct MarginPoolInner<phantom Asset> has store {
+    allowed_versions: VecSet<u64>,
     vault: Balance<Asset>,
     state: State,
     interest: InterestParams,
@@ -56,8 +69,8 @@ public fun create_margin_pool<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    let margin_pool = MarginPool<Asset> {
-        id: object::new(ctx),
+    let margin_pool_inner = MarginPoolInner<Asset> {
+        allowed_versions: registry.allowed_versions(),
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         interest: interest_params::new_interest_params(
@@ -71,6 +84,11 @@ public fun create_margin_pool<Asset>(
         positions: position_manager::create_position_manager(ctx),
         referral_manager: referral_manager::empty(),
         allowed_deepbook_pools: vec_set::empty(),
+    };
+
+    let margin_pool = MarginPool<Asset> {
+        id: object::new(ctx),
+        inner: versioned::create(margin_constants::margin_version(), margin_pool_inner, ctx),
     };
     let margin_pool_id = margin_pool.id.to_inner();
     transfer::share_object(margin_pool);
@@ -88,8 +106,9 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
-    self.allowed_deepbook_pools.insert(deepbook_pool_id);
+    let inner = self.load_inner_mut();
+    assert!(!inner.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
+    inner.allowed_deepbook_pools.insert(deepbook_pool_id);
 }
 
 /// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
@@ -99,8 +118,9 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
-    self.allowed_deepbook_pools.remove(&deepbook_pool_id);
+    let inner = self.load_inner_mut();
+    assert!(inner.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
+    inner.allowed_deepbook_pools.remove(&deepbook_pool_id);
 }
 
 public fun mint_referral_cap<Asset>(
@@ -108,8 +128,9 @@ public fun mint_referral_cap<Asset>(
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ): ReferralCap {
-    let current_index = self.state.supply_index();
-    self.referral_manager.mint_referral_cap(current_index, ctx)
+    let inner = self.load_inner_mut();
+    let current_index = inner.state.supply_index();
+    inner.referral_manager.mint_referral_cap(current_index, ctx)
 }
 
 public fun update_interest_params<Asset>(
@@ -120,18 +141,19 @@ public fun update_interest_params<Asset>(
     excess_slope: u64,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let inner = self.load_inner_mut();
     let interest_params = interest_params::new_interest_params(
         base_rate,
         base_slope,
         optimal_utilization,
         excess_slope,
     );
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(
-        self.max_utilization_rate() >= interest_params.optimal_utilization(),
+        inner.config.max_utilization_rate() >= interest_params.optimal_utilization(),
         EInvalidRiskParam,
     );
-    self.interest = interest_params;
+    inner.interest = interest_params;
 }
 
 public fun update_protocol_config<Asset>(
@@ -142,10 +164,11 @@ public fun update_protocol_config<Asset>(
     margin_pool_cap: &MarginPoolCap,
 ) {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let inner = self.load_inner_mut();
     assert!(protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
     assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(max_utilization_rate >= self.interest.optimal_utilization(), EInvalidRiskParam);
-    self.config = protocol_config::default(supply_cap, max_utilization_rate, protocol_spread);
+    assert!(max_utilization_rate >= inner.interest.optimal_utilization(), EInvalidRiskParam);
+    inner.config = protocol_config::default(supply_cap, max_utilization_rate, protocol_spread);
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -155,10 +178,11 @@ public fun withdraw_protocol_profit<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let inner = self.load_inner_mut();
 
-    let profit = self.protocol_profit;
-    self.protocol_profit = 0;
-    let balance = self.vault.split(profit);
+    let profit = inner.protocol_profit;
+    inner.protocol_profit = 0;
+    let balance = inner.vault.split(profit);
 
     balance.into_coin(ctx)
 }
@@ -172,26 +196,32 @@ public fun supply<Asset>(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    self.update_state(clock);
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
 
     let supplier = ctx.sender();
-    let (referred_supply_shares, previous_referral) = self
+    let (referred_supply_shares, previous_referral) = inner
         .positions
         .reset_referral_supply_shares(supplier);
-    self
+    inner
         .referral_manager
         .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
     let supply_amount = coin.value();
-    let supply_shares = self.state.to_supply_shares(supply_amount);
-    self.state.increase_total_supply(supply_amount);
-    let new_supply_shares = self.positions.increase_user_supply_shares(supplier, supply_shares);
-    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
+    let supply_shares = inner.state.to_supply_shares(supply_amount);
+    inner.state.increase_total_supply(supply_amount);
+    let new_supply_shares = inner.positions.increase_user_supply_shares(supplier, supply_shares);
+    inner.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
 
     let balance = coin.into_balance();
-    self.vault.join(balance);
+    inner.vault.join(balance);
 
-    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+    assert!(inner.state.total_supply() <= inner.config.supply_cap(), ESupplyCapExceeded);
 }
 
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
@@ -201,27 +231,33 @@ public fun withdraw<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    self.update_state(clock);
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
 
     let supplier = ctx.sender();
-    let (referred_supply_shares, previous_referral) = self
+    let (referred_supply_shares, previous_referral) = inner
         .positions
         .reset_referral_supply_shares(supplier);
-    self
+    inner
         .referral_manager
         .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
-    let user_supply_shares = self.positions.user_supply_shares(supplier);
-    let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
+    let user_supply_shares = inner.positions.user_supply_shares(supplier);
+    let user_supply_amount = inner.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
+    let withdrawal_amount_shares = inner.state.to_supply_shares(withdrawal_amount);
     assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
-    assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
+    assert!(withdrawal_amount <= inner.vault.value(), ENotEnoughAssetInPool);
 
-    self.state.decrease_total_supply(withdrawal_amount);
-    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares);
+    inner.state.decrease_total_supply(withdrawal_amount);
+    inner.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares);
 
-    self.vault.split(withdrawal_amount).into_coin(ctx)
+    inner.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
 public(package) fun claim_referral_rewards<Asset>(
@@ -230,28 +266,36 @@ public(package) fun claim_referral_rewards<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    self.update_state(clock);
-    let share_value_appreciated = self
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
+    let share_value_appreciated = inner
         .referral_manager
-        .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.config.protocol_spread());
-    self.protocol_profit = self.protocol_profit - reward_amount;
+        .claim_referral_rewards(referral_cap.id(), inner.state.supply_index());
+    let reward_amount = math::mul(share_value_appreciated, inner.config.protocol_spread());
+    inner.protocol_profit = inner.protocol_profit - reward_amount;
 
-    self.vault.split(reward_amount).into_coin(ctx)
+    inner.vault.split(reward_amount).into_coin(ctx)
 }
 
 // === Public-View Functions ===
 public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
-    self.allowed_deepbook_pools.contains(&deepbook_pool_id)
+    let inner = self.load_inner();
+    inner.allowed_deepbook_pools.contains(&deepbook_pool_id)
 }
 
 // === Public-Package Functions ===
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let interest_accrued = self.state.update(&self.interest, clock);
-    let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
     if (protocol_profit_accrued > 0) {
-        self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
-        self.state.decrease_total_supply_with_index(protocol_profit_accrued);
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
     }
 }
 
@@ -262,27 +306,39 @@ public(package) fun borrow<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
+    let inner = self.load_inner_mut();
+    assert!(amount <= inner.vault.value(), ENotEnoughAssetInPool);
     assert!(amount > 0, EInvalidLoanQuantity);
 
-    self.update_state(clock);
-    self.state.increase_total_borrow(amount);
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
+    inner.state.increase_total_borrow(amount);
 
     assert!(
-        self.state.utilization_rate() <= self.config.max_utilization_rate(),
+        inner.state.utilization_rate() <= inner.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
 
-    let balance = self.vault.split(amount);
+    let balance = inner.vault.split(amount);
 
     balance.into_coin(ctx)
 }
 
 /// Allows repaying the loan.
 public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>, clock: &Clock) {
-    self.update_state(clock);
-    self.state.decrease_total_borrow(coin.value());
-    self.vault.join(coin.into_balance());
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
+    inner.state.decrease_total_borrow(coin.value());
+    inner.vault.join(coin.into_balance());
 }
 
 public(package) fun repay_with_reward<Asset>(
@@ -293,30 +349,56 @@ public(package) fun repay_with_reward<Asset>(
     default_amount: u64,
     clock: &Clock,
 ) {
-    self.update_state(clock);
-    self.state.decrease_total_borrow(repay_amount);
-    self.state.increase_total_supply_with_index(reward_amount);
-    self.state.decrease_total_supply_with_index(default_amount);
-    self.vault.join(coin.into_balance());
+    let inner = self.load_inner_mut();
+    let interest_accrued = inner.state.update(&inner.interest, clock);
+    let protocol_profit_accrued = math::mul(interest_accrued, inner.config.protocol_spread());
+    if (protocol_profit_accrued > 0) {
+        inner.protocol_profit = inner.protocol_profit + protocol_profit_accrued;
+        inner.state.decrease_total_supply_with_index(protocol_profit_accrued);
+    };
+    inner.state.decrease_total_borrow(repay_amount);
+    inner.state.increase_total_supply_with_index(reward_amount);
+    inner.state.decrease_total_supply_with_index(default_amount);
+    inner.vault.join(coin.into_balance());
 }
 
 /// Returns the supply cap.
 public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.supply_cap()
+    let inner = self.load_inner();
+    inner.config.supply_cap()
 }
 
 public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u64): u64 {
-    self.state.to_borrow_shares(amount)
+    let inner = self.load_inner();
+    inner.state.to_borrow_shares(amount)
 }
 
 public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
-    self.state.to_borrow_amount(shares)
+    let inner = self.load_inner();
+    inner.state.to_borrow_amount(shares)
 }
 
 public(package) fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.max_utilization_rate()
+    let inner = self.load_inner();
+    inner.config.max_utilization_rate()
 }
 
-public fun id<Asset>(self: &MarginPool<Asset>): ID {
+public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
+}
+
+fun load_inner<Asset>(self: &MarginPool<Asset>): &MarginPoolInner<Asset> {
+    let inner: &MarginPoolInner<Asset> = self.inner.load_value();
+    let package_version = margin_constants::margin_version();
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
+
+    inner
+}
+
+fun load_inner_mut<Asset>(self: &mut MarginPool<Asset>): &mut MarginPoolInner<Asset> {
+    let inner: &mut MarginPoolInner<Asset> = self.inner.load_value_mut();
+    let package_version = margin_constants::margin_version();
+    assert!(inner.allowed_versions.contains(&package_version), EPackageVersionDisabled);
+
+    inner
 }

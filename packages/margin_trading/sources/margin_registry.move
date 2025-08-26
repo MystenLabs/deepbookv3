@@ -438,6 +438,12 @@ public(package) fun load_inner(self: &MarginRegistry): &MarginRegistryInner {
     inner
 }
 
+public(package) fun allowed_versions(self: &MarginRegistry): VecSet<u64> {
+    let self = self.load_inner();
+
+    self.allowed_versions
+}
+
 /// Calculate risk parameters based on leverage factor
 fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
     RiskRatios {
