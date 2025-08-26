@@ -163,7 +163,6 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
     user_liquidation_reward: u64,
     pool_liquidation_reward: u64,
 ): PoolConfig {
-    let _ = self.load_inner();
     assert!(min_borrow_risk_ratio < min_withdraw_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < min_borrow_risk_ratio, EInvalidRiskParam);
     assert!(liquidation_risk_ratio < target_liquidation_risk_ratio, EInvalidRiskParam);
