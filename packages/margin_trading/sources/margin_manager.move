@@ -312,7 +312,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let _ = registry.load_inner();
     let pool_id = pool.id();
     let margin_pool_id = margin_pool.id();
     assert!(self.deepbook_pool == pool_id, EIncorrectDeepBookPool);
@@ -355,7 +354,6 @@ public fun liquidate_base_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let _ = registry.load_inner();
     let (mut base_coin, quote_coin, liquidation_coin) = self.liquidate_loan<
         BaseAsset,
         QuoteAsset,
@@ -386,7 +384,6 @@ public fun liquidate_quote_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let _ = registry.load_inner();
     let (base_coin, mut quote_coin, liquidation_coin) = self.liquidate_loan<
         BaseAsset,
         QuoteAsset,
@@ -426,7 +423,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
-    let _ = registry.load_inner();
     let pool_id = pool.id();
     let margin_pool_id = margin_pool.id();
     assert!(self.deepbook_pool == pool_id, EIncorrectDeepBookPool);
@@ -694,7 +690,6 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     request: Request,
 ) {
-    let _ = registry.load_inner();
     let margin_pool_id = margin_pool.id();
     assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(request.margin_manager_id == self.id(), EInvalidMarginManager);
@@ -740,7 +735,6 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     pool_id: ID,
 ): ManagerInfo {
-    let _ = registry.load_inner();
     let margin_pool_id = margin_pool.id();
     assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
     assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);

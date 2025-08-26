@@ -46,7 +46,6 @@ public fun create_margin_pool<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    let _ = registry.load_inner();
     let id = object::new(ctx);
     let margin_pool_id = id.to_inner();
     let margin_pool = MarginPool<Asset> {
