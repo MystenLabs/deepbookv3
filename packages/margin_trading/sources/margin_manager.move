@@ -201,7 +201,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     );
     base_margin_pool.update_state(clock);
     let loan_shares = base_margin_pool.to_borrow_shares(loan_amount);
-    margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares + loan_shares;
+    margin_manager.increase_borrowed_shares(true, loan_shares);
 
     margin_manager.borrow<BaseAsset, QuoteAsset, BaseAsset>(
         base_margin_pool,
@@ -227,7 +227,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     );
     quote_margin_pool.update_state(clock);
     let loan_shares = quote_margin_pool.to_borrow_shares(loan_amount);
-    margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares + loan_shares;
+    margin_manager.increase_borrowed_shares(false, loan_shares);
 
     margin_manager.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         quote_margin_pool,
@@ -423,8 +423,8 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     let (
         debt_is_base,
         repay_amount,
-        pool_reward_amount,
-        default_amount,
+        mut pool_reward_amount,
+        mut default_amount,
         repay_usd,
         repay_amount_with_pool_reward,
     ) = amounts.liquidation_amounts_info();
@@ -451,6 +451,10 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     let margin_manager_id = margin_manager.id();
     let margin_pool_id = margin_pool.id();
     let user_reward_usd = manager_info.to_user_liquidation_reward(repay_usd);
+
+    let cancel_amount = pool_reward_amount.min(default_amount);
+    pool_reward_amount = pool_reward_amount - cancel_amount;
+    default_amount = default_amount - cancel_amount;
 
     // Emit events
     event::emit(LoanRepaidEvent {
@@ -499,19 +503,18 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let repay_is_base = margin_manager.has_base_debt();
     let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
+    let full_repayment = repay_percentage == constants::float_scaling();
+    let mut default_amount = if (full_repayment) fulfillment.default_amount else 0;
     let mut pool_reward_amount = repay_coin_amount - repay_amount;
-    let mut default_amount = math::mul(fulfillment.default_amount, repay_percentage);
-    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
 
     let cancel_amount = pool_reward_amount.min(default_amount);
     pool_reward_amount = pool_reward_amount - cancel_amount;
     default_amount = default_amount - cancel_amount;
 
-    if (repay_is_base) {
-        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
-    } else {
-        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
-    };
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+    margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
+    let default_shares = margin_pool.to_borrow_shares(default_amount);
+    margin_manager.decrease_borrowed_shares(repay_is_base, default_shares);
 
     let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
     let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
@@ -589,18 +592,15 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount;
     assert!(coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
 
+    let repay_is_base = margin_manager.has_base_debt();
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+    margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
+    let default_shares = margin_pool.to_borrow_shares(fulfillment.default_amount);
+    margin_manager.decrease_borrowed_shares(repay_is_base, default_shares);
+
     let cancel_amount = fulfillment.pool_reward_amount.min(fulfillment.default_amount);
     let pool_reward_amount = fulfillment.pool_reward_amount - cancel_amount;
     let default_amount = fulfillment.default_amount - cancel_amount;
-
-    let repay_is_base = margin_manager.has_base_debt();
-    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
-
-    if (repay_is_base) {
-        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
-    } else {
-        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
-    };
 
     let repay_coin = coin.split(total_fulfillment_amount, ctx);
 
@@ -967,12 +967,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     let available_balance = margin_manager.balance_manager().balance<RepayAsset>();
     let repay_amount = repay_amount.min(available_balance);
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
-
-    if (repay_is_base) {
-        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
-    } else {
-        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
-    };
+    margin_manager.decrease_borrowed_shares(repay_is_base, repay_shares);
 
     let coin = margin_manager.repay_withdraw<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount,
@@ -1079,12 +1074,9 @@ fun repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
 ) {
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
-
-    if (debt_is_base) {
-        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - repay_shares;
-    } else {
-        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - repay_shares;
-    };
+    margin_manager.decrease_borrowed_shares(debt_is_base, repay_shares);
+    let default_shares = margin_pool.to_borrow_shares(default_amount);
+    margin_manager.decrease_borrowed_shares(debt_is_base, default_shares);
 
     margin_pool.repay_with_reward(
         repay_coin,
@@ -1136,9 +1128,32 @@ fun repay_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     coin
 }
 
-/// Helper function to check if margin manager has debt in base asset
 fun has_base_debt<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
 ): bool {
     margin_manager.base_borrowed_shares > 0
+}
+
+fun increase_borrowed_shares<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    debt_is_base: bool,
+    shares: u64,
+) {
+    if (debt_is_base) {
+        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares + shares;
+    } else {
+        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares + shares;
+    };
+}
+
+fun decrease_borrowed_shares<BaseAsset, QuoteAsset>(
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    debt_is_base: bool,
+    shares: u64,
+) {
+    if (debt_is_base) {
+        margin_manager.base_borrowed_shares = margin_manager.base_borrowed_shares - shares;
+    } else {
+        margin_manager.quote_borrowed_shares = margin_manager.quote_borrowed_shares - shares;
+    };
 }

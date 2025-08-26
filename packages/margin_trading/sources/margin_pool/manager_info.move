@@ -343,14 +343,8 @@ public(package) fun calculate_liquidation_amounts<DebtAsset>(
 
     let repay_amount = math::mul(repay_usd, debt_per_dollar); // 679.61 USDT
     let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio); // 699.99 USDT
-    let mut pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // 20.38 USDT
-    let mut default_amount = if (loan_defaulted) debt - repay_amount else 0;
-
-    if (loan_defaulted) {
-        let cancel_amount = pool_reward_amount.min(default_amount);
-        pool_reward_amount = pool_reward_amount - cancel_amount;
-        default_amount = default_amount - cancel_amount;
-    };
+    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount; // 20.38 USDT
+    let default_amount = if (loan_defaulted) debt - repay_amount else 0;
 
     LiquidationAmounts {
         debt_is_base,
