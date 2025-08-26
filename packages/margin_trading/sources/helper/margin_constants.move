@@ -4,7 +4,7 @@
 module margin_trading::margin_constants;
 
 #[allow(unused_const)]
-const CURRENT_VERSION: u64 = 1; // TODO: add version checks
+const MARGIN_VERSION: u64 = 1;
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
 const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
@@ -15,6 +15,10 @@ const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 const MIN_REWARD_AMOUNT: u64 = 1000;
 const MIN_REWARD_DURATION_SECONDS: u64 = 3600;
 const MAX_REWARD_TYPES: u64 = 10;
+
+public fun margin_version(): u64 {
+    MARGIN_VERSION
+}
 
 public fun max_risk_ratio(): u64 {
     MAX_RISK_RATIO
