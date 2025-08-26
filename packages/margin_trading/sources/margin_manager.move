@@ -122,7 +122,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
         owner: ctx.sender(),
     });
 
-    let self = MarginManager<BaseAsset, QuoteAsset> {
+    let manager = MarginManager<BaseAsset, QuoteAsset> {
         id,
         owner: ctx.sender(),
         deepbook_pool: pool.id(),
@@ -136,7 +136,7 @@ public fun new<BaseAsset, QuoteAsset>(pool: &Pool<BaseAsset, QuoteAsset>, ctx: &
         active_liquidation: false,
     };
 
-    transfer::share_object(self)
+    transfer::share_object(manager)
 }
 
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
