@@ -69,9 +69,11 @@ public fun create_margin_pool<Asset>(
 /// Allow a margin manager tied to a deepbook pool to borrow from the margin pool.
 public fun enable_deepbook_pool_for_loan<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
     self.allowed_deepbook_pools.insert(deepbook_pool_id);
@@ -80,9 +82,11 @@ public fun enable_deepbook_pool_for_loan<Asset>(
 /// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
 public fun disable_deepbook_pool_for_loan<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
@@ -90,27 +94,33 @@ public fun disable_deepbook_pool_for_loan<Asset>(
 
 public fun mint_referral_cap<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     _cap: &MarginAdminCap,
     ctx: &mut TxContext,
 ): ReferralCap {
+    registry.load_inner();
     let current_index = self.state.supply_index();
     self.referral_manager.mint_referral_cap(current_index, ctx)
 }
 
 public fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_interest_config(interest_config);
 }
 
 public fun update_protocol_config<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
 ) {
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_margin_pool_config(margin_pool_config);
 }
@@ -118,9 +128,11 @@ public fun update_protocol_config<Asset>(
 /// Resets the protocol profit and returns the coin.
 public fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     margin_pool_cap: &MarginPoolCap,
     ctx: &mut TxContext,
 ): Coin<Asset> {
+    registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
 
     let profit = self.protocol_profit;
@@ -134,11 +146,13 @@ public fun withdraw_protocol_profit<Asset>(
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     coin: Coin<Asset>,
     referral: Option<ID>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
+    registry.load_inner();
     self.update_state(clock);
 
     let supplier = ctx.sender();
@@ -164,10 +178,12 @@ public fun supply<Asset>(
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
+    registry.load_inner();
     self.update_state(clock);
 
     let supplier = ctx.sender();
@@ -191,6 +207,12 @@ public fun withdraw<Asset>(
     self.vault.split(withdrawal_amount).into_coin(ctx)
 }
 
+// === Public-View Functions ===
+public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
+    self.allowed_deepbook_pools.contains(&deepbook_pool_id)
+}
+
+// === Public-Package Functions ===
 public(package) fun claim_referral_rewards<Asset>(
     self: &mut MarginPool<Asset>,
     referral_cap: &ReferralCap,
@@ -207,12 +229,6 @@ public(package) fun claim_referral_rewards<Asset>(
     self.vault.split(reward_amount).into_coin(ctx)
 }
 
-// === Public-View Functions ===
-public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
-    self.allowed_deepbook_pools.contains(&deepbook_pool_id)
-}
-
-// === Public-Package Functions ===
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let interest_accrued = self.state.update(&self.config, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
@@ -280,6 +296,6 @@ public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u6
     self.state.to_borrow_amount(shares)
 }
 
-public fun id<Asset>(self: &MarginPool<Asset>): ID {
+public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
