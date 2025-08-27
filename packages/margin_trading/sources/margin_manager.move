@@ -79,6 +79,7 @@ public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
     balance_manager_id: ID,
     owner: address,
+    timestamp: u64,
 }
 
 /// Event emitted when loan is borrowed
@@ -86,6 +87,7 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
+    timestamp: u64,
 }
 
 /// Event emitted when loan is repaid
@@ -93,6 +95,7 @@ public struct LoanRepaidEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     repay_amount: u64,
+    timestamp: u64,
 }
 
 /// Event emitted when margin manager is liquidated
@@ -104,12 +107,14 @@ public struct LiquidationEvent has copy, drop {
     default_amount: u64,
     user_reward_usd: u64,
     risk_ratio: u64,
+    timestamp: u64,
 }
 
 // === Public Functions - Margin Manager ===
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
@@ -128,6 +133,7 @@ public fun new<BaseAsset, QuoteAsset>(
         margin_manager_id: id.to_inner(),
         balance_manager_id: object::id(&balance_manager),
         owner: ctx.sender(),
+        timestamp: clock.timestamp_ms(),
     });
 
     let manager = MarginManager<BaseAsset, QuoteAsset> {
@@ -456,6 +462,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
 
     let user_reward_usd = fulfillment.user_reward_usd;
     let risk_ratio = fulfillment.risk_ratio;
+    let timestamp = clock.timestamp_ms();
 
     margin_pool.repay_with_reward(
         repay_coin,
@@ -469,6 +476,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         margin_manager_id,
         margin_pool_id,
         repay_amount,
+        timestamp,
     });
 
     event::emit(LiquidationEvent {
@@ -479,6 +487,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         user_reward_usd,
         default_amount,
         risk_ratio,
+        timestamp,
     });
 
     let Fulfillment {
@@ -532,6 +541,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let default_amount = fulfillment.default_amount - cancel_amount;
 
     let repay_coin = coin.split(total_fulfillment_amount, ctx);
+    let timestamp = clock.timestamp_ms();
 
     margin_pool.repay_with_reward(
         repay_coin,
@@ -545,6 +555,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         margin_manager_id,
         margin_pool_id,
         repay_amount,
+        timestamp,
     });
 
     let user_reward_usd = fulfillment.user_reward_usd;
@@ -558,6 +569,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         user_reward_usd,
         default_amount,
         risk_ratio,
+        timestamp,
     });
 
     let Fulfillment {
@@ -723,11 +735,14 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     pool_reward_amount = pool_reward_amount - cancel_amount;
     default_amount = default_amount - cancel_amount;
 
+    let timestamp = clock.timestamp_ms();
+
     // Emit events
     event::emit(LoanRepaidEvent {
         margin_manager_id,
         margin_pool_id,
         repay_amount,
+        timestamp,
     });
 
     event::emit(LiquidationEvent {
@@ -738,6 +753,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         default_amount,
         user_reward_usd,
         risk_ratio,
+        timestamp,
     });
 
     (base_coin, quote_coin, liquidation_coin)
@@ -996,6 +1012,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 ): Request {
     let manager_id = self.id();
     let coin = margin_pool.borrow(loan_amount, clock, ctx);
+    let timestamp = clock.timestamp_ms();
 
     self.deposit<BaseAsset, QuoteAsset, BorrowAsset>(registry, coin, ctx);
 
@@ -1003,6 +1020,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
         margin_manager_id: manager_id,
         margin_pool_id: margin_pool.id(),
         loan_amount,
+        timestamp,
     });
 
     Request {
@@ -1043,6 +1061,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount,
         ctx,
     );
+    let timestamp = clock.timestamp_ms();
 
     margin_pool.repay(
         coin,
@@ -1053,6 +1072,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
         repay_amount,
+        timestamp,
     });
 
     repay_amount
