@@ -10,7 +10,7 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    manager_info::{Self, ManagerInfo},
+    manager_info::{Self, ManagerInfo, Fulfillment},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
@@ -56,17 +56,6 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
     active_liquidation: bool, // without this, the margin manager can be liquidated multiple times within the same tx
 }
 
-public struct Fulfillment<phantom DebtAsset> {
-    manager_id: ID,
-    repay_amount: u64,
-    pool_reward_amount: u64,
-    user_reward_usd: u64,
-    default_amount: u64,
-    base_exit_amount: u64,
-    quote_exit_amount: u64,
-    risk_ratio: u64,
-}
-
 /// Request_type: 0 for withdraw, 1 for borrow
 public struct Request {
     margin_manager_id: ID,
@@ -105,7 +94,6 @@ public struct LiquidationEvent has copy, drop {
     liquidation_amount: u64,
     pool_reward_amount: u64,
     default_amount: u64,
-    user_reward_usd: u64,
     risk_ratio: u64,
     timestamp: u64,
 }
@@ -368,7 +356,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
+): (Fulfillment, Coin<BaseAsset>, Coin<QuoteAsset>) {
     let pool_id = pool.id();
     let margin_pool_id = margin_pool.id();
     assert!(self.deepbook_pool == pool_id, EIncorrectDeepBookPool);
@@ -393,11 +381,18 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let balance_manager = self.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
-    produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
-        self,
-        &manager_info,
+    let fulfillment = manager_info.produce_fulfillment(self.id());
+
+    let base = self.liquidation_withdraw_base(
+        fulfillment.base_exit_amount(),
         ctx,
-    )
+    );
+    let quote = self.liquidation_withdraw_quote(
+        fulfillment.quote_exit_amount(),
+        ctx,
+    );
+
+    (fulfillment, base, quote)
 }
 
 /// Repays the loan as the liquidator.
@@ -410,12 +405,12 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     repay_coin: Coin<RepayAsset>,
     mut return_base: Coin<BaseAsset>,
     mut return_quote: Coin<QuoteAsset>,
-    fulfillment: Fulfillment<RepayAsset>,
+    fulfillment: Fulfillment,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     registry.load_inner();
-    assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
+    assert!(fulfillment.manager_id() == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);
     self.active_liquidation = false;
@@ -424,15 +419,15 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_pool_id = margin_pool.id();
     let repay_coin_amount = repay_coin.value();
 
-    let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
+    let total_fulfillment_amount = fulfillment.repay_amount() + fulfillment.pool_reward_amount();
     let repay_percentage = math::div(repay_coin_amount, total_fulfillment_amount);
     assert!(repay_percentage <= constants::float_scaling(), ERepaymentExceedsTotal);
     let return_percentage = constants::float_scaling() - repay_percentage;
 
     let repay_is_base = self.has_base_debt();
-    let repay_amount = math::mul(fulfillment.repay_amount, repay_percentage);
+    let repay_amount = math::mul(fulfillment.repay_amount(), repay_percentage);
     let full_repayment = repay_percentage == constants::float_scaling();
-    let mut default_amount = if (full_repayment) fulfillment.default_amount else 0;
+    let mut default_amount = if (full_repayment) fulfillment.default_amount() else 0;
     let mut pool_reward_amount = repay_coin_amount - repay_amount;
 
     let cancel_amount = pool_reward_amount.min(default_amount);
@@ -445,8 +440,8 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     self.decrease_borrowed_shares(repay_is_base, default_shares);
     self.reset_margin_pool_id();
 
-    let base_to_return = math::mul(fulfillment.base_exit_amount, return_percentage);
-    let quote_to_return = math::mul(fulfillment.quote_exit_amount, return_percentage);
+    let base_to_return = math::mul(fulfillment.base_exit_amount(), return_percentage);
+    let quote_to_return = math::mul(fulfillment.quote_exit_amount(), return_percentage);
 
     if (base_to_return > 0) {
         assert!(return_base.value() >= base_to_return, EInvalidReturnAmount);
@@ -460,8 +455,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         self.liquidation_deposit_quote(quote_coin, ctx);
     };
 
-    let user_reward_usd = fulfillment.user_reward_usd;
-    let risk_ratio = fulfillment.risk_ratio;
+    let risk_ratio = fulfillment.fulfillment_risk_ratio();
     let timestamp = clock.timestamp_ms();
 
     margin_pool.repay_with_reward(
@@ -484,22 +478,11 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         margin_pool_id,
         liquidation_amount: repay_amount,
         pool_reward_amount,
-        user_reward_usd,
         default_amount,
         risk_ratio,
         timestamp,
     });
-
-    let Fulfillment {
-        manager_id: _,
-        repay_amount: _,
-        pool_reward_amount: _,
-        user_reward_usd: _,
-        default_amount: _,
-        base_exit_amount: _,
-        quote_exit_amount: _,
-        risk_ratio: _,
-    } = fulfillment;
+    fulfillment.drop();
 
     (return_base, return_quote)
 }
@@ -511,12 +494,12 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
     mut coin: Coin<RepayAsset>,
-    fulfillment: Fulfillment<RepayAsset>,
+    fulfillment: Fulfillment,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<RepayAsset>) {
     registry.load_inner();
-    assert!(fulfillment.manager_id == self.id(), EInvalidMarginManager);
+    assert!(fulfillment.manager_id() == self.id(), EInvalidMarginManager);
     margin_pool.update_state(clock);
     assert!(self.active_liquidation, ECannotLiquidate);
     self.active_liquidation = false;
@@ -524,21 +507,21 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_manager_id = self.id();
     let margin_pool_id = margin_pool.id();
     let coin_amount = coin.value();
-    let repay_amount = fulfillment.repay_amount;
+    let repay_amount = fulfillment.repay_amount();
 
-    let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount;
+    let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount();
     assert!(coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
 
     let repay_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
     self.decrease_borrowed_shares(repay_is_base, repay_shares);
-    let default_shares = margin_pool.to_borrow_shares(fulfillment.default_amount);
+    let default_shares = margin_pool.to_borrow_shares(fulfillment.default_amount());
     self.decrease_borrowed_shares(repay_is_base, default_shares);
     self.reset_margin_pool_id();
 
-    let cancel_amount = fulfillment.pool_reward_amount.min(fulfillment.default_amount);
-    let pool_reward_amount = fulfillment.pool_reward_amount - cancel_amount;
-    let default_amount = fulfillment.default_amount - cancel_amount;
+    let cancel_amount = fulfillment.pool_reward_amount().min(fulfillment.default_amount());
+    let pool_reward_amount = fulfillment.pool_reward_amount() - cancel_amount;
+    let default_amount = fulfillment.default_amount() - cancel_amount;
 
     let repay_coin = coin.split(total_fulfillment_amount, ctx);
     let timestamp = clock.timestamp_ms();
@@ -558,30 +541,19 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         timestamp,
     });
 
-    let user_reward_usd = fulfillment.user_reward_usd;
-    let risk_ratio = fulfillment.risk_ratio;
+    let risk_ratio = fulfillment.fulfillment_risk_ratio();
 
     event::emit(LiquidationEvent {
         margin_manager_id,
         margin_pool_id,
         liquidation_amount: repay_amount,
         pool_reward_amount,
-        user_reward_usd,
         default_amount,
         risk_ratio,
         timestamp,
     });
 
-    let Fulfillment {
-        manager_id: _,
-        repay_amount: _,
-        pool_reward_amount: _,
-        user_reward_usd: _,
-        default_amount: _,
-        base_exit_amount: _,
-        quote_exit_amount: _,
-        risk_ratio: _,
-    } = fulfillment;
+    fulfillment.drop();
 
     coin
 }
@@ -696,24 +668,19 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
     // Step 1: Calculate liquidation amounts
-    let amounts = manager_info.calculate_liquidation_amounts<DebtAsset>(
-        &liquidation_coin,
-    );
     let (
-        debt_is_base,
-        repay_amount,
-        mut pool_reward_amount,
         mut default_amount,
         repay_usd,
-        repay_amount_with_pool_reward,
-    ) = amounts.liquidation_amounts_info();
+    ) = manager_info.calculate_liquidation_amounts(liquidation_coin.value());
+    let repay_amount = manager_info.debt_usd_to_quantity(repay_usd);
+    let repay_amount_with_pool_reward = manager_info.with_pool_reward_ratio(repay_amount);
+    let mut pool_reward_amount = repay_amount_with_pool_reward - repay_amount;
 
     // Step 2: Repay the user's loan
     let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx);
     self.repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
         repay_coin,
-        debt_is_base,
         repay_amount,
         pool_reward_amount,
         default_amount,
@@ -721,15 +688,19 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     );
 
     // Step 3: Calculate and withdraw exit assets
-    let (base_coin, quote_coin) = self.calculate_exit_assets<BaseAsset, QuoteAsset>(
-        &manager_info,
-        repay_usd,
+
+    let (base_to_exit, quote_to_exit) = manager_info.calculate_exit_amounts(repay_usd);
+    let base_coin = self.liquidation_withdraw_base(
+        base_to_exit,
+        ctx,
+    );
+    let quote_coin = self.liquidation_withdraw_quote(
+        quote_to_exit,
         ctx,
     );
 
     let margin_manager_id = self.id();
     let margin_pool_id = margin_pool.id();
-    let user_reward_usd = manager_info.to_user_liquidation_reward(repay_usd);
 
     let cancel_amount = pool_reward_amount.min(default_amount);
     pool_reward_amount = pool_reward_amount - cancel_amount;
@@ -751,7 +722,6 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         liquidation_amount: repay_amount,
         pool_reward_amount,
         default_amount,
-        user_reward_usd,
         risk_ratio,
         timestamp,
     });
@@ -805,32 +775,6 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
 
 public fun deepbook_pool<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
     self.deepbook_pool
-}
-
-/// Returns fulfillment repay amount
-public fun repay_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.repay_amount
-}
-
-/// Returns fulfillment pool reward amount
-public fun pool_reward_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.pool_reward_amount
-}
-
-public fun user_reward_usd<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.user_reward_usd
-}
-
-public fun default_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.default_amount
-}
-
-public fun base_exit_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.base_exit_amount
-}
-
-public fun quote_exit_amount<DebtAsset>(fulfillment: &Fulfillment<DebtAsset>): u64 {
-    fulfillment.quote_exit_amount
 }
 
 // === Public-Package Functions ===
@@ -926,75 +870,6 @@ public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 // === Private Functions ===
-/// calculate quantity of debt that must be removed to reach target risk ratio.
-/// amount_to_repay is only for the loan, not including liquidation rewards.
-/// amount_to_repay = (target_ratio × debt_value - asset) / (target_ratio - (1 + total_liquidation_reward)))
-fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    manager_info: &ManagerInfo,
-    ctx: &mut TxContext,
-): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let risk_ratio = manager_info.risk_ratio();
-    let in_default = risk_ratio < constants::float_scaling(); // false
-    // Manager is in default if asset / debt < 1
-    let (default_amount_to_repay, default_amount) = manager_info.default_info(in_default); // (0, 0)
-
-    let usd_amount_to_repay = if (in_default) {
-        manager_info.calculate_usd_amount_to_repay_in_default()
-    } else {
-        manager_info.calculate_usd_amount_to_repay()
-    }; // 750
-
-    let (base_exit_amount, quote_exit_amount) = manager_info.calculate_quantity_to_exit(
-        usd_amount_to_repay,
-    ); // (550, 237.5)
-
-    let base = self.liquidation_withdraw_base(
-        base_exit_amount,
-        ctx,
-    );
-    let quote = self.liquidation_withdraw_quote(
-        quote_exit_amount,
-        ctx,
-    );
-
-    // If manager is in default, we repay as much as possible
-    let repay_amount = if (in_default) {
-        default_amount_to_repay
-    } else {
-        manager_info.calculate_debt_repay_amount(
-            self.has_base_debt(),
-            usd_amount_to_repay,
-        )
-    }; // 750 USDT
-
-    let manager_id = self.id();
-    let pool_reward_amount = manager_info.to_pool_liquidation_reward(repay_amount); // 750 * 0.03 = 22.5 USDT
-    let user_reward_usd = manager_info.to_user_liquidation_reward(usd_amount_to_repay); // $750 * 0.02 = $15
-    (
-        Fulfillment<DebtAsset> {
-            manager_id,
-            repay_amount,
-            pool_reward_amount,
-            user_reward_usd,
-            default_amount,
-            base_exit_amount,
-            quote_exit_amount,
-            risk_ratio,
-        },
-        base,
-        quote,
-    )
-
-    // User receives 550 USDT, 237.5 USDC. User has to repay 750 USDT, and 22.5 USDT to the pool.
-    // User reward at the end is 550 + 237.5 - 750 - 22.5 = 15
-    // Manager now has:
-    // - 0 USDT
-    // - 550 - 237.5 = 312.5 USDC
-    // - 250 USDT debt
-    // Risk ratio is 312.5 / 250 = 1.25
-}
-
 fun validate_owner<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
@@ -1163,12 +1038,12 @@ fun repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<DebtAsset>,
     repay_coin: Coin<DebtAsset>,
-    debt_is_base: bool,
     repay_amount: u64,
     pool_reward_amount: u64,
     default_amount: u64,
     clock: &Clock,
 ) {
+    let debt_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
     self.decrease_borrowed_shares(debt_is_base, repay_shares);
     let default_shares = margin_pool.to_borrow_shares(default_amount);
@@ -1182,29 +1057,6 @@ fun repay_user_loan<BaseAsset, QuoteAsset, DebtAsset>(
         default_amount,
         clock,
     );
-}
-
-/// Helper function for Step 3: Calculate assets that exit the manager
-fun calculate_exit_assets<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    manager_info: &ManagerInfo,
-    repay_usd: u64,
-    ctx: &mut TxContext,
-): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    // Calculate total USD to exit including all rewards
-    let total_usd_to_exit = manager_info.with_liquidation_reward_ratio(repay_usd);
-    let (base_usd, quote_usd) = manager_info.calculate_usd_exit_amounts(total_usd_to_exit);
-
-    // Convert USD to asset amounts and withdraw in parallel
-    let (base_to_exit, quote_to_exit) = manager_info.calculate_asset_amounts(
-        base_usd,
-        quote_usd,
-    );
-
-    (
-        self.liquidation_withdraw_base(base_to_exit, ctx),
-        self.liquidation_withdraw_quote(quote_to_exit, ctx),
-    )
 }
 
 /// This can only be called by the manager owner
