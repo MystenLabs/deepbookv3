@@ -534,7 +534,7 @@ fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
 }
 
 #[test_only]
-public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap) {
+public fun new_for_testing(ctx: &mut TxContext): MarginAdminCap {
     let id = object::new(ctx);
     let margin_registry_inner = MarginRegistryInner {
         registry_id: id.to_inner(),
@@ -550,5 +550,7 @@ public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap
     };
     let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
 
-    (registry, margin_admin_cap)
+    transfer::share_object(registry);
+
+    margin_admin_cap
 }

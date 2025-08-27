@@ -1,58 +1,72 @@
-// // Copyright (c) Mysten Labs, Inc.
-// // SPDX-License-Identifier: Apache-2.0
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
 
-// #[test_only]
-// module margin_trading::test_utils;
+#[test_only]
+module margin_trading::test_utils;
 
-// use margin_trading::margin_pool::{Self, MarginPool};
-// use margin_trading::margin_registry::{
-//     Self,
-//     MarginRegistry,
-//     MarginAdminCap,
-//     MaintainerCap,
-//     MarginPoolCap
-// };
-// use margin_trading::protocol_config;
-// use sui::clock::{Self, Clock};
-// use sui::coin::{Self, Coin};
-// use sui::test_scenario::{Self as test, Scenario};
-// use sui::test_utils::destroy;
+use margin_trading::{
+    margin_pool,
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
+    protocol_config::{Self, ProtocolConfig},
+    test_constants
+};
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, Coin},
+    test_scenario::{Scenario, begin, return_shared}
+};
 
-// const ADMIN: address = @0x1;
-// const ALICE: address = @0xAAAA;
-// const BOB: address = @0xBBBB;
+const ADMIN: address = @0x1;
 
-// public fun setup_test(): (Scenario, Clock, MarginRegistry, MarginAdminCap, MaintainerCap, ID) {
-//     let mut scenario = test::begin(ADMIN);
-//     let clock = clock::create_for_testing(scenario.ctx());
+public fun setup_test(): (Scenario, MarginAdminCap) {
+    let mut test = begin(ADMIN);
+    let clock = clock::create_for_testing(test.ctx());
 
-//     let (mut registry, admin_cap) = margin_registry::new_for_testing(scenario.ctx());
-//     let maintainer_cap = margin_registry::mint_maintainer_cap(
-//         &mut registry,
-//         &admin_cap,
-//         &clock,
-//         scenario.ctx(),
-//     );
+    let admin_cap = margin_registry::new_for_testing(test.ctx());
 
-//     let margin_pool_config = protocol_config::new_margin_pool_config(
-//         SUPPLY_CAP,
-//         MAX_UTILIZATION_RATE,
-//         PROTOCOL_SPREAD,
-//     );
-//     let interest_config = protocol_config::new_interest_config(
-//         50_000_000, // base_rate: 5% with 9 decimals
-//         100_000_000, // base_slope: 10% with 9 decimals
-//         800_000_000, // optimal_utilization: 80% with 9 decimals
-//         2_000_000_000, // excess_slope: 200% with 9 decimals
-//     );
-//     let protocol_config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
-//     let pool_id = margin_pool::create_margin_pool<USDC>(
-//         &mut registry,
-//         protocol_config,
-//         &maintainer_cap,
-//         &clock,
-//         scenario.ctx(),
-//     );
+    clock.share_for_testing();
 
-//     (scenario, clock, registry, admin_cap, maintainer_cap, pool_id)
-// }
+    (test, admin_cap)
+}
+
+public fun create_margin_pool<Asset>(
+    test: &mut Scenario,
+    maintainer_cap: &MaintainerCap,
+    protocol_config: ProtocolConfig,
+    clock: &Clock,
+): ID {
+    test.next_tx(ADMIN);
+
+    let mut registry = test.take_shared<MarginRegistry>();
+
+    let pool_id = margin_pool::create_margin_pool<Asset>(
+        &mut registry,
+        protocol_config,
+        maintainer_cap,
+        clock,
+        test.ctx(),
+    );
+    return_shared(registry);
+
+    pool_id
+}
+
+public fun default_protocol_config(): ProtocolConfig {
+    let margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
+    );
+    let interest_config = protocol_config::new_interest_config(
+        test_constants::base_rate(), // base_rate: 5% with 9 decimals
+        test_constants::base_slope(), // base_slope: 10% with 9 decimals
+        test_constants::optimal_utilization(), // optimal_utilization: 80% with 9 decimals
+        test_constants::excess_slope(), // excess_slope: 200% with 9 decimals
+    );
+
+    protocol_config::new_protocol_config(margin_pool_config, interest_config)
+}
+
+public fun mint_coin<T>(amount: u64, ctx: &mut TxContext): Coin<T> {
+    coin::mint_for_testing<T>(amount, ctx)
+}

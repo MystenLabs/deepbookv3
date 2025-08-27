@@ -10,10 +10,6 @@ const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
-// === Reward Constraints ===
-const MIN_REWARD_AMOUNT: u64 = 1000;
-const MIN_REWARD_DURATION_SECONDS: u64 = 3600;
-const MAX_REWARD_TYPES: u64 = 10;
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -37,18 +33,6 @@ public fun min_leverage(): u64 {
 
 public fun max_leverage(): u64 {
     MAX_LEVERAGE
-}
-
-public fun min_reward_amount(): u64 {
-    MIN_REWARD_AMOUNT
-}
-
-public fun min_reward_duration_seconds(): u64 {
-    MIN_REWARD_DURATION_SECONDS
-}
-
-public fun max_reward_types(): u64 {
-    MAX_REWARD_TYPES
 }
 
 public fun year_ms(): u64 {
