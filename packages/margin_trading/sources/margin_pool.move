@@ -10,8 +10,8 @@ use margin_trading::{
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
 };
-use std::type_name;
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::{Self, VecSet}};
+use std::type_name::{Self, TypeName};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -34,12 +34,68 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
+public struct MarginPoolCreated has copy, drop {
+    margin_pool_id: ID,
+    maintainer_cap_id: ID,
+    asset_type: TypeName,
+    config: ProtocolConfig,
+    timestamp: u64,
+}
+
+public struct DeepbookPoolEnabled has copy, drop {
+    margin_pool_id: ID,
+    deepbook_pool_id: ID,
+    pool_cap_id: ID,
+    enabled: bool,
+    timestamp: u64,
+}
+
+public struct InterestParamsUpdated has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    interest_config: InterestConfig,
+    timestamp: u64,
+}
+
+public struct MarginPoolConfigUpdated has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    margin_pool_config: MarginPoolConfig,
+    timestamp: u64,
+}
+
+public struct ProtocolProfitWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    asset_type: TypeName,
+    profit: u64,
+    timestamp: u64,
+}
+
+public struct AssetSupplied has copy, drop {
+    margin_pool_id: ID,
+    asset_type: TypeName,
+    supplier: address,
+    supply_amount: u64,
+    supply_shares: u64,
+    timestamp: u64,
+}
+
+public struct AssetWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    asset_type: TypeName,
+    supplier: address,
+    withdrawal_amount: u64,
+    withdrawal_shares: u64,
+    timestamp: u64,
+}
+
 // === Public Functions * ADMIN *===
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
-/// Returns a `MarginPoolCap` that can be used to update the margin pool.
+/// Sends a `MarginPoolCap` to the pool creator.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
-    protocol_config: ProtocolConfig,
+    config: ProtocolConfig,
     maintainer_cap: &MaintainerCap,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -50,15 +106,24 @@ public fun create_margin_pool<Asset>(
         id,
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
-        config: protocol_config,
+        config,
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
     transfer::share_object(margin_pool);
 
-    let key = type_name::get<Asset>();
-    registry.register_margin_pool(key, margin_pool_id, maintainer_cap, ctx);
+    let asset_type = type_name::get<Asset>();
+    registry.register_margin_pool(asset_type, margin_pool_id, maintainer_cap, ctx);
+
+    let maintainer_cap_id = maintainer_cap.maintainer_cap_id();
+    event::emit(MarginPoolCreated {
+        margin_pool_id,
+        maintainer_cap_id,
+        asset_type,
+        config,
+        timestamp: clock.timestamp_ms(),
+    });
 
     margin_pool_id
 }
@@ -69,11 +134,20 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
     self.allowed_deepbook_pools.insert(deepbook_pool_id);
+
+    event::emit(DeepbookPoolEnabled {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        deepbook_pool_id,
+        enabled: true,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
@@ -82,11 +156,20 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
+
+    event::emit(DeepbookPoolEnabled {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        deepbook_pool_id,
+        enabled: false,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 public fun update_interest_params<Asset>(
@@ -94,21 +177,37 @@ public fun update_interest_params<Asset>(
     registry: &MarginRegistry,
     interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_interest_config(interest_config);
+
+    event::emit(InterestParamsUpdated {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        interest_config,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
-public fun update_protocol_config<Asset>(
+public fun update_margin_pool_config<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_margin_pool_config(margin_pool_config);
+
+    event::emit(MarginPoolConfigUpdated {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        margin_pool_config,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -116,6 +215,7 @@ public fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
@@ -125,7 +225,17 @@ public fun withdraw_protocol_profit<Asset>(
     self.protocol_profit = 0;
     let balance = self.vault.split(profit);
 
-    balance.into_coin(ctx)
+    let coin = balance.into_coin(ctx);
+
+    event::emit(ProtocolProfitWithdrawn {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        asset_type: type_name::get<Asset>(),
+        profit,
+        timestamp: clock.timestamp_ms(),
+    });
+
+    coin
 }
 
 // === Public Functions * LENDING * ===
@@ -151,6 +261,15 @@ public fun supply<Asset>(
     self.vault.join(balance);
 
     assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+
+    event::emit(AssetSupplied {
+        margin_pool_id: self.id(),
+        asset_type: type_name::get<Asset>(),
+        supplier,
+        supply_amount,
+        supply_shares,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
@@ -169,14 +288,25 @@ public fun withdraw<Asset>(
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
-    assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
+    let withdrawal_shares = self.state.to_supply_shares(withdrawal_amount);
+    assert!(withdrawal_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.state.decrease_total_supply(withdrawal_amount);
-    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares);
+    self.positions.decrease_user_supply_shares(supplier, withdrawal_shares);
 
-    self.vault.split(withdrawal_amount).into_coin(ctx)
+    let coin = self.vault.split(withdrawal_amount).into_coin(ctx);
+
+    event::emit(AssetWithdrawn {
+        margin_pool_id: self.id(),
+        asset_type: type_name::get<Asset>(),
+        supplier,
+        withdrawal_amount,
+        withdrawal_shares,
+        timestamp: clock.timestamp_ms(),
+    });
+
+    coin
 }
 
 // === Public-View Functions ===

@@ -511,6 +511,14 @@ public(package) fun margin_pool_id(margin_pool_cap: &MarginPoolCap): ID {
     margin_pool_cap.margin_pool_id
 }
 
+public(package) fun pool_cap_id(margin_pool_cap: &MarginPoolCap): ID {
+    margin_pool_cap.id.to_inner()
+}
+
+public(package) fun maintainer_cap_id(maintainer_cap: &MaintainerCap): ID {
+    maintainer_cap.id.to_inner()
+}
+
 /// Calculate risk parameters based on leverage factor
 fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
     RiskRatios {
