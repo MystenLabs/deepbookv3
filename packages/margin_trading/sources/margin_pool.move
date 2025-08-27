@@ -37,8 +37,34 @@ public struct MarginPool<phantom Asset> has key, store {
 public struct MarginPoolCreated has copy, drop {
     margin_pool_id: ID,
     maintainer_cap_id: ID,
-    type_name: TypeName,
+    asset_type: TypeName,
     config: ProtocolConfig,
+}
+
+public struct DeepbookPoolEnabled has copy, drop {
+    margin_pool_id: ID,
+    deepbook_pool_id: ID,
+    pool_cap_id: ID,
+    enabled: bool,
+}
+
+public struct InterestParamsUpdated has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    interest_config: InterestConfig,
+}
+
+public struct MarginPoolConfigUpdated has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    margin_pool_config: MarginPoolConfig,
+}
+
+public struct ProtocolProfitWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    pool_cap_id: ID,
+    asset_type: TypeName,
+    profit: u64,
 }
 
 // === Public Functions * ADMIN *===
@@ -64,14 +90,14 @@ public fun create_margin_pool<Asset>(
     };
     transfer::share_object(margin_pool);
 
-    let type_name = type_name::get<Asset>();
-    registry.register_margin_pool(type_name, margin_pool_id, maintainer_cap, ctx);
+    let asset_type = type_name::get<Asset>();
+    registry.register_margin_pool(asset_type, margin_pool_id, maintainer_cap, ctx);
 
     let maintainer_cap_id = maintainer_cap.maintainer_cap_id();
     event::emit(MarginPoolCreated {
         margin_pool_id,
         maintainer_cap_id,
-        type_name,
+        asset_type,
         config,
     });
 
@@ -89,6 +115,13 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
     self.allowed_deepbook_pools.insert(deepbook_pool_id);
+
+    event::emit(DeepbookPoolEnabled {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        deepbook_pool_id,
+        enabled: true,
+    });
 }
 
 /// Disable a margin manager tied to a deepbook pool from borrowing from the margin pool.
@@ -102,6 +135,13 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
+
+    event::emit(DeepbookPoolEnabled {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        deepbook_pool_id,
+        enabled: false,
+    });
 }
 
 public fun update_interest_params<Asset>(
@@ -113,9 +153,15 @@ public fun update_interest_params<Asset>(
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_interest_config(interest_config);
+
+    event::emit(InterestParamsUpdated {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        interest_config,
+    });
 }
 
-public fun update_protocol_config<Asset>(
+public fun update_margin_pool_config<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     margin_pool_config: MarginPoolConfig,
@@ -124,6 +170,12 @@ public fun update_protocol_config<Asset>(
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_margin_pool_config(margin_pool_config);
+
+    event::emit(MarginPoolConfigUpdated {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        margin_pool_config,
+    });
 }
 
 /// Resets the protocol profit and returns the coin.
@@ -140,7 +192,16 @@ public fun withdraw_protocol_profit<Asset>(
     self.protocol_profit = 0;
     let balance = self.vault.split(profit);
 
-    balance.into_coin(ctx)
+    let coin = balance.into_coin(ctx);
+
+    event::emit(ProtocolProfitWithdrawn {
+        margin_pool_id: self.id(),
+        pool_cap_id: margin_pool_cap.pool_cap_id(),
+        asset_type: type_name::get<Asset>(),
+        profit,
+    });
+
+    coin
 }
 
 // === Public Functions * LENDING * ===
