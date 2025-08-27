@@ -8,7 +8,9 @@ use deepbook::{constants, math, pool::Pool};
 use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
 use sui::{
+    clock::Clock,
     dynamic_field as df,
+    event,
     table::{Self, Table},
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
@@ -36,6 +38,19 @@ const EVersionNotEnabled: u64 = 13;
 public struct MARGIN_REGISTRY has drop {}
 
 // === Structs ===
+public struct MarginRegistry has key {
+    id: UID,
+    inner: Versioned,
+}
+
+public struct MarginRegistryInner has store {
+    registry_id: ID,
+    allowed_versions: VecSet<u64>,
+    pool_registry: Table<ID, PoolConfig>,
+    margin_pools: Table<TypeName, ID>,
+    allowed_maintainers: VecSet<ID>,
+}
+
 public struct MarginAdminCap has key, store {
     id: UID,
 }
@@ -58,21 +73,6 @@ public struct PoolConfig has copy, drop, store {
     enabled: bool, // whether the pool is enabled for margin trading
 }
 
-public struct MarginRegistry has key {
-    id: UID,
-    inner: Versioned,
-}
-
-public struct MarginRegistryInner has store {
-    registry_id: ID,
-    allowed_versions: VecSet<u64>,
-    pool_registry: Table<ID, PoolConfig>,
-    margin_pools: Table<TypeName, ID>,
-    allowed_maintainers: VecSet<ID>,
-}
-
-public struct ConfigKey<phantom Config> has copy, drop, store {}
-
 public struct RiskRatios has copy, drop, store {
     min_withdraw_risk_ratio: u64,
     min_borrow_risk_ratio: u64,
@@ -80,6 +80,24 @@ public struct RiskRatios has copy, drop, store {
     target_liquidation_risk_ratio: u64,
 }
 
+public struct MaintainerCapUpdated has copy, drop {
+    maintainer_cap_id: ID,
+    allowed: bool,
+    timestamp: u64,
+}
+
+public struct DeepbookPoolRegistered has copy, drop {
+    pool_id: ID,
+    timestamp: u64,
+}
+
+public struct DeepbookPoolUpdated has copy, drop {
+    pool_id: ID,
+    enabled: bool,
+    timestamp: u64,
+}
+
+public struct ConfigKey<phantom Config> has copy, drop, store {}
 public struct MarginApp has drop {}
 
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
@@ -106,11 +124,18 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 public fun mint_maintainer_cap(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): MaintainerCap {
     let self = self.load_inner_mut();
     let id = object::new(ctx);
     self.allowed_maintainers.insert(id.to_inner());
+
+    event::emit(MaintainerCapUpdated {
+        maintainer_cap_id: id.to_inner(),
+        allowed: true,
+        timestamp: clock.timestamp_ms(),
+    });
 
     MaintainerCap {
         id,
@@ -121,37 +146,174 @@ public fun mint_maintainer_cap(
 public fun revoke_maintainer_cap(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
-    maintainer_cap_id: &ID,
+    maintainer_cap_id: ID,
+    clock: &Clock,
 ) {
     let self = self.load_inner_mut();
-    assert!(self.allowed_maintainers.contains(maintainer_cap_id), EMaintainerCapNotValid);
-    self.allowed_maintainers.remove(maintainer_cap_id);
+    assert!(self.allowed_maintainers.contains(&maintainer_cap_id), EMaintainerCapNotValid);
+    self.allowed_maintainers.remove(&maintainer_cap_id);
+
+    event::emit(MaintainerCapUpdated {
+        maintainer_cap_id,
+        allowed: false,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
-#[allow(lint(self_transfer))]
-public(package) fun register_margin_pool(
+/// Updates risk params for a deepbook pool as the admin.
+public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    key: TypeName,
-    margin_pool_id: ID,
-    maintainer_cap: &MaintainerCap,
-    ctx: &mut TxContext,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool_config: PoolConfig,
+    _cap: &MarginAdminCap,
 ) {
     let inner = self.load_inner_mut();
+    let pool_id = pool.id();
+    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
+
+    let prev_config = inner.pool_registry.remove(pool_id);
     assert!(
-        inner.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
-        EMaintainerCapNotValid,
+        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config
+            .risk_ratios
+            .liquidation_risk_ratio,
+        EInvalidRiskParam,
     );
-    assert!(!inner.margin_pools.contains(key), EMarginPoolAlreadyExists);
-    inner.margin_pools.add(key, margin_pool_id);
+    assert!(prev_config.enabled, EPoolNotEnabled);
 
-    let margin_pool_cap = MarginPoolCap {
-        id: object::new(ctx),
-        margin_pool_id,
-    };
+    // Validate new risk parameters
+    assert!(
+        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config
+            .risk_ratios
+            .min_withdraw_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .min_borrow_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .target_liquidation_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio >= constants::float_scaling(),
+        EInvalidRiskParam,
+    );
 
-    transfer::public_transfer(margin_pool_cap, ctx.sender());
+    inner.pool_registry.add(pool_id, pool_config);
 }
 
+/// Register a margin pool for margin trading with existing margin pools
+public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool_config: PoolConfig,
+    clock: &Clock,
+) {
+    let inner = self.load_inner_mut();
+    let pool_id = pool.id();
+    assert!(!inner.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
+
+    inner.pool_registry.add(pool_id, pool_config);
+
+    event::emit(DeepbookPoolRegistered {
+        pool_id,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Enables a deepbook pool for margin trading.
+public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+) {
+    let inner = self.load_inner_mut();
+    let pool_id = pool.id();
+    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
+
+    let config = inner.pool_registry.borrow_mut(pool_id);
+    assert!(config.enabled == false, EPoolAlreadyEnabled);
+    config.enabled = true;
+
+    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, true);
+
+    event::emit(DeepbookPoolUpdated {
+        pool_id,
+        enabled: true,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
+public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+) {
+    let inner = self.load_inner_mut();
+    let pool_id = pool.id();
+    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
+
+    let config = inner.pool_registry.borrow_mut(pool_id);
+    assert!(config.enabled == true, EPoolAlreadyDisabled);
+    config.enabled = false;
+
+    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, false);
+
+    event::emit(DeepbookPoolUpdated {
+        pool_id,
+        enabled: false,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Add Pyth Config to the MarginRegistry.
+public fun add_config<Config: store + drop>(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    config: Config,
+) {
+    self.load_inner();
+    self.id.add(ConfigKey<Config> {}, config);
+}
+
+/// Remove Pyth Config from the MarginRegistry.
+public fun remove_config<Config: store + drop>(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+): Config {
+    self.load_inner();
+    self.id.remove(ConfigKey<Config> {})
+}
+
+/// Enables a package version
+/// Only Admin can enable a package version
+/// This function does not have version restrictions
+public fun enable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
+    self.allowed_versions.insert(version);
+}
+
+/// Disables a package version
+/// Only Admin can disable a package version
+/// This function does not have version restrictions
+public fun disable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(version != margin_constants::margin_version(), ECannotDisableCurrentVersion);
+    assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
+    self.allowed_versions.remove(&version);
+}
+
+// === Public Helper Functions ===
 /// Create a PoolConfig with margin pool IDs and risk parameters
 /// Enable is false by default, must be enabled after registration
 public fun new_pool_config<BaseAsset, QuoteAsset>(
@@ -216,121 +378,7 @@ public fun new_pool_config_with_leverage<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Register a margin pool for margin trading with existing margin pools
-public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    pool_config: PoolConfig,
-    _cap: &MarginAdminCap,
-) {
-    let inner = self.load_inner_mut();
-    let pool_id = pool.id();
-    assert!(!inner.pool_registry.contains(pool_id), EPoolAlreadyRegistered);
-
-    inner.pool_registry.add(pool_id, pool_config);
-}
-
-/// Updates risk params for a deepbook pool as the admin.
-public fun update_risk_params<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    pool_config: PoolConfig,
-    _cap: &MarginAdminCap,
-) {
-    let inner = self.load_inner_mut();
-    let pool_id = pool.id();
-    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
-
-    let prev_config = inner.pool_registry.remove(pool_id);
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config
-            .risk_ratios
-            .liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(prev_config.enabled, EPoolNotEnabled);
-
-    // Validate new risk parameters
-    assert!(
-        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config
-            .risk_ratios
-            .min_withdraw_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
-            .risk_ratios
-            .min_borrow_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
-            .risk_ratios
-            .target_liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio >= constants::float_scaling(),
-        EInvalidRiskParam,
-    );
-
-    inner.pool_registry.add(pool_id, pool_config);
-}
-
-/// Enables a deepbook pool for margin trading.
-public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    _cap: &MarginAdminCap,
-) {
-    let inner = self.load_inner_mut();
-    let pool_id = pool.id();
-    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
-
-    let config = inner.pool_registry.borrow_mut(pool_id);
-    assert!(config.enabled == false, EPoolAlreadyEnabled);
-    config.enabled = true;
-
-    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, true);
-}
-
-/// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
-public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    _cap: &MarginAdminCap,
-) {
-    let inner = self.load_inner_mut();
-    let pool_id = pool.id();
-    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
-
-    let config = inner.pool_registry.borrow_mut(pool_id);
-    assert!(config.enabled == true, EPoolAlreadyDisabled);
-    config.enabled = false;
-
-    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, false);
-}
-
-/// Add Pyth Config to the MarginRegistry.
-public fun add_config<Config: store + drop>(
-    self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
-    config: Config,
-) {
-    self.load_inner();
-    self.id.add(ConfigKey<Config> {}, config);
-}
-
-/// Remove Pyth Config from the MarginRegistry.
-public fun remove_config<Config: store + drop>(
-    self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
-): Config {
-    self.load_inner();
-    self.id.remove(ConfigKey<Config> {})
-}
-
-// === Public Helper Functions ===
+// === Public-View Functions ===
 /// Check if a deepbook pool is registered for margin trading
 public fun pool_enabled<BaseAsset, QuoteAsset>(
     self: &MarginRegistry,
@@ -366,26 +414,31 @@ public fun get_deepbook_pool_margin_pool_ids(
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }
 
-/// Enables a package version
-/// Only Admin can enable a package version
-/// This function does not have version restrictions
-public fun enable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
-    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
-    assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
-    self.allowed_versions.insert(version);
-}
-
-/// Disables a package version
-/// Only Admin can disable a package version
-/// This function does not have version restrictions
-public fun disable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
-    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
-    assert!(version != margin_constants::margin_version(), ECannotDisableCurrentVersion);
-    assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
-    self.allowed_versions.remove(&version);
-}
-
 // === Public-Package Functions ===
+#[allow(lint(self_transfer))]
+public(package) fun register_margin_pool(
+    self: &mut MarginRegistry,
+    key: TypeName,
+    margin_pool_id: ID,
+    maintainer_cap: &MaintainerCap,
+    ctx: &mut TxContext,
+) {
+    let inner = self.load_inner_mut();
+    assert!(
+        inner.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
+        EMaintainerCapNotValid,
+    );
+    assert!(!inner.margin_pools.contains(key), EMarginPoolAlreadyExists);
+    inner.margin_pools.add(key, margin_pool_id);
+
+    let margin_pool_cap = MarginPoolCap {
+        id: object::new(ctx),
+        margin_pool_id,
+    };
+
+    transfer::public_transfer(margin_pool_cap, ctx.sender());
+}
+
 public(package) fun load_inner_mut(self: &mut MarginRegistry): &mut MarginRegistryInner {
     let inner: &mut MarginRegistryInner = self.inner.load_value_mut();
     let package_version = margin_constants::margin_version();
