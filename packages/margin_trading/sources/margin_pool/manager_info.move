@@ -308,28 +308,15 @@ public(package) fun calculate_repay_amounts(
         self.quote_per_dollar()
     };
     let max_usd_amount_to_repay = self.calculate_usd_amount_to_repay();
-    let repay_usd = self.calculate_repay_usd(
+    let (max_repay_usd, repay_usd) = self.calculate_repay_usd(
         liquidation_coin_value,
         max_usd_amount_to_repay,
         debt_per_dollar,
     );
 
-    let pool_liquidation_reward = self.pool_liquidation_reward();
-    let float_scaling = constants::float_scaling();
-
     // Check if we're in default and if this is a full liquidation
-    let in_default = self.risk_ratio() < float_scaling;
-
-    let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
-    let user_liquidation_reward = self.user_liquidation_reward();
-    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
-    let liquidation_reward_ratio = float_scaling + total_liquidation_reward;
-    let max_repay_usd = if (in_default) {
-        math::div(assets_in_usd, liquidation_reward_ratio)
-    } else {
-        max_usd_amount_to_repay
-    };
-    let loan_defaulted = in_default && repay_usd == max_repay_usd;
+    let in_default = self.risk_ratio() < constants::float_scaling();
+    let loan_defaulted = in_default && max_repay_usd == repay_usd;
     let repay_amount = math::mul(repay_usd, debt_per_dollar);
 
     (repay_amount, repay_usd, loan_defaulted)
@@ -340,7 +327,7 @@ public(package) fun calculate_repay_usd(
     liquidation_coin_value: u64,
     max_usd_amount_to_repay: u64,
     debt_per_dollar: u64,
-): u64 {
+): (u64, u64) {
     let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
     let user_liquidation_reward = self.user_liquidation_reward();
     let pool_liquidation_reward = self.pool_liquidation_reward();
@@ -360,7 +347,7 @@ public(package) fun calculate_repay_usd(
     };
 
     // Return final USD repay amount
-    max_repay_usd.min(coin_in_usd_minus_pool_reward)
+    (max_repay_usd, max_repay_usd.min(coin_in_usd_minus_pool_reward))
 }
 
 public(package) fun calculate_asset_amounts(
