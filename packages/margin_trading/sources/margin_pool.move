@@ -4,14 +4,16 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
-};
+use margin_trading::margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap};
+use margin_trading::margin_state::{Self, State};
+use margin_trading::position_manager::{Self, PositionManager};
+use margin_trading::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
 use std::type_name::{Self, TypeName};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -34,6 +36,7 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
+// === Events ===
 public struct MarginPoolCreated has copy, drop {
     margin_pool_id: ID,
     maintainer_cap_id: ID,
