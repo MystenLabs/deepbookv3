@@ -51,19 +51,6 @@ public struct MarginRegistryInner has store {
     allowed_maintainers: VecSet<ID>,
 }
 
-public struct MarginAdminCap has key, store {
-    id: UID,
-}
-
-public struct MaintainerCap has key, store {
-    id: UID,
-}
-
-public struct MarginPoolCap has key, store {
-    id: UID,
-    margin_pool_id: ID,
-}
-
 public struct PoolConfig has copy, drop, store {
     base_margin_pool_id: ID,
     quote_margin_pool_id: ID,
@@ -80,6 +67,24 @@ public struct RiskRatios has copy, drop, store {
     target_liquidation_risk_ratio: u64,
 }
 
+public struct ConfigKey<phantom Config> has copy, drop, store {}
+public struct MarginApp has drop {}
+
+// === Caps ===
+public struct MarginAdminCap has key, store {
+    id: UID,
+}
+
+public struct MaintainerCap has key, store {
+    id: UID,
+}
+
+public struct MarginPoolCap has key, store {
+    id: UID,
+    margin_pool_id: ID,
+}
+
+// === Events ===
 public struct MaintainerCapUpdated has copy, drop {
     maintainer_cap_id: ID,
     allowed: bool,
@@ -96,9 +101,6 @@ public struct DeepbookPoolUpdated has copy, drop {
     enabled: bool,
     timestamp: u64,
 }
-
-public struct ConfigKey<phantom Config> has copy, drop, store {}
-public struct MarginApp has drop {}
 
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let id = object::new(ctx);
