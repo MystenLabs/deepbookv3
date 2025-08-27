@@ -50,11 +50,15 @@ public fun quote_info(manager_info: &ManagerInfo): AssetInfo {
     manager_info.quote
 }
 
-public fun asset(asset_info: &AssetInfo): u64 {
+public fun debt(manager_info: &ManagerInfo): u64 {
+    manager_info.base.debt.max(manager_info.quote.debt)
+}
+
+public fun asset_amount(asset_info: &AssetInfo): u64 {
     asset_info.asset
 }
 
-public fun debt(asset_info: &AssetInfo): u64 {
+public fun debt_amount(asset_info: &AssetInfo): u64 {
     asset_info.debt
 }
 
@@ -158,6 +162,12 @@ public(package) fun to_user_liquidation_reward(manager_info: &ManagerInfo, amoun
     math::mul(amount, user_liquidation_reward)
 }
 
+public(package) fun to_pool_liquidation_reward(manager_info: &ManagerInfo, amount: u64): u64 {
+    let pool_liquidation_reward = manager_info.pool_liquidation_reward;
+
+    math::mul(amount, pool_liquidation_reward)
+}
+
 public(package) fun with_liquidation_reward_ratio(manager_info: &ManagerInfo, amount: u64): u64 {
     let liquidation_reward =
         manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward;
@@ -166,10 +176,14 @@ public(package) fun with_liquidation_reward_ratio(manager_info: &ManagerInfo, am
     math::mul(amount, liquidation_reward_ratio)
 }
 
-public(package) fun to_pool_liquidation_reward(manager_info: &ManagerInfo, amount: u64): u64 {
+public(package) fun with_pool_liquidation_reward_ratio(
+    manager_info: &ManagerInfo,
+    amount: u64,
+): u64 {
     let pool_liquidation_reward = manager_info.pool_liquidation_reward;
+    let pool_liquidation_reward_ratio = constants::float_scaling() + pool_liquidation_reward;
 
-    math::mul(amount, pool_liquidation_reward)
+    math::mul(amount, pool_liquidation_reward_ratio)
 }
 
 /// Returns (default_amount_to_repay, default_amount)
@@ -281,6 +295,74 @@ public(package) fun calculate_quantity_to_exit(
     (base_to_exit, quote_to_exit)
 }
 
+/// Calculate repay amounts needed
+/// Returns: (repay_amount, repay_usd, loan_defaulted)
+public(package) fun calculate_repay_amounts(
+    self: &ManagerInfo,
+    debt_is_base: bool,
+    liquidation_coin_value: u64,
+): (u64, u64, bool) {
+    let debt_per_dollar = if (debt_is_base) {
+        self.base_per_dollar()
+    } else {
+        self.quote_per_dollar()
+    };
+    let max_usd_amount_to_repay = self.calculate_usd_amount_to_repay();
+    let repay_usd = self.calculate_repay_usd(
+        liquidation_coin_value,
+        max_usd_amount_to_repay,
+        debt_per_dollar,
+    );
+
+    let pool_liquidation_reward = self.pool_liquidation_reward();
+    let float_scaling = constants::float_scaling();
+
+    // Check if we're in default and if this is a full liquidation
+    let in_default = self.risk_ratio() < float_scaling;
+
+    let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
+    let user_liquidation_reward = self.user_liquidation_reward();
+    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
+    let liquidation_reward_ratio = float_scaling + total_liquidation_reward;
+    let max_repay_usd = if (in_default) {
+        math::div(assets_in_usd, liquidation_reward_ratio)
+    } else {
+        max_usd_amount_to_repay
+    };
+    let loan_defaulted = in_default && repay_usd == max_repay_usd;
+    let repay_amount = math::mul(repay_usd, debt_per_dollar);
+
+    (repay_amount, repay_usd, loan_defaulted)
+}
+
+public(package) fun calculate_repay_usd(
+    self: &ManagerInfo,
+    liquidation_coin_value: u64,
+    max_usd_amount_to_repay: u64,
+    debt_per_dollar: u64,
+): u64 {
+    let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
+    let user_liquidation_reward = self.user_liquidation_reward();
+    let pool_liquidation_reward = self.pool_liquidation_reward();
+    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
+    let float_scaling = constants::float_scaling();
+    let pool_reward_ratio = float_scaling + pool_liquidation_reward;
+    let liquidation_reward_ratio = float_scaling + total_liquidation_reward;
+    let coin_in_usd = math::div(liquidation_coin_value, debt_per_dollar);
+    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio);
+
+    // Default scenarios
+    let in_default = self.risk_ratio() < float_scaling;
+    let max_repay_usd = if (in_default) {
+        math::div(assets_in_usd, liquidation_reward_ratio)
+    } else {
+        max_usd_amount_to_repay
+    };
+
+    // Return final USD repay amount
+    max_repay_usd.min(coin_in_usd_minus_pool_reward)
+}
+
 public(package) fun calculate_asset_amounts(
     manager_info: &ManagerInfo,
     base_usd: u64,
@@ -321,79 +403,4 @@ public(package) fun base_per_dollar(manager_info: &ManagerInfo): u64 {
 
 public(package) fun quote_per_dollar(manager_info: &ManagerInfo): u64 {
     manager_info.quote_per_dollar
-}
-
-/// Calculate repay amounts needed for repay_user_loan function
-/// Returns: (pool_reward_amount, default_amount, repay_amount, repay_amount_with_pool_reward, repay_usd)
-public(package) fun calculate_repay_amounts(
-    self: &ManagerInfo,
-    debt_is_base: bool,
-    liquidation_coin_value: u64,
-): (u64, u64, u64, u64, u64) {
-    let debt_per_dollar = if (debt_is_base) {
-        self.base_per_dollar()
-    } else {
-        self.quote_per_dollar()
-    };
-    let max_usd_amount_to_repay = self.calculate_usd_amount_to_repay();
-    let repay_usd = self.calculate_repay_usd(
-        liquidation_coin_value,
-        max_usd_amount_to_repay,
-        debt_per_dollar,
-    );
-
-    // Get debt and pool reward ratio
-    let debt = self.base.debt.max(self.quote.debt);
-    let pool_liquidation_reward = self.pool_liquidation_reward();
-    let float_scaling = constants::float_scaling();
-    let pool_reward_ratio = float_scaling + pool_liquidation_reward;
-
-    // Check if we're in default and if this is a full liquidation
-    let in_default = self.risk_ratio() < float_scaling;
-
-    let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
-    let user_liquidation_reward = self.user_liquidation_reward();
-    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
-    let liquidation_reward_ratio = float_scaling + total_liquidation_reward;
-    let max_repay_usd = if (in_default) {
-        math::div(assets_in_usd, liquidation_reward_ratio)
-    } else {
-        max_usd_amount_to_repay
-    };
-    let loan_defaulted = in_default && repay_usd == max_repay_usd;
-
-    let repay_amount = math::mul(repay_usd, debt_per_dollar);
-    let repay_amount_with_pool_reward = math::mul(repay_amount, pool_reward_ratio);
-    let pool_reward_amount = repay_amount_with_pool_reward - repay_amount;
-    let default_amount = if (loan_defaulted) debt - repay_amount else 0;
-
-    (pool_reward_amount, default_amount, repay_amount, repay_amount_with_pool_reward, repay_usd)
-}
-
-public(package) fun calculate_repay_usd(
-    self: &ManagerInfo,
-    liquidation_coin_value: u64,
-    max_usd_amount_to_repay: u64,
-    debt_per_dollar: u64,
-): u64 {
-    let assets_in_usd = self.base.usd_asset + self.quote.usd_asset;
-    let user_liquidation_reward = self.user_liquidation_reward();
-    let pool_liquidation_reward = self.pool_liquidation_reward();
-    let total_liquidation_reward = user_liquidation_reward + pool_liquidation_reward;
-    let float_scaling = constants::float_scaling();
-    let pool_reward_ratio = float_scaling + pool_liquidation_reward;
-    let liquidation_reward_ratio = float_scaling + total_liquidation_reward;
-    let coin_in_usd = math::div(liquidation_coin_value, debt_per_dollar);
-    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio);
-
-    // Default scenarios
-    let in_default = self.risk_ratio() < float_scaling;
-    let max_repay_usd = if (in_default) {
-        math::div(assets_in_usd, liquidation_reward_ratio)
-    } else {
-        max_usd_amount_to_repay
-    };
-
-    // Return final USD repay amount
-    max_repay_usd.min(coin_in_usd_minus_pool_reward)
 }
