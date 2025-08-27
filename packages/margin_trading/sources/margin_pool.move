@@ -10,8 +10,8 @@ use margin_trading::{
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
 };
-use std::type_name;
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::{Self, VecSet}};
+use std::type_name::{Self, TypeName};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -34,12 +34,19 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
+public struct MarginPoolCreated has copy, drop {
+    margin_pool_id: ID,
+    maintainer_cap_id: ID,
+    type_name: TypeName,
+    config: ProtocolConfig,
+}
+
 // === Public Functions * ADMIN *===
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
-/// Returns a `MarginPoolCap` that can be used to update the margin pool.
+/// Sends a `MarginPoolCap` to the pool creator.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
-    protocol_config: ProtocolConfig,
+    config: ProtocolConfig,
     maintainer_cap: &MaintainerCap,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -50,15 +57,23 @@ public fun create_margin_pool<Asset>(
         id,
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
-        config: protocol_config,
+        config,
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
     transfer::share_object(margin_pool);
 
-    let key = type_name::get<Asset>();
-    registry.register_margin_pool(key, margin_pool_id, maintainer_cap, ctx);
+    let type_name = type_name::get<Asset>();
+    registry.register_margin_pool(type_name, margin_pool_id, maintainer_cap, ctx);
+
+    let maintainer_cap_id = maintainer_cap.maintainer_cap_id();
+    event::emit(MarginPoolCreated {
+        margin_pool_id,
+        maintainer_cap_id,
+        type_name,
+        config,
+    });
 
     margin_pool_id
 }
