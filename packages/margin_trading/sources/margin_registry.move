@@ -486,6 +486,6 @@ public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap
         inner: versioned::create(margin_constants::margin_version(), margin_registry_inner, ctx),
     };
     let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
-    
+
     (registry, margin_admin_cap)
 }
