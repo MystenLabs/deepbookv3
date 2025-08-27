@@ -14,13 +14,13 @@ use margin_trading::{
     margin_manager,
     margin_pool,
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
-    protocol_config
+    protocol_config,
+    oracle
 };
 use sui::{
     clock::{Self, Clock},
-    coin,
     test_scenario::{Self as test, Scenario, return_shared},
-    test_utils::{Self, destroy}
+    test_utils::destroy
 };
 use pyth::{
     i64,
@@ -35,14 +35,16 @@ use sui::coin::mint_for_testing;
 public struct USDC has drop {}
 public struct USDT has drop {}
 public struct BTC has drop {}
+public struct USD has drop {}
 
 const ADMIN: address = @0x0;
 const USER1: address = @0x1;
 const USER2: address = @0x2;
 
-const MILLION_USDC: u64 = 1_000_000_000_000; // 1M USDC with 6 decimals
-const THOUSAND_USDT: u64 = 1000_000_000; // 1000 USDT with 6 decimals
-const ONE_BTC: u64 = 100_000_000; // 1 BTC with 8 decimals
+/// Pyth price feed IDs for testing
+const USDC_PRICE_FEED_ID: vector<u8> = b"USDC0000000000000000000000000000";
+const USDT_PRICE_FEED_ID: vector<u8> = b"USDT0000000000000000000000000000";
+const BTC_PRICE_FEED_ID: vector<u8> = b"BTC00000000000000000000000000000";
 
 /// Pool and margin constants
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
@@ -105,6 +107,60 @@ fun cleanup_margin_test(
     destroy(maintainer_cap);
     destroy(clock);
     scenario.end();
+}
+
+/// Helper function to set up a complete BTC/USD margin trading environment
+/// Returns: (scenario, clock, registry, admin_cap, maintainer_cap, btc_pool_id, usd_pool_id, deepbook_pool_id)
+fun setup_btc_usd_margin_trading(): (
+    Scenario, Clock, MarginRegistry, MarginAdminCap, MaintainerCap, ID, ID, ID
+) {
+    let (mut scenario, mut clock, mut registry, admin_cap, maintainer_cap) = setup_margin_registry();
+    
+    clock.set_for_testing(1000000);
+    
+    // Add PythConfig to the registry
+    let pyth_config = create_test_pyth_config();
+    margin_registry::add_config(&mut registry, &admin_cap, pyth_config);
+    
+    // Create margin pools
+    scenario.next_tx(ADMIN);
+    let btc_pool_id = create_margin_pool<BTC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
+    let usd_pool_id = create_margin_pool<USDC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
+    
+    // Get MarginPoolCaps
+    scenario.next_tx(ADMIN);
+    let cap1 = scenario.take_from_sender<margin_registry::MarginPoolCap>();
+    let cap2 = scenario.take_from_sender<margin_registry::MarginPoolCap>();
+    
+    let (btc_pool_cap, usd_pool_cap) = if (margin_registry::margin_pool_id(&cap1) == btc_pool_id) {
+        (cap1, cap2)
+    } else {
+        (cap2, cap1)
+    };
+    
+    // Create and enable DeepBook pool
+    let pool_id = create_pool_for_testing<BTC, USDC>(&mut scenario);
+    enable_margin_trading_on_pool<BTC, USDC>(
+        pool_id, &mut registry, &admin_cap, &clock, &mut scenario
+    );
+    
+    // Supply liquidity
+    scenario.next_tx(ADMIN);
+    let mut btc_pool = scenario.take_shared_by_id<margin_pool::MarginPool<BTC>>(btc_pool_id);
+    let mut usd_pool = scenario.take_shared_by_id<margin_pool::MarginPool<USDC>>(usd_pool_id);
+    
+    margin_pool::supply<BTC>(&mut btc_pool, &registry, mint_for_testing<BTC>(10_00000000, scenario.ctx()), &clock, scenario.ctx());
+    margin_pool::supply<USDC>(&mut usd_pool, &registry, mint_for_testing<USDC>(1_000_000_000000, scenario.ctx()), &clock, scenario.ctx());
+    
+    margin_pool::enable_deepbook_pool_for_loan<BTC>(&mut btc_pool, &registry, pool_id, &btc_pool_cap, &clock);
+    margin_pool::enable_deepbook_pool_for_loan<USDC>(&mut usd_pool, &registry, pool_id, &usd_pool_cap, &clock);
+    
+    test::return_shared(btc_pool);
+    test::return_shared(usd_pool);
+    scenario.return_to_sender(btc_pool_cap);
+    scenario.return_to_sender(usd_pool_cap);
+    
+    (scenario, clock, registry, admin_cap, maintainer_cap, btc_pool_id, usd_pool_id, pool_id)
 }
 
 fun create_pool_for_testing<BaseAsset, QuoteAsset>(
@@ -182,9 +238,9 @@ fun test_margin_manager_creation() {
     
     // Test creating multiple margin pools
     scenario.next_tx(USER1);
-    let btc_pool_id = create_margin_pool<BTC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
-    let usdt_pool_id = create_margin_pool<USDT>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
-    let usdc_pool_id = create_margin_pool<USDC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
+    let _btc_pool_id = create_margin_pool<BTC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
+    let _usdt_pool_id = create_margin_pool<USDT>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
+    let _usdc_pool_id = create_margin_pool<USDC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
     
     // Create DeepBook pool and enable margin trading on it
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -197,8 +253,8 @@ fun test_margin_manager_creation() {
     );
     
     scenario.next_tx(ADMIN);  
-    let mut pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&mut pool, &registry, scenario.ctx());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    margin_manager::new<USDC, USDT>(&pool, &registry, scenario.ctx());
     return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -241,24 +297,65 @@ public fun build_pyth_price_info_object(
 #[test_only]
 public fun build_demo_usdc_price_info_object(scenario: &mut Scenario, timestamp: u64): PriceInfoObject {
     // USDC at ~$1.00 (0.99995001)
-    build_pyth_price_info_object(scenario, b"USDC0000000000000000000000000000", 99995001, 98352, 8, timestamp)
+    build_pyth_price_info_object(scenario, USDC_PRICE_FEED_ID, 99995001, 98352, 8, timestamp)
 }
 
 /// Build a demo USDT price info object at $1.00
 #[test_only]
 public fun build_demo_usdt_price_info_object(scenario: &mut Scenario, timestamp: u64): PriceInfoObject {
     // USDT at exactly $1.00
-    build_pyth_price_info_object(scenario, b"USDT0000000000000000000000000000", 100000000, 50000, 8, timestamp)
+    build_pyth_price_info_object(scenario, USDT_PRICE_FEED_ID, 100000000, 50000, 8, timestamp)
 }
 
-/// Test demonstrates the complete setup for borrowing and liquidation
-/// Note: This test shows the structure but skips actual borrowing/liquidation
-/// since that requires complete oracle price feed setup.
+/// Build a BTC price info object at a given price
+#[test_only]
+public fun build_btc_price_info_object(scenario: &mut Scenario, price: u64, timestamp: u64): PriceInfoObject {
+    // BTC price with 8 decimal places (e.g., 60000_00000000 = $60,000)
+    build_pyth_price_info_object(scenario, BTC_PRICE_FEED_ID, price, 1000000, 8, timestamp)
+}
+
+/// Create a test PythConfig for all test coins
+#[test_only]
+fun create_test_pyth_config(): oracle::PythConfig {
+    // For testing, create a simple configuration with minimal setup
+    let mut coin_data_vec = vector[];
+    
+    // Add USDC configuration (6 decimals)
+    let usdc_data = oracle::test_coin_type_data<USDC>(
+        6, // decimals
+        USDC_PRICE_FEED_ID
+    );
+    coin_data_vec.push_back(usdc_data);
+    
+    // Add USDT configuration (6 decimals)
+    let usdt_data = oracle::test_coin_type_data<USDT>(
+        6, // decimals
+        USDT_PRICE_FEED_ID
+    );
+    coin_data_vec.push_back(usdt_data);
+    
+    // Add BTC configuration (8 decimals)
+    let btc_data = oracle::test_coin_type_data<BTC>(
+        8, // decimals
+        BTC_PRICE_FEED_ID
+    );
+    coin_data_vec.push_back(btc_data);
+
+    oracle::new_pyth_config(
+        coin_data_vec,
+        60 // max age 60 seconds
+    )
+}
+
 #[test]
-fun test_margin_trading_setup() {
+fun test_margin_trading_with_oracle() {
     let (mut scenario, mut clock, mut registry, admin_cap, maintainer_cap) = setup_margin_registry();
     
     clock.set_for_testing(1000000);
+    
+    // Add PythConfig to the registry - CRITICAL STEP!
+    let pyth_config = create_test_pyth_config();
+    margin_registry::add_config(&mut registry, &admin_cap, pyth_config);
     
     scenario.next_tx(ADMIN);
     let usdc_pool_id = create_margin_pool<USDC>(&mut registry, &maintainer_cap, &clock, scenario.ctx());
@@ -324,15 +421,160 @@ fun test_margin_trading_setup() {
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, clock.timestamp_ms() / 1000);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, clock.timestamp_ms() / 1000);
     
+    // Now test borrowing with oracle prices
     scenario.next_tx(USER1);
     let mut margin_managers = scenario.take_shared<margin_manager::MarginManager<USDC, USDT>>();
-    let deposit_coin = mint_for_testing<USDC>(100_000_000_000, scenario.ctx()); // 100k USDC
+    let mut usdt_pool = scenario.take_shared_by_id<margin_pool::MarginPool<USDT>>(usdt_pool_id);
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    
+    // User1 deposits 10k USDC as collateral
+    let deposit_coin = mint_for_testing<USDC>(10_000_000_000, scenario.ctx()); // 10k USDC with 6 decimals
     margin_manager::deposit<USDC, USDT, USDC>(&mut margin_managers, &registry, deposit_coin, scenario.ctx());
     
+    // Borrow 5k USDT against the collateral (50% borrow ratio)
+    let request = margin_manager::borrow_quote<USDC, USDT>(
+        &mut margin_managers,
+        &registry,
+        &mut usdt_pool,
+        5_000_000_000, // 5k USDT with 6 decimals
+        &clock,
+        scenario.ctx()
+    );
+    
+    // Prove the request is valid using oracle prices
+    margin_manager::prove_and_destroy_request<USDC, USDT, USDT>(
+        &margin_managers,
+        &registry,
+        &mut usdt_pool,
+        &pool,
+        &usdc_price,
+        &usdt_price,
+        &clock,
+        request
+    );
+    
     test::return_shared(margin_managers);
+    test::return_shared(usdt_pool);
+    test::return_shared(pool);
     
     destroy(usdc_price);
     destroy(usdt_price);
+    
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// Test demonstrates BTC/USD margin trading with borrowing
+#[test]
+fun test_btc_usd_margin_trading() {
+    let (mut scenario, mut clock, registry, admin_cap, maintainer_cap, _btc_pool_id, usd_pool_id, pool_id) = 
+        setup_btc_usd_margin_trading();
+    
+    // BTC price: $60,000
+    let btc_price = build_btc_price_info_object(&mut scenario, 60000_00000000, clock.timestamp_ms() / 1000);
+    let usd_price = build_demo_usdc_price_info_object(&mut scenario, clock.timestamp_ms() / 1000);
+    
+    // USER1 creates margin manager and borrows
+    scenario.next_tx(USER1);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    margin_manager::new<BTC, USDC>(&pool, &registry, scenario.ctx());
+    return_shared(pool);
+    
+    scenario.next_tx(USER1);
+    let mut margin_managers = scenario.take_shared<margin_manager::MarginManager<BTC, USDC>>();
+    let mut usd_pool = scenario.take_shared_by_id<margin_pool::MarginPool<USDC>>(usd_pool_id);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    
+    // Deposit 0.5 BTC as collateral
+    let deposit = mint_for_testing<BTC>(50000000, scenario.ctx()); // 0.5 BTC
+    margin_manager::deposit<BTC, USDC, BTC>(&mut margin_managers, &registry, deposit, scenario.ctx());
+    
+    let request = margin_manager::borrow_quote<BTC, USDC>(
+        &mut margin_managers,
+        &registry,
+        &mut usd_pool,
+        15_000_000000, // $15,000
+        &clock,
+        scenario.ctx()
+    );
+    
+    // Prove the borrow is valid
+    margin_manager::prove_and_destroy_request<BTC, USDC, USDC>(
+        &margin_managers,
+        &registry,
+        &mut usd_pool,
+        &pool,
+        &btc_price,
+        &usd_price,
+        &clock,
+        request
+    );
+    
+    test::return_shared(margin_managers);
+    test::return_shared(usd_pool);
+    test::return_shared(pool);
+    
+    destroy(btc_price);
+    destroy(usd_price);
+    
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// Test demonstrates depositing USD and borrowing BTC at near-max LTV
+#[test]
+fun test_usd_deposit_btc_borrow() {
+    let (mut scenario, mut clock, registry, admin_cap, maintainer_cap, btc_pool_id, _usd_pool_id, pool_id) = 
+        setup_btc_usd_margin_trading();
+    
+    // Set initial prices
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000_00000000, clock.timestamp_ms() / 1000);
+    let usd_price = build_demo_usdc_price_info_object(&mut scenario, clock.timestamp_ms() / 1000);
+    
+    scenario.next_tx(USER1);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    margin_manager::new<BTC, USDC>(&pool, &registry, scenario.ctx());
+    return_shared(pool);
+    
+    scenario.next_tx(USER1);
+    let mut margin_managers = scenario.take_shared<margin_manager::MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<margin_pool::MarginPool<BTC>>(btc_pool_id);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    
+    // Deposit 75000 USD
+    margin_manager::deposit<BTC, USDC, USDC>(
+        &mut margin_managers, 
+        &registry, 
+        mint_for_testing<USDC>(75_000_000000, scenario.ctx()),
+        scenario.ctx()
+    );
+    
+    // Borrow 0.95 BTC 
+    let request = margin_manager::borrow_base<BTC, USDC>(
+        &mut margin_managers,
+        &registry,
+        &mut btc_pool,
+        95000000, // 0.95 BTC
+        &clock,
+        scenario.ctx()
+    );
+    
+    // Prove borrow is valid
+    margin_manager::prove_and_destroy_request<BTC, USDC, BTC>(
+        &margin_managers, &registry, &mut btc_pool, &pool,
+        &btc_price, &usd_price, &clock, request
+    );
+    
+    // 20% BTC price increase to $60,000
+    clock.set_for_testing(1000001);
+    let btc_increased = build_btc_price_info_object(&mut scenario, 60000_00000000, clock.timestamp_ms() / 1000);
+    
+    
+    test::return_shared(margin_managers);
+    test::return_shared(btc_pool);
+    test::return_shared(pool);
+    
+    destroy(btc_price);
+    destroy(usd_price);
+    destroy(btc_increased);
     
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
