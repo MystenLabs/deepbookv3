@@ -6,18 +6,18 @@ use margin_trading::margin_constants;
 const EInvalidRiskParam: u64 = 1;
 const EInvalidProtocolSpread: u64 = 2;
 
-public struct ProtocolConfig has drop, store {
+public struct ProtocolConfig has copy, drop, store {
     margin_pool_config: MarginPoolConfig,
     interest_config: InterestConfig,
 }
 
-public struct MarginPoolConfig has drop, store {
+public struct MarginPoolConfig has copy, drop, store {
     supply_cap: u64,
     max_utilization_rate: u64,
     protocol_spread: u64,
 }
 
-public struct InterestConfig has drop, store {
+public struct InterestConfig has copy, drop, store {
     base_rate: u64,
     base_slope: u64,
     optimal_utilization: u64,
