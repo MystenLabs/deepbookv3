@@ -695,18 +695,18 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
     let balance_manager = self.balance_manager_mut();
     pool.cancel_all_orders(balance_manager, &trade_proof, clock, ctx);
 
-    // Step 1: Calculate liquidation amounts
-    let amounts = manager_info.calculate_liquidation_amounts<DebtAsset>(
-        &liquidation_coin,
-    );
+    // Step 1: Calculate liquidation amounts using helper functions
+    let debt_is_base = self.has_base_debt();
     let (
-        debt_is_base,
-        repay_amount,
         mut pool_reward_amount,
         mut default_amount,
-        repay_usd,
+        repay_amount,
         repay_amount_with_pool_reward,
-    ) = amounts.liquidation_amounts_info();
+        repay_usd,
+    ) = manager_info.calculate_repay_amounts(
+        debt_is_base,
+        liquidation_coin.value(),
+    );
 
     // Step 2: Repay the user's loan
     let repay_coin = liquidation_coin.split(repay_amount_with_pool_reward, ctx);
