@@ -5,11 +5,10 @@ module margin_trading::margin_pool;
 
 use deepbook::math;
 use margin_trading::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
+    margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_manager::{Self, ReferralManager, ReferralCap}
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
 };
 use std::type_name;
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, vec_set::{Self, VecSet}};
@@ -32,7 +31,6 @@ public struct MarginPool<phantom Asset> has key, store {
     config: ProtocolConfig,
     protocol_profit: u64,
     positions: PositionManager,
-    referral_manager: ReferralManager,
     allowed_deepbook_pools: VecSet<ID>,
 }
 
@@ -55,7 +53,6 @@ public fun create_margin_pool<Asset>(
         config: protocol_config,
         protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
-        referral_manager: referral_manager::empty(),
         allowed_deepbook_pools: vec_set::empty(),
     };
     transfer::share_object(margin_pool);
@@ -90,17 +87,6 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
-}
-
-public fun mint_referral_cap<Asset>(
-    self: &mut MarginPool<Asset>,
-    registry: &MarginRegistry,
-    _cap: &MarginAdminCap,
-    ctx: &mut TxContext,
-): ReferralCap {
-    registry.load_inner();
-    let current_index = self.state.supply_index();
-    self.referral_manager.mint_referral_cap(current_index, ctx)
 }
 
 public fun update_interest_params<Asset>(
@@ -148,7 +134,6 @@ public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     coin: Coin<Asset>,
-    referral: Option<ID>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
@@ -156,18 +141,11 @@ public fun supply<Asset>(
     self.update_state(clock);
 
     let supplier = ctx.sender();
-    let (referred_supply_shares, previous_referral) = self
-        .positions
-        .reset_referral_supply_shares(supplier);
-    self
-        .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
     let supply_amount = coin.value();
     let supply_shares = self.state.to_supply_shares(supply_amount);
     self.state.increase_total_supply(supply_amount);
-    let new_supply_shares = self.positions.increase_user_supply_shares(supplier, supply_shares);
-    self.referral_manager.increase_referral_supply_shares(referral, new_supply_shares);
+    self.positions.increase_user_supply_shares(supplier, supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -187,12 +165,6 @@ public fun withdraw<Asset>(
     self.update_state(clock);
 
     let supplier = ctx.sender();
-    let (referred_supply_shares, previous_referral) = self
-        .positions
-        .reset_referral_supply_shares(supplier);
-    self
-        .referral_manager
-        .decrease_referral_supply_shares(previous_referral, referred_supply_shares);
 
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
@@ -213,22 +185,6 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 }
 
 // === Public-Package Functions ===
-public(package) fun claim_referral_rewards<Asset>(
-    self: &mut MarginPool<Asset>,
-    referral_cap: &ReferralCap,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<Asset> {
-    self.update_state(clock);
-    let share_value_appreciated = self
-        .referral_manager
-        .claim_referral_rewards(referral_cap.id(), self.state.supply_index());
-    let reward_amount = math::mul(share_value_appreciated, self.config.protocol_spread());
-    self.protocol_profit = self.protocol_profit - reward_amount;
-
-    self.vault.split(reward_amount).into_coin(ctx)
-}
-
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
     let interest_accrued = self.state.update(&self.config, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
