@@ -39,6 +39,7 @@ public struct MarginPoolCreated has copy, drop {
     maintainer_cap_id: ID,
     asset_type: TypeName,
     config: ProtocolConfig,
+    timestamp: u64,
 }
 
 public struct DeepbookPoolEnabled has copy, drop {
@@ -46,18 +47,21 @@ public struct DeepbookPoolEnabled has copy, drop {
     deepbook_pool_id: ID,
     pool_cap_id: ID,
     enabled: bool,
+    timestamp: u64,
 }
 
 public struct InterestParamsUpdated has copy, drop {
     margin_pool_id: ID,
     pool_cap_id: ID,
     interest_config: InterestConfig,
+    timestamp: u64,
 }
 
 public struct MarginPoolConfigUpdated has copy, drop {
     margin_pool_id: ID,
     pool_cap_id: ID,
     margin_pool_config: MarginPoolConfig,
+    timestamp: u64,
 }
 
 public struct ProtocolProfitWithdrawn has copy, drop {
@@ -65,6 +69,7 @@ public struct ProtocolProfitWithdrawn has copy, drop {
     pool_cap_id: ID,
     asset_type: TypeName,
     profit: u64,
+    timestamp: u64,
 }
 
 public struct AssetSupplied has copy, drop {
@@ -73,6 +78,7 @@ public struct AssetSupplied has copy, drop {
     supplier: address,
     supply_amount: u64,
     supply_shares: u64,
+    timestamp: u64,
 }
 
 public struct AssetWithdrawn has copy, drop {
@@ -81,6 +87,7 @@ public struct AssetWithdrawn has copy, drop {
     supplier: address,
     withdrawal_amount: u64,
     withdrawal_shares: u64,
+    timestamp: u64,
 }
 
 // === Public Functions * ADMIN *===
@@ -115,6 +122,7 @@ public fun create_margin_pool<Asset>(
         maintainer_cap_id,
         asset_type,
         config,
+        timestamp: clock.timestamp_ms(),
     });
 
     margin_pool_id
@@ -126,6 +134,7 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
@@ -137,6 +146,7 @@ public fun enable_deepbook_pool_for_loan<Asset>(
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         deepbook_pool_id,
         enabled: true,
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -146,6 +156,7 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     registry: &MarginRegistry,
     deepbook_pool_id: ID,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
@@ -157,6 +168,7 @@ public fun disable_deepbook_pool_for_loan<Asset>(
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         deepbook_pool_id,
         enabled: false,
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -165,6 +177,7 @@ public fun update_interest_params<Asset>(
     registry: &MarginRegistry,
     interest_config: InterestConfig,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
@@ -174,6 +187,7 @@ public fun update_interest_params<Asset>(
         margin_pool_id: self.id(),
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         interest_config,
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -182,6 +196,7 @@ public fun update_margin_pool_config<Asset>(
     registry: &MarginRegistry,
     margin_pool_config: MarginPoolConfig,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
@@ -191,6 +206,7 @@ public fun update_margin_pool_config<Asset>(
         margin_pool_id: self.id(),
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         margin_pool_config,
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -199,6 +215,7 @@ public fun withdraw_protocol_profit<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     margin_pool_cap: &MarginPoolCap,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
@@ -215,6 +232,7 @@ public fun withdraw_protocol_profit<Asset>(
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         asset_type: type_name::get<Asset>(),
         profit,
+        timestamp: clock.timestamp_ms(),
     });
 
     coin
@@ -250,6 +268,7 @@ public fun supply<Asset>(
         supplier,
         supply_amount,
         supply_shares,
+        timestamp: clock.timestamp_ms(),
     });
 }
 
@@ -284,6 +303,7 @@ public fun withdraw<Asset>(
         supplier,
         withdrawal_amount,
         withdrawal_shares,
+        timestamp: clock.timestamp_ms(),
     });
 
     coin
