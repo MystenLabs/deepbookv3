@@ -3,25 +3,20 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    constants,
+    math,
+    pool::Pool
 };
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
-use margin_trading::manager_info::{Self, ManagerInfo};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::{
+    manager_info::{Self, ManagerInfo},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{clock::Clock, coin::Coin, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -69,6 +64,7 @@ public struct Fulfillment<phantom DebtAsset> {
     default_amount: u64,
     base_exit_amount: u64,
     quote_exit_amount: u64,
+    risk_ratio: u64,
 }
 
 /// Request_type: 0 for withdraw, 1 for borrow
@@ -107,6 +103,7 @@ public struct LiquidationEvent has copy, drop {
     pool_reward_amount: u64,
     default_amount: u64,
     user_reward_usd: u64,
+    risk_ratio: u64,
 }
 
 // === Public Functions - Margin Manager ===
@@ -458,6 +455,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     };
 
     let user_reward_usd = fulfillment.user_reward_usd;
+    let risk_ratio = fulfillment.risk_ratio;
 
     margin_pool.repay_with_reward(
         repay_coin,
@@ -480,6 +478,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         pool_reward_amount,
         user_reward_usd,
         default_amount,
+        risk_ratio,
     });
 
     let Fulfillment {
@@ -490,6 +489,7 @@ public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
         default_amount: _,
         base_exit_amount: _,
         quote_exit_amount: _,
+        risk_ratio: _,
     } = fulfillment;
 
     (return_base, return_quote)
@@ -548,6 +548,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     });
 
     let user_reward_usd = fulfillment.user_reward_usd;
+    let risk_ratio = fulfillment.risk_ratio;
 
     event::emit(LiquidationEvent {
         margin_manager_id,
@@ -556,6 +557,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         pool_reward_amount,
         user_reward_usd,
         default_amount,
+        risk_ratio,
     });
 
     let Fulfillment {
@@ -566,6 +568,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         default_amount: _,
         base_exit_amount: _,
         quote_exit_amount: _,
+        risk_ratio: _,
     } = fulfillment;
 
     coin
@@ -671,7 +674,8 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
         pool_id,
     );
-    assert!(registry.can_liquidate(pool_id, manager_info.risk_ratio()), ECannotLiquidate);
+    let risk_ratio = manager_info.risk_ratio();
+    assert!(registry.can_liquidate(pool_id, risk_ratio), ECannotLiquidate);
     assert!(!self.active_liquidation, ECannotLiquidate);
 
     // Cancel all orders to make assets available for liquidation
@@ -733,6 +737,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         pool_reward_amount,
         default_amount,
         user_reward_usd,
+        risk_ratio,
     });
 
     (base_coin, quote_coin, liquidation_coin)
@@ -913,7 +918,8 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
     manager_info: &ManagerInfo,
     ctx: &mut TxContext,
 ): (Fulfillment<DebtAsset>, Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let in_default = manager_info.risk_ratio() < constants::float_scaling(); // false
+    let risk_ratio = manager_info.risk_ratio();
+    let in_default = risk_ratio < constants::float_scaling(); // false
     // Manager is in default if asset / debt < 1
     let (default_amount_to_repay, default_amount) = manager_info.default_info(in_default); // (0, 0)
 
@@ -958,6 +964,7 @@ fun produce_fulfillment<BaseAsset, QuoteAsset, DebtAsset>(
             default_amount,
             base_exit_amount,
             quote_exit_amount,
+            risk_ratio,
         },
         base,
         quote,

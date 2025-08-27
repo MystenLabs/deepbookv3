@@ -4,17 +4,17 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
+use deepbook::{constants, math, pool::Pool};
 use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
-use sui::clock::Clock;
-use sui::dynamic_field as df;
-use sui::event;
-use sui::table::{Self, Table};
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{
+    clock::Clock,
+    dynamic_field as df,
+    event,
+    table::{Self, Table},
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
