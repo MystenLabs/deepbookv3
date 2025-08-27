@@ -530,3 +530,23 @@ fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
         leverage_factor, // 1 + 0.25 = 1.25x
     }
 }
+
+#[test_only]
+public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap) {
+    let id = object::new(ctx);
+    let margin_registry_inner = MarginRegistryInner {
+        registry_id: id.to_inner(),
+        allowed_versions: vec_set::singleton(margin_constants::margin_version()),
+        pool_registry: table::new(ctx),
+        margin_pools: table::new(ctx),
+        allowed_maintainers: vec_set::empty(),
+    };
+
+    let registry = MarginRegistry {
+        id,
+        inner: versioned::create(margin_constants::margin_version(), margin_registry_inner, ctx),
+    };
+    let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
+
+    (registry, margin_admin_cap)
+}
