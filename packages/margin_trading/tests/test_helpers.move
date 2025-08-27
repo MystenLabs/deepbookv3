@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::test_utils;
+module margin_trading::test_helpers;
 
 use margin_trading::{
     margin_pool,
@@ -16,10 +16,8 @@ use sui::{
     test_scenario::{Scenario, begin, return_shared}
 };
 
-const ADMIN: address = @0x1;
-
 public fun setup_test(): (Scenario, MarginAdminCap) {
-    let mut test = begin(ADMIN);
+    let mut test = begin(test_constants::admin());
     let clock = clock::create_for_testing(test.ctx());
 
     let admin_cap = margin_registry::new_for_testing(test.ctx());
@@ -35,7 +33,7 @@ public fun create_margin_pool<Asset>(
     protocol_config: ProtocolConfig,
     clock: &Clock,
 ): ID {
-    test.next_tx(ADMIN);
+    test.next_tx(test_constants::admin());
 
     let mut registry = test.take_shared<MarginRegistry>();
 

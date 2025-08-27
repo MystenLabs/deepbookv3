@@ -13,6 +13,13 @@ const BASE_SLOPE: u64 = 100_000_000; // 10%
 const OPTIMAL_UTILIZATION: u64 = 800_000_000; // 80%
 const EXCESS_SLOPE: u64 = 2_000_000_000; // 200%
 
+const USER1: address = @0xA;
+const USER2: address = @0xB;
+const ADMIN: address = @0x1;
+
+public struct USDC has drop {}
+public struct USDT has drop {}
+
 public fun supply_cap(): u64 {
     SUPPLY_CAP
 }
@@ -39,4 +46,16 @@ public fun optimal_utilization(): u64 {
 
 public fun excess_slope(): u64 {
     EXCESS_SLOPE
+}
+
+public fun user1(): address {
+    USER1
+}
+
+public fun user2(): address {
+    USER2
+}
+
+public fun admin(): address {
+    ADMIN
 }
