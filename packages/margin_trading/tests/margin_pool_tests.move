@@ -7,7 +7,8 @@ module margin_trading::margin_pool_tests;
 use margin_trading::{
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
-    protocol_config
+    protocol_config,
+    test_constants
 };
 use sui::{
     clock::{Self, Clock},
@@ -23,11 +24,6 @@ const USER1: address = @0x1;
 const USER2: address = @0x2;
 const ADMIN: address = @0x0;
 
-// Test constants
-const SUPPLY_CAP: u64 = 1_000_000_000_000; // 1M tokens with 9 decimals
-const MAX_UTILIZATION_RATE: u64 = 800_000_000; // 80% with 9 decimals
-const PROTOCOL_SPREAD: u64 = 100_000_000; // 10% with 9 decimals
-
 fun setup_test(): (Scenario, Clock, MarginRegistry, MarginAdminCap, MaintainerCap, ID) {
     let mut scenario = test::begin(ADMIN);
     let clock = clock::create_for_testing(scenario.ctx());
@@ -41,9 +37,9 @@ fun setup_test(): (Scenario, Clock, MarginRegistry, MarginAdminCap, MaintainerCa
     );
 
     let margin_pool_config = protocol_config::new_margin_pool_config(
-        SUPPLY_CAP,
-        MAX_UTILIZATION_RATE,
-        PROTOCOL_SPREAD,
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
     );
     let interest_config = protocol_config::new_interest_config(
         50_000_000, // base_rate: 5% with 9 decimals
@@ -126,7 +122,7 @@ fun test_supply_cap_enforcement() {
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
 
     scenario.next_tx(USER1);
-    let supply_coin = mint_coin<USDC>(SUPPLY_CAP + 1, scenario.ctx());
+    let supply_coin = mint_coin<USDC>(test_constants::supply_cap() + 1, scenario.ctx());
 
     // This should fail due to supply cap
     pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
@@ -361,8 +357,8 @@ fun test_invalid_margin_pool_cap() {
     scenario.next_tx(ADMIN);
     let margin_pool_config2 = protocol_config::new_margin_pool_config(
         500_000_000_000, // Different supply cap
-        MAX_UTILIZATION_RATE,
-        PROTOCOL_SPREAD,
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
     );
     let interest_config2 = protocol_config::new_interest_config(
         50_000_000,
