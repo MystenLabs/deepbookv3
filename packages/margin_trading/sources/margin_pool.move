@@ -67,6 +67,22 @@ public struct ProtocolProfitWithdrawn has copy, drop {
     profit: u64,
 }
 
+public struct AssetSupplied has copy, drop {
+    margin_pool_id: ID,
+    asset_type: TypeName,
+    supplier: address,
+    supply_amount: u64,
+    supply_shares: u64,
+}
+
+public struct AssetWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    asset_type: TypeName,
+    supplier: address,
+    withdrawal_amount: u64,
+    withdrawal_shares: u64,
+}
+
 // === Public Functions * ADMIN *===
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 /// Sends a `MarginPoolCap` to the pool creator.
@@ -227,6 +243,14 @@ public fun supply<Asset>(
     self.vault.join(balance);
 
     assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+
+    event::emit(AssetSupplied {
+        margin_pool_id: self.id(),
+        asset_type: type_name::get<Asset>(),
+        supplier,
+        supply_amount,
+        supply_shares,
+    });
 }
 
 /// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
@@ -245,14 +269,24 @@ public fun withdraw<Asset>(
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_amount_shares = self.state.to_supply_shares(withdrawal_amount);
-    assert!(withdrawal_amount_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
+    let withdrawal_shares = self.state.to_supply_shares(withdrawal_amount);
+    assert!(withdrawal_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 
     self.state.decrease_total_supply(withdrawal_amount);
-    self.positions.decrease_user_supply_shares(supplier, withdrawal_amount_shares);
+    self.positions.decrease_user_supply_shares(supplier, withdrawal_shares);
 
-    self.vault.split(withdrawal_amount).into_coin(ctx)
+    let coin = self.vault.split(withdrawal_amount).into_coin(ctx);
+
+    event::emit(AssetWithdrawn {
+        margin_pool_id: self.id(),
+        asset_type: type_name::get<Asset>(),
+        supplier,
+        withdrawal_amount,
+        withdrawal_shares,
+    });
+
+    coin
 }
 
 // === Public-View Functions ===
