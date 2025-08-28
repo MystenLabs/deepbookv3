@@ -23,14 +23,14 @@ const EMarginTradingNotAllowedInPool: u64 = 2;
 const EInvalidMarginManagerOwner: u64 = 3;
 const ECannotHaveLoanInMoreThanOneMarginPool: u64 = 4;
 const EIncorrectDeepBookPool: u64 = 5;
-const EDeepbookPoolNotAllowedForLoan: u64 = 7;
-const EInvalidMarginManager: u64 = 8;
-const EBorrowRiskRatioExceeded: u64 = 9;
-const EWithdrawRiskRatioExceeded: u64 = 10;
-const EInvalidDebtAsset: u64 = 11;
-const ECannotLiquidate: u64 = 12;
-const ERepaymentNotEnough: u64 = 14;
-const EIncorrectMarginPool: u64 = 15;
+const EDeepbookPoolNotAllowedForLoan: u64 = 6;
+const EInvalidMarginManager: u64 = 7;
+const EBorrowRiskRatioExceeded: u64 = 8;
+const EWithdrawRiskRatioExceeded: u64 = 9;
+const EInvalidDebtAsset: u64 = 10;
+const ECannotLiquidate: u64 = 11;
+const ERepaymentNotEnough: u64 = 12;
+const EIncorrectMarginPool: u64 = 13;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
