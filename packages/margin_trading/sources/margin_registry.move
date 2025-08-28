@@ -51,19 +51,6 @@ public struct MarginRegistryInner has store {
     allowed_maintainers: VecSet<ID>,
 }
 
-public struct MarginAdminCap has key, store {
-    id: UID,
-}
-
-public struct MaintainerCap has key, store {
-    id: UID,
-}
-
-public struct MarginPoolCap has key, store {
-    id: UID,
-    margin_pool_id: ID,
-}
-
 public struct PoolConfig has copy, drop, store {
     base_margin_pool_id: ID,
     quote_margin_pool_id: ID,
@@ -80,6 +67,24 @@ public struct RiskRatios has copy, drop, store {
     target_liquidation_risk_ratio: u64,
 }
 
+public struct ConfigKey<phantom Config> has copy, drop, store {}
+public struct MarginApp has drop {}
+
+// === Caps ===
+public struct MarginAdminCap has key, store {
+    id: UID,
+}
+
+public struct MaintainerCap has key, store {
+    id: UID,
+}
+
+public struct MarginPoolCap has key, store {
+    id: UID,
+    margin_pool_id: ID,
+}
+
+// === Events ===
 public struct MaintainerCapUpdated has copy, drop {
     maintainer_cap_id: ID,
     allowed: bool,
@@ -96,9 +101,6 @@ public struct DeepbookPoolUpdated has copy, drop {
     enabled: bool,
     timestamp: u64,
 }
-
-public struct ConfigKey<phantom Config> has copy, drop, store {}
-public struct MarginApp has drop {}
 
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let id = object::new(ctx);
@@ -532,7 +534,7 @@ fun calculate_risk_ratios(leverage_factor: u64): RiskRatios {
 }
 
 #[test_only]
-public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap) {
+public fun new_for_testing(ctx: &mut TxContext): MarginAdminCap {
     let id = object::new(ctx);
     let margin_registry_inner = MarginRegistryInner {
         registry_id: id.to_inner(),
@@ -548,5 +550,7 @@ public fun new_for_testing(ctx: &mut TxContext): (MarginRegistry, MarginAdminCap
     };
     let margin_admin_cap = MarginAdminCap { id: object::new(ctx) };
 
-    (registry, margin_admin_cap)
+    transfer::share_object(registry);
+
+    margin_admin_cap
 }

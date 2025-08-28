@@ -34,6 +34,7 @@ public struct MarginPool<phantom Asset> has key, store {
     allowed_deepbook_pools: VecSet<ID>,
 }
 
+// === Events ===
 public struct MarginPoolCreated has copy, drop {
     margin_pool_id: ID,
     maintainer_cap_id: ID,
