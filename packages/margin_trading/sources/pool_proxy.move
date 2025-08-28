@@ -36,11 +36,10 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -71,11 +70,10 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(pool.margin_trading_enabled(), EPoolNotEnabledForMarginTrading);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_market_order(
         balance_manager,

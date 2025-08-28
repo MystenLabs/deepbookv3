@@ -118,7 +118,7 @@ public fun new<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
-    assert!(pool.margin_trading_enabled(), EMarginTradingNotAllowedInPool);
+    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
 

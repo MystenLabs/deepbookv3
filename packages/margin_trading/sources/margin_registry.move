@@ -244,8 +244,6 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     assert!(config.enabled == false, EPoolAlreadyEnabled);
     config.enabled = true;
 
-    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, true);
-
     event::emit(DeepbookPoolUpdated {
         pool_id,
         enabled: true,
@@ -267,8 +265,6 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     let config = inner.pool_registry.borrow_mut(pool_id);
     assert!(config.enabled == true, EPoolAlreadyDisabled);
     config.enabled = false;
-
-    pool.update_margin_status<MarginApp, BaseAsset, QuoteAsset>(MarginApp {}, false);
 
     event::emit(DeepbookPoolUpdated {
         pool_id,
