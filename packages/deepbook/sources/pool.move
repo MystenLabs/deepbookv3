@@ -4,26 +4,30 @@
 /// Public-facing interface for the package.
 module deepbook::pool;
 
-use deepbook::account::Account;
-use deepbook::balance_manager::{Self, BalanceManager, TradeProof};
-use deepbook::big_vector::BigVector;
-use deepbook::book::{Self, Book};
-use deepbook::constants;
-use deepbook::deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added};
-use deepbook::ewma::{init_ewma_state, EWMAState};
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::{Self, OrderInfo};
-use deepbook::registry::{DeepbookAdminCap, Registry};
-use deepbook::state::{Self, State};
-use deepbook::vault::{Self, Vault, FlashLoan};
+use deepbook::{
+    account::Account,
+    balance_manager::{Self, BalanceManager, TradeProof},
+    big_vector::BigVector,
+    book::{Self, Book},
+    constants,
+    deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
+    ewma::{init_ewma_state, EWMAState},
+    math,
+    order::Order,
+    order_info::{Self, OrderInfo},
+    registry::{DeepbookAdminCap, Registry},
+    state::{Self, State},
+    vault::{Self, Vault, FlashLoan}
+};
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::{Self, Coin};
-use sui::dynamic_field as df;
-use sui::event;
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{
+    clock::Clock,
+    coin::{Self, Coin},
+    dynamic_field as df,
+    event,
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 use token::deep::{DEEP, ProtectedTreasury};
 
 use fun df::add as UID.add;
@@ -267,10 +271,10 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     let is_bid = quote_quantity > 0;
     if (is_bid) {
         (base_quantity, _, _) = if (pay_with_deep) {
-                self.get_quantity_out(0, quote_quantity, clock)
-            } else {
-                self.get_quantity_out_input_fee(0, quote_quantity, clock)
-            }
+            self.get_quantity_out(0, quote_quantity, clock)
+        } else {
+            self.get_quantity_out_input_fee(0, quote_quantity, clock)
+        }
     } else {
         if (!pay_with_deep) {
             base_quantity =
