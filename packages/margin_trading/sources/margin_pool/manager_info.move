@@ -143,25 +143,44 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
     }
 }
 
-public(package) fun produce_fulfillment(manager_info: &ManagerInfo, manager_id: ID): Fulfillment {
-    let (repay_amount, default_amount) = if (
-        manager_info.risk_ratio >= constants::float_scaling()
-    ) {
-        (0, 0)
+public(package) fun produce_fulfillment(self: &ManagerInfo, manager_id: ID): Fulfillment {
+    let repay_usd_with_rewards = self.debt_usd.min(self.asset_usd);
+    let liquidation_reward = self.user_liquidation_reward + self.pool_liquidation_reward;
+    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
+
+    let usd_to_repay = math::div(repay_usd_with_rewards, liquidation_reward_ratio);
+    let mut pool_reward_usd = math::mul(usd_to_repay, self.pool_liquidation_reward);
+
+    let in_default = self.debt_usd > self.asset_usd;
+    let default_usd = if (in_default) {
+        let default_usd = self.debt_usd - usd_to_repay;
+        let cancel = default_usd.min(pool_reward_usd);
+        pool_reward_usd = pool_reward_usd - cancel;
+        default_usd - cancel
     } else {
-        let liquidation_reward =
-            manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward;
-        let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
-        let debt = manager_info.base.debt.max(manager_info.quote.debt);
-        let repay_with_liquidation_reward = math::mul(debt, manager_info.risk_ratio);
-        let quantity_to_repay = math::div(repay_with_liquidation_reward, liquidation_reward_ratio);
-        let repay_amount = math::div(quantity_to_repay, manager_info.debt_per_dollar);
-        let default_amount = debt - repay_amount;
-        (repay_amount, default_amount)
+        0
     };
 
-    let pool_reward_amount = manager_info.to_pool_liquidation_reward(repay_amount);
-    let (base_exit_amount, quote_exit_amount) = manager_info.calculate_exit_amounts(repay_amount);
+    let base_usd_asset = self.base.usd_asset;
+    let quote_usd_asset = self.quote.usd_asset;
+    let (base_usd, quote_usd) = if (self.base.debt > 0) {
+        let base_usd = repay_usd_with_rewards.min(base_usd_asset);
+        let repay_usd_with_rewards = repay_usd_with_rewards - base_usd;
+        let quote_usd = repay_usd_with_rewards.min(quote_usd_asset);
+        (base_usd, quote_usd)
+    } else {
+        let quote_usd = repay_usd_with_rewards.min(quote_usd_asset);
+        let repay_usd_with_rewards = repay_usd_with_rewards - quote_usd;
+        let base_usd = repay_usd_with_rewards.min(base_usd_asset);
+        (base_usd, quote_usd)
+    };
+
+    let repay_amount = math::div(usd_to_repay, self.debt_per_dollar);
+    let pool_reward_amount = math::div(pool_reward_usd, self.debt_per_dollar);
+    let default_amount = math::div(default_usd, self.debt_per_dollar);
+    let base_exit_amount = math::div(base_usd, self.base_per_dollar);
+    let quote_exit_amount = math::div(quote_usd, self.quote_per_dollar);
+
     Fulfillment {
         manager_id,
         repay_amount,
@@ -169,157 +188,8 @@ public(package) fun produce_fulfillment(manager_info: &ManagerInfo, manager_id: 
         default_amount,
         base_exit_amount,
         quote_exit_amount,
-        risk_ratio: manager_info.risk_ratio,
+        risk_ratio: self.risk_ratio,
     }
-}
-
-public(package) fun with_liquidation_reward_ratio(manager_info: &ManagerInfo, amount: u64): u64 {
-    let liquidation_reward =
-        manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward;
-    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
-
-    math::mul(amount, liquidation_reward_ratio)
-}
-
-public(package) fun to_pool_liquidation_reward(manager_info: &ManagerInfo, amount: u64): u64 {
-    let pool_liquidation_reward = manager_info.pool_liquidation_reward;
-
-    math::mul(amount, pool_liquidation_reward)
-}
-
-public(package) fun with_pool_reward_ratio(manager_info: &ManagerInfo, amount: u64): u64 {
-    let pool_reward_ratio = constants::float_scaling() + manager_info.pool_liquidation_reward;
-    math::mul(amount, pool_reward_ratio)
-}
-
-public(package) fun debt_usd_to_quantity(manager_info: &ManagerInfo, debt_usd: u64): u64 {
-    math::div(debt_usd, manager_info.debt_per_dollar)
-}
-
-public(package) fun calculate_usd_amount_to_repay(manager_info: &ManagerInfo): u64 {
-    let in_default = manager_info.risk_ratio < constants::float_scaling();
-    let debt_usd = manager_info.debt_usd;
-    let liquidation_reward =
-        manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward;
-
-    let usd_to_repay = if (in_default) {
-        let repay_usd_with_liquidation_reward = math::mul(debt_usd, manager_info.risk_ratio);
-        let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
-        let usd_to_repay = math::div(repay_usd_with_liquidation_reward, liquidation_reward_ratio);
-
-        usd_to_repay
-    } else {
-        let target_ratio = manager_info.target_ratio; // 1.25
-        let assets_in_usd = manager_info.asset_usd; // 1100
-        let numerator = math::mul(target_ratio, debt_usd) - assets_in_usd; // 1250 - 1100 = 150
-        let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - 1.05 = 0.2
-
-        math::div(numerator, denominator) // 750
-    };
-
-    usd_to_repay
-}
-
-public(package) fun calculate_exit_amounts(manager_info: &ManagerInfo, repay_usd: u64): (u64, u64) {
-    let total_usd_to_exit = manager_info.with_liquidation_reward_ratio(repay_usd);
-    let base_usd_asset = manager_info.base.usd_asset;
-    let quote_usd_asset = manager_info.quote.usd_asset;
-    let (base_usd, quote_usd) = if (manager_info.base.debt > 0) {
-        let base_usd = total_usd_to_exit.min(base_usd_asset);
-        let total_usd_to_exit = total_usd_to_exit - base_usd;
-        let quote_usd = total_usd_to_exit.min(quote_usd_asset);
-        (base_usd, quote_usd)
-    } else {
-        let quote_usd = total_usd_to_exit.min(quote_usd_asset);
-        let total_usd_to_exit = total_usd_to_exit - quote_usd;
-        let base_usd = total_usd_to_exit.min(base_usd_asset);
-        (base_usd, quote_usd)
-    };
-
-    let base_to_exit = math::div(base_usd, manager_info.base_per_dollar);
-    let quote_to_exit = math::div(quote_usd, manager_info.quote_per_dollar);
-
-    (base_to_exit, quote_to_exit)
-}
-
-public(package) fun calculate_quantity_to_exit(manager_info: &ManagerInfo): (u64, u64) {
-    let usd_amount_to_repay = manager_info.calculate_usd_amount_to_repay();
-    let usd_amount_to_repay_with_reward = manager_info.with_liquidation_reward_ratio(
-        usd_amount_to_repay,
-    ); // 750 * 1.05 = 787.5
-
-    let base_usd_asset = manager_info.base.usd_asset; // 550
-    let quote_usd_asset = manager_info.quote.usd_asset; // 550
-    let mut base_to_exit_usd = 0;
-    let mut quote_to_exit_usd = 0;
-
-    let same_asset_to_repay_usd = if (manager_info.base.debt > 0) {
-        let same_repay = usd_amount_to_repay_with_reward.min(base_usd_asset);
-        base_to_exit_usd = base_to_exit_usd + same_repay;
-
-        same_repay
-    } else {
-        let same_repay = usd_amount_to_repay_with_reward.min(quote_usd_asset);
-        quote_to_exit_usd = quote_to_exit_usd + same_repay;
-
-        same_repay
-    }; // base_to_exit_usd = 550, quote_to_exit_usd = 0
-
-    if (usd_amount_to_repay_with_reward > same_asset_to_repay_usd) {
-        let usd_remaining_to_repay = usd_amount_to_repay_with_reward - same_asset_to_repay_usd;
-
-        if (manager_info.base.debt > 0) {
-            quote_to_exit_usd = quote_to_exit_usd + usd_remaining_to_repay.min(quote_usd_asset);
-        } else {
-            base_to_exit_usd = base_to_exit_usd + usd_remaining_to_repay.min(base_usd_asset);
-        };
-    }; // base_to_exit_usd = 550, quote_to_exit_usd = 787.5 - 550 = 237.5
-
-    let base_to_exit = math::div(base_to_exit_usd, manager_info.base_per_dollar);
-    let quote_to_exit = math::div(quote_to_exit_usd, manager_info.quote_per_dollar);
-
-    (base_to_exit, quote_to_exit)
-}
-
-/// Calculate liquidation amounts with USD pricing logic
-/// This centralizes all oracle-dependent calculations for liquidation
-public(package) fun calculate_liquidation_amounts(
-    manager_info: &ManagerInfo,
-    liquidation_coin_value: u64,
-): (u64, u64) {
-    let max_usd_amount_to_repay = manager_info.calculate_usd_amount_to_repay();
-
-    // Get debt and asset totals
-    let debt = manager_info.debt;
-    let assets_in_usd = manager_info.asset_usd; // $1100
-
-    // Calculate ratios once
-    let float_scaling = constants::float_scaling();
-    let pool_reward_ratio = float_scaling + manager_info.pool_liquidation_reward; // 1.03
-
-    // Get liquidation coin value in USD
-    let coin_in_usd = math::div(liquidation_coin_value, manager_info.debt_per_dollar); // $700
-    let coin_in_usd_minus_pool_reward = math::div(coin_in_usd, pool_reward_ratio); // $679.61
-
-    // Handle default cases
-    let total_liquidation_reward =
-        manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward; // 5%
-    let liquidation_reward_ratio = float_scaling + total_liquidation_reward; // 1.05
-    let in_default = manager_info.risk_ratio < float_scaling;
-    let max_repay_usd = if (in_default) {
-        math::div(assets_in_usd, liquidation_reward_ratio)
-    } else {
-        max_usd_amount_to_repay
-    }; // $750
-
-    // Calculate final repay amounts
-    let repay_usd = max_repay_usd.min(coin_in_usd_minus_pool_reward); // $679.61
-    let loan_defaulted = in_default && repay_usd == max_repay_usd;
-
-    let repay_amount = math::div(repay_usd, manager_info.debt_per_dollar); // 679.61 USDT
-    let default_amount = if (loan_defaulted) debt - repay_amount else 0;
-
-    (default_amount, repay_amount)
 }
 
 public(package) fun user_liquidation_reward(manager_info: &ManagerInfo): u64 {
