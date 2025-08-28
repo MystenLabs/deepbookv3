@@ -484,8 +484,6 @@ public(package) fun can_liquidate(
     risk_ratio: u64,
 ): bool {
     let config = self.get_pool_config(deepbook_pool_id);
-    std::debug::print(&config.risk_ratios.liquidation_risk_ratio);
-    std::debug::print(&risk_ratio);
     risk_ratio < config.risk_ratios.liquidation_risk_ratio
 }
 

@@ -298,7 +298,6 @@ public fun prove_and_destroy_request<BaseAsset, QuoteAsset, DebtAsset>(
         pool.id(),
     );
     let risk_ratio = manager_info.risk_ratio();
-    std::debug::print(&risk_ratio);
     let pool_id = pool.id();
     if (request.request_type == BORROW) {
         assert!(registry.can_borrow(pool_id, risk_ratio), EBorrowRiskRatioExceeded);

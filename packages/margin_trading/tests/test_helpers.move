@@ -41,11 +41,11 @@ public fun setup_test(): (Scenario, MarginAdminCap) {
 }
 
 public fun setup_margin_registry(): (Scenario, Clock, MarginAdminCap, MaintainerCap) {
-    let mut scenario = test::begin(test_constants::admin());
+    
+    let (mut scenario, admin_cap) = setup_test();
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(1000);
 
-    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let maintainer_cap = registry.mint_maintainer_cap(&admin_cap, &clock, scenario.ctx());

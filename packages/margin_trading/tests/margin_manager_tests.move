@@ -32,19 +32,19 @@ fun test_margin_manager_creation() {
 
     // Test creating multiple margin pools
     scenario.next_tx(test_constants::user1());
-    let _btc_pool_id = create_margin_pool<BTC>(
+    create_margin_pool<BTC>(
         &mut scenario,
         &maintainer_cap,
         default_protocol_config(),
         &clock,
     );
-    let _usdt_pool_id = create_margin_pool<USDT>(
+   create_margin_pool<USDT>(
         &mut scenario,
         &maintainer_cap,
         default_protocol_config(),
         &clock,
     );
-    let _usdc_pool_id = create_margin_pool<USDC>(
+    create_margin_pool<USDC>(
         &mut scenario,
         &maintainer_cap,
         default_protocol_config(),
