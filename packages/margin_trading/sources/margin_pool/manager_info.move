@@ -144,7 +144,8 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
 }
 
 public(package) fun produce_fulfillment(self: &ManagerInfo, manager_id: ID): Fulfillment {
-    let repay_usd_with_rewards = self.debt_usd.min(self.asset_usd);
+    let usd_to_repay_with_rewards = self.calculate_usd_amount_to_repay();
+    let repay_usd_with_rewards = self.asset_usd.min(usd_to_repay_with_rewards);
     let liquidation_reward = self.user_liquidation_reward + self.pool_liquidation_reward;
     let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
 
@@ -190,6 +191,19 @@ public(package) fun produce_fulfillment(self: &ManagerInfo, manager_id: ID): Ful
         quote_exit_amount,
         risk_ratio: self.risk_ratio,
     }
+}
+
+public(package) fun calculate_usd_amount_to_repay(manager_info: &ManagerInfo): u64 {
+    let target_ratio = manager_info.target_ratio; // 1.25
+    let debt_in_usd = manager_info.base.usd_debt.max(manager_info.quote.usd_debt); // 1000
+    let liquidation_reward =
+        manager_info.user_liquidation_reward + manager_info.pool_liquidation_reward; // 5%
+    let assets_in_usd = manager_info.base.usd_asset + manager_info.quote.usd_asset; // 1100
+    let numerator = math::mul(target_ratio, debt_in_usd) - assets_in_usd; // 1250 - 1100 = 150
+    let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - 1.05 = 0.2
+    let usd_to_repay = math::div(numerator, denominator); // 750
+
+    math::mul(usd_to_repay, constants::float_scaling() + liquidation_reward)
 }
 
 public(package) fun user_liquidation_reward(manager_info: &ManagerInfo): u64 {
