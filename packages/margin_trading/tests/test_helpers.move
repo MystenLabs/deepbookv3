@@ -4,28 +4,30 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::{constants, pool::{Self, Pool}, registry::{Self, Registry}};
-use margin_trading::{
-    margin_pool::{Self, MarginPool},
-    margin_registry::{
-        Self,
-        MarginRegistry,
-        MarginAdminCap,
-        MaintainerCap,
-        PoolConfig,
-        MarginPoolCap
-    },
-    oracle::{Self, PythConfig},
-    protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, BTC}
+use deepbook::constants;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    PoolConfig,
+    MarginPoolCap
 };
-use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
-};
+use margin_trading::oracle::{Self, PythConfig};
+use margin_trading::protocol_config::{Self, ProtocolConfig};
+use margin_trading::test_constants::{Self, USDC, BTC};
+use pyth::i64;
+use pyth::price;
+use pyth::price_feed;
+use pyth::price_identifier;
+use pyth::price_info::{Self, PriceInfoObject};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 public fun setup_test(): (Scenario, MarginAdminCap) {
@@ -126,10 +128,6 @@ public fun enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
 ) {
     scenario.next_tx(test_constants::admin());
     let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
-
-    // authorize MarginApp on the pool - deepbook admin feature
-    let deepbook_admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
-    destroy(deepbook_admin_cap);
 
     let pool_config = create_test_pool_config<BaseAsset, QuoteAsset>(margin_registry);
     margin_registry.register_deepbook_pool<BaseAsset, QuoteAsset>(
