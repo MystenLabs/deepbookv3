@@ -14,6 +14,10 @@ public struct USDC has drop {}
 public struct USDT has drop {}
 public struct BTC has drop {}
 
+const USDC_MULTIPLIER: u64 = 1000000;
+const USDT_MULTIPLIER: u64 = 1000000;
+const BTC_MULTIPLIER: u64 = 100000000;
+
 // === Margin Pool Constants ===
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
 const MAX_UTILIZATION_RATE: u64 = 800_000_000; // 80%
@@ -114,4 +118,16 @@ public fun usdt_price_feed_id(): vector<u8> {
 
 public fun btc_price_feed_id(): vector<u8> {
     BTC_PRICE_FEED_ID
+}
+
+public fun usdc_multiplier(): u64 {
+    USDC_MULTIPLIER
+}
+
+public fun usdt_multiplier(): u64 {
+    USDT_MULTIPLIER
+}
+
+public fun btc_multiplier(): u64 {
+    BTC_MULTIPLIER
 }

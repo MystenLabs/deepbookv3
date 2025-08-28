@@ -340,10 +340,15 @@ public fun setup_btc_usd_margin_trading(): (
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
 
-    btc_pool.supply(&registry, mint_coin<BTC>(10_00000000, scenario.ctx()), &clock, scenario.ctx());
+    btc_pool.supply(
+        &registry,
+        mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
     usdc_pool.supply(
         &registry,
-        mint_coin<USDC>(1_000_000_000000, scenario.ctx()),
+        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         &clock,
         scenario.ctx(),
     );

@@ -117,8 +117,14 @@ fun test_margin_trading_with_oracle() {
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
 
-    let usdc_supply = mint_coin<USDC>(1_000_000_000_000, scenario.ctx()); // 1M USDC with 6 decimals
-    let usdt_supply = mint_coin<USDT>(1_000_000_000_000, scenario.ctx()); // 1M USDT with 6 decimals
+    let usdc_supply = mint_coin<USDC>(
+        1_000_000 * test_constants::usdc_multiplier(),
+        scenario.ctx(),
+    );
+    let usdt_supply = mint_coin<USDT>(
+        1_000_000 * test_constants::usdt_multiplier(),
+        scenario.ctx(),
+    );
 
     usdc_pool.supply(&registry, usdc_supply, &clock, scenario.ctx());
     usdt_pool.supply(&registry, usdt_supply, &clock, scenario.ctx());
