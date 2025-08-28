@@ -257,13 +257,13 @@ fun test_usd_deposit_btc_borrow() {
     // Set initial prices
     let btc_price = build_btc_price_info_object(
         &mut scenario,
-        50000,
+        100000,
         &clock,
     );
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     scenario.next_tx(test_constants::user1());
-    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
     margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
 
@@ -271,18 +271,18 @@ fun test_usd_deposit_btc_borrow() {
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
 
-    // Deposit 75000 USD
+    // Deposit 100000 USD
     mm.deposit<BTC, USDC, USDC>(
         &registry,
-        mint_coin<USDC>(75_000_000000, scenario.ctx()),
+        mint_coin<USDC>(100_000_000000, scenario.ctx()),
         scenario.ctx(),
     );
 
-    // Borrow 0.95 BTC
+    // Borrow 2 BTC
     let request = mm.borrow_base<BTC, USDC>(
         &registry,
         &mut btc_pool,
-        95000000, // 0.95 BTC
+        200000000,
         &clock,
         scenario.ctx(),
     );
@@ -298,13 +298,27 @@ fun test_usd_deposit_btc_borrow() {
         request,
     );
 
-    // 20% BTC price increase to $60,000
     clock.set_for_testing(1000001);
     let btc_increased = build_btc_price_info_object(
         &mut scenario,
-        60000,
+        300000,
         &clock,
     );
+
+    scenario.next_tx(test_constants::admin());
+    let (fulfillment, base_coin, quote_coin) = mm.liquidate<BTC, USDC, BTC>(
+        &registry,
+        &btc_increased,
+        &usdc_price,
+        &mut btc_pool,
+        &mut pool,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy(fulfillment);
+    destroy(base_coin);
+    destroy(quote_coin);
 
     test::return_shared(mm);
     test::return_shared(btc_pool);
