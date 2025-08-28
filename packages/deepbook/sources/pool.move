@@ -93,12 +93,6 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
-/// An authorization Key kept in Pool - allows applications access
-/// protected features of Deepbook core.
-/// The `App` type parameter is a witness which should be defined in the
-/// original module.
-public struct AppKey<phantom App: drop> has copy, drop, store {}
-
 // === Public-Mutative Functions * POOL CREATION * ===
 /// Create a new pool. The pool is registered in the registry.
 /// Checks are performed to ensure the tick size, lot size,
@@ -795,24 +789,6 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
     });
 }
 
-/// Authorize an application to access protected features of Deepbook core.
-public fun authorize_app<App: drop, BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    _cap: &DeepbookAdminCap,
-) {
-    let _ = self.load_inner_mut();
-    self.id.add(AppKey<App> {}, true);
-}
-
-/// Deauthorize an application by removing its authorization key.
-public fun deauthorize_app<App: drop, BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    _cap: &DeepbookAdminCap,
-): bool {
-    let _ = self.load_inner_mut();
-    self.id.remove(AppKey<App> {})
-}
-
 /// Enable the EWMA state for the pool. This allows the pool to use
 /// the EWMA state for volatility calculations and additional taker fees.
 public fun enable_ewma_state<BaseAsset, QuoteAsset>(
@@ -1206,21 +1182,6 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
 
 public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
-}
-
-/// Check if an application is authorized to access protected features of DeepBook core.
-public fun is_app_authorized<App: drop, BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-): bool {
-    self.id.exists_(AppKey<App> {})
-}
-
-/// Assert that an application is authorized to access protected features of
-/// DeepBook core. Aborts with `EAppNotAuthorized` if not.
-public fun assert_app_is_authorized<App: drop, BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-) {
-    assert!(self.is_app_authorized<App, BaseAsset, QuoteAsset>(), EAppNotAuthorized);
 }
 
 // === Public-Package Functions ===
