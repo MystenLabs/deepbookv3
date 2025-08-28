@@ -9,7 +9,6 @@ use margin_trading::{
     margin_pool::{Self, MarginPool},
     margin_registry::{
         Self,
-        MarginApp,
         MarginRegistry,
         MarginAdminCap,
         MaintainerCap,
@@ -130,7 +129,6 @@ public fun enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
 
     // authorize MarginApp on the pool - deepbook admin feature
     let deepbook_admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
-    pool.authorize_app<MarginApp, BaseAsset, QuoteAsset>(&deepbook_admin_cap);
     destroy(deepbook_admin_cap);
 
     let pool_config = create_test_pool_config<BaseAsset, QuoteAsset>(margin_registry);
