@@ -1,0 +1,21 @@
+[package]
+name = "margin_trading"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+token = { local = "../token" }
+deepbook = { local = "../deepbook" }
+
+# Pyth dependency
+Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-mainnet" }
+
+[dev-dependencies]
+
+[dev-dependencies.Pyth]
+git = "https://github.com/pyth-network/pyth-crosschain.git"
+subdir = "target_chains/sui/contracts"
+rev = "main"
+
+[addresses]
+margin_trading = "0x0"

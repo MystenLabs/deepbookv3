@@ -89,8 +89,13 @@ public fun new(ctx: &mut TxContext): BalanceManager {
     }
 }
 
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner` instead.")]
+public fun new_with_owner(_ctx: &mut TxContext, _owner: address): BalanceManager {
+    abort 1337
+}
+
 /// Create a new balance manager with an owner.
-public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
+public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceManager {
     let id = object::new(ctx);
     event::emit(BalanceManagerEvent {
         balance_manager_id: id.to_inner(),
@@ -103,6 +108,19 @@ public fun new_with_owner(ctx: &mut TxContext, owner: address): BalanceManager {
         balances: bag::new(ctx),
         allow_listed: vec_set::empty(),
     }
+}
+
+public fun new_with_custom_owner_and_caps(
+    owner: address,
+    ctx: &mut TxContext,
+): (BalanceManager, DepositCap, WithdrawCap, TradeCap) {
+    let mut balance_manager = new_with_custom_owner(owner, ctx);
+
+    let deposit_cap = mint_deposit_cap_internal(&mut balance_manager, ctx);
+    let withdraw_cap = mint_withdraw_cap_internal(&mut balance_manager, ctx);
+    let trade_cap = mint_trade_cap_internal(&mut balance_manager, ctx);
+
+    (balance_manager, deposit_cap, withdraw_cap, trade_cap)
 }
 
 /// Returns the balance of a Coin in a balance manager.
@@ -119,29 +137,13 @@ public fun balance<T>(balance_manager: &BalanceManager): u64 {
 /// Mint a `TradeCap`, only owner can mint a `TradeCap`.
 public fun mint_trade_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
     balance_manager.validate_owner(ctx);
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
-
-    let id = object::new(ctx);
-    balance_manager.allow_listed.insert(id.to_inner());
-
-    TradeCap {
-        id,
-        balance_manager_id: object::id(balance_manager),
-    }
+    balance_manager.mint_trade_cap_internal(ctx)
 }
 
 /// Mint a `DepositCap`, only owner can mint.
 public fun mint_deposit_cap(balance_manager: &mut BalanceManager, ctx: &mut TxContext): DepositCap {
     balance_manager.validate_owner(ctx);
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
-
-    let id = object::new(ctx);
-    balance_manager.allow_listed.insert(id.to_inner());
-
-    DepositCap {
-        id,
-        balance_manager_id: object::id(balance_manager),
-    }
+    balance_manager.mint_deposit_cap_internal(ctx)
 }
 
 /// Mint a `WithdrawCap`, only owner can mint.
@@ -150,15 +152,7 @@ public fun mint_withdraw_cap(
     ctx: &mut TxContext,
 ): WithdrawCap {
     balance_manager.validate_owner(ctx);
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
-
-    let id = object::new(ctx);
-    balance_manager.allow_listed.insert(id.to_inner());
-
-    WithdrawCap {
-        id,
-        balance_manager_id: object::id(balance_manager),
-    }
+    balance_manager.mint_withdraw_cap_internal(ctx)
 }
 
 /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
@@ -408,6 +402,48 @@ public(package) fun emit_balance_event(
 }
 
 // === Private Functions ===
+fun mint_trade_cap_internal(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+
+    let id = object::new(ctx);
+    balance_manager.allow_listed.insert(id.to_inner());
+
+    TradeCap {
+        id,
+        balance_manager_id: object::id(balance_manager),
+    }
+}
+
+fun mint_deposit_cap_internal(
+    balance_manager: &mut BalanceManager,
+    ctx: &mut TxContext,
+): DepositCap {
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+
+    let id = object::new(ctx);
+    balance_manager.allow_listed.insert(id.to_inner());
+
+    DepositCap {
+        id,
+        balance_manager_id: object::id(balance_manager),
+    }
+}
+
+fun mint_withdraw_cap_internal(
+    balance_manager: &mut BalanceManager,
+    ctx: &mut TxContext,
+): WithdrawCap {
+    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+
+    let id = object::new(ctx);
+    balance_manager.allow_listed.insert(id.to_inner());
+
+    WithdrawCap {
+        id,
+        balance_manager_id: object::id(balance_manager),
+    }
+}
+
 fun validate_owner(balance_manager: &BalanceManager, ctx: &TxContext) {
     assert!(ctx.sender() == balance_manager.owner(), EInvalidOwner);
 }

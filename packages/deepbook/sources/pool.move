@@ -11,6 +11,7 @@ use deepbook::{
     book::{Self, Book},
     constants,
     deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
+    ewma::{init_ewma_state, EWMAState},
     math,
     order::Order,
     order_info::{Self, OrderInfo},
@@ -22,11 +23,17 @@ use std::type_name;
 use sui::{
     clock::Clock,
     coin::{Self, Coin},
+    dynamic_field as df,
     event,
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
 };
 use token::deep::{DEEP, ProtectedTreasury};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -718,6 +725,18 @@ public fun update_allowed_versions<BaseAsset, QuoteAsset>(
     inner.allowed_versions = allowed_versions;
 }
 
+/// Takes the registry and updates the allowed version within pool
+/// Permissionless equivalent of `update_allowed_versions`
+/// This function does not have version restrictions
+public fun update_pool_allowed_versions<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    registry: &Registry,
+) {
+    let allowed_versions = registry.allowed_versions();
+    let inner: &mut PoolInner<BaseAsset, QuoteAsset> = self.inner.load_value_mut();
+    inner.allowed_versions = allowed_versions;
+}
+
 /// Adjust the tick size of the pool. Only admin can adjust the tick size.
 public fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -766,6 +785,42 @@ public fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
         min_size: self.book.min_size(),
         timestamp: clock.timestamp_ms(),
     });
+}
+
+/// Enable the EWMA state for the pool. This allows the pool to use
+/// the EWMA state for volatility calculations and additional taker fees.
+public fun enable_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    enable: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let _ = self.load_inner_mut();
+    let ewma_state = self.update_ewma_state(clock, ctx);
+    if (enable) {
+        ewma_state.enable();
+    } else {
+        ewma_state.disable();
+    }
+}
+
+/// Set the EWMA parameters for the pool.
+/// Only admin can set the parameters.
+public fun set_ewma_params<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    alpha: u64,
+    z_score_threshold: u64,
+    additional_taker_fee: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let _ = self.load_inner_mut();
+    let ewma_state = self.update_ewma_state(clock, ctx);
+    ewma_state.set_alpha(alpha);
+    ewma_state.set_z_score_threshold(z_score_threshold);
+    ewma_state.set_additional_taker_fee(additional_taker_fee);
 }
 
 // === Public-View Functions ===
@@ -836,7 +891,7 @@ public fun get_quantity_out<BaseAsset, QuoteAsset>(
     let whitelist = self.whitelisted();
     let self = self.load_inner();
     let params = self.state.governance().trade_params();
-    let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    let taker_fee = params.taker_fee();
     let deep_price = self.deep_price.get_order_deep_price(whitelist);
     self
         .book
@@ -863,7 +918,7 @@ public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
 ): (u64, u64, u64) {
     let self = self.load_inner();
     let params = self.state.governance().trade_params();
-    let (taker_fee, _) = (params.taker_fee(), params.maker_fee());
+    let taker_fee = params.taker_fee();
     let deep_price = self.deep_price.empty_deep_price();
     self
         .book
@@ -1123,6 +1178,10 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
     self.load_inner().state.governance().quorum()
 }
 
+public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
+    self.load_inner().pool_id
+}
+
 // === Public-Package Functions ===
 public(package) fun create_pool<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
@@ -1145,17 +1204,14 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
     assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
 
     let pool_id = object::new(ctx);
-    let mut pool_inner = PoolInner<BaseAsset, QuoteAsset> {
+    let pool_inner = PoolInner<BaseAsset, QuoteAsset> {
         allowed_versions: registry.allowed_versions(),
         pool_id: pool_id.to_inner(),
         book: book::empty(tick_size, lot_size, min_size, ctx),
-        state: state::empty(stable_pool, ctx),
+        state: state::empty(whitelisted_pool, stable_pool, ctx),
         vault: vault::empty(),
         deep_price: deep_price::empty(),
         registered_pool: true,
-    };
-    if (whitelisted_pool) {
-        pool_inner.set_whitelist(ctx);
     };
     let params = pool_inner.state.governance().trade_params();
     let taker_fee = params.taker_fee();
@@ -1217,15 +1273,6 @@ public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
 }
 
 // === Private Functions ===
-/// Set a pool as a whitelist pool at pool creation. Whitelist pools have zero
-/// fees.
-fun set_whitelist<BaseAsset, QuoteAsset>(
-    self: &mut PoolInner<BaseAsset, QuoteAsset>,
-    ctx: &TxContext,
-) {
-    self.state.governance_mut(ctx).set_whitelist(true);
-}
-
 fun place_order_int<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
@@ -1243,6 +1290,8 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     let whitelist = self.whitelisted();
+    self.update_ewma_state(clock, ctx);
+    let ewma_state = self.load_ewma_state();
     let self = self.load_inner_mut();
 
     let order_deep_price = if (pay_with_deep) {
@@ -1273,6 +1322,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         .state
         .process_create(
             &mut order_info,
+            &ewma_state,
             self.pool_id,
             ctx,
         );
@@ -1281,4 +1331,27 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info.emit_orders_filled(clock.timestamp_ms());
 
     order_info
+}
+
+fun update_ewma_state<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+    ctx: &TxContext,
+): &mut EWMAState {
+    if (!self.id.exists_(constants::ewma_df_key())) {
+        self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
+    };
+
+    let ewma_state: &mut EWMAState = self
+        .id
+        .borrow_mut(
+            constants::ewma_df_key(),
+        );
+    ewma_state.update(clock, ctx);
+
+    ewma_state
+}
+
+fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
+    *self.id.borrow(constants::ewma_df_key())
 }
