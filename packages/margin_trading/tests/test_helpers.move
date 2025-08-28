@@ -127,10 +127,6 @@ public fun enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
     scenario.next_tx(test_constants::admin());
     let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
 
-    // authorize MarginApp on the pool - deepbook admin feature
-    let deepbook_admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
-    destroy(deepbook_admin_cap);
-
     let pool_config = create_test_pool_config<BaseAsset, QuoteAsset>(margin_registry);
     margin_registry.register_deepbook_pool<BaseAsset, QuoteAsset>(
         admin_cap,
