@@ -18,17 +18,13 @@ use margin_trading::{
         default_protocol_config,
         cleanup_margin_test,
         mint_coin,
-        create_test_pyth_config,
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object,
         build_btc_price_info_object,
         setup_btc_usd_margin_trading
     }
 };
-use sui::{
-    test_scenario::{Self as test, return_shared},
-    test_utils::destroy
-};
+use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
 
 #[test]
 fun test_margin_manager_creation() {
@@ -81,15 +77,6 @@ fun test_margin_trading_with_oracle() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
 
     clock.set_for_testing(1000000);
-
-    // Add PythConfig to the registry - CRITICAL STEP!
-    scenario.next_tx(test_constants::admin());
-    let mut registry = scenario.take_shared<MarginRegistry>();
-    let pyth_config = create_test_pyth_config();
-    registry.add_config(&admin_cap, pyth_config);
-    return_shared(registry);
-
-    scenario.next_tx(test_constants::admin());
     let usdc_pool_id = create_margin_pool<USDC>(
         &mut scenario,
         &maintainer_cap,

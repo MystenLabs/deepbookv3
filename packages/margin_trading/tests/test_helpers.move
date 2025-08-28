@@ -49,6 +49,8 @@ public fun setup_margin_registry(): (Scenario, Clock, MarginAdminCap, Maintainer
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let maintainer_cap = registry.mint_maintainer_cap(&admin_cap, &clock, scenario.ctx());
+    let pyth_config = create_test_pyth_config();
+    registry.add_config(&admin_cap, pyth_config);
     return_shared(registry);
 
     (scenario, clock, admin_cap, maintainer_cap)
@@ -299,14 +301,6 @@ public fun setup_btc_usd_margin_trading(): (
     let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
 
     clock.set_for_testing(1000000);
-
-    scenario.next_tx(test_constants::admin());
-    let mut registry = scenario.take_shared<MarginRegistry>();
-    let pyth_config = create_test_pyth_config();
-    registry.add_config(&admin_cap, pyth_config);
-    return_shared(registry);
-
-    scenario.next_tx(test_constants::admin());
     let btc_pool_id = create_margin_pool<BTC>(
         &mut scenario,
         &maintainer_cap,
