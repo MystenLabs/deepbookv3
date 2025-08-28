@@ -4,30 +4,26 @@
 /// Public-facing interface for the package.
 module deepbook::pool;
 
-use deepbook::{
-    account::Account,
-    balance_manager::{Self, BalanceManager, TradeProof},
-    big_vector::BigVector,
-    book::{Self, Book},
-    constants,
-    deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
-    ewma::{init_ewma_state, EWMAState},
-    math,
-    order::Order,
-    order_info::{Self, OrderInfo},
-    registry::{DeepbookAdminCap, Registry},
-    state::{Self, State},
-    vault::{Self, Vault, FlashLoan}
-};
+use deepbook::account::Account;
+use deepbook::balance_manager::{Self, BalanceManager, TradeProof};
+use deepbook::big_vector::BigVector;
+use deepbook::book::{Self, Book};
+use deepbook::constants;
+use deepbook::deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added};
+use deepbook::ewma::{init_ewma_state, EWMAState};
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::{Self, OrderInfo};
+use deepbook::registry::{DeepbookAdminCap, Registry};
+use deepbook::state::{Self, State};
+use deepbook::vault::{Self, Vault, FlashLoan};
 use std::type_name;
-use sui::{
-    clock::Clock,
-    coin::{Self, Coin},
-    dynamic_field as df,
-    event,
-    vec_set::{Self, VecSet},
-    versioned::{Self, Versioned}
-};
+use sui::clock::Clock;
+use sui::coin::{Self, Coin};
+use sui::dynamic_field as df;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
+use sui::versioned::{Self, Versioned};
 use token::deep::{DEEP, ProtectedTreasury};
 
 use fun df::add as UID.add;
@@ -98,8 +94,6 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
 /// The `App` type parameter is a witness which should be defined in the
 /// original module.
 public struct AppKey<phantom App: drop> has copy, drop, store {}
-
-public struct MarginTradingKey has copy, drop, store {}
 
 // === Public-Mutative Functions * POOL CREATION * ===
 /// Create a new pool. The pool is registered in the registry.
@@ -273,10 +267,10 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     let is_bid = quote_quantity > 0;
     if (is_bid) {
         (base_quantity, _, _) = if (pay_with_deep) {
-            self.get_quantity_out(0, quote_quantity, clock)
-        } else {
-            self.get_quantity_out_input_fee(0, quote_quantity, clock)
-        }
+                self.get_quantity_out(0, quote_quantity, clock)
+            } else {
+                self.get_quantity_out_input_fee(0, quote_quantity, clock)
+            }
     } else {
         if (!pay_with_deep) {
             base_quantity =
@@ -851,28 +845,6 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
     ewma_state.set_additional_taker_fee(additional_taker_fee);
 }
 
-// === Public-Mutative Functions * MARGIN TRADING * ===
-public fun update_margin_status<A: drop, BaseAsset, QuoteAsset>(
-    self: &mut Pool<BaseAsset, QuoteAsset>,
-    _: A,
-    enable: bool,
-) {
-    let _ = self.load_inner_mut();
-    self.assert_app_is_authorized<A, BaseAsset, QuoteAsset>();
-
-    if (!self.id.exists_(MarginTradingKey {})) {
-        self
-            .id
-            .add(
-                MarginTradingKey {},
-                enable,
-            );
-    } else {
-        let margin_enabled = self.id.borrow_mut<_, bool>(MarginTradingKey {});
-        *margin_enabled = enable;
-    }
-}
-
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
 public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
@@ -1230,14 +1202,6 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
 
 public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
-}
-
-public fun margin_trading_enabled<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
-    if (!self.id.exists_(MarginTradingKey {})) {
-        return false
-    };
-
-    *self.id.borrow<_, bool>(MarginTradingKey {})
 }
 
 /// Check if an application is authorized to access protected features of DeepBook core.
