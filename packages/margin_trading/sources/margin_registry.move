@@ -68,7 +68,6 @@ public struct RiskRatios has copy, drop, store {
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
-public struct MarginApp has drop {}
 
 // === Caps ===
 public struct MarginAdminCap has key, store {

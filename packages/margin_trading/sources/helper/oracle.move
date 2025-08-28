@@ -214,10 +214,7 @@ public fun test_conversion_config(
 
 #[test_only]
 /// Create a test CoinTypeData for testing without needing CoinMetadata
-public fun test_coin_type_data<T>(
-    decimals: u8,
-    price_feed_id: vector<u8>,
-): CoinTypeData {
+public fun test_coin_type_data<T>(decimals: u8, price_feed_id: vector<u8>): CoinTypeData {
     CoinTypeData {
         decimals,
         price_feed_id,
