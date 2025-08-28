@@ -176,11 +176,11 @@ public(package) fun produce_fulfillment(self: &ManagerInfo, manager_id: ID): Ful
         (base_usd, quote_usd)
     };
 
-    let repay_amount = math::div(usd_to_repay, self.debt_per_dollar);
-    let pool_reward_amount = math::div(pool_reward_usd, self.debt_per_dollar);
-    let default_amount = math::div(default_usd, self.debt_per_dollar);
-    let base_exit_amount = math::div(base_usd, self.base_per_dollar);
-    let quote_exit_amount = math::div(quote_usd, self.quote_per_dollar);
+    let repay_amount = math::mul(usd_to_repay, self.debt_per_dollar);
+    let pool_reward_amount = math::mul(pool_reward_usd, self.debt_per_dollar);
+    let default_amount = math::mul(default_usd, self.debt_per_dollar);
+    let base_exit_amount = math::mul(base_usd, self.base_per_dollar);
+    let quote_exit_amount = math::mul(quote_usd, self.quote_per_dollar);
 
     Fulfillment {
         manager_id,
