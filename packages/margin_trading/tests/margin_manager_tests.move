@@ -38,7 +38,7 @@ fun test_margin_manager_creation() {
         default_protocol_config(),
         &clock,
     );
-   create_margin_pool<USDT>(
+    create_margin_pool<USDT>(
         &mut scenario,
         &maintainer_cap,
         default_protocol_config(),

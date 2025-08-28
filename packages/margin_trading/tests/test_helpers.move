@@ -41,7 +41,6 @@ public fun setup_test(): (Scenario, MarginAdminCap) {
 }
 
 public fun setup_margin_registry(): (Scenario, Clock, MarginAdminCap, MaintainerCap) {
-    
     let (mut scenario, admin_cap) = setup_test();
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(1000);
