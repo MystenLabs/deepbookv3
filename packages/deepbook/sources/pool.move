@@ -34,7 +34,6 @@ use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
 use fun df::exists_ as UID.exists_;
-use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -51,7 +50,6 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
-const EAppNotAuthorized: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
