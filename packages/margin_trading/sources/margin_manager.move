@@ -31,7 +31,8 @@ const EBorrowRiskRatioExceeded: u64 = 8;
 const EWithdrawRiskRatioExceeded: u64 = 9;
 const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
-const EIncorrectMarginPool: u64 = 12;
+const ERepaymentNotEnough: u64 = 12;
+const EIncorrectMarginPool: u64 = 13;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -401,6 +402,9 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<RepayAsset> {
+    let total_fulfillment_amount = fulfillment.repay_amount() + fulfillment.pool_reward_amount();
+    assert!(coin.value() >= total_fulfillment_amount, ERepaymentNotEnough);
+
     let base_coin = coin::zero<BaseAsset>(ctx);
     let quote_coin = coin::zero<QuoteAsset>(ctx);
 
