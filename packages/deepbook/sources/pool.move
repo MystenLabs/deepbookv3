@@ -1329,6 +1329,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     order_info.emit_order_info();
     order_info.emit_orders_filled(clock.timestamp_ms());
+    balance_manager.process_referral_fees<BaseAsset, QuoteAsset>(trade_proof, &order_info);
 
     order_info
 }
