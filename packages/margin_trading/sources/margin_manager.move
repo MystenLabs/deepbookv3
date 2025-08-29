@@ -5,12 +5,10 @@ module margin_trading::margin_manager;
 
 use deepbook::{
     balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
-    constants,
-    math,
     pool::Pool
 };
 use margin_trading::{
-    manager_info::{Self, ManagerInfo, Fulfillment},
+    manager_info::{Self, ManagerInfo, Fulfillment, calculate_return_amounts},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
@@ -448,21 +446,13 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_pool_id = margin_pool.id();
     let repay_coin_amount = coin.value();
 
-    let total_fulfillment_amount = fulfillment.repay_amount() + fulfillment.pool_reward_amount();
-    let full_liquidation = repay_coin_amount >= total_fulfillment_amount;
-    let repay_percent = if (full_liquidation) {
-        constants::float_scaling()
-    } else {
-        math::div(repay_coin_amount, total_fulfillment_amount)
-    };
-    let actual_fulfillment_amount = math::mul(repay_percent, total_fulfillment_amount);
-    let repay_amount = math::mul(repay_percent, fulfillment.repay_amount());
-    let pool_reward_amount = math::mul(repay_percent, fulfillment.pool_reward_amount());
-    let default_amount = if (full_liquidation) {
-        fulfillment.default_amount()
-    } else {
-        0
-    };
+    let (
+        actual_fulfillment_amount,
+        repay_amount,
+        mut pool_reward_amount,
+        mut default_amount,
+        return_percent,
+    ) = fulfillment.calculate_fulfillment_amounts(repay_coin_amount);
 
     let repay_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
@@ -472,8 +462,8 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     self.reset_margin_pool_id();
 
     let cancel_amount = pool_reward_amount.min(default_amount);
-    let pool_reward_amount = pool_reward_amount - cancel_amount;
-    let default_amount = default_amount - cancel_amount;
+    pool_reward_amount = pool_reward_amount - cancel_amount;
+    default_amount = default_amount - cancel_amount;
 
     let repay_coin = coin.split(actual_fulfillment_amount, ctx);
     let timestamp = clock.timestamp_ms();
@@ -487,10 +477,12 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     );
 
     // Return coins accordingly if this is a partial liquidation
-    let return_percent = constants::float_scaling() - repay_percent;
     if (return_percent > 0) {
-        let base_return_amount = math::mul(return_percent, base_coin.value());
-        let quote_return_amount = math::mul(return_percent, quote_coin.value());
+        let (base_return_amount, quote_return_amount) = calculate_return_amounts(
+            return_percent,
+            base_coin.value(),
+            quote_coin.value(),
+        );
         let base_return_coin = base_coin.split(base_return_amount, ctx);
         let quote_return_coin = quote_coin.split(quote_return_amount, ctx);
         self.liquidation_deposit_base(base_return_coin, ctx);
