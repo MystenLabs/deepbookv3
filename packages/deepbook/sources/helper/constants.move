@@ -19,6 +19,8 @@ const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ o
 const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
 const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
 const EWMA_DF_KEY: vector<u8> = b"ewma";
+const REFERRAL_DF_KEY: vector<u8> = b"referral";
+const REFERRAL_MULTIPLIER: u64 = 1_000_000_000; // 100%
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -239,6 +241,14 @@ public fun default_additional_taker_fee(): u64 {
 
 public fun ewma_df_key(): vector<u8> {
     EWMA_DF_KEY
+}
+
+public fun referral_df_key(): vector<u8> {
+    REFERRAL_DF_KEY
+}
+
+public fun referral_multiplier(): u64 {
+    REFERRAL_MULTIPLIER
 }
 
 #[test_only]

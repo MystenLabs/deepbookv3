@@ -8,8 +8,22 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
+use deepbook::{constants, math, order_info::OrderInfo};
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, coin::Coin, event, vec_set::{Self, VecSet}};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    coin::Coin,
+    dynamic_field as df,
+    event,
+    vec_set::{Self, VecSet}
+};
+use token::deep::DEEP;
+
+use fun df::remove as UID.remove;
+use fun df::add as UID.add;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
@@ -29,6 +43,11 @@ public struct BalanceManager has key, store {
     owner: address,
     balances: Bag,
     allow_listed: VecSet<ID>,
+}
+
+public struct Referral has store {
+    id: ID,
+    referral_fees: Bag,
 }
 
 /// Event emitted when a new balance_manager is created.
@@ -64,6 +83,11 @@ public struct DepositCap has key, store {
 public struct WithdrawCap has key, store {
     id: UID,
     balance_manager_id: ID,
+}
+
+public struct ReferralCap has key, store {
+    id: UID,
+    owner: address,
 }
 
 /// BalanceManager owner and `TradeCap` owners can generate a `TradeProof`.
@@ -155,6 +179,13 @@ public fun mint_withdraw_cap(
     balance_manager.mint_withdraw_cap_internal(ctx)
 }
 
+public fun mint_referral_cap(ctx: &mut TxContext): ReferralCap {
+    ReferralCap {
+        id: object::new(ctx),
+        owner: ctx.sender(),
+    }
+}
+
 /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
 /// Can also be used to revoke `DepositCap` and `WithdrawCap`.
 public fun revoke_trade_cap(
@@ -166,6 +197,48 @@ public fun revoke_trade_cap(
 
     assert!(balance_manager.allow_listed.contains(trade_cap_id), ECapNotInList);
     balance_manager.allow_listed.remove(trade_cap_id);
+}
+
+public fun set_referral(
+    balance_manager: &mut BalanceManager,
+    trade_cap: &TradeCap,
+    referral_cap: &ReferralCap,
+    ctx: &mut TxContext,
+) {
+    let ref_key = constants::referral_df_key();
+    let referral_id = referral_cap.id.to_inner();
+    balance_manager.validate_trader(trade_cap);
+    let current_fees = if (balance_manager.id.exists_(ref_key)) {
+        let referral: Referral = balance_manager.id.remove(ref_key);
+        let Referral {
+            id: _,
+            referral_fees,
+        } = referral;
+        referral_fees
+    } else {
+        bag::new(ctx)
+    };
+    balance_manager
+        .id
+        .add(
+            ref_key,
+            Referral {
+                id: referral_id,
+                referral_fees: current_fees,
+            },
+        );
+}
+
+public fun claim_referral_fees<Asset>(
+    balance_manager: &mut BalanceManager,
+    referral_cap: &ReferralCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    assert!(referral_cap.owner == ctx.sender(), EInvalidOwner);
+    let ref_key = constants::referral_df_key();
+    let referral: &mut Referral = balance_manager.id.borrow_mut(ref_key);
+    let balance: Balance<Asset> = referral.referral_fees.remove(BalanceKey<Asset> {});
+    balance.into_coin(ctx)
 }
 
 /// Generate a `TradeProof` by the owner. The owner does not require a capability
@@ -293,6 +366,39 @@ public fun id(balance_manager: &BalanceManager): ID {
 }
 
 // === Public-Package Functions ===
+public(package) fun process_referral_fees<BaseAsset, QuoteAsset>(
+    balance_manager: &mut BalanceManager,
+    proof: &TradeProof,
+    order_info: &OrderInfo,
+) {
+    let ref_key = constants::referral_df_key();
+    if (!balance_manager.id.exists_(ref_key)) {
+        return
+    };
+
+    let paid_fees = order_info.paid_fees_balances();
+    let referral_base_fees = math::mul(paid_fees.base(), constants::referral_multiplier());
+    let referral_quote_fees = math::mul(paid_fees.quote(), constants::referral_multiplier());
+    let deep_fees = math::mul(paid_fees.deep(), constants::referral_multiplier());
+
+    let base_balance = balance_manager.withdraw_with_proof<BaseAsset>(
+        proof,
+        referral_base_fees,
+        false,
+    );
+    let quote_balance = balance_manager.withdraw_with_proof<QuoteAsset>(
+        proof,
+        referral_quote_fees,
+        false,
+    );
+    let deep_balance = balance_manager.withdraw_with_proof<DEEP>(proof, deep_fees, false);
+
+    let referral: &mut Referral = balance_manager.id.borrow_mut(ref_key);
+    referral.referral_fees.add(BalanceKey<BaseAsset> {}, base_balance);
+    referral.referral_fees.add(BalanceKey<QuoteAsset> {}, quote_balance);
+    referral.referral_fees.add(BalanceKey<DEEP> {}, deep_balance);
+}
+
 /// Deposit funds to a balance_manager. Pool will call this to deposit funds.
 public(package) fun deposit_with_proof<T>(
     balance_manager: &mut BalanceManager,
