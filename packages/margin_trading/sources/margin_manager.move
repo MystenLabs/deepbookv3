@@ -428,8 +428,8 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
     mut coin: Coin<RepayAsset>,
-    base_coin: Coin<BaseAsset>,
-    quote_coin: Coin<QuoteAsset>,
+    mut base_coin: Coin<BaseAsset>,
+    mut quote_coin: Coin<QuoteAsset>,
     fulfillment: Fulfillment,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -481,6 +481,17 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
         default_amount,
         clock,
     );
+
+    // Return coins accordingly if this is a partial liquidation
+    let return_percent = constants::float_scaling() - repay_percent;
+    if (return_percent > 0) {
+        let base_return_amount = math::mul(return_percent, base_coin.value());
+        let quote_return_amount = math::mul(return_percent, quote_coin.value());
+        let base_return_coin = base_coin.split(base_return_amount, ctx);
+        let quote_return_coin = quote_coin.split(quote_return_amount, ctx);
+        self.liquidation_deposit_base(base_return_coin, ctx);
+        self.liquidation_deposit_quote(quote_return_coin, ctx);
+    };
 
     event::emit(LoanRepaidEvent {
         margin_manager_id,
@@ -592,7 +603,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    let (base_coin_2, quote_coin_2, remainder_coin) = self.repay_liquidation_int<
+    let (base_coin_returned, quote_coin_returned, remainder_coin) = self.repay_liquidation_int<
         BaseAsset,
         QuoteAsset,
         DebtAsset,
@@ -607,7 +618,7 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    (base_coin_2, quote_coin_2, remainder_coin)
+    (base_coin_returned, quote_coin_returned, remainder_coin)
 }
 
 // === Public Functions - Read Only ===
@@ -838,6 +849,44 @@ fun reset_margin_pool_id<BaseAsset, QuoteAsset>(self: &mut MarginManager<BaseAss
     if (self.base_borrowed_shares == 0 && self.quote_borrowed_shares == 0) {
         self.margin_pool_id = option::none();
     };
+}
+
+/// Deposit base asset to margin manager during liquidation
+fun liquidation_deposit_base<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<BaseAsset>,
+    ctx: &TxContext,
+) {
+    self.liquidation_deposit<BaseAsset, QuoteAsset, BaseAsset>(
+        coin,
+        ctx,
+    )
+}
+
+/// Deposit quote asset to margin manager during liquidation
+fun liquidation_deposit_quote<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<QuoteAsset>,
+    ctx: &TxContext,
+) {
+    self.liquidation_deposit<BaseAsset, QuoteAsset, QuoteAsset>(
+        coin,
+        ctx,
+    )
+}
+
+fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<DepositAsset>,
+    ctx: &TxContext,
+) {
+    let balance_manager = &mut self.balance_manager;
+
+    balance_manager.deposit_with_cap<DepositAsset>(
+        &self.deposit_cap,
+        coin,
+        ctx,
+    )
 }
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
