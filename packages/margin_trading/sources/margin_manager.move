@@ -3,23 +3,20 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    constants,
+    math,
+    pool::Pool
 };
-use deepbook::pool::Pool;
-use margin_trading::manager_info::{Self, ManagerInfo, Fulfillment};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::{
+    manager_info::{Self, ManagerInfo, Fulfillment},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::clock::Clock;
-use sui::coin::{Self, Coin};
-use sui::event;
+use sui::{clock::Clock, coin::{Self, Coin}, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -34,8 +31,7 @@ const EBorrowRiskRatioExceeded: u64 = 8;
 const EWithdrawRiskRatioExceeded: u64 = 9;
 const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
-const ERepaymentNotEnough: u64 = 12;
-const EIncorrectMarginPool: u64 = 13;
+const EIncorrectMarginPool: u64 = 12;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -426,6 +422,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
 
 /// Repays the loan as the liquidator.
 /// Returns the extra coin not required for repayment.
+/// If the liquidation is not full, the repay percentage is returned
 fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -446,10 +443,22 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_manager_id = self.id();
     let margin_pool_id = margin_pool.id();
     let repay_coin_amount = coin.value();
-    let repay_amount = fulfillment.repay_amount();
 
-    let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount();
-    assert!(repay_coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
+    let total_fulfillment_amount = fulfillment.repay_amount() + fulfillment.pool_reward_amount();
+    let full_liquidation = repay_coin_amount >= total_fulfillment_amount;
+    let repay_percent = if (full_liquidation) {
+        constants::float_scaling()
+    } else {
+        math::div(repay_coin_amount, total_fulfillment_amount)
+    };
+    let actual_fulfillment_amount = math::mul(repay_percent, total_fulfillment_amount);
+    let repay_amount = math::mul(repay_percent, fulfillment.repay_amount());
+    let pool_reward_amount = math::mul(repay_percent, fulfillment.pool_reward_amount());
+    let default_amount = if (full_liquidation) {
+        fulfillment.default_amount()
+    } else {
+        0
+    };
 
     let repay_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
@@ -458,11 +467,11 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     self.decrease_borrowed_shares(repay_is_base, default_shares);
     self.reset_margin_pool_id();
 
-    let cancel_amount = fulfillment.pool_reward_amount().min(fulfillment.default_amount());
-    let pool_reward_amount = fulfillment.pool_reward_amount() - cancel_amount;
-    let default_amount = fulfillment.default_amount() - cancel_amount;
+    let cancel_amount = pool_reward_amount.min(default_amount);
+    let pool_reward_amount = pool_reward_amount - cancel_amount;
+    let default_amount = default_amount - cancel_amount;
 
-    let repay_coin = coin.split(total_fulfillment_amount, ctx);
+    let repay_coin = coin.split(actual_fulfillment_amount, ctx);
     let timestamp = clock.timestamp_ms();
 
     margin_pool.repay_with_reward(
