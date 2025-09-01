@@ -23,7 +23,10 @@ use margin_trading::{
         build_btc_price_info_object,
         setup_btc_usd_margin_trading,
         get_margin_pool_caps,
-        get_margin_pool_cap
+        destroy_2,
+        return_shared_2,
+        return_shared_3,
+        return_to_sender_2
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
@@ -140,8 +143,7 @@ fun test_margin_trading_with_oracle() {
     test::return_shared(usdc_pool);
     test::return_shared(usdt_pool);
 
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -184,8 +186,7 @@ fun test_margin_trading_with_oracle() {
     test::return_shared(usdt_pool);
     test::return_shared(pool);
 
-    destroy(usdc_price);
-    destroy(usdt_price);
+    destroy_2!(usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -242,8 +243,7 @@ fun test_btc_usd_margin_trading() {
     test::return_shared(usdc_pool);
     test::return_shared(pool);
 
-    destroy(btc_price);
-    destroy(usdc_price);
+    destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -328,8 +328,7 @@ fun test_usd_deposit_btc_borrow() {
     test::return_shared(btc_pool);
     test::return_shared(pool);
 
-    destroy(btc_price);
-    destroy(usdc_price);
+    destroy_2!(btc_price, usdc_price);
     destroy(btc_increased);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -363,8 +362,7 @@ fun test_margin_manager_creation_ok() {
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
 
-    return_shared(mm);
-    return_shared(pool);
+    return_shared_2!(mm, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -435,8 +433,7 @@ fun test_deposit_with_base_quote_deep_assets() {
         scenario.ctx(),
     );
 
-    return_shared(mm);
-    return_shared(pool);
+    return_shared_2!(mm, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -536,10 +533,8 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
-    return_shared(usdc_pool);
-    return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -596,11 +591,8 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     assert!(withdrawn_coin.value() == withdraw_amount);
     destroy(withdrawn_coin);
 
-    return_shared(mm);
-    return_shared(usdt_pool);
-    return_shared(pool);
-    destroy(usdc_price);
-    destroy(usdt_price);
+    return_shared_3!(mm, usdt_pool, pool);
+    destroy_2!(usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -661,10 +653,8 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
-    return_shared(usdc_pool);
-    return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -776,10 +766,8 @@ fun test_borrow_fails_from_both_pools() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
-    return_shared(usdc_pool);
-    return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -1060,10 +1048,8 @@ fun test_repay_fails_wrong_pool() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
-    return_shared(usdc_pool);
-    return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -1164,8 +1150,7 @@ fun test_repay_full_with_none() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     // Create margin manager and borrow
     scenario.next_tx(test_constants::user1());
@@ -1218,11 +1203,8 @@ fun test_repay_full_with_none() {
     );
 
     assert!(repaid_amount > 0);
-    return_shared(mm);
-    return_shared(usdt_pool);
-    return_shared(pool);
-    destroy(usdc_price);
-    destroy(usdt_price);
+    return_shared_3!(mm, usdt_pool, pool);
+    destroy_2!(usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1275,8 +1257,7 @@ fun test_repay_exact_amount_no_rounding_errors() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared(usdt_pool);
-    scenario.return_to_sender(usdc_pool_cap);
-    scenario.return_to_sender(usdt_pool_cap);
+    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -1365,12 +1346,9 @@ fun test_repay_exact_amount_no_rounding_errors() {
             };
         };
 
-        destroy(usdc_price);
-        destroy(usdt_price);
+        destroy_2!(usdc_price, usdt_price);
     });
 
-    return_shared(mm);
-    return_shared(usdt_pool);
-    return_shared(pool);
+    return_shared_3!(mm, usdt_pool, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
