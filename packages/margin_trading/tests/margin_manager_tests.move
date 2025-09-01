@@ -21,7 +21,9 @@ use margin_trading::{
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object,
         build_btc_price_info_object,
-        setup_btc_usd_margin_trading
+        setup_btc_usd_margin_trading,
+        get_margin_pool_caps,
+        get_margin_pool_cap
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
@@ -495,14 +497,11 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     );
 
     // Get pool caps for enabling loans
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -623,14 +622,11 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -741,14 +737,11 @@ fun test_borrow_fails_from_both_pools() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -853,14 +846,11 @@ fun test_borrow_fails_with_zero_amount() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (_usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (_usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -934,14 +924,11 @@ fun test_borrow_fails_when_risk_ratio_below_150() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -1034,14 +1021,11 @@ fun test_repay_fails_wrong_pool() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -1148,14 +1132,11 @@ fun test_repay_full_with_none() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -1263,14 +1244,11 @@ fun test_repay_exact_amount_no_rounding_errors() {
         &clock,
     );
 
-    scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-    let (usdc_pool_cap, usdt_pool_cap) = if (cap1.margin_pool_id() == usdc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+        &mut scenario,
+        usdc_pool_id,
+        usdt_pool_id,
+    );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
@@ -1317,8 +1295,8 @@ fun test_repay_exact_amount_no_rounding_errors() {
     // testing for rounding errors when repaying shares * index
     let test_amounts = vector[
         100 * test_constants::usdt_multiplier(), // Small amount
-        1234567890, // Odd amount 
-        999999999, // Just under 1 USDT 
+        1234567890, // Odd amount
+        999999999, // Just under 1 USDT
     ];
 
     test_amounts.do!(|borrow_amount| {

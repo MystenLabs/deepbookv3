@@ -76,6 +76,31 @@ public fun create_margin_pool<Asset>(
     pool_id
 }
 
+/// Helper function to retrieve two MarginPoolCaps and return them in the correct order
+public fun get_margin_pool_caps<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    base_pool_id: ID,
+    quote_pool_id: ID,
+): (MarginPoolCap, MarginPoolCap) {
+    scenario.next_tx(test_constants::admin());
+    let cap1 = scenario.take_from_sender<MarginPoolCap>();
+    let cap2 = scenario.take_from_sender<MarginPoolCap>();
+
+    if (cap1.margin_pool_id() == base_pool_id) {
+        (cap1, cap2)
+    } else {
+        (cap2, cap1)
+    }
+}
+
+/// Helper function to retrieve a single MarginPoolCap for a specific pool
+public fun get_margin_pool_cap(scenario: &mut Scenario, pool_id: ID): MarginPoolCap {
+    scenario.next_tx(test_constants::admin());
+    let cap = scenario.take_from_sender<MarginPoolCap>();
+    assert!(cap.margin_pool_id() == pool_id, 0);
+    cap
+}
+
 public fun default_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
