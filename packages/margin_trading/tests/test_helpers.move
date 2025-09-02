@@ -70,7 +70,7 @@ public macro fun return_shared_4<$T1, $T2, $T3, $T4>(
     return_shared($obj4);
 }
 
-public macro fun return_to_sender_2<$T1, $T2>($scenario: &mut Scenario, $obj1: $T1, $obj2: $T2) {
+public macro fun return_to_sender_2<$T1, $T2>($scenario: &Scenario, $obj1: $T1, $obj2: $T2) {
     let s = $scenario;
     s.return_to_sender($obj1);
     s.return_to_sender($obj2);
@@ -125,10 +125,9 @@ public fun create_margin_pool<Asset>(
 }
 
 /// Helper function to retrieve two MarginPoolCaps and return them in the correct order
-public fun get_margin_pool_caps<BaseAsset, QuoteAsset>(
+public fun get_margin_pool_caps(
     scenario: &mut Scenario,
     base_pool_id: ID,
-    quote_pool_id: ID,
 ): (MarginPoolCap, MarginPoolCap) {
     scenario.next_tx(test_constants::admin());
     let cap1 = scenario.take_from_sender<MarginPoolCap>();

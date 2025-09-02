@@ -141,7 +141,7 @@ fun test_margin_trading_with_oracle() {
     test::return_shared(usdc_pool);
     test::return_shared(usdt_pool);
 
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -492,10 +492,9 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     );
 
     // Get pool caps for enabling loans
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -532,7 +531,7 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared_2!(usdc_pool, usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -612,10 +611,9 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -652,7 +650,7 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared_2!(usdc_pool, usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -725,10 +723,9 @@ fun test_borrow_fails_from_both_pools() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -765,7 +762,7 @@ fun test_borrow_fails_from_both_pools() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared_2!(usdc_pool, usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -832,10 +829,9 @@ fun test_borrow_fails_with_zero_amount() {
         &clock,
     );
 
-    let (_usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (_usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -910,10 +906,9 @@ fun test_borrow_fails_when_risk_ratio_below_150() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (_usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -1007,10 +1002,9 @@ fun test_repay_fails_wrong_pool() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -1047,7 +1041,7 @@ fun test_repay_fails_wrong_pool() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared_2!(usdc_pool, usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
@@ -1116,10 +1110,9 @@ fun test_repay_full_with_none() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -1148,7 +1141,7 @@ fun test_repay_full_with_none() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared(usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     // Create margin manager and borrow
     scenario.next_tx(test_constants::user1());
@@ -1224,10 +1217,9 @@ fun test_repay_exact_amount_no_rounding_errors() {
         &clock,
     );
 
-    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps<USDC, USDT>(
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(
         &mut scenario,
         usdc_pool_id,
-        usdt_pool_id,
     );
 
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
@@ -1255,7 +1247,7 @@ fun test_repay_exact_amount_no_rounding_errors() {
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
     return_shared(usdt_pool);
-    return_to_sender_2!(&mut scenario, usdc_pool_cap, usdt_pool_cap);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
