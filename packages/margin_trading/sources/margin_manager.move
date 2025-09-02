@@ -3,18 +3,23 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof
 };
-use margin_trading::{
-    manager_info::{Self, ManagerInfo, Fulfillment},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry
-};
+use deepbook::pool::Pool;
+use margin_trading::manager_info::{Self, ManagerInfo, Fulfillment};
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
 use token::deep::DEEP;
 
 // === Errors ===
@@ -148,10 +153,10 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     registry.load_inner();
     self.validate_owner(ctx);
 
-    let deposit_asset_type = type_name::get<DepositAsset>();
-    let base_asset_type = type_name::get<BaseAsset>();
-    let quote_asset_type = type_name::get<QuoteAsset>();
-    let deep_asset_type = type_name::get<DEEP>();
+    let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
+    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
+    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
+    let deep_asset_type = type_name::with_defining_ids<DEEP>();
     assert!(
         deposit_asset_type == base_asset_type || deposit_asset_type == quote_asset_type || deposit_asset_type == deep_asset_type,
         EInvalidDeposit,
@@ -685,7 +690,10 @@ public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     };
 
     let base_debt = if (debt_is_base) {
-        assert!(type_name::get<DebtAsset>() == type_name::get<BaseAsset>(), EInvalidDebtAsset);
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>(),
+            EInvalidDebtAsset,
+        );
         margin_pool.to_borrow_amount(debt_shares)
     } else {
         0
@@ -693,7 +701,10 @@ public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     let quote_debt = if (debt_is_base) {
         0
     } else {
-        assert!(type_name::get<DebtAsset>() == type_name::get<QuoteAsset>(), EInvalidDebtAsset);
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<QuoteAsset>(),
+            EInvalidDebtAsset,
+        );
         margin_pool.to_borrow_amount(debt_shares)
     };
 

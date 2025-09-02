@@ -4,17 +4,17 @@
 /// Registry holds all margin pools.
 module margin_trading::margin_registry;
 
-use deepbook::{constants, math, pool::Pool};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
 use margin_trading::margin_constants;
 use std::type_name::{Self, TypeName};
-use sui::{
-    clock::Clock,
-    dynamic_field as df,
-    event,
-    table::{Self, Table},
-    vec_set::{Self, VecSet},
-    versioned::{Self, Versioned}
-};
+use sui::clock::Clock;
+use sui::dynamic_field as df;
+use sui::event;
+use sui::table::{Self, Table};
+use sui::vec_set::{Self, VecSet};
+use sui::versioned::{Self, Versioned};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -395,7 +395,7 @@ public fun pool_enabled<BaseAsset, QuoteAsset>(
 /// Get the margin pool id for the given asset.
 public fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
     let inner = self.load_inner();
-    let key = type_name::get<Asset>();
+    let key = type_name::with_defining_ids<Asset>();
     assert!(inner.margin_pools.contains(key), EMarginPoolDoesNotExists);
 
     *inner.margin_pools.borrow<TypeName, ID>(key)

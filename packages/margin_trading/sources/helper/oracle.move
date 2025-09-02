@@ -4,9 +4,12 @@
 module margin_trading::oracle;
 
 use margin_trading::margin_registry::MarginRegistry;
-use pyth::{price_info::PriceInfoObject, pyth};
+use pyth::price_info::PriceInfoObject;
+use pyth::pyth;
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::coin::CoinMetadata;
+use sui::vec_map::{Self, VecMap};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -43,7 +46,7 @@ public fun new_coin_type_data<T>(
     coin_metadata: &CoinMetadata<T>,
     price_feed_id: vector<u8>,
 ): CoinTypeData {
-    let type_name = type_name::get<T>();
+    let type_name = type_name::with_defining_ids<T>();
     CoinTypeData {
         decimals: coin_metadata.get_decimals(),
         price_feed_id,
@@ -192,7 +195,7 @@ fun price_config<T>(
 /// Gets the configuration for a given currency type.
 fun get_config_for_type<T>(registry: &MarginRegistry): CoinTypeData {
     let config = registry.get_config<PythConfig>();
-    let payment_type = type_name::get<T>();
+    let payment_type = type_name::with_defining_ids<T>();
     assert!(config.currencies.contains(&payment_type), ECurrencyNotSupported);
     *config.currencies.get(&payment_type)
 }
@@ -218,6 +221,6 @@ public fun test_coin_type_data<T>(decimals: u8, price_feed_id: vector<u8>): Coin
     CoinTypeData {
         decimals,
         price_feed_id,
-        type_name: type_name::get<T>(),
+        type_name: type_name::with_defining_ids<T>(),
     }
 }

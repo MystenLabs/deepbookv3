@@ -4,14 +4,16 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
-};
+use margin_trading::margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap};
+use margin_trading::margin_state::{Self, State};
+use margin_trading::position_manager::{Self, PositionManager};
+use margin_trading::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
 use std::type_name::{Self, TypeName};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -114,7 +116,7 @@ public fun create_margin_pool<Asset>(
     };
     transfer::share_object(margin_pool);
 
-    let asset_type = type_name::get<Asset>();
+    let asset_type = type_name::with_defining_ids<Asset>();
     registry.register_margin_pool(asset_type, margin_pool_id, maintainer_cap, ctx);
 
     let maintainer_cap_id = maintainer_cap.maintainer_cap_id();
@@ -231,7 +233,7 @@ public fun withdraw_protocol_profit<Asset>(
     event::emit(ProtocolProfitWithdrawn {
         margin_pool_id: self.id(),
         pool_cap_id: margin_pool_cap.pool_cap_id(),
-        asset_type: type_name::get<Asset>(),
+        asset_type: type_name::with_defining_ids<Asset>(),
         profit,
         timestamp: clock.timestamp_ms(),
     });
@@ -265,7 +267,7 @@ public fun supply<Asset>(
 
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
-        asset_type: type_name::get<Asset>(),
+        asset_type: type_name::with_defining_ids<Asset>(),
         supplier,
         supply_amount,
         supply_shares,
@@ -300,7 +302,7 @@ public fun withdraw<Asset>(
 
     event::emit(AssetWithdrawn {
         margin_pool_id: self.id(),
-        asset_type: type_name::get<Asset>(),
+        asset_type: type_name::with_defining_ids<Asset>(),
         supplier,
         withdrawal_amount,
         withdrawal_shares,
