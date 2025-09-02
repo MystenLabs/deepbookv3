@@ -200,7 +200,7 @@ public fun generate_proof_as_trader(
 /// Deposit funds to a balance manager. Only owner can call this directly.
 public fun deposit<T>(balance_manager: &mut BalanceManager, coin: Coin<T>, ctx: &mut TxContext) {
     balance_manager.emit_balance_event(
-        type_name::get<T>(),
+        type_name::with_defining_ids<T>(),
         coin.value(),
         true,
     );
@@ -217,7 +217,7 @@ public fun deposit_with_cap<T>(
     ctx: &TxContext,
 ) {
     balance_manager.emit_balance_event(
-        type_name::get<T>(),
+        type_name::with_defining_ids<T>(),
         coin.value(),
         true,
     );
@@ -239,7 +239,7 @@ public fun withdraw_with_cap<T>(
     );
     let coin = balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx);
     balance_manager.emit_balance_event(
-        type_name::get<T>(),
+        type_name::with_defining_ids<T>(),
         coin.value(),
         false,
     );
@@ -258,7 +258,7 @@ public fun withdraw<T>(
     let proof = generate_proof_as_owner(balance_manager, ctx);
     let coin = balance_manager.withdraw_with_proof(&proof, withdraw_amount, false).into_coin(ctx);
     balance_manager.emit_balance_event(
-        type_name::get<T>(),
+        type_name::with_defining_ids<T>(),
         coin.value(),
         false,
     );
@@ -270,7 +270,7 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
     let proof = generate_proof_as_owner(balance_manager, ctx);
     let coin = balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
     balance_manager.emit_balance_event(
-        type_name::get<T>(),
+        type_name::with_defining_ids<T>(),
         coin.value(),
         false,
     );
@@ -403,7 +403,7 @@ public(package) fun emit_balance_event(
 
 // === Private Functions ===
 fun mint_trade_cap_internal(balance_manager: &mut BalanceManager, ctx: &mut TxContext): TradeCap {
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+    assert!(balance_manager.allow_listed.length() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
@@ -418,7 +418,7 @@ fun mint_deposit_cap_internal(
     balance_manager: &mut BalanceManager,
     ctx: &mut TxContext,
 ): DepositCap {
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+    assert!(balance_manager.allow_listed.length() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
@@ -433,7 +433,7 @@ fun mint_withdraw_cap_internal(
     balance_manager: &mut BalanceManager,
     ctx: &mut TxContext,
 ): WithdrawCap {
-    assert!(balance_manager.allow_listed.size() < MAX_TRADE_CAPS, EMaxCapsReached);
+    assert!(balance_manager.allow_listed.length() < MAX_TRADE_CAPS, EMaxCapsReached);
 
     let id = object::new(ctx);
     balance_manager.allow_listed.insert(id.to_inner());
