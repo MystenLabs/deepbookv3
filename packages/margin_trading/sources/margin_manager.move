@@ -342,7 +342,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 // === Public Functions - Liquidation - Receive Assets before liquidation ===
 /// Liquidates a margin manager. Can source liquidity from anywhere.
 /// Returns the fulfillment, base coin, and quote coin.
-/// Fulfillment must be destroyed using repay_liquidation or repay_liquidation_in_full
+/// Fulfillment must be destroyed using repay_liquidation
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -391,7 +391,10 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     (fulfillment, base, quote)
 }
 
-public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
+/// Repays the loan as the liquidator.
+/// Returns the remainder coin if the there is extra coin left over after the repayment.
+/// The full amount must be paid in order to satisfy the liquidation.
+public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
@@ -447,12 +450,12 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     let repay_coin_amount = coin.value();
 
     let (
-        actual_fulfillment_amount,
         repay_amount,
         mut pool_reward_amount,
         mut default_amount,
         return_percent,
     ) = fulfillment.calculate_fulfillment_amounts(repay_coin_amount);
+    let actual_fulfillment_amount = repay_amount + pool_reward_amount;
 
     let repay_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);

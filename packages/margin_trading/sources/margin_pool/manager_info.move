@@ -263,15 +263,16 @@ public(package) fun calculate_return_amounts(
 ): (u64, u64) {
     let base_return_amount = math::mul(return_percent, base_coin_value);
     let quote_return_amount = math::mul(return_percent, quote_coin_value);
+
     (base_return_amount, quote_return_amount)
 }
 
 /// Calculate all liquidation amounts and percentages from fulfillment and coin amount
-/// Returns: (actual_fulfillment_amount, repay_amount, pool_reward_amount, default_amount, return_percent)
+/// Returns: (repay_amount, pool_reward_amount, default_amount, return_percent)
 public(package) fun calculate_fulfillment_amounts(
     fulfillment: &Fulfillment,
     repay_coin_amount: u64,
-): (u64, u64, u64, u64, u64) {
+): (u64, u64, u64, u64) {
     let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
     let full_liquidation = repay_coin_amount >= total_fulfillment_amount;
     let repay_percent = if (full_liquidation) {
@@ -279,9 +280,9 @@ public(package) fun calculate_fulfillment_amounts(
     } else {
         math::div(repay_coin_amount, total_fulfillment_amount)
     };
-    let actual_fulfillment_amount = math::mul(repay_percent, total_fulfillment_amount);
     let repay_amount = math::mul(repay_percent, fulfillment.repay_amount);
     let pool_reward_amount = math::mul(repay_percent, fulfillment.pool_reward_amount);
+
     let default_amount = if (full_liquidation) {
         fulfillment.default_amount
     } else {
@@ -289,5 +290,5 @@ public(package) fun calculate_fulfillment_amounts(
     };
     let return_percent = constants::float_scaling() - repay_percent;
 
-    (actual_fulfillment_amount, repay_amount, pool_reward_amount, default_amount, return_percent)
+    (repay_amount, pool_reward_amount, default_amount, return_percent)
 }
