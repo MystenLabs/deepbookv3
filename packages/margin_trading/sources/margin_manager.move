@@ -435,7 +435,7 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     mut coin: Coin<RepayAsset>,
     mut base_coin: Coin<BaseAsset>,
     mut quote_coin: Coin<QuoteAsset>,
-    fulfillment: Fulfillment,
+    mut fulfillment: Fulfillment,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<RepayAsset>) {
