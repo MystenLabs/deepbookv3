@@ -26,7 +26,7 @@ use margin_trading::{
         destroy_2,
         return_shared_2,
         return_shared_3,
-        return_to_sender_2,
+        return_to_sender_2
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
