@@ -13,6 +13,7 @@ const ADMIN: address = @0x0;
 public struct USDC has drop {}
 public struct USDT has drop {}
 public struct BTC has drop {}
+public struct INVALID_ASSET has drop {}
 
 const USDC_MULTIPLIER: u64 = 1000000;
 const USDT_MULTIPLIER: u64 = 1000000;

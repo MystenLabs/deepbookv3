@@ -28,6 +28,54 @@ use sui::{
 };
 use token::deep::DEEP;
 
+// === Cleanup helper functions ===
+
+public macro fun destroy_all<$T>($vec: vector<$T>) {
+    let mut v = $vec;
+    v.do!(|item| destroy(item));
+    v.destroy_empty();
+}
+
+public macro fun destroy_2<$T1, $T2>($obj1: $T1, $obj2: $T2) {
+    destroy($obj1);
+    destroy($obj2);
+}
+
+public macro fun destroy_3<$T1, $T2, $T3>($obj1: $T1, $obj2: $T2, $obj3: $T3) {
+    destroy($obj1);
+    destroy($obj2);
+    destroy($obj3);
+}
+
+public macro fun return_shared_2<$T1, $T2>($obj1: $T1, $obj2: $T2) {
+    return_shared($obj1);
+    return_shared($obj2);
+}
+
+public macro fun return_shared_3<$T1, $T2, $T3>($obj1: $T1, $obj2: $T2, $obj3: $T3) {
+    return_shared($obj1);
+    return_shared($obj2);
+    return_shared($obj3);
+}
+
+public macro fun return_shared_4<$T1, $T2, $T3, $T4>(
+    $obj1: $T1,
+    $obj2: $T2,
+    $obj3: $T3,
+    $obj4: $T4,
+) {
+    return_shared($obj1);
+    return_shared($obj2);
+    return_shared($obj3);
+    return_shared($obj4);
+}
+
+public macro fun return_to_sender_2<$T1, $T2>($scenario: &mut Scenario, $obj1: $T1, $obj2: $T2) {
+    let s = $scenario;
+    s.return_to_sender($obj1);
+    s.return_to_sender($obj2);
+}
+
 public fun setup_test(): (Scenario, MarginAdminCap) {
     let mut test = begin(test_constants::admin());
     let clock = clock::create_for_testing(test.ctx());
@@ -74,6 +122,31 @@ public fun create_margin_pool<Asset>(
     return_shared(registry);
 
     pool_id
+}
+
+/// Helper function to retrieve two MarginPoolCaps and return them in the correct order
+public fun get_margin_pool_caps<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    base_pool_id: ID,
+    quote_pool_id: ID,
+): (MarginPoolCap, MarginPoolCap) {
+    scenario.next_tx(test_constants::admin());
+    let cap1 = scenario.take_from_sender<MarginPoolCap>();
+    let cap2 = scenario.take_from_sender<MarginPoolCap>();
+
+    if (cap1.margin_pool_id() == base_pool_id) {
+        (cap1, cap2)
+    } else {
+        (cap2, cap1)
+    }
+}
+
+/// Helper function to retrieve a single MarginPoolCap for a specific pool
+public fun get_margin_pool_cap(scenario: &mut Scenario, pool_id: ID): MarginPoolCap {
+    scenario.next_tx(test_constants::admin());
+    let cap = scenario.take_from_sender<MarginPoolCap>();
+    assert!(cap.margin_pool_id() == pool_id, 0);
+    cap
 }
 
 public fun default_protocol_config(): ProtocolConfig {
