@@ -3,12 +3,12 @@
 
 module margin_trading::pool_proxy;
 
-use deepbook::math;
-use deepbook::order_info::OrderInfo;
-use deepbook::pool::Pool;
-use margin_trading::margin_manager::MarginManager;
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
+use deepbook::{math, order_info::OrderInfo, pool::Pool};
+use margin_trading::{
+    margin_manager::MarginManager,
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use std::type_name;
 use sui::clock::Clock;
 use token::deep::DEEP;
