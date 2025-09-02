@@ -51,6 +51,7 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
+const EInvalidReferralMultiplier: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -831,6 +832,7 @@ public fun set_referral_multiplier<BaseAsset, QuoteAsset>(
     _cap: &DeepbookAdminCap,
     multiplier: u64,
 ) {
+    assert!(multiplier % 10_000_000 == 0 && multiplier >= constants::referral_min_multiplier() && multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     let _ = self.load_inner_mut();
     if (self.id.exists_(constants::referral_multiplier_df_key())) {
         let _: u64 = self.id.remove(constants::referral_multiplier_df_key());
