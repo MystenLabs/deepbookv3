@@ -15,6 +15,7 @@ public struct MarginPoolConfig has copy, drop, store {
     supply_cap: u64,
     max_utilization_rate: u64,
     protocol_spread: u64,
+    min_borrow: u64,
 }
 
 public struct InterestConfig has copy, drop, store {
@@ -38,11 +39,13 @@ public fun new_margin_pool_config(
     supply_cap: u64,
     max_utilization_rate: u64,
     protocol_spread: u64,
+    min_borrow: u64,
 ): MarginPoolConfig {
     MarginPoolConfig {
         supply_cap,
         max_utilization_rate,
         protocol_spread,
+        min_borrow,
     }
 }
 
@@ -118,6 +121,10 @@ public(package) fun max_utilization_rate(self: &ProtocolConfig): u64 {
 
 public(package) fun protocol_spread(self: &ProtocolConfig): u64 {
     self.margin_pool_config.protocol_spread
+}
+
+public(package) fun min_borrow(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.min_borrow
 }
 
 public(package) fun base_rate(self: &ProtocolConfig): u64 {

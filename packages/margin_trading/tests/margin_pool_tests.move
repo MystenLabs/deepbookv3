@@ -345,6 +345,7 @@ fun test_invalid_margin_pool_cap() {
         500_000_000_000, // Different supply cap
         test_constants::max_utilization_rate(),
         test_constants::protocol_spread(),
+        test_constants::min_borrow(),
     );
     let interest_config2 = protocol_config::new_interest_config(
         50_000_000,
