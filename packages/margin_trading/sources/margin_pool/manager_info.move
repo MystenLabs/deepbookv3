@@ -216,12 +216,9 @@ public(package) fun calculate_return_amounts(
     (base_return_amount, quote_return_amount)
 }
 
-/// Calculate all liquidation amounts and percentages from fulfillment and coin amount
-/// Returns: (repay_amount, pool_reward_amount, default_amount, return_percent)
-public(package) fun calculate_fulfillment_amounts(
-    fulfillment: &Fulfillment,
-    repay_coin_amount: u64,
-): (u64, u64, u64, u64) {
+/// Calculate and updates fulfillment based on repay percentage
+/// Returns the percent of the base and quote assets are returned to the manager
+public(package) fun update_fulfillment(fulfillment: &mut Fulfillment, repay_coin_amount: u64): u64 {
     let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
     let full_liquidation = repay_coin_amount >= total_fulfillment_amount;
     let repay_percent = if (full_liquidation) {
@@ -239,7 +236,11 @@ public(package) fun calculate_fulfillment_amounts(
     };
     let return_percent = constants::float_scaling() - repay_percent;
 
-    (repay_amount, pool_reward_amount, default_amount, return_percent)
+    fulfillment.repay_amount = repay_amount;
+    fulfillment.pool_reward_amount = pool_reward_amount;
+    fulfillment.default_amount = default_amount;
+
+    return_percent
 }
 
 public(package) fun user_liquidation_reward(manager_info: &ManagerInfo): u64 {

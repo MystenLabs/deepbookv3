@@ -449,12 +449,10 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_pool_id = margin_pool.id();
     let repay_coin_amount = coin.value();
 
-    let (
-        repay_amount,
-        mut pool_reward_amount,
-        mut default_amount,
-        return_percent,
-    ) = fulfillment.calculate_fulfillment_amounts(repay_coin_amount);
+    let return_percent = fulfillment.update_fulfillment(repay_coin_amount);
+    let repay_amount = fulfillment.repay_amount();
+    let mut pool_reward_amount = fulfillment.pool_reward_amount();
+    let mut default_amount = fulfillment.default_amount();
     let actual_fulfillment_amount = repay_amount + pool_reward_amount;
 
     let repay_is_base = self.has_base_debt();
