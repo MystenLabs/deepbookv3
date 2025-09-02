@@ -395,7 +395,7 @@ public fun pool_enabled<BaseAsset, QuoteAsset>(
 /// Get the margin pool id for the given asset.
 public fun get_margin_pool_id<Asset>(self: &MarginRegistry): ID {
     let inner = self.load_inner();
-    let key = type_name::get<Asset>();
+    let key = type_name::with_defining_ids<Asset>();
     assert!(inner.margin_pools.contains(key), EMarginPoolDoesNotExists);
 
     *inner.margin_pools.borrow<TypeName, ID>(key)
