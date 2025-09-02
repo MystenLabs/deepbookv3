@@ -106,8 +106,8 @@ public fun create_permissionless_pool<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ): ID {
     assert!(creation_fee.value() == constants::pool_creation_fee(), EInvalidFee);
-    let base_type = type_name::get<BaseAsset>();
-    let quote_type = type_name::get<QuoteAsset>();
+    let base_type = type_name::with_defining_ids<BaseAsset>();
+    let quote_type = type_name::with_defining_ids<QuoteAsset>();
     let whitelisted_pool = false;
     let stable_pool = registry.is_stablecoin(base_type) && registry.is_stablecoin(quote_type);
 
@@ -597,11 +597,11 @@ public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, Refer
     let reference_pool_price = reference_pool.mid_price(clock);
 
     let target_pool = target_pool.load_inner_mut();
-    let reference_base_type = type_name::get<ReferenceBaseAsset>();
-    let reference_quote_type = type_name::get<ReferenceQuoteAsset>();
-    let target_base_type = type_name::get<BaseAsset>();
-    let target_quote_type = type_name::get<QuoteAsset>();
-    let deep_type = type_name::get<DEEP>();
+    let reference_base_type = type_name::with_defining_ids<ReferenceBaseAsset>();
+    let reference_quote_type = type_name::with_defining_ids<ReferenceQuoteAsset>();
+    let target_base_type = type_name::with_defining_ids<BaseAsset>();
+    let target_quote_type = type_name::with_defining_ids<QuoteAsset>();
+    let deep_type = type_name::with_defining_ids<DEEP>();
     let timestamp = clock.timestamp_ms();
 
     assert!(
@@ -1201,7 +1201,10 @@ public(package) fun create_pool<BaseAsset, QuoteAsset>(
     assert!(min_size % lot_size == 0, EInvalidMinSize);
     assert!(math::is_power_of_ten(min_size), EInvalidMinSize);
     assert!(!(whitelisted_pool && stable_pool), EPoolCannotBeBothWhitelistedAndStable);
-    assert!(type_name::get<BaseAsset>() != type_name::get<QuoteAsset>(), ESameBaseAndQuote);
+    assert!(
+        type_name::with_defining_ids<BaseAsset>() != type_name::with_defining_ids<QuoteAsset>(),
+        ESameBaseAndQuote,
+    );
 
     let pool_id = object::new(ctx);
     let pool_inner = PoolInner<BaseAsset, QuoteAsset> {

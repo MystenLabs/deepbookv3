@@ -314,9 +314,9 @@ public fun stake<BaseAsset, QuoteAsset>(
 ) {
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let base_asset_type = type_name::get<BaseAsset>();
-    let quote_asset_type = type_name::get<QuoteAsset>();
-    let deep_asset_type = type_name::get<DEEP>();
+    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
+    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
+    let deep_asset_type = type_name::with_defining_ids<DEEP>();
     assert!(
         base_asset_type != deep_asset_type && quote_asset_type != deep_asset_type,
         ECannotStakeWithDeepMarginManager,

@@ -1670,7 +1670,7 @@ public(package) fun validate_open_orders<BaseAsset, QuoteAsset>(
         );
 
         assert!(
-            pool.account_open_orders(&balance_manager).size() ==
+            pool.account_open_orders(&balance_manager).length() ==
             expected_open_orders,
             1,
         );

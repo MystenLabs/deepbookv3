@@ -139,7 +139,7 @@ public(package) fun process_create(
     let maker_fee = self.governance.trade_params().maker_fee();
 
     if (order_info.order_inserted()) {
-        assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
+        assert!(account.open_orders().length() < constants::max_open_orders(), EMaxOpenOrders);
         account.add_order(order_info.order_id());
     };
     account.add_taker_volume(order_info.executed_quantity());
@@ -372,17 +372,17 @@ public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
         claim_amount,
     });
     balance_manager.emit_balance_event(
-        type_name::get<DEEP>(),
+        type_name::with_defining_ids<DEEP>(),
         claim_amount.deep(),
         true,
     );
     balance_manager.emit_balance_event(
-        type_name::get<BaseAsset>(),
+        type_name::with_defining_ids<BaseAsset>(),
         claim_amount.base(),
         true,
     );
     balance_manager.emit_balance_event(
-        type_name::get<QuoteAsset>(),
+        type_name::with_defining_ids<QuoteAsset>(),
         claim_amount.quote(),
         true,
     );

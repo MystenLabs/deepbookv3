@@ -98,7 +98,7 @@ public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdm
 /// Only Admin can add stablecoin
 public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
     let _: &mut RegistryInner = self.load_inner_mut();
-    let stable_type = type_name::get<StableCoin>();
+    let stable_type = type_name::with_defining_ids<StableCoin>();
     if (
         !dynamic_field::exists_(
             &self.id,
@@ -124,7 +124,7 @@ public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminC
 /// Only Admin can remove stablecoin
 public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminCap) {
     let _: &mut RegistryInner = self.load_inner_mut();
-    let stable_type = type_name::get<StableCoin>();
+    let stable_type = type_name::with_defining_ids<StableCoin>();
     assert!(
         dynamic_field::exists_(
             &self.id,
@@ -175,14 +175,14 @@ public(package) fun load_inner_mut(self: &mut Registry): &mut RegistryInner {
 public(package) fun register_pool<BaseAsset, QuoteAsset>(self: &mut Registry, pool_id: ID) {
     let self = self.load_inner_mut();
     let key = PoolKey {
-        base: type_name::get<QuoteAsset>(),
-        quote: type_name::get<BaseAsset>(),
+        base: type_name::with_defining_ids<QuoteAsset>(),
+        quote: type_name::with_defining_ids<BaseAsset>(),
     };
     assert!(!self.pools.contains(key), EPoolAlreadyExists);
 
     let key = PoolKey {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
+        base: type_name::with_defining_ids<BaseAsset>(),
+        quote: type_name::with_defining_ids<QuoteAsset>(),
     };
     assert!(!self.pools.contains(key), EPoolAlreadyExists);
 
@@ -193,8 +193,8 @@ public(package) fun register_pool<BaseAsset, QuoteAsset>(self: &mut Registry, po
 public(package) fun unregister_pool<BaseAsset, QuoteAsset>(self: &mut Registry) {
     let self = self.load_inner_mut();
     let key = PoolKey {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
+        base: type_name::with_defining_ids<BaseAsset>(),
+        quote: type_name::with_defining_ids<QuoteAsset>(),
     };
     assert!(self.pools.contains(key), EPoolDoesNotExist);
     self.pools.remove<PoolKey, ID>(key);
@@ -212,8 +212,8 @@ public(package) fun load_inner(self: &Registry): &RegistryInner {
 public(package) fun get_pool_id<BaseAsset, QuoteAsset>(self: &Registry): ID {
     let self = self.load_inner();
     let key = PoolKey {
-        base: type_name::get<BaseAsset>(),
-        quote: type_name::get<QuoteAsset>(),
+        base: type_name::with_defining_ids<BaseAsset>(),
+        quote: type_name::with_defining_ids<QuoteAsset>(),
     };
     assert!(self.pools.contains(key), EPoolDoesNotExist);
 
