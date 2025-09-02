@@ -34,6 +34,7 @@ use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
 use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -823,6 +824,20 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
     ewma_state.set_additional_taker_fee(additional_taker_fee);
 }
 
+/// Set the referral multiplier for the pool.
+/// Only admin can set the multiplier.
+public fun set_referral_multiplier<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    _cap: &DeepbookAdminCap,
+    multiplier: u64,
+) {
+    let _ = self.load_inner_mut();
+    if (self.id.exists_(constants::referral_multiplier_df_key())) {
+        let _: u64 = self.id.remove(constants::referral_multiplier_df_key());
+    };
+    self.id.add(constants::referral_multiplier_df_key(), multiplier);
+}
+
 // === Public-View Functions ===
 /// Accessor to check if the pool is whitelisted.
 public fun whitelisted<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
@@ -1292,6 +1307,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     let whitelist = self.whitelisted();
     self.update_ewma_state(clock, ctx);
     let ewma_state = self.load_ewma_state();
+    let referral_multiplier = self.load_referral_multiplier();
     let self = self.load_inner_mut();
 
     let order_deep_price = if (pay_with_deep) {
@@ -1329,7 +1345,11 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
     order_info.emit_order_info();
     order_info.emit_orders_filled(clock.timestamp_ms());
-    balance_manager.process_referral_fees<BaseAsset, QuoteAsset>(trade_proof, &order_info);
+    balance_manager.process_referral_fees<BaseAsset, QuoteAsset>(
+        trade_proof,
+        &order_info,
+        referral_multiplier,
+    );
 
     order_info
 }
@@ -1355,4 +1375,11 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
 
 fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
     *self.id.borrow(constants::ewma_df_key())
+}
+
+fun load_referral_multiplier<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u64 {
+    if (!self.id.exists_(constants::referral_multiplier_df_key())) {
+        return 0
+    };
+    *self.id.borrow(constants::referral_multiplier_df_key())
 }
