@@ -8,13 +8,13 @@ use deepbook::{
     pool::Pool
 };
 use margin_trading::{
-    manager_info::{Self, ManagerInfo, Fulfillment},
+    manager_info::{Self, ManagerInfo, Fulfillment, calculate_return_amounts},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::{clock::Clock, coin::{Self, Coin}, event};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -342,7 +342,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 // === Public Functions - Liquidation - Receive Assets before liquidation ===
 /// Liquidates a margin manager. Can source liquidity from anywhere.
 /// Returns the fulfillment, base coin, and quote coin.
-/// Fulfillment must be destroyed using repay_liquidation or repay_liquidation_in_full
+/// Fulfillment must be destroyed using repay_liquidation
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -392,16 +392,53 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 /// Repays the loan as the liquidator.
-/// Returns the extra coin not required for repayment.
-public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
+/// Returns the remainder coin if the there is extra coin left over after the repayment.
+/// The full amount must be paid in order to satisfy the liquidation.
+public fun repay_liquidation<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<RepayAsset>,
-    mut coin: Coin<RepayAsset>,
+    coin: Coin<RepayAsset>,
     fulfillment: Fulfillment,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<RepayAsset> {
+    let total_fulfillment_amount = fulfillment.repay_amount() + fulfillment.pool_reward_amount();
+    assert!(coin.value() >= total_fulfillment_amount, ERepaymentNotEnough);
+
+    let base_coin = coin::zero<BaseAsset>(ctx);
+    let quote_coin = coin::zero<QuoteAsset>(ctx);
+
+    let (base_coin, quote_coin, remainder_coin) = self.repay_liquidation_int(
+        registry,
+        margin_pool,
+        coin,
+        base_coin,
+        quote_coin,
+        fulfillment,
+        clock,
+        ctx,
+    );
+    coin::destroy_zero(base_coin);
+    coin::destroy_zero(quote_coin);
+
+    remainder_coin
+}
+
+/// Repays the loan as the liquidator.
+/// Returns the extra coin not required for repayment.
+/// If the liquidation is not full, the repay percentage is returned
+fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    margin_pool: &mut MarginPool<RepayAsset>,
+    mut coin: Coin<RepayAsset>,
+    mut base_coin: Coin<BaseAsset>,
+    mut quote_coin: Coin<QuoteAsset>,
+    mut fulfillment: Fulfillment,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<RepayAsset>) {
     registry.load_inner();
     margin_pool.update_state(clock);
     assert!(fulfillment.manager_id() == self.id(), EInvalidMarginManager);
@@ -411,10 +448,12 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     let margin_manager_id = self.id();
     let margin_pool_id = margin_pool.id();
     let repay_coin_amount = coin.value();
-    let repay_amount = fulfillment.repay_amount();
 
-    let total_fulfillment_amount = repay_amount + fulfillment.pool_reward_amount();
-    assert!(repay_coin_amount >= total_fulfillment_amount, ERepaymentNotEnough);
+    let return_percent = fulfillment.update_fulfillment(repay_coin_amount);
+    let repay_amount = fulfillment.repay_amount();
+    let mut pool_reward_amount = fulfillment.pool_reward_amount();
+    let mut default_amount = fulfillment.default_amount();
+    let actual_fulfillment_amount = repay_amount + pool_reward_amount;
 
     let repay_is_base = self.has_base_debt();
     let repay_shares = margin_pool.to_borrow_shares(repay_amount);
@@ -423,11 +462,11 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
     self.decrease_borrowed_shares(repay_is_base, default_shares);
     self.reset_margin_pool_id();
 
-    let cancel_amount = fulfillment.pool_reward_amount().min(fulfillment.default_amount());
-    let pool_reward_amount = fulfillment.pool_reward_amount() - cancel_amount;
-    let default_amount = fulfillment.default_amount() - cancel_amount;
+    let cancel_amount = pool_reward_amount.min(default_amount);
+    pool_reward_amount = pool_reward_amount - cancel_amount;
+    default_amount = default_amount - cancel_amount;
 
-    let repay_coin = coin.split(total_fulfillment_amount, ctx);
+    let repay_coin = coin.split(actual_fulfillment_amount, ctx);
     let timestamp = clock.timestamp_ms();
 
     margin_pool.repay_with_reward(
@@ -437,6 +476,19 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
         default_amount,
         clock,
     );
+
+    // Return coins accordingly if this is a partial liquidation
+    if (return_percent > 0) {
+        let (base_return_amount, quote_return_amount) = calculate_return_amounts(
+            return_percent,
+            base_coin.value(),
+            quote_coin.value(),
+        );
+        let base_return_coin = base_coin.split(base_return_amount, ctx);
+        let quote_return_coin = quote_coin.split(quote_return_amount, ctx);
+        self.liquidation_deposit_base(base_return_coin, ctx);
+        self.liquidation_deposit_quote(quote_return_coin, ctx);
+    };
 
     event::emit(LoanRepaidEvent {
         margin_manager_id,
@@ -459,7 +511,7 @@ public fun repay_liquidation_in_full<BaseAsset, QuoteAsset, RepayAsset>(
 
     fulfillment.drop();
 
-    coin
+    (base_coin, quote_coin, coin)
 }
 
 // === Public Functions - Liquidation - Receive rewards after liquidation ===
@@ -548,16 +600,22 @@ public fun liquidate_loan<BaseAsset, QuoteAsset, DebtAsset>(
         ctx,
     );
 
-    let remainder_coin = self.repay_liquidation_in_full<BaseAsset, QuoteAsset, DebtAsset>(
+    let (base_coin_returned, quote_coin_returned, remainder_coin) = self.repay_liquidation_int<
+        BaseAsset,
+        QuoteAsset,
+        DebtAsset,
+    >(
         registry,
         margin_pool,
         liquidation_coin,
+        base_coin,
+        quote_coin,
         fulfillment,
         clock,
         ctx,
     );
 
-    (base_coin, quote_coin, remainder_coin)
+    (base_coin_returned, quote_coin_returned, remainder_coin)
 }
 
 // === Public Functions - Read Only ===
@@ -794,6 +852,44 @@ fun reset_margin_pool_id<BaseAsset, QuoteAsset>(self: &mut MarginManager<BaseAss
     if (self.base_borrowed_shares == 0 && self.quote_borrowed_shares == 0) {
         self.margin_pool_id = option::none();
     };
+}
+
+/// Deposit base asset to margin manager during liquidation
+fun liquidation_deposit_base<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<BaseAsset>,
+    ctx: &TxContext,
+) {
+    self.liquidation_deposit<BaseAsset, QuoteAsset, BaseAsset>(
+        coin,
+        ctx,
+    )
+}
+
+/// Deposit quote asset to margin manager during liquidation
+fun liquidation_deposit_quote<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<QuoteAsset>,
+    ctx: &TxContext,
+) {
+    self.liquidation_deposit<BaseAsset, QuoteAsset, QuoteAsset>(
+        coin,
+        ctx,
+    )
+}
+
+fun liquidation_deposit<BaseAsset, QuoteAsset, DepositAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<DepositAsset>,
+    ctx: &TxContext,
+) {
+    let balance_manager = &mut self.balance_manager;
+
+    balance_manager.deposit_with_cap<DepositAsset>(
+        &self.deposit_cap,
+        coin,
+        ctx,
+    )
 }
 
 fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(

@@ -144,20 +144,17 @@ public(package) fun new_manager_info<BaseAsset, QuoteAsset>(
 }
 
 public(package) fun produce_fulfillment(self: &ManagerInfo, manager_id: ID): Fulfillment {
-    let usd_to_repay_with_rewards = self.calculate_usd_amount_to_repay();
-    let repay_usd_with_rewards = self.asset_usd.min(usd_to_repay_with_rewards);
+    let usd_to_repay_with_rewards = self.calculate_usd_amount_to_repay(); // 1000
+    let repay_usd_with_rewards = self.asset_usd.min(usd_to_repay_with_rewards); // 900
     let liquidation_reward = self.user_liquidation_reward + self.pool_liquidation_reward;
-    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward;
+    let liquidation_reward_ratio = constants::float_scaling() + liquidation_reward; // 1.05
 
-    let usd_to_repay = math::div(repay_usd_with_rewards, liquidation_reward_ratio);
-    let mut pool_reward_usd = math::mul(usd_to_repay, self.pool_liquidation_reward);
+    let usd_to_repay = math::div(repay_usd_with_rewards, liquidation_reward_ratio); // 900 / 1.05 = 857
+    let pool_reward_usd = math::mul(usd_to_repay, self.pool_liquidation_reward); // 857 * 0.03 = 26
 
-    let in_default = self.debt_usd > self.asset_usd;
+    let in_default = self.debt_usd > self.asset_usd; // 1000 > 900 = true
     let default_usd = if (in_default) {
-        let default_usd = self.debt_usd - usd_to_repay;
-        let cancel = default_usd.min(pool_reward_usd);
-        pool_reward_usd = pool_reward_usd - cancel;
-        default_usd - cancel
+        self.debt_usd - usd_to_repay
     } else {
         0
     };
@@ -203,7 +200,47 @@ public(package) fun calculate_usd_amount_to_repay(manager_info: &ManagerInfo): u
     let denominator = target_ratio - (constants::float_scaling() + liquidation_reward); // 1.25 - 1.05 = 0.2
     let usd_to_repay = math::div(numerator, denominator); // 750
 
-    math::mul(usd_to_repay, constants::float_scaling() + liquidation_reward)
+    math::mul(usd_to_repay, constants::float_scaling() + liquidation_reward) // 750 * 1.05 = 787.5
+}
+
+/// Calculate return amounts for partial liquidations
+/// Returns: (base_return_amount, quote_return_amount)
+public(package) fun calculate_return_amounts(
+    return_percent: u64,
+    base_coin_value: u64,
+    quote_coin_value: u64,
+): (u64, u64) {
+    let base_return_amount = math::mul(return_percent, base_coin_value);
+    let quote_return_amount = math::mul(return_percent, quote_coin_value);
+
+    (base_return_amount, quote_return_amount)
+}
+
+/// Calculate and updates fulfillment based on repay percentage
+/// Returns the percent of the base and quote assets are returned to the manager
+public(package) fun update_fulfillment(fulfillment: &mut Fulfillment, repay_coin_amount: u64): u64 {
+    let total_fulfillment_amount = fulfillment.repay_amount + fulfillment.pool_reward_amount;
+    let full_liquidation = repay_coin_amount >= total_fulfillment_amount;
+    let repay_percent = if (full_liquidation) {
+        constants::float_scaling()
+    } else {
+        math::div(repay_coin_amount, total_fulfillment_amount)
+    };
+    let repay_amount = math::mul(repay_percent, fulfillment.repay_amount);
+    let pool_reward_amount = math::mul(repay_percent, fulfillment.pool_reward_amount);
+
+    let default_amount = if (full_liquidation) {
+        fulfillment.default_amount
+    } else {
+        0
+    };
+    let return_percent = constants::float_scaling() - repay_percent;
+
+    fulfillment.repay_amount = repay_amount;
+    fulfillment.pool_reward_amount = pool_reward_amount;
+    fulfillment.default_amount = default_amount;
+
+    return_percent
 }
 
 public(package) fun user_liquidation_reward(manager_info: &ManagerInfo): u64 {
