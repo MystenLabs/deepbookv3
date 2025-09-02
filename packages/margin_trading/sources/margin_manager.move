@@ -151,7 +151,7 @@ public fun set_referral<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
-    self.balance_manager.set_referral(&self.trade_cap, referral_cap, ctx);
+    self.balance_manager.set_referral(referral_cap, &self.trade_cap);
 }
 
 // === Public Functions - Margin Manager ===

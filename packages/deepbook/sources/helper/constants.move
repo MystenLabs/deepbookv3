@@ -24,7 +24,6 @@ const REFERRAL_MULTIPLIER_DF_KEY: vector<u8> = b"referral_multiplier";
 const REFERRAL_MIN_MULTIPLIER: u64 = 10_000_000; // 1%
 const REFERRAL_MAX_MULTIPLIER: u64 = 10_000_000_000; // 1000%
 
-
 // Restrictions on limit orders.
 // No restriction on the order.
 const NO_RESTRICTION: u8 = 0;

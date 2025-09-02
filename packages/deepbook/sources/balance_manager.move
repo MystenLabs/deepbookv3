@@ -20,10 +20,11 @@ use sui::{
 };
 use token::deep::DEEP;
 
-use fun df::remove as UID.remove;
-use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
 use fun df::exists_ as UID.exists_;
+use fun df::remove_if_exists as UID.remove_if_exists;
+use fun df::add as UID.add;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
@@ -43,11 +44,6 @@ public struct BalanceManager has key, store {
     owner: address,
     balances: Bag,
     allow_listed: VecSet<ID>,
-}
-
-public struct Referral has store {
-    id: ID,
-    referral_fees: Bag,
 }
 
 /// Event emitted when a new balance_manager is created.
@@ -164,6 +160,16 @@ public fun new_with_custom_owner_and_caps(
     (balance_manager, deposit_cap, withdraw_cap, trade_cap)
 }
 
+public fun set_referral(
+    balance_manager: &mut BalanceManager,
+    referral: &DeepBookReferral,
+    trade_cap: &TradeCap,
+) {
+    balance_manager.validate_trader(trade_cap);
+    let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
+    balance_manager.id.add(constants::referral_df_key(), referral.id.to_inner());
+}
+
 /// Returns the balance of a Coin in a balance manager.
 public fun balance<T>(balance_manager: &BalanceManager): u64 {
     let key = BalanceKey<T> {};
@@ -196,21 +202,6 @@ public fun mint_withdraw_cap(
     balance_manager.mint_withdraw_cap_internal(ctx)
 }
 
-/// Mint a `DeepBookReferral` and share it.
-public fun mint_referral_cap(ctx: &mut TxContext) {
-    let referral = DeepBookReferral {
-        id: object::new(ctx),
-        owner: ctx.sender(),
-    };
-
-    event::emit(DeepBookReferralCreatedEvent {
-        referral_id: referral.id.to_inner(),
-        owner: ctx.sender(),
-    });
-
-    transfer::share_object(referral);
-}
-
 /// Revoke a `TradeCap`. Only the owner can revoke a `TradeCap`.
 /// Can also be used to revoke `DepositCap` and `WithdrawCap`.
 public fun revoke_trade_cap(
@@ -222,61 +213,6 @@ public fun revoke_trade_cap(
 
     assert!(balance_manager.allow_listed.contains(trade_cap_id), ECapNotInList);
     balance_manager.allow_listed.remove(trade_cap_id);
-}
-
-public fun set_referral(
-    balance_manager: &mut BalanceManager,
-    trade_cap: &TradeCap,
-    referral_cap: &DeepBookReferral,
-    ctx: &mut TxContext,
-) {
-    balance_manager.validate_trader(trade_cap);
-    let ref_key = constants::referral_df_key();
-    let referral_id = referral_cap.id.to_inner();
-    let current_fees = if (balance_manager.id.exists_(ref_key)) {
-        let referral: Referral = balance_manager.id.remove(ref_key);
-        let Referral {
-            id: _,
-            referral_fees,
-        } = referral;
-        referral_fees
-    } else {
-        bag::new(ctx)
-    };
-    balance_manager
-        .id
-        .add(
-            ref_key,
-            Referral {
-                id: referral_id,
-                referral_fees: current_fees,
-            },
-        );
-
-    event::emit(DeepBookReferralSetEvent {
-        referral_id,
-        balance_manager_id: object::id(balance_manager),
-    });
-}
-
-public fun claim_referral_fees<Asset>(
-    balance_manager: &mut BalanceManager,
-    referral_cap: &DeepBookReferral,
-    ctx: &mut TxContext,
-): Coin<Asset> {
-    assert!(referral_cap.owner == ctx.sender(), EInvalidOwner);
-    let ref_key = constants::referral_df_key();
-    let referral: &mut Referral = balance_manager.id.borrow_mut(ref_key);
-    let balance: Balance<Asset> = referral.referral_fees.remove(BalanceKey<Asset> {});
-
-    event::emit(DeepBookReferralClaimedEvent {
-        referral_id: referral_cap.id.to_inner(),
-        balance_manager_id: object::id(balance_manager),
-        asset: type_name::get<Asset>(),
-        amount: balance.value(),
-    });
-
-    balance.into_coin(ctx)
 }
 
 /// Generate a `TradeProof` by the owner. The owner does not require a capability
@@ -404,41 +340,33 @@ public fun id(balance_manager: &BalanceManager): ID {
 }
 
 // === Public-Package Functions ===
-public(package) fun process_referral_fees<BaseAsset, QuoteAsset>(
-    balance_manager: &mut BalanceManager,
-    proof: &TradeProof,
-    order_info: &OrderInfo,
-    referral_multiplier: u64,
-) {
-    if (referral_multiplier == 0) {
-        return
+/// Mint a `DeepBookReferral` and share it.
+public(package) fun mint_referral(ctx: &mut TxContext): ID {
+    let id = object::new(ctx);
+    let referral_id = id.to_inner();
+    let referral = DeepBookReferral {
+        id,
+        owner: ctx.sender(),
     };
+
+    event::emit(DeepBookReferralCreatedEvent {
+        referral_id,
+        owner: ctx.sender(),
+    });
+
+    transfer::share_object(referral);
+
+    referral_id
+}
+
+public(package) fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
     let ref_key = constants::referral_df_key();
     if (!balance_manager.id.exists_(ref_key)) {
-        return
+        return option::none()
     };
+    let referral_id: &ID = balance_manager.id.borrow(ref_key);
 
-    let paid_fees = order_info.paid_fees_balances();
-    let referral_base_fees = math::mul(paid_fees.base(), referral_multiplier);
-    let referral_quote_fees = math::mul(paid_fees.quote(), referral_multiplier);
-    let deep_fees = math::mul(paid_fees.deep(), referral_multiplier);
-
-    let base_balance = balance_manager.withdraw_with_proof<BaseAsset>(
-        proof,
-        referral_base_fees,
-        false,
-    );
-    let quote_balance = balance_manager.withdraw_with_proof<QuoteAsset>(
-        proof,
-        referral_quote_fees,
-        false,
-    );
-    let deep_balance = balance_manager.withdraw_with_proof<DEEP>(proof, deep_fees, false);
-
-    let referral: &mut Referral = balance_manager.id.borrow_mut(ref_key);
-    referral.referral_fees.add(BalanceKey<BaseAsset> {}, base_balance);
-    referral.referral_fees.add(BalanceKey<QuoteAsset> {}, quote_balance);
-    referral.referral_fees.add(BalanceKey<DEEP> {}, deep_balance);
+    option::some(*referral_id)
 }
 
 /// Deposit funds to a balance_manager. Pool will call this to deposit funds.
