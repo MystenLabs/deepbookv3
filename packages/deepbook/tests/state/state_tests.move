@@ -123,7 +123,7 @@ fun process_create_ok() {
     // Alice has 1 open order remaining. The first two orders have been filled.
     let alice = state.account(id_from_address(ALICE));
     assert!(alice.total_volume() == 2_001_001_000, 0);
-    assert!(alice.open_orders().size() == 1, 0);
+    assert!(alice.open_orders().length() == 1, 0);
     assert!(alice.open_orders().contains(&order_info3.order_id()), 0);
     // she traded BOB for 2.001001 SUI
     assert_eq(alice.settled_balances(), balances::new(2_001_001_000, 0, 0));
@@ -132,7 +132,7 @@ fun process_create_ok() {
     // Bob has 1 open order after the partial fill.
     let bob = state.account(id_from_address(BOB));
     assert!(bob.total_volume() == 2_001_001_000, 0);
-    assert!(bob.open_orders().size() == 1, 0);
+    assert!(bob.open_orders().length() == 1, 0);
     assert!(bob.open_orders().contains(&taker_order.order_id()), 0);
     // Bob's balances have been settled already
     assert_eq(bob.settled_balances(), balances::new(0, 0, 0));

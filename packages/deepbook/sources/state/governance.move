@@ -166,7 +166,7 @@ public(package) fun add_proposal(
     };
 
     let voting_power = stake_to_voting_power(stake_amount);
-    if (self.proposals.size() == MAX_PROPOSALS) {
+    if (self.proposals.length() == MAX_PROPOSALS) {
         self.remove_lowest_proposal(voting_power);
     };
 
@@ -259,7 +259,7 @@ fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
     let mut cur_lowest_votes = constants::max_u64();
     let (keys, values) = self.proposals.into_keys_values();
 
-    self.proposals.size().do!(|i| {
+    self.proposals.length().do!(|i| {
         let proposal_votes = values[i].votes;
         if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
             removal_id = option::some(keys[i]);
