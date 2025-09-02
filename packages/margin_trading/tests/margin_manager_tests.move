@@ -9,7 +9,7 @@ use margin_trading::{
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
     margin_registry::{MarginRegistry, MarginPoolCap},
-    test_constants::{Self, USDC, USDT, BTC, btc_multiplier},
+    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
     test_helpers::{
         setup_margin_registry,
         create_margin_pool,
@@ -26,13 +26,11 @@ use margin_trading::{
         destroy_2,
         return_shared_2,
         return_shared_3,
-        return_to_sender_2
+        return_to_sender_2,
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
 use token::deep::DEEP;
-
-public struct INVALID_ASSET has drop {}
 
 #[test]
 fun test_margin_manager_creation() {
