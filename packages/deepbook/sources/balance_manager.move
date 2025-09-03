@@ -16,7 +16,8 @@ use sui::{
     coin::Coin,
     dynamic_field as df,
     event,
-    vec_set::{Self, VecSet}
+    vec_set::{Self, VecSet},
+    object::{Self, id_from_bytes}
 };
 
 use fun df::borrow as UID.borrow;
@@ -172,6 +173,11 @@ public fun set_referral(
 public fun unset_referral(balance_manager: &mut BalanceManager, trade_cap: &TradeCap) {
     balance_manager.validate_trader(trade_cap);
     let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
+
+    event::emit(DeepBookReferralSetEvent {
+        referral_id: id_from_bytes(b""),
+        balance_manager_id: balance_manager.id.to_inner(),
+    });
 }
 
 /// Returns the balance of a Coin in a balance manager.
