@@ -4,7 +4,15 @@
 module margin_trading::margin_manager;
 
 use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, TradeProof},
+    balance_manager::{
+        Self,
+        BalanceManager,
+        TradeCap,
+        DepositCap,
+        WithdrawCap,
+        TradeProof,
+        DeepBookReferral
+    },
     pool::Pool
 };
 use margin_trading::{
@@ -137,6 +145,25 @@ public fun new<BaseAsset, QuoteAsset>(
     };
 
     transfer::share_object(manager)
+}
+
+/// Set the referral for the margin manager.
+public fun set_referral<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    referral_cap: &DeepBookReferral,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    self.balance_manager.set_referral(referral_cap, &self.trade_cap);
+}
+
+/// Unset the referral for the margin manager.
+public fun unset_referral<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    self.balance_manager.unset_referral(&self.trade_cap);
 }
 
 // === Public Functions - Margin Manager ===

@@ -6,7 +6,7 @@ module deepbook::pool;
 
 use deepbook::{
     account::Account,
-    balance_manager::{Self, BalanceManager, TradeProof},
+    balance_manager::{Self, BalanceManager, TradeProof, DeepBookReferral},
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -21,6 +21,7 @@ use deepbook::{
 };
 use std::type_name;
 use sui::{
+    balance::{Self, Balance},
     clock::Clock,
     coin::{Self, Coin},
     dynamic_field as df,
@@ -50,6 +51,7 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
+const EInvalidReferralBPS: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -89,6 +91,21 @@ public struct BookParamsUpdated<phantom BaseAsset, phantom QuoteAsset> has copy,
 public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     pool_id: ID,
     deep_burned: u64,
+}
+
+public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
+    additional_bps: u64,
+    base: Balance<BaseAsset>,
+    quote: Balance<QuoteAsset>,
+    deep: Balance<DEEP>,
+}
+
+public struct ReferralClaimedEvent<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
+    referral_id: ID,
+    owner: address,
+    base_amount: u64,
+    quote_amount: u64,
+    deep_amount: u64,
 }
 
 // === Public-Mutative Functions * POOL CREATION * ===
@@ -670,6 +687,72 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
     });
 
     amount_burned
+}
+
+/// Mint a DeepBookReferral and set the additional bps for the referral.
+public fun mint_referral<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    additional_bps: u64,
+    ctx: &mut TxContext,
+) {
+    assert!(additional_bps <= constants::referral_max_bps(), EInvalidReferralBPS);
+    assert!(additional_bps % constants::referral_multiple() == 0, EInvalidReferralBPS);
+    let _ = self.load_inner();
+    let referral_id = balance_manager::mint_referral(ctx);
+    self
+        .id
+        .add(
+            referral_id,
+            ReferralRewards<BaseAsset, QuoteAsset> {
+                additional_bps,
+                base: balance::zero(),
+                quote: balance::zero(),
+                deep: balance::zero(),
+            },
+        );
+}
+
+/// Update the additional bps for the referral.
+public fun update_referral_bps<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookReferral,
+    additional_bps: u64,
+) {
+    assert!(additional_bps <= constants::referral_max_bps(), EInvalidReferralBPS);
+    assert!(additional_bps % constants::referral_multiple() == 0, EInvalidReferralBPS);
+    let _ = self.load_inner();
+    let referral_id = object::id(referral);
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow_mut(referral_id);
+    referral_rewards.additional_bps = additional_bps;
+}
+
+/// Claim the rewards for the referral.
+public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookReferral,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
+    let referral_id = object::id(referral);
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow_mut(referral_id);
+    let base = referral_rewards.base.withdraw_all().into_coin(ctx);
+    let quote = referral_rewards.quote.withdraw_all().into_coin(ctx);
+    let deep = referral_rewards.deep.withdraw_all().into_coin(ctx);
+
+    event::emit(ReferralClaimedEvent<BaseAsset, QuoteAsset> {
+        referral_id,
+        owner: ctx.sender(),
+        base_amount: base.value(),
+        quote_amount: quote.value(),
+        deep_amount: deep.value(),
+    });
+
+    (base, quote, deep)
 }
 
 // === Public-Mutative Functions * ADMIN * ===
@@ -1295,45 +1378,86 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     let whitelist = self.whitelisted();
     self.update_ewma_state(clock, ctx);
     let ewma_state = self.load_ewma_state();
-    let self = self.load_inner_mut();
+    let order_info = {
+        let pool_inner = self.load_inner_mut();
 
-    let order_deep_price = if (pay_with_deep) {
-        self.deep_price.get_order_deep_price(whitelist)
-    } else {
-        self.deep_price.empty_deep_price()
+        let order_deep_price = if (pay_with_deep) {
+            pool_inner.deep_price.get_order_deep_price(whitelist)
+        } else {
+            pool_inner.deep_price.empty_deep_price()
+        };
+
+        let mut order_info = order_info::new(
+            pool_inner.pool_id,
+            balance_manager.id(),
+            client_order_id,
+            ctx.sender(),
+            order_type,
+            self_matching_option,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            ctx.epoch(),
+            expire_timestamp,
+            order_deep_price,
+            market_order,
+            clock.timestamp_ms(),
+        );
+        pool_inner.book.create_order(&mut order_info, clock.timestamp_ms());
+        let (settled, owed) = pool_inner
+            .state
+            .process_create(
+                &mut order_info,
+                &ewma_state,
+                pool_inner.pool_id,
+                ctx,
+            );
+        pool_inner.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
+        order_info.emit_order_info();
+        order_info.emit_orders_filled(clock.timestamp_ms());
+
+        order_info
     };
 
-    let mut order_info = order_info::new(
-        self.pool_id,
-        balance_manager.id(),
-        client_order_id,
-        ctx.sender(),
-        order_type,
-        self_matching_option,
-        price,
-        quantity,
-        is_bid,
-        pay_with_deep,
-        ctx.epoch(),
-        expire_timestamp,
-        order_deep_price,
-        market_order,
-        clock.timestamp_ms(),
+    self.process_referral_fees<BaseAsset, QuoteAsset>(
+        &order_info,
+        balance_manager,
+        trade_proof,
     );
-    self.book.create_order(&mut order_info, clock.timestamp_ms());
-    let (settled, owed) = self
-        .state
-        .process_create(
-            &mut order_info,
-            &ewma_state,
-            self.pool_id,
-            ctx,
-        );
-    self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
-    order_info.emit_order_info();
-    order_info.emit_orders_filled(clock.timestamp_ms());
 
     order_info
+}
+
+fun process_referral_fees<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    order_info: &OrderInfo,
+    balance_manager: &mut BalanceManager,
+    trade_proof: &TradeProof,
+) {
+    let referral_id = balance_manager::get_referral_id(balance_manager);
+    if (referral_id.is_some()) {
+        let referral_id = referral_id.destroy_some();
+        let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+            .id
+            .borrow_mut(referral_id);
+        let referral_bps = referral_rewards.additional_bps;
+        let multiplier = math::div(referral_bps, order_info.taker_fee());
+        let referral_fee = math::mul(order_info.paid_fees(), multiplier);
+        if (order_info.fee_is_deep()) {
+            referral_rewards
+                .deep
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+        } else if (order_info.is_bid()) {
+            referral_rewards
+                .base
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+        } else {
+            referral_rewards
+                .quote
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+        }
+    };
 }
 
 fun update_ewma_state<BaseAsset, QuoteAsset>(
