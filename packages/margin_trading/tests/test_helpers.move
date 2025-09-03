@@ -431,3 +431,8 @@ public fun setup_btc_usd_margin_trading(): (
 
     (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id)
 }
+
+public fun advance_time(clock: &mut Clock, ms: u64) {
+    let current_time = clock.timestamp_ms();
+    clock.set_for_testing(current_time + ms);
+}
