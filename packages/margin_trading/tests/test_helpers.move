@@ -4,28 +4,31 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
-use margin_trading::{
-    margin_pool::{Self, MarginPool},
-    margin_registry::{
-        Self,
-        MarginRegistry,
-        MarginAdminCap,
-        MaintainerCap,
-        PoolConfig,
-        MarginPoolCap
-    },
-    oracle::{Self, PythConfig},
-    protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, BTC}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    PoolConfig,
+    MarginPoolCap
 };
-use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
-};
+use margin_trading::oracle::{Self, PythConfig};
+use margin_trading::protocol_config::{Self, ProtocolConfig};
+use margin_trading::test_constants::{Self, USDC, BTC};
+use pyth::i64;
+use pyth::price;
+use pyth::price_feed;
+use pyth::price_identifier;
+use pyth::price_info::{Self, PriceInfoObject};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
@@ -457,14 +460,15 @@ public fun interest_rate(
 }
 
 /// Setup a complete margin trading environment with margin manager for pool proxy testing
-/// Returns: (scenario, clock, admin_cap, maintainer_cap, margin_manager, pool, registry, margin_pools)
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, deepbook_pool_id)
 public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     Scenario,
     Clock,
     MarginAdminCap,
     MaintainerCap,
-    ID, // base pool id,,,
-    ID, // deepbook pool id,,,
+    ID,
+    ID,
+    ID,
 ) {
     let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
 
