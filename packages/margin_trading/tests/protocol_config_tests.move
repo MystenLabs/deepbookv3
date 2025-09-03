@@ -325,9 +325,8 @@ fun test_set_margin_pool_config_invalid_min_borrow() {
     destroy(config);
 }
 
-
 #[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
-/// Test sequential config updates 
+/// Test sequential config updates
 fun test_sequential_config_updates_violating_constraints() {
     let mut config = create_test_protocol_config();
 
@@ -353,7 +352,7 @@ fun test_sequential_config_updates_violating_constraints() {
 }
 
 #[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
-/// Test that protocol spread maximum 
+/// Test that protocol spread maximum
 fun test_set_margin_pool_config_spread() {
     let mut config = create_test_protocol_config();
 
@@ -361,7 +360,7 @@ fun test_set_margin_pool_config_spread() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        1_000_000_001, // > 100% 
+        1_000_000_001, // > 100%
         test_constants::min_borrow(),
     );
 
