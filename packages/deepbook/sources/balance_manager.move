@@ -16,7 +16,7 @@ use sui::{
     coin::Coin,
     dynamic_field as df,
     event,
-    object::{Self, id_from_bytes},
+    object::id_from_bytes,
     vec_set::{Self, VecSet}
 };
 
