@@ -383,6 +383,10 @@ public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u6
     self.state.to_borrow_shares(amount)
 }
 
+public(package) fun to_borrow_shares_round_up<Asset>(self: &MarginPool<Asset>, amount: u64): u64 {
+    self.state.to_borrow_shares_round_up(amount)
+}
+
 public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
     self.state.to_borrow_amount(shares)
 }

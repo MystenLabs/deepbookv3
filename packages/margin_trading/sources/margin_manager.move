@@ -239,7 +239,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     base_margin_pool.update_state(clock);
-    let loan_shares = base_margin_pool.to_borrow_shares(loan_amount);
+    let loan_shares = base_margin_pool.to_borrow_shares_round_up(loan_amount);
     self.increase_borrowed_shares(true, loan_shares);
     self.margin_pool_id = option::some(base_margin_pool.id());
 
@@ -279,7 +279,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     quote_margin_pool.update_state(clock);
-    let loan_shares = quote_margin_pool.to_borrow_shares(loan_amount);
+    let loan_shares = quote_margin_pool.to_borrow_shares_round_up(loan_amount);
     self.increase_borrowed_shares(false, loan_shares);
     self.margin_pool_id = option::some(quote_margin_pool.id());
 
@@ -746,7 +746,7 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
             type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>(),
             EInvalidDebtAsset,
         );
-        margin_pool.to_borrow_amount(debt_shares)
+        margin_pool.to_borrow_amount_round_up(debt_shares)
     } else {
         0
     };
@@ -757,7 +757,7 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
             type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<QuoteAsset>(),
             EInvalidDebtAsset,
         );
-        margin_pool.to_borrow_amount(debt_shares)
+        margin_pool.to_borrow_amount_round_up(debt_shares)
     };
 
     (base_debt, quote_debt)
