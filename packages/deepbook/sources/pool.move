@@ -93,18 +93,14 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
-public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset, phantom DEEP> has store {
+public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     additional_bps: u64,
     base: Balance<BaseAsset>,
     quote: Balance<QuoteAsset>,
     deep: Balance<DEEP>,
 }
 
-public struct ReferralClaimedEvent<
-    phantom BaseAsset,
-    phantom QuoteAsset,
-    phantom DEEP,
-> has copy, drop, store {
+public struct ReferralClaimedEvent<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     referral_id: ID,
     owner: address,
     base_amount: u64,
@@ -694,7 +690,7 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 }
 
 /// Mint a DeepBookReferral and set the additional bps for the referral.
-public fun mint_referral<BaseAsset: store, QuoteAsset: store, DEEP: store>(
+public fun mint_referral<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     additional_bps: u64,
     ctx: &mut TxContext,
@@ -707,7 +703,7 @@ public fun mint_referral<BaseAsset: store, QuoteAsset: store, DEEP: store>(
         .id
         .add(
             referral_id,
-            ReferralRewards<BaseAsset, QuoteAsset, DEEP> {
+            ReferralRewards<BaseAsset, QuoteAsset> {
                 additional_bps,
                 base: balance::zero(),
                 quote: balance::zero(),
@@ -717,7 +713,7 @@ public fun mint_referral<BaseAsset: store, QuoteAsset: store, DEEP: store>(
 }
 
 /// Update the additional bps for the referral.
-public fun update_referral_bps<BaseAsset, QuoteAsset, DEEP>(
+public fun update_referral_bps<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     additional_bps: u64,
@@ -726,14 +722,14 @@ public fun update_referral_bps<BaseAsset, QuoteAsset, DEEP>(
     assert!(additional_bps % constants::referral_multiple() == 0, EInvalidReferralBPS);
     let _ = self.load_inner();
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset, DEEP> = self
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     referral_rewards.additional_bps = additional_bps;
 }
 
 /// Claim the rewards for the referral.
-public fun claim_referral_rewards<BaseAsset, QuoteAsset, DEEP>(
+public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     ctx: &mut TxContext,
@@ -741,14 +737,14 @@ public fun claim_referral_rewards<BaseAsset, QuoteAsset, DEEP>(
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset, DEEP> = self
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     let base = referral_rewards.base.withdraw_all().into_coin(ctx);
     let quote = referral_rewards.quote.withdraw_all().into_coin(ctx);
     let deep = referral_rewards.deep.withdraw_all().into_coin(ctx);
 
-    event::emit(ReferralClaimedEvent<BaseAsset, QuoteAsset, DEEP> {
+    event::emit(ReferralClaimedEvent<BaseAsset, QuoteAsset> {
         referral_id,
         owner: ctx.sender(),
         base_amount: base.value(),
@@ -1424,7 +1420,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         order_info
     };
 
-    self.process_referral_fees<BaseAsset, QuoteAsset, DEEP>(
+    self.process_referral_fees<BaseAsset, QuoteAsset>(
         &order_info,
         balance_manager,
         trade_proof,
@@ -1433,7 +1429,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info
 }
 
-fun process_referral_fees<BaseAsset, QuoteAsset, DEEP>(
+fun process_referral_fees<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     order_info: &OrderInfo,
     balance_manager: &mut BalanceManager,
@@ -1442,7 +1438,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset, DEEP>(
     let referral_id = balance_manager::get_referral_id(balance_manager);
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
-        let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset, DEEP> = self
+        let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
         let referral_bps = referral_rewards.additional_bps;
