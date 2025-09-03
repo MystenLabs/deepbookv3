@@ -4,12 +4,13 @@
 #[test_only, allow(unused_use)]
 module margin_trading::margin_pool_math_tests;
 
+use deepbook::{constants, math};
 use margin_trading::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
     test_constants::{Self, USDC, USDT},
-    test_helpers::{Self, mint_coin, advance_time}
+    test_helpers::{Self, mint_coin, advance_time, interest_rate}
 };
 use sui::{
     clock::Clock,
@@ -58,7 +59,31 @@ fun cleanup_test(
 }
 
 #[test]
-fun test_borrow_supply_interest_correct() {
+fun test_borrow_supply_interest_ok() {
+    let duration = 1 * constants::float_scaling();
+    let borrow = 50 * test_constants::usdc_multiplier();
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
+}
+
+fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
+    let duration_ms = math::mul(duration, margin_constants::year_ms());
+    let utilization_rate = math::div(borrow, supply);
+    let interest_rate = interest_rate(
+        utilization_rate,
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        test_constants::optimal_utilization(),
+        test_constants::excess_slope(),
+    );
+    let protocol_profit_expected = math::mul(
+        borrow,
+        math::mul(test_constants::protocol_spread(), interest_rate),
+    );
+    let borrow_multiplier = constants::float_scaling() + interest_rate;
+    let supply_multiplier =
+        constants::float_scaling() + math::mul(constants::float_scaling() - test_constants::protocol_spread(), math::mul(interest_rate, utilization_rate));
+
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
     scenario.next_tx(test_constants::admin());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
@@ -66,31 +91,31 @@ fun test_borrow_supply_interest_correct() {
 
     // At time 0, user1 supplies 100 USDC. User 2 borrows 50 USDC.
     scenario.next_tx(test_constants::user1());
-    let coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    let coin = mint_coin<USDC>(supply, scenario.ctx());
     pool.supply(&registry, coin, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
     let borrowed_coin = pool.borrow(
-        50 * test_constants::usdc_multiplier(),
+        borrow,
         &clock,
         scenario.ctx(),
     );
-    assert!(borrowed_coin.value() == 50 * test_constants::usdc_multiplier());
+    assert!(borrowed_coin.value() == borrow);
     destroy(borrowed_coin);
 
     // 1 year passes
     // Interest should be 5% + 0.1 * 50% = 10%
     // Repayment should be 55 USDC for user 2
-    advance_time(&mut clock, margin_constants::year_ms());
+    advance_time(&mut clock, duration_ms);
     scenario.next_tx(test_constants::user2());
-    let repay_coin = mint_coin<USDC>(55 * test_constants::usdc_multiplier(), scenario.ctx());
+    let repay_coin = mint_coin<USDC>(math::mul(borrow, borrow_multiplier), scenario.ctx());
     pool.repay(repay_coin, &clock);
 
     // User 1 withdraws his entire balance
     // Protocol spread is 10% of the 5 interest paid. user 1 should receive 104.5 USDC.
     scenario.next_tx(test_constants::user1());
     let withdrawn_coin = pool.withdraw(&registry, option::none(), &clock, scenario.ctx());
-    assert!(withdrawn_coin.value() == 104_500_000 - 1); // -1 offset for precision loss
+    assert!(withdrawn_coin.value() == math::mul(supply, supply_multiplier) - 1); // -1 offset for precision loss
     destroy(withdrawn_coin);
 
     // Admin withdraws protocol profits
@@ -103,7 +128,7 @@ fun test_borrow_supply_interest_correct() {
         &clock,
         scenario.ctx(),
     );
-    assert!(protocol_profit.value() == 500_000); // -1 offset for precision loss
+    assert!(protocol_profit.value() == protocol_profit_expected); // -1 offset for precision loss
     destroy(protocol_profit);
 
     scenario.return_to_sender(margin_pool_cap);
