@@ -10,6 +10,7 @@ const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
+const MIN_MIN_BORROW: u64 = 1000;
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -37,4 +38,8 @@ public fun max_leverage(): u64 {
 
 public fun year_ms(): u64 {
     YEAR_MS
+}
+
+public fun min_min_borrow(): u64 {
+    MIN_MIN_BORROW
 }

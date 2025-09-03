@@ -23,7 +23,7 @@ const BTC_MULTIPLIER: u64 = 100000000;
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
 const MAX_UTILIZATION_RATE: u64 = 800_000_000; // 80%
 const PROTOCOL_SPREAD: u64 = 100_000_000; // 10%
-const MIN_BORROW: u64 = 10;
+const MIN_BORROW: u64 = 1000;
 
 // === Interest Rate Constants ===
 const BASE_RATE: u64 = 50_000_000; // 5%

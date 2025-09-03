@@ -677,6 +677,8 @@ public fun calculate_assets<BaseAsset, QuoteAsset>(
 
 /// General helper for debt calculation and asset totals.
 /// Returns (base_debt, quote_debt)
+/// Note this function does not ensure the margin pool is in the most updated state
+/// It is purely for informational purposes
 public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,

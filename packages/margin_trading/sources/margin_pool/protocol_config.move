@@ -78,6 +78,7 @@ public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: Ma
         config.max_utilization_rate >= self.interest_config.optimal_utilization,
         EInvalidRiskParam,
     );
+    assert!(config.min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
     self.margin_pool_config = config;
 }
 
