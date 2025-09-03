@@ -4,7 +4,7 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::{constants, pool::{Self, Pool}, registry::{Self, Registry}};
+use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
 use margin_trading::{
     margin_pool::{Self, MarginPool},
     margin_registry::{
@@ -430,4 +430,28 @@ public fun setup_btc_usd_margin_trading(): (
     scenario.return_to_sender(usdc_pool_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id)
+}
+
+public fun advance_time(clock: &mut Clock, ms: u64) {
+    let current_time = clock.timestamp_ms();
+    clock.set_for_testing(current_time + ms);
+}
+
+public fun interest_rate(
+    utilization_rate: u64,
+    base_rate: u64,
+    base_slope: u64,
+    optimal_utilization: u64,
+    excess_slope: u64,
+): u64 {
+    if (utilization_rate < optimal_utilization) {
+        // Use base slope
+        math::mul(utilization_rate, base_slope) + base_rate
+    } else {
+        // Use base slope and excess slope
+        let excess_utilization = utilization_rate - optimal_utilization;
+        let excess_rate = math::mul(excess_utilization, excess_slope);
+
+        base_rate + math::mul(optimal_utilization, base_slope) + excess_rate
+    }
 }
