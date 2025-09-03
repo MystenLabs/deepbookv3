@@ -22,7 +22,9 @@ use margin_trading::test_helpers::{
     cleanup_margin_test,
     mint_coin,
     destroy_2,
-    return_shared_2
+    return_shared_2,
+    build_demo_usdc_price_info_object,
+    build_demo_usdt_price_info_object
 };
 use sui::test_scenario::return_shared;
 use sui::test_utils::destroy;
@@ -373,8 +375,79 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     abort
 }
 
-#[test]
-fun test_place_reduce_only_limit_order_not_reduce_only() {}
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+fun test_place_reduce_only_limit_order_not_reduce_only() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        quote_pool_id,
+        pool_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+
+    // Deposit some USDT to use as collateral
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // Borrow some USDT to establish relationship with quote pool
+    let borrow_request = mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        100 * test_constants::usdt_multiplier(), // Small borrow amount
+        &clock,
+        scenario.ctx(),
+    );
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    mm.prove_and_destroy_request<USDC, USDT, USDT>(
+        &registry,
+        &mut quote_pool,
+        &pool,
+        &usdc_price, // USDC price
+        &usdt_price, // USDT price
+        &clock,
+        borrow_request,
+    );
+
+    // User has no USDC debt but has USDT debt, tries to buy USDC (is_bid = true)
+    // This should fail because it's not reducing any USDC position - user is increasing exposure
+    pool_proxy::place_reduce_only_limit_order<USDC, USDT, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &quote_pool, // Pass quote_pool since we have USDT debt
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_100_000, // price
+        100 * test_constants::usdc_multiplier(), // quantity
+        true, // is_bid = true (buying USDC)
+        false,
+        2000000, // expire_timestamp
+        &clock,
+        scenario.ctx(),
+    );
+
+    return_shared_2!(mm, pool);
+    return_shared(quote_pool);
+    destroy(usdc_price);
+    destroy(usdt_price);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
 
 // === Place Reduce Only Market Order Tests ===
 
