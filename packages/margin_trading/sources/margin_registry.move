@@ -161,53 +161,6 @@ public fun revoke_maintainer_cap(
     });
 }
 
-/// Updates risk params for a deepbook pool as the admin.
-public fun update_risk_params<BaseAsset, QuoteAsset>(
-    self: &mut MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    pool_config: PoolConfig,
-    _cap: &MarginAdminCap,
-) {
-    let inner = self.load_inner_mut();
-    let pool_id = pool.id();
-    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
-
-    let prev_config = inner.pool_registry.remove(pool_id);
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config
-            .risk_ratios
-            .liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(prev_config.enabled, EPoolNotEnabled);
-
-    // Validate new risk parameters
-    assert!(
-        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config
-            .risk_ratios
-            .min_withdraw_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
-            .risk_ratios
-            .min_borrow_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
-            .risk_ratios
-            .target_liquidation_risk_ratio,
-        EInvalidRiskParam,
-    );
-    assert!(
-        pool_config.risk_ratios.liquidation_risk_ratio >= constants::float_scaling(),
-        EInvalidRiskParam,
-    );
-
-    inner.pool_registry.add(pool_id, pool_config);
-}
-
 /// Register a margin pool for margin trading with existing margin pools
 public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
@@ -270,6 +223,53 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
         enabled: false,
         timestamp: clock.timestamp_ms(),
     });
+}
+
+/// Updates risk params for a deepbook pool as the admin.
+public fun update_risk_params<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    pool_config: PoolConfig,
+    _cap: &MarginAdminCap,
+) {
+    let inner = self.load_inner_mut();
+    let pool_id = pool.id();
+    assert!(inner.pool_registry.contains(pool_id), EPoolNotRegistered);
+
+    let prev_config = inner.pool_registry.remove(pool_id);
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio <= prev_config
+            .risk_ratios
+            .liquidation_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(prev_config.enabled, EPoolNotEnabled);
+
+    // Validate new risk parameters
+    assert!(
+        pool_config.risk_ratios.min_borrow_risk_ratio < pool_config
+            .risk_ratios
+            .min_withdraw_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .min_borrow_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio < pool_config
+            .risk_ratios
+            .target_liquidation_risk_ratio,
+        EInvalidRiskParam,
+    );
+    assert!(
+        pool_config.risk_ratios.liquidation_risk_ratio >= constants::float_scaling(),
+        EInvalidRiskParam,
+    );
+
+    inner.pool_registry.add(pool_id, pool_config);
 }
 
 /// Add Pyth Config to the MarginRegistry.
