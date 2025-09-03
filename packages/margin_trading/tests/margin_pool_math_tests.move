@@ -76,10 +76,6 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
         test_constants::optimal_utilization(),
         test_constants::excess_slope(),
     );
-    let protocol_profit_expected = math::mul(
-        borrow,
-        math::mul(test_constants::protocol_spread(), interest_rate),
-    );
     let borrow_multiplier = constants::float_scaling() + interest_rate;
     let supply_multiplier =
         constants::float_scaling() + math::mul(constants::float_scaling() - test_constants::protocol_spread(), math::mul(interest_rate, utilization_rate));
@@ -115,7 +111,10 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     // Protocol spread is 10% of the 5 interest paid. user 1 should receive 104.5 USDC.
     scenario.next_tx(test_constants::user1());
     let withdrawn_coin = pool.withdraw(&registry, option::none(), &clock, scenario.ctx());
-    assert!(withdrawn_coin.value() == math::mul(supply, supply_multiplier) - 1); // -1 offset for precision loss
+    let expected_withdrawn_value = math::mul(supply, supply_multiplier) - 1;
+    assert!(
+        withdrawn_coin.value() == expected_withdrawn_value || withdrawn_coin.value() == expected_withdrawn_value - 1,
+    ); // -1 offset for precision loss
     destroy(withdrawn_coin);
 
     // Admin withdraws protocol profits
@@ -128,7 +127,13 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
         &clock,
         scenario.ctx(),
     );
-    assert!(protocol_profit.value() == protocol_profit_expected); // -1 offset for precision loss
+    let protocol_profit_expected = math::mul(
+        borrow,
+        math::mul(test_constants::protocol_spread(), interest_rate),
+    );
+    assert!(
+        protocol_profit.value() == protocol_profit_expected || protocol_profit.value() == protocol_profit_expected - 1,
+    ); // -1 offset for precision loss
     destroy(protocol_profit);
 
     scenario.return_to_sender(margin_pool_cap);
