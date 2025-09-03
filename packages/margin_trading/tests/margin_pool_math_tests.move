@@ -60,22 +60,55 @@ fun cleanup_test(
 
 #[test]
 fun test_borrow_supply_interest_ok() {
-    let duration = 1 * constants::float_scaling();
+    let duration = 1;
+    let borrow = 50 * test_constants::usdc_multiplier();
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
+}
+
+#[test]
+fun test_borrow_supply_interest_ok_2() {
+    let duration = 5;
+    let borrow = 20 * test_constants::usdc_multiplier();
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
+}
+
+#[test]
+fun test_borrow_supply_interest_ok_3() {
+    let duration = 2;
+    let borrow = 80 * test_constants::usdc_multiplier();
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
+}
+
+#[test]
+fun test_borrow_supply_interest_ok_4() {
+    let duration = 3;
+    let borrow = 10 * test_constants::usdc_multiplier();
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
+}
+
+#[test]
+fun test_borrow_supply_interest_ok_5() {
+    let duration = 10;
     let borrow = 50 * test_constants::usdc_multiplier();
     let supply = 100 * test_constants::usdc_multiplier();
     test_borrow_supply(duration, borrow, supply);
 }
 
 fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
-    let duration_ms = math::mul(duration, margin_constants::year_ms());
+    let duration_ms = duration * margin_constants::year_ms();
     let utilization_rate = math::div(borrow, supply);
-    let interest_rate = interest_rate(
-        utilization_rate,
-        test_constants::base_rate(),
-        test_constants::base_slope(),
-        test_constants::optimal_utilization(),
-        test_constants::excess_slope(),
-    );
+    let interest_rate =
+        interest_rate(
+            utilization_rate,
+            test_constants::base_rate(),
+            test_constants::base_slope(),
+            test_constants::optimal_utilization(),
+            test_constants::excess_slope(),
+        ) * duration;
     let borrow_multiplier = constants::float_scaling() + interest_rate;
     let supply_multiplier =
         constants::float_scaling() + math::mul(constants::float_scaling() - test_constants::protocol_spread(), math::mul(interest_rate, utilization_rate));
