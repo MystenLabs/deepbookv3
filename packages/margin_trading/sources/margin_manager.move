@@ -456,15 +456,18 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
     let actual_fulfillment_amount = repay_amount + pool_reward_amount;
 
     let repay_is_base = self.has_base_debt();
-    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
-    self.decrease_borrowed_shares(repay_is_base, repay_shares);
-    let default_shares = margin_pool.to_borrow_shares(fulfillment.default_amount());
-    self.decrease_borrowed_shares(repay_is_base, default_shares);
-    self.reset_margin_pool_id();
-
+    
+    // Apply cancel logic first to get correct amounts
     let cancel_amount = pool_reward_amount.min(default_amount);
     pool_reward_amount = pool_reward_amount - cancel_amount;
     default_amount = default_amount - cancel_amount;
+    
+    // Now decrease borrowed shares based on corrected amounts
+    let repay_shares = margin_pool.to_borrow_shares(repay_amount);
+    self.decrease_borrowed_shares(repay_is_base, repay_shares);
+    let default_shares = margin_pool.to_borrow_shares(default_amount);
+    self.decrease_borrowed_shares(repay_is_base, default_shares);
+    self.reset_margin_pool_id();
 
     let repay_coin = coin.split(actual_fulfillment_amount, ctx);
     let timestamp = clock.timestamp_ms();
