@@ -16,8 +16,8 @@ use sui::{
     coin::Coin,
     dynamic_field as df,
     event,
-    vec_set::{Self, VecSet},
-    object::{Self, id_from_bytes}
+    object::{Self, id_from_bytes},
+    vec_set::{Self, VecSet}
 };
 
 use fun df::borrow as UID.borrow;
