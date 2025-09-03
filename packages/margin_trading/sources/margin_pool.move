@@ -94,7 +94,7 @@ public struct AssetWithdrawn has copy, drop {
 
 // === Public Functions * ADMIN *===
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
-/// Sends a `MarginPoolCap` to the pool creator.
+/// Sends a `MarginPoolCap` to the pool creator. Returns the created margin pool id.
 public fun create_margin_pool<Asset>(
     registry: &mut MarginRegistry,
     config: ProtocolConfig,
@@ -174,6 +174,7 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     });
 }
 
+/// Updates interest params for the margin pool
 public fun update_interest_params<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
@@ -193,6 +194,7 @@ public fun update_interest_params<Asset>(
     });
 }
 
+/// Updates margin pool config
 public fun update_margin_pool_config<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,

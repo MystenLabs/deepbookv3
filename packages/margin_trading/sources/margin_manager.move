@@ -72,6 +72,7 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
+    loan_shares: u64,
     timestamp: u64,
 }
 
@@ -80,6 +81,7 @@ public struct LoanRepaidEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     repay_amount: u64,
+    repay_shares: u64,
     timestamp: u64,
 }
 
@@ -214,6 +216,15 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self.increase_borrowed_shares(true, loan_shares);
     self.margin_pool_id = option::some(base_margin_pool.id());
 
+    let timestamp = clock.timestamp_ms();
+    event::emit(LoanBorrowedEvent {
+        margin_manager_id: self.id(),
+        margin_pool_id: base_margin_pool.id(),
+        loan_amount,
+        loan_shares,
+        timestamp,
+    });
+
     self.borrow<BaseAsset, QuoteAsset, BaseAsset>(
         registry,
         base_margin_pool,
@@ -244,6 +255,15 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     let loan_shares = quote_margin_pool.to_borrow_shares(loan_amount);
     self.increase_borrowed_shares(false, loan_shares);
     self.margin_pool_id = option::some(quote_margin_pool.id());
+
+    let timestamp = clock.timestamp_ms();
+    event::emit(LoanBorrowedEvent {
+        margin_manager_id: self.id(),
+        margin_pool_id: quote_margin_pool.id(),
+        loan_amount,
+        loan_shares,
+        timestamp,
+    });
 
     self.borrow<BaseAsset, QuoteAsset, QuoteAsset>(
         registry,
@@ -494,6 +514,7 @@ fun repay_liquidation_int<BaseAsset, QuoteAsset, RepayAsset>(
         margin_manager_id,
         margin_pool_id,
         repay_amount,
+        repay_shares,
         timestamp,
     });
 
@@ -784,16 +805,7 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 ): Request {
     let manager_id = self.id();
     let coin = margin_pool.borrow(loan_amount, clock, ctx);
-    let timestamp = clock.timestamp_ms();
-
     self.deposit<BaseAsset, QuoteAsset, BorrowAsset>(registry, coin, ctx);
-
-    event::emit(LoanBorrowedEvent {
-        margin_manager_id: manager_id,
-        margin_pool_id: margin_pool.id(),
-        loan_amount,
-        timestamp,
-    });
 
     Request {
         margin_manager_id: manager_id,
@@ -844,6 +856,7 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
         repay_amount,
+        repay_shares,
         timestamp,
     });
 
