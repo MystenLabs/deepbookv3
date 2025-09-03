@@ -101,6 +101,12 @@ public struct DeepbookPoolUpdated has copy, drop {
     timestamp: u64,
 }
 
+public struct DeepbookPoolConfigUpdated has copy, drop {
+    pool_id: ID,
+    config: PoolConfig,
+    timestamp: u64,
+}
+
 fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
     let id = object::new(ctx);
     let margin_registry_inner = MarginRegistryInner {
@@ -228,9 +234,10 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
 /// Updates risk params for a deepbook pool as the admin.
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
     pool: &Pool<BaseAsset, QuoteAsset>,
     pool_config: PoolConfig,
-    _cap: &MarginAdminCap,
+    clock: &Clock,
 ) {
     let inner = self.load_inner_mut();
     let pool_id = pool.id();
@@ -270,6 +277,12 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
     );
 
     inner.pool_registry.add(pool_id, pool_config);
+
+    event::emit(DeepbookPoolConfigUpdated {
+        pool_id,
+        config: pool_config,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Add Pyth Config to the MarginRegistry.
