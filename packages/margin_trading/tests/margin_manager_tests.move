@@ -26,7 +26,8 @@ use margin_trading::{
         destroy_2,
         return_shared_2,
         return_shared_3,
-        return_to_sender_2
+        return_to_sender_2,
+        advance_time
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
@@ -1340,5 +1341,138 @@ fun test_repay_exact_amount_no_rounding_errors() {
     });
 
     return_shared_3!(mm, usdt_pool, pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_repayment_priority_logic() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    let usdc_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let usdt_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
+
+    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_margin_trading_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    usdc_pool.supply(
+        &registry,
+        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    usdt_pool.supply(
+        &registry,
+        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
+    usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+
+    // Setup position with debt
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        mint_coin<USDC>(20_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let request = mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut usdt_pool,
+        5_000 * test_constants::usdt_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.prove_and_destroy_request<USDC, USDT, USDT>(
+        &registry,
+        &mut usdt_pool,
+        &pool,
+        &usdc_price,
+        &usdt_price,
+        &clock,
+        request,
+    );
+
+    advance_time(&mut clock, 1000 * 100); // 100 seconds later
+
+    // Partial repayment
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(2_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let repaid_amount = mm.repay_quote<USDC, USDT>(
+        &registry,
+        &mut usdt_pool,
+        option::some(2_000 * test_constants::usdt_multiplier()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(repaid_amount == 2_000 * test_constants::usdt_multiplier());
+
+    // Full repayment
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(5_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let final_repaid = mm.repay_quote<USDC, USDT>(
+        &registry,
+        &mut usdt_pool,
+        option::none(), // Repay all
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(final_repaid > 0);
+    assert!(mm.quote_borrowed_shares() == 0);
+
+    return_shared_3!(mm, usdt_pool, pool);
+    destroy_2!(usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }

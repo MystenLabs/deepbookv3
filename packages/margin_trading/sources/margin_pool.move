@@ -292,7 +292,7 @@ public fun withdraw<Asset>(
     let user_supply_shares = self.positions.user_supply_shares(supplier);
     let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
     let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_shares = self.state.to_supply_shares(withdrawal_amount);
+    let withdrawal_shares = self.state.to_supply_shares_round_up(withdrawal_amount);
     assert!(withdrawal_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
     assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
 

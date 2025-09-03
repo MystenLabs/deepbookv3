@@ -86,6 +86,10 @@ public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
     math::div(amount, self.supply_index)
 }
 
+public(package) fun to_supply_shares_round_up(self: &State, amount: u64): u64 {
+    math::div_round_up(amount, self.supply_index)
+}
+
 public(package) fun to_borrow_shares(self: &State, amount: u64): u64 {
     math::div(amount, self.borrow_index)
 }
@@ -96,6 +100,10 @@ public(package) fun to_supply_amount(self: &State, shares: u64): u64 {
 
 public(package) fun to_borrow_amount(self: &State, shares: u64): u64 {
     math::mul(shares, self.borrow_index)
+}
+
+public(package) fun to_borrow_amount_round_up(self: &State, shares: u64): u64 {
+    math::mul_round_up(shares, self.borrow_index)
 }
 
 public(package) fun supply_index(self: &State): u64 {
