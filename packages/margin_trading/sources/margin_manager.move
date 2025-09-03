@@ -662,6 +662,59 @@ public fun manager_info<BaseAsset, QuoteAsset, DebtAsset>(
     )
 }
 
+/// Returns (base_asset, quote_asset) for margin manager.
+public fun calculate_assets<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): (u64, u64) {
+    let balance_manager = self.balance_manager();
+    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
+    base = base + balance_manager.balance<BaseAsset>();
+    quote = quote + balance_manager.balance<QuoteAsset>();
+
+    (base, quote)
+}
+
+/// General helper for debt calculation and asset totals.
+/// Returns (base_debt, quote_debt)
+/// Note this function does not ensure the margin pool is in the most updated state
+/// It is purely for informational purposes
+public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+): (u64, u64) {
+    let margin_pool_id = margin_pool.id();
+    assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
+
+    let debt_is_base = self.has_base_debt();
+    let debt_shares = if (debt_is_base) {
+        self.base_borrowed_shares
+    } else {
+        self.quote_borrowed_shares
+    };
+
+    let base_debt = if (debt_is_base) {
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>(),
+            EInvalidDebtAsset,
+        );
+        margin_pool.to_borrow_amount(debt_shares)
+    } else {
+        0
+    };
+    let quote_debt = if (debt_is_base) {
+        0
+    } else {
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<QuoteAsset>(),
+            EInvalidDebtAsset,
+        );
+        margin_pool.to_borrow_amount(debt_shares)
+    };
+
+    (base_debt, quote_debt)
+}
+
 public fun deepbook_pool<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
     self.deepbook_pool
 }
@@ -711,57 +764,6 @@ public(package) fun trade_proof<BaseAsset, QuoteAsset>(
 
 public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
     object::id(self)
-}
-
-/// Returns (base_asset, quote_asset) for margin manager.
-public(package) fun calculate_assets<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-): (u64, u64) {
-    let balance_manager = self.balance_manager();
-    let (mut base, mut quote, _) = pool.locked_balance(balance_manager);
-    base = base + balance_manager.balance<BaseAsset>();
-    quote = quote + balance_manager.balance<QuoteAsset>();
-
-    (base, quote)
-}
-
-/// General helper for debt calculation and asset totals.
-/// Returns (base_debt, quote_debt)
-public(package) fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
-): (u64, u64) {
-    let margin_pool_id = margin_pool.id();
-    assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
-
-    let debt_is_base = self.has_base_debt();
-    let debt_shares = if (debt_is_base) {
-        self.base_borrowed_shares
-    } else {
-        self.quote_borrowed_shares
-    };
-
-    let base_debt = if (debt_is_base) {
-        assert!(
-            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>(),
-            EInvalidDebtAsset,
-        );
-        margin_pool.to_borrow_amount(debt_shares)
-    } else {
-        0
-    };
-    let quote_debt = if (debt_is_base) {
-        0
-    } else {
-        assert!(
-            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<QuoteAsset>(),
-            EInvalidDebtAsset,
-        );
-        margin_pool.to_borrow_amount(debt_shares)
-    };
-
-    (base_debt, quote_debt)
 }
 
 // === Private Functions ===
