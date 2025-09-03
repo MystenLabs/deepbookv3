@@ -22,6 +22,7 @@ const EInvalidLoanQuantity: u64 = 5;
 const EDeepbookPoolAlreadyAllowed: u64 = 6;
 const EDeepbookPoolNotAllowed: u64 = 7;
 const EInvalidMarginPoolCap: u64 = 8;
+const EBorrowAmountTooLow: u64 = 9;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -342,6 +343,7 @@ public(package) fun borrow<Asset>(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
+    assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
 
     let balance = self.vault.split(amount);
 

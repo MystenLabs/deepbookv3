@@ -153,6 +153,7 @@ public fun default_protocol_config(): ProtocolConfig {
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
         test_constants::protocol_spread(),
+        test_constants::min_borrow(),
     );
     let interest_config = protocol_config::new_interest_config(
         test_constants::base_rate(), // base_rate: 5% with 9 decimals
