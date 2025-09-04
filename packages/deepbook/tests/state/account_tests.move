@@ -57,7 +57,7 @@ fun process_maker_fill_ok() {
     assert_eq(settled, balances::new(100, 0, 0));
     assert_eq(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 100, 0);
-    assert!(account.open_orders().size() == 1, 0);
+    assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
 
     account.add_order(2);
@@ -82,7 +82,7 @@ fun process_maker_fill_ok() {
     assert_eq(settled, balances::new(0, 500, 0));
     assert_eq(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
-    assert!(account.open_orders().size() == 1, 0);
+    assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
     assert!(!account.open_orders().contains(&(2 as u128)), 0);
 
@@ -108,7 +108,7 @@ fun process_maker_fill_ok() {
     assert_eq(settled, balances::new(100, 0, 0));
     assert_eq(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
-    assert!(account.open_orders().size() == 1, 0);
+    assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
     assert!(!account.open_orders().contains(&(2 as u128)), 0);
     assert!(!account.open_orders().contains(&(3 as u128)), 0);
@@ -135,7 +135,7 @@ fun process_maker_fill_ok() {
     assert_eq(settled, balances::new(0, 500, 0));
     assert_eq(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 300, 0);
-    assert!(account.open_orders().size() == 1, 0);
+    assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
     assert!(!account.open_orders().contains(&(2 as u128)), 0);
     assert!(!account.open_orders().contains(&(3 as u128)), 0);

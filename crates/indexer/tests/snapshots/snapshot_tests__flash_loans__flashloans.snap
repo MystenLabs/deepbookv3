@@ -1,0 +1,32 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "DzuGc5r1R6yocW2uNHh5ULbggTJLSqXdwtCFydtf8xfU0",
+    "digest": "DzuGc5r1R6yocW2uNHh5ULbggTJLSqXdwtCFydtf8xfU",
+    "sender": "0xfdb4ab707ca6c6c785ff4826d55862009d24902352a73ff0d79d8e0faaa9e7e8",
+    "checkpoint": "100001465",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1736510724877",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "borrow": true,
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "borrow_quantity": "22976181",
+    "type_name": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC"
+  },
+  {
+    "event_digest": "8pwFqN1gh7Q59ZWiwvEXsjYzZF2G21gcPMbAaucjPD210",
+    "digest": "8pwFqN1gh7Q59ZWiwvEXsjYzZF2G21gcPMbAaucjPD21",
+    "sender": "0x6e50a6963c20b1cc12d6abde56148117f523a8d679496b070d88a8c35641f68d",
+    "checkpoint": "100001465",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1736510724877",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "borrow": true,
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "borrow_quantity": "10348560026",
+    "type_name": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI"
+  }
+]

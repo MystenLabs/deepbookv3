@@ -10,15 +10,15 @@ use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
-use deepbook_indexer::MAINNET_REMOTE_STORE_URL;
+use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
-use move_core_types::account_address::AccountAddress;
 use prometheus::Registry;
 use std::net::SocketAddr;
 use sui_indexer_alt_framework::ingestion::ClientArgs;
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
+use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
-use sui_pg_db::DbArgs;
+use sui_pg_db::{Db, DbArgs};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -37,12 +37,9 @@ struct Args {
         default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
-    /// Checkpoint remote store URL, defaulted to Sui mainnet remote store.
-    #[clap(env, long, default_value = MAINNET_REMOTE_STORE_URL)]
-    remote_store_url: Url,
-    /// Deepbook package id override, defaulted to the mainnet deepbook package id.
+    /// Deepbook environment, defaulted to SUI mainnet.
     #[clap(env, long)]
-    package_id_override: Option<AccountAddress>,
+    env: DeepbookEnv,
 }
 
 #[tokio::main]
@@ -55,9 +52,8 @@ async fn main() -> Result<(), anyhow::Error> {
         db_args,
         indexer_args,
         metrics_address,
-        remote_store_url,
         database_url,
-        package_id_override,
+        env,
     } = Args::parse();
 
     let cancel = CancellationToken::new();
@@ -65,78 +61,70 @@ async fn main() -> Result<(), anyhow::Error> {
         .context("Failed to create Prometheus registry.")?;
     let metrics = MetricsService::new(
         MetricsArgs { metrics_address },
-        registry,
+        registry.clone(),
         cancel.child_token(),
     );
 
+    // Prepare the store for the indexer
+    let store = Db::for_write(database_url, db_args)
+        .await
+        .context("Failed to connect to database")?;
+
+    store
+        .run_migrations(Some(&MIGRATIONS))
+        .await
+        .context("Failed to run pending migrations")?;
+
+    registry.register(Box::new(DbConnectionStatsCollector::new(
+        Some("deepbook_indexer_db"),
+        store.clone(),
+    )))?;
+
     let mut indexer = Indexer::new(
-        database_url,
-        db_args,
+        store,
         indexer_args,
         ClientArgs {
-            remote_store_url: Some(remote_store_url),
+            remote_store_url: Some(env.remote_store_url()),
             local_ingestion_path: None,
             rpc_api_url: None,
             rpc_username: None,
             rpc_password: None,
         },
         Default::default(),
-        Some(&MIGRATIONS),
         metrics.registry(),
         cancel.clone(),
     )
     .await?;
 
     indexer
-        .concurrent_pipeline(
-            BalancesHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(BalancesHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            FlashLoanHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            OrderFillHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(OrderFillHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            OrderUpdateHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(OrderUpdateHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            PoolPriceHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(PoolPriceHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            ProposalsHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(ProposalsHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(RebatesHandler::new(package_id_override), Default::default())
+        .concurrent_pipeline(RebatesHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(StakesHandler::new(package_id_override), Default::default())
+        .concurrent_pipeline(StakesHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(
-            TradeParamsUpdateHandler::new(package_id_override),
-            Default::default(),
-        )
+        .concurrent_pipeline(TradeParamsUpdateHandler::new(env), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(VotesHandler::new(package_id_override), Default::default())
+        .concurrent_pipeline(VotesHandler::new(env), Default::default())
         .await?;
 
     let h_indexer = indexer.run().await?;

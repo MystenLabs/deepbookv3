@@ -11,6 +11,7 @@ use deepbook::{
     balance_manager::BalanceManager,
     balances::{Self, Balances},
     constants,
+    ewma::EWMAState,
     fill::Fill,
     governance::{Self, Governance},
     history::{Self, History},
@@ -75,8 +76,9 @@ public struct RebateEvent has copy, drop {
     claim_amount: u64,
 }
 
-public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
+public(package) fun empty(whitelisted: bool, stable_pool: bool, ctx: &mut TxContext): State {
     let governance = governance::empty(
+        whitelisted,
         stable_pool,
         ctx,
     );
@@ -97,6 +99,7 @@ public(package) fun empty(stable_pool: bool, ctx: &mut TxContext): State {
 public(package) fun process_create(
     self: &mut State,
     order_info: &mut OrderInfo,
+    ewma_state: &EWMAState,
     pool_id: ID,
     ctx: &TxContext,
 ): (Balances, Balances) {
@@ -126,16 +129,17 @@ public(package) fun process_create(
             math::mul_u128(account_volume, avg_executed_price as u128),
         );
 
-    // taker fee will almost be calculated as 0 for whitelisted pools by
+    // taker fee will always be calculated as 0 for whitelisted pools by
     // default, as account_volume_in_deep is 0
     let taker_fee = self
         .governance
         .trade_params()
         .taker_fee_for_user(account_stake, account_volume_in_deep);
+    let taker_fee = ewma_state.apply_taker_penalty(taker_fee, ctx);
     let maker_fee = self.governance.trade_params().maker_fee();
 
     if (order_info.order_inserted()) {
-        assert!(account.open_orders().size() < constants::max_open_orders(), EMaxOpenOrders);
+        assert!(account.open_orders().length() < constants::max_open_orders(), EMaxOpenOrders);
         account.add_order(order_info.order_id());
     };
     account.add_taker_volume(order_info.executed_quantity());
@@ -368,17 +372,17 @@ public(package) fun process_claim_rebates<BaseAsset, QuoteAsset>(
         claim_amount,
     });
     balance_manager.emit_balance_event(
-        type_name::get<DEEP>(),
+        type_name::with_defining_ids<DEEP>(),
         claim_amount.deep(),
         true,
     );
     balance_manager.emit_balance_event(
-        type_name::get<BaseAsset>(),
+        type_name::with_defining_ids<BaseAsset>(),
         claim_amount.base(),
         true,
     );
     balance_manager.emit_balance_event(
-        type_name::get<QuoteAsset>(),
+        type_name::with_defining_ids<QuoteAsset>(),
         claim_amount.quote(),
         true,
     );
