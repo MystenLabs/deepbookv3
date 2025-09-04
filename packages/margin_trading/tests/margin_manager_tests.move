@@ -1433,7 +1433,6 @@ fun test_min_position_size_requirement() {
     abort
 }
 
-
 #[test]
 fun test_repayment_rounding() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
