@@ -14,7 +14,6 @@ use margin_trading::{
     test_helpers::{
         setup_pool_proxy_test_env,
         setup_margin_registry,
-        create_wrong_pool,
         create_margin_pool,
         create_pool_for_testing,
         enable_margin_trading_on_pool,
@@ -95,7 +94,7 @@ fun test_place_limit_order_incorrect_pool() {
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
     // Create a wrong pool
-    let wrong_pool_id = create_wrong_pool<USDC, USDT>(&mut scenario);
+    let wrong_pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
@@ -244,7 +243,7 @@ fun test_place_market_order_incorrect_pool() {
         pool_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
-    let wrong_pool_id = create_wrong_pool<USDC, USDT>(&mut scenario);
+    let wrong_pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
@@ -431,7 +430,7 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
         pool_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
-    let wrong_pool_id = create_wrong_pool<USDC, USDT>(&mut scenario);
+    let wrong_pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
@@ -643,7 +642,7 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
         pool_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
-    let wrong_pool_id = create_wrong_pool<USDC, USDT>(&mut scenario);
+    let wrong_pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
@@ -745,7 +744,6 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
 }
 
 // === Stake Tests ===
-
 #[test]
 fun test_stake_ok() {
     let (
@@ -819,7 +817,6 @@ fun test_stake_with_deep_margin_manager() {
 }
 
 // === Other Function Tests ===
-
 #[test]
 fun test_modify_order_ok() {
     let (

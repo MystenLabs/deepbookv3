@@ -531,8 +531,3 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
 
     (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id)
 }
-
-/// Create a wrong/different DeepBook pool for testing EIncorrectDeepBookPool
-public fun create_wrong_pool<BaseAsset, QuoteAsset>(scenario: &mut Scenario): ID {
-    create_pool_for_testing<BaseAsset, QuoteAsset>(scenario)
-}
