@@ -68,7 +68,7 @@ public struct Request {
 }
 
 /// Hot potato to ensure manager is shared during creation
-public struct SharingHotPotato {
+public struct ManagerInitializer {
     margin_manager_id: ID,
 }
 
@@ -126,25 +126,25 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-): (MarginManager<BaseAsset, QuoteAsset>, SharingHotPotato) {
+): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
     let manager = new_margin_manager(pool, registry, clock, ctx);
-    let hot_potato = SharingHotPotato {
+    let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
 
-    (manager, hot_potato)
+    (manager, initializer)
 }
 
 public fun share<BaseAsset, QuoteAsset>(
     manager: MarginManager<BaseAsset, QuoteAsset>,
-    hot_potato: SharingHotPotato,
+    initializer: ManagerInitializer,
 ) {
-    assert!(manager.id() == hot_potato.margin_manager_id, EInvalidManagerForSharing);
+    assert!(manager.id() == initializer.margin_manager_id, EInvalidManagerForSharing);
     transfer::share_object(manager);
 
-    let SharingHotPotato {
-        margin_manager_id,
-    } = hot_potato;
+    let ManagerInitializer {
+        margin_manager_id: _,
+    } = initializer;
 }
 
 /// Set the referral for the margin manager.
