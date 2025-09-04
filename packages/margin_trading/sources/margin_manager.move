@@ -46,7 +46,7 @@ const BORROW: u8 = 1;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
-public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, store {
+public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
     owner: address,
     deepbook_pool: ID,
@@ -64,6 +64,11 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
 public struct Request {
     margin_manager_id: ID,
     request_type: u8,
+}
+
+/// Hot potato to ensure manager is shared during creation
+public struct ManagerSharing {
+    margin_manager_id: ID,
 }
 
 // === Events ===
@@ -112,9 +117,22 @@ public fun new<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
+    let (manager, hot_potato) = custom_new(pool, registry, clock, ctx);
+
+    manager.share(hot_potato);
+}
+
+public fun custom_new<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (MarginManager<BaseAsset, QuoteAsset>, ManagerSharing) {
+    registry.load_inner();
     assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
+    let manager_id = id.to_inner();
 
     let (
         balance_manager,
@@ -124,7 +142,7 @@ public fun new<BaseAsset, QuoteAsset>(
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
 
     event::emit(MarginManagerEvent {
-        margin_manager_id: id.to_inner(),
+        margin_manager_id: manager_id,
         balance_manager_id: object::id(&balance_manager),
         owner: ctx.sender(),
         timestamp: clock.timestamp_ms(),
@@ -144,7 +162,22 @@ public fun new<BaseAsset, QuoteAsset>(
         active_liquidation: false,
     };
 
-    transfer::share_object(manager)
+    let hot_potato = ManagerSharing {
+        margin_manager_id: manager_id,
+    };
+
+    (manager, hot_potato)
+}
+
+public fun share<BaseAsset, QuoteAsset>(
+    manager: MarginManager<BaseAsset, QuoteAsset>,
+    hot_potato: ManagerSharing,
+) {
+    transfer::share_object(manager);
+
+    let ManagerSharing {
+        margin_manager_id,
+    } = hot_potato;
 }
 
 /// Set the referral for the margin manager.
