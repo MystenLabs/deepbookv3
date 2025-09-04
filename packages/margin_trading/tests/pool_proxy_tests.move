@@ -31,7 +31,6 @@ use sui::{test_scenario::return_shared, test_utils::destroy};
 use token::deep::DEEP;
 
 // === Place Limit Order Tests ===
-
 #[test]
 fun test_place_limit_order_ok() {
     let (
@@ -189,7 +188,6 @@ fun test_place_limit_order_pool_not_enabled() {
 }
 
 // === Place Market Order Tests ===
-
 #[test]
 fun test_place_market_order_ok() {
     let (
@@ -771,7 +769,7 @@ fun test_stake_ok() {
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
-        mint_coin<DEEP>(1000 * 1_000_000_000, scenario.ctx()),
+        mint_coin<DEEP>(1000 * test_constants::deep_multiplier(), scenario.ctx()),
         scenario.ctx(),
     );
 
@@ -780,7 +778,7 @@ fun test_stake_ok() {
         &registry,
         &mut mm,
         &mut pool,
-        100 * 1_000_000_000, // 100 DEEP
+        100 * test_constants::deep_multiplier(), // 100 DEEP
         scenario.ctx(),
     );
 
@@ -813,7 +811,7 @@ fun test_stake_with_deep_margin_manager() {
         &registry,
         &mut mm,
         &mut pool,
-        100 * 1_000_000_000,
+        100 * test_constants::deep_multiplier(),
         scenario.ctx(),
     );
 
@@ -1138,7 +1136,10 @@ fun test_submit_proposal_ok() {
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
-        mint_coin<DEEP>(20000 * 1_000_000, scenario.ctx()), // 20000 DEEP with 6 decimals
+        mint_coin<DEEP>(
+            20000 * test_constants::deep_multiplier(),
+            scenario.ctx(),
+        ), // 20000 DEEP with 6 decimals
         scenario.ctx(),
     );
 
@@ -1195,7 +1196,10 @@ fun test_vote_ok() {
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
-        mint_coin<DEEP>(20000 * 1_000_000, scenario.ctx()), // 20000 DEEP with 6 decimals
+        mint_coin<DEEP>(
+            20000 * test_constants::deep_multiplier(),
+            scenario.ctx(),
+        ), // 20000 DEEP with 6 decimals
         scenario.ctx(),
     );
 
