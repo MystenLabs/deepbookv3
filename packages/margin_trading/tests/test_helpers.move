@@ -17,7 +17,7 @@ use margin_trading::{
     },
     oracle::{Self, PythConfig},
     protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, BTC}
+    test_constants::{Self, USDC, USDT, BTC}
 };
 use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
 use sui::{
@@ -90,7 +90,7 @@ public fun setup_test(): (Scenario, MarginAdminCap) {
 public fun setup_margin_registry(): (Scenario, Clock, MarginAdminCap, MaintainerCap) {
     let (mut scenario, admin_cap) = setup_test();
     let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(1000);
+    clock.set_for_testing(1000000);
 
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -353,6 +353,76 @@ public fun create_test_pyth_config(): PythConfig {
     )
 }
 
+public fun setup_usdc_usdt_margin_trading(): (
+    Scenario,
+    Clock,
+    MarginAdminCap,
+    MaintainerCap,
+    ID,
+    ID,
+    ID,
+) {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    clock.set_for_testing(1000000);
+    let usdc_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let usdt_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
+
+    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_margin_trading_on_pool<USDT, USDC>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    usdc_pool.supply(
+        &registry,
+        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    usdt_pool.supply(
+        &registry,
+        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+    usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
+
+    test::return_shared(usdc_pool);
+    test::return_shared(usdt_pool);
+    test::return_shared(registry);
+    scenario.return_to_sender(usdt_pool_cap);
+    scenario.return_to_sender(usdc_pool_cap);
+
+    (scenario, clock, admin_cap, maintainer_cap, usdc_pool_id, usdt_pool_id, pool_id)
+}
+
 /// Helper function to set up a complete BTC/USD margin trading environment
 /// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, deepbook_pool_id)
 public fun setup_btc_usd_margin_trading(): (
@@ -381,14 +451,7 @@ public fun setup_btc_usd_margin_trading(): (
     );
 
     scenario.next_tx(test_constants::admin());
-    let cap1 = scenario.take_from_sender<MarginPoolCap>();
-    let cap2 = scenario.take_from_sender<MarginPoolCap>();
-
-    let (btc_pool_cap, usdc_pool_cap) = if (cap1.margin_pool_id() == btc_pool_id) {
-        (cap1, cap2)
-    } else {
-        (cap2, cap1)
-    };
+    let (btc_pool_cap, usdc_pool_cap) = get_margin_pool_caps(&mut scenario, btc_pool_id);
 
     let pool_id = create_pool_for_testing<BTC, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
