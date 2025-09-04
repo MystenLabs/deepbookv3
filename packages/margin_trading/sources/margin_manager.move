@@ -117,9 +117,7 @@ public fun new<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    registry.load_inner();
     let (manager, hot_potato) = custom_new(pool, registry, clock, ctx);
-
     manager.share(hot_potato);
 }
 
