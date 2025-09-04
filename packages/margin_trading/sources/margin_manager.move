@@ -39,7 +39,7 @@ const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
 const ERepaymentNotEnough: u64 = 12;
 const EIncorrectMarginPool: u64 = 13;
-const EInvalidManagerHotPotato: u64 = 14;
+const EInvalidManagerForSharing: u64 = 14;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -68,7 +68,7 @@ public struct Request {
 }
 
 /// Hot potato to ensure manager is shared during creation
-public struct ManagerHotPotato {
+public struct SharingHotPotato {
     margin_manager_id: ID,
 }
 
@@ -161,7 +161,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
         active_liquidation: false,
     };
 
-    let hot_potato = ManagerHotPotato {
+    let hot_potato = SharingHotPotato {
         margin_manager_id,
     };
 
@@ -170,12 +170,12 @@ public fun custom_new<BaseAsset, QuoteAsset>(
 
 public fun share<BaseAsset, QuoteAsset>(
     manager: MarginManager<BaseAsset, QuoteAsset>,
-    hot_potato: ManagerHotPotato,
+    hot_potato: SharingHotPotato,
 ) {
-    assert!(manager.id() == hot_potato.margin_manager_id, EInvalidManagerHotPotato);
+    assert!(manager.id() == hot_potato.margin_manager_id, EInvalidManagerForSharing);
     transfer::share_object(manager);
 
-    let ManagerHotPotato {
+    let SharingHotPotato {
         margin_manager_id,
     } = hot_potato;
 }
