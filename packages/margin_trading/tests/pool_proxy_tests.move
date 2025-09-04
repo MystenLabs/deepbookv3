@@ -1148,7 +1148,7 @@ fun test_submit_proposal_ok() {
         &registry,
         &mut mm,
         &mut pool,
-        10000 * 1_000_000, // 10000 DEEP stake amount
+        10000 * test_constants::deep_multiplier(), // 10000 DEEP stake amount
         scenario.ctx(),
     );
 
@@ -1165,7 +1165,7 @@ fun test_submit_proposal_ok() {
         &mut pool,
         600000, // taker_fee
         200000, // maker_fee
-        10000 * 1_000_000, // stake_required
+        10000 * test_constants::deep_multiplier(), // stake_required
         scenario.ctx(),
     );
 
@@ -1208,7 +1208,7 @@ fun test_vote_ok() {
         &registry,
         &mut mm,
         &mut pool,
-        10000 * 1_000_000, // 10000 DEEP stake amount
+        10000 * test_constants::deep_multiplier(), // 10000 DEEP stake amount
         scenario.ctx(),
     );
 
@@ -1218,9 +1218,29 @@ fun test_vote_ok() {
     // Continue the transaction as user1
     scenario.next_tx(test_constants::user1());
 
-    // This test demonstrates that the vote function exists and is callable
-    // In a real scenario, you would vote on actual proposal IDs returned from submit_proposal
-    // For testing purposes, we just verify the function interface works
+    // Get the balance manager ID to use as proposal ID
+    let balance_manager = mm.balance_manager();
+    let balance_manager_id = object::id(balance_manager);
+
+    // First submit a proposal (this creates a proposal with balance_manager_id as the key)
+    pool_proxy::submit_proposal<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        600000, // taker_fee
+        200000, // maker_fee
+        10000 * test_constants::deep_multiplier(), // stake_required
+        scenario.ctx(),
+    );
+
+    // Vote on the proposal using balance manager ID as proposal ID
+    pool_proxy::vote<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        balance_manager_id,
+        scenario.ctx(),
+    );
 
     return_shared_2!(mm, pool);
     cleanup_margin_test(registry, admin_cap, _maintainer_cap, clock, scenario);
