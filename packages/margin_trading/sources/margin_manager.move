@@ -117,8 +117,8 @@ public fun new<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let (manager, hot_potato) = custom_new(pool, registry, clock, ctx);
-    manager.share(hot_potato);
+    let manager = new_margin_manager(pool, registry, clock, ctx);
+    transfer::share_object(manager);
 }
 
 public fun custom_new<BaseAsset, QuoteAsset>(
@@ -127,42 +127,9 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, SharingHotPotato) {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
-
-    let id = object::new(ctx);
-    let margin_manager_id = id.to_inner();
-
-    let (
-        balance_manager,
-        deposit_cap,
-        withdraw_cap,
-        trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-
-    event::emit(MarginManagerEvent {
-        margin_manager_id,
-        balance_manager_id: object::id(&balance_manager),
-        owner: ctx.sender(),
-        timestamp: clock.timestamp_ms(),
-    });
-
-    let manager = MarginManager<BaseAsset, QuoteAsset> {
-        id,
-        owner: ctx.sender(),
-        deepbook_pool: pool.id(),
-        margin_pool_id: option::none(),
-        balance_manager,
-        deposit_cap,
-        withdraw_cap,
-        trade_cap,
-        base_borrowed_shares: 0,
-        quote_borrowed_shares: 0,
-        active_liquidation: false,
-    };
-
+    let manager = new_margin_manager(pool, registry, clock, ctx);
     let hot_potato = SharingHotPotato {
-        margin_manager_id,
+        margin_manager_id: manager.id(),
     };
 
     (manager, hot_potato)
@@ -848,6 +815,47 @@ public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, Qu
 }
 
 // === Private Functions ===
+fun new_margin_manager<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginManager<BaseAsset, QuoteAsset> {
+    registry.load_inner();
+    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+
+    let id = object::new(ctx);
+    let margin_manager_id = id.to_inner();
+
+    let (
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        trade_cap,
+    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
+
+    event::emit(MarginManagerEvent {
+        margin_manager_id,
+        balance_manager_id: object::id(&balance_manager),
+        owner: ctx.sender(),
+        timestamp: clock.timestamp_ms(),
+    });
+
+    MarginManager<BaseAsset, QuoteAsset> {
+        id,
+        owner: ctx.sender(),
+        deepbook_pool: pool.id(),
+        margin_pool_id: option::none(),
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        trade_cap,
+        base_borrowed_shares: 0,
+        quote_borrowed_shares: 0,
+        active_liquidation: false,
+    }
+}
+
 fun validate_owner<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
