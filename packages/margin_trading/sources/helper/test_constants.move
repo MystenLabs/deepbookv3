@@ -18,6 +18,7 @@ public struct INVALID_ASSET has drop {}
 
 const USDC_MULTIPLIER: u64 = 1000000;
 const USDT_MULTIPLIER: u64 = 1000000;
+const DEEP_MULTIPLIER: u64 = 1000000;
 const BTC_MULTIPLIER: u64 = 100000000;
 
 // === Margin Pool Constants ===
@@ -137,6 +138,10 @@ public fun usdc_multiplier(): u64 {
 
 public fun usdt_multiplier(): u64 {
     USDT_MULTIPLIER
+}
+
+public fun deep_multiplier(): u64 {
+    DEEP_MULTIPLIER
 }
 
 public fun btc_multiplier(): u64 {

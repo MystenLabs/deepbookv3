@@ -518,3 +518,79 @@ public fun interest_rate(
         base_rate + math::mul(optimal_utilization, base_slope) + excess_rate
     }
 }
+
+/// Setup a complete margin trading environment with margin manager for pool proxy testing
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, deepbook_pool_id)
+public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
+    Scenario,
+    Clock,
+    MarginAdminCap,
+    MaintainerCap,
+    ID,
+    ID,
+    ID,
+) {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    clock.set_for_testing(1000000);
+
+    // Create margin pools
+    let base_pool_id = create_margin_pool<BaseAsset>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let quote_pool_id = create_margin_pool<QuoteAsset>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Get pool caps
+    let (base_pool_cap, quote_pool_cap) = get_margin_pool_caps(&mut scenario, base_pool_id);
+
+    // Create DeepBook pool
+    let pool_id = create_pool_for_testing<BaseAsset, QuoteAsset>(&mut scenario);
+
+    // Enable margin trading
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    // Setup liquidity for margin pools
+    scenario.next_tx(test_constants::admin());
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<BaseAsset>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<QuoteAsset>>(quote_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    base_pool.supply(
+        &registry,
+        mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    quote_pool.supply(
+        &registry,
+        mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    base_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &base_pool_cap, &clock);
+    quote_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &quote_pool_cap, &clock);
+
+    return_shared_2!(base_pool, quote_pool);
+    return_shared(registry);
+    return_to_sender_2!(&scenario, base_pool_cap, quote_pool_cap);
+
+    (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id)
+}
