@@ -8,6 +8,7 @@ module margin_trading::test_constants;
 const USER1: address = @0xA;
 const USER2: address = @0xB;
 const ADMIN: address = @0x0;
+const LIQUIDATOR: address = @0xC;
 
 // === Test Coin Types ===
 public struct USDC has drop {}
@@ -86,6 +87,10 @@ public fun user2(): address {
 
 public fun admin(): address {
     ADMIN
+}
+
+public fun liquidator(): address {
+    LIQUIDATOR
 }
 
 // === Pool Configuration Getters ===
