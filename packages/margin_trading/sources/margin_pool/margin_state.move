@@ -90,6 +90,10 @@ public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
     math::div(amount, self.supply_index)
 }
 
+public(package) fun to_supply_shares_round_up(self: &State, amount: u64): u64 {
+    math::div_round_up(amount, self.supply_index)
+}
+
 public(package) fun to_borrow_shares(self: &State, amount: u64): u64 {
     math::div(amount, self.borrow_index)
 }
