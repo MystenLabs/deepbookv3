@@ -39,6 +39,7 @@ const EInvalidDebtAsset: u64 = 10;
 const ECannotLiquidate: u64 = 11;
 const ERepaymentNotEnough: u64 = 12;
 const EIncorrectMarginPool: u64 = 13;
+const EInvalidManagerForSharing: u64 = 14;
 
 // === Constants ===
 const WITHDRAW: u8 = 0;
@@ -46,7 +47,7 @@ const BORROW: u8 = 1;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
-public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, store {
+public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
     owner: address,
     deepbook_pool: ID,
@@ -64,6 +65,11 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key, stor
 public struct Request {
     margin_manager_id: ID,
     request_type: u8,
+}
+
+/// Hot potato to ensure manager is shared during creation
+public struct ManagerInitializer {
+    margin_manager_id: ID,
 }
 
 // === Events ===
@@ -105,46 +111,44 @@ public struct LiquidationEvent has copy, drop {
 }
 
 // === Public Functions - Margin Manager ===
+/// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+    let manager = new_margin_manager(pool, registry, clock, ctx);
+    transfer::share_object(manager);
+}
 
-    let id = object::new(ctx);
-
-    let (
-        balance_manager,
-        deposit_cap,
-        withdraw_cap,
-        trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-
-    event::emit(MarginManagerEvent {
-        margin_manager_id: id.to_inner(),
-        balance_manager_id: object::id(&balance_manager),
-        owner: ctx.sender(),
-        timestamp: clock.timestamp_ms(),
-    });
-
-    let manager = MarginManager<BaseAsset, QuoteAsset> {
-        id,
-        owner: ctx.sender(),
-        deepbook_pool: pool.id(),
-        margin_pool_id: option::none(),
-        balance_manager,
-        deposit_cap,
-        withdraw_cap,
-        trade_cap,
-        base_borrowed_shares: 0,
-        quote_borrowed_shares: 0,
-        active_liquidation: false,
+/// Creates a new margin manager and returns it along with an initializer.
+/// The initializer is used to ensure the margin manager is shared after creation.
+public fun new_with_initializer<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
+    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let initializer = ManagerInitializer {
+        margin_manager_id: manager.id(),
     };
 
-    transfer::share_object(manager)
+    (manager, initializer)
+}
+
+/// Shares the margin manager. The initializer is dropped in the process.
+public fun share<BaseAsset, QuoteAsset>(
+    manager: MarginManager<BaseAsset, QuoteAsset>,
+    initializer: ManagerInitializer,
+) {
+    assert!(manager.id() == initializer.margin_manager_id, EInvalidManagerForSharing);
+    transfer::share_object(manager);
+
+    let ManagerInitializer {
+        margin_manager_id: _,
+    } = initializer;
 }
 
 /// Set the referral for the margin manager.
@@ -815,6 +819,47 @@ public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, Qu
 }
 
 // === Private Functions ===
+fun new_margin_manager<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginManager<BaseAsset, QuoteAsset> {
+    registry.load_inner();
+    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+
+    let id = object::new(ctx);
+    let margin_manager_id = id.to_inner();
+
+    let (
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        trade_cap,
+    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
+
+    event::emit(MarginManagerEvent {
+        margin_manager_id,
+        balance_manager_id: object::id(&balance_manager),
+        owner: ctx.sender(),
+        timestamp: clock.timestamp_ms(),
+    });
+
+    MarginManager<BaseAsset, QuoteAsset> {
+        id,
+        owner: ctx.sender(),
+        deepbook_pool: pool.id(),
+        margin_pool_id: option::none(),
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        trade_cap,
+        base_borrowed_shares: 0,
+        quote_borrowed_shares: 0,
+        active_liquidation: false,
+    }
+}
+
 fun validate_owner<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     ctx: &TxContext,
