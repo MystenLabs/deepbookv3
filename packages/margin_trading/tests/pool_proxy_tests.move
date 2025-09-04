@@ -22,6 +22,7 @@ use margin_trading::{
         mint_coin,
         destroy_2,
         return_shared_2,
+        return_shared_3,
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object
     }
@@ -411,8 +412,7 @@ fun test_place_reduce_only_limit_order_ok() {
 
     // Verify the order was placed successfully
     destroy(order_info);
-    return_shared_2!(mm, pool);
-    return_shared(base_pool);
+    return_shared_3!(mm, pool, base_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -530,8 +530,7 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
         scenario.ctx(),
     );
 
-    return_shared_2!(mm, pool);
-    return_shared(quote_pool);
+    return_shared_3!(mm, pool, quote_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -623,8 +622,7 @@ fun test_place_reduce_only_market_order_ok() {
 
     // Verify the order was placed successfully
     destroy(order_info);
-    return_shared_2!(mm, pool);
-    return_shared(base_pool);
+    return_shared_3!(mm, pool, base_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -736,8 +734,7 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
         scenario.ctx(),
     );
 
-    return_shared_2!(mm, pool);
-    return_shared(quote_pool);
+    return_shared_3!(mm, pool, quote_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
