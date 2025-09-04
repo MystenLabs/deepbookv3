@@ -79,7 +79,11 @@ public(package) fun increase_total_borrow(self: &mut State, amount: u64) {
 }
 
 public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
-    self.total_borrow = self.total_borrow - amount;
+    self.total_borrow = if (amount > self.total_borrow) {
+        0
+    } else {
+        self.total_borrow - amount
+    };
 }
 
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
@@ -96,6 +100,10 @@ public(package) fun to_supply_amount(self: &State, shares: u64): u64 {
 
 public(package) fun to_borrow_amount(self: &State, shares: u64): u64 {
     math::mul(shares, self.borrow_index)
+}
+
+public(package) fun to_borrow_amount_round_up(self: &State, shares: u64): u64 {
+    math::mul_round_up(shares, self.borrow_index)
 }
 
 public(package) fun supply_index(self: &State): u64 {

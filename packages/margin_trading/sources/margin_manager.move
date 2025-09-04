@@ -842,7 +842,6 @@ fun borrow<BaseAsset, QuoteAsset, BorrowAsset>(
 
 /// Repays the loan using the margin manager.
 /// Returns the total amount repaid
-/// TODO: Can the conversion here cause a rounding error?
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
@@ -857,9 +856,9 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
         repay_amount.destroy_some()
     } else {
         if (repay_is_base) {
-            margin_pool.to_borrow_amount(self.base_borrowed_shares)
+            margin_pool.to_borrow_amount_round_up(self.base_borrowed_shares)
         } else {
-            margin_pool.to_borrow_amount(self.quote_borrowed_shares)
+            margin_pool.to_borrow_amount_round_up(self.quote_borrowed_shares)
         }
     };
     let available_balance = self.balance_manager().balance<RepayAsset>();

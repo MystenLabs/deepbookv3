@@ -387,6 +387,10 @@ public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u6
     self.state.to_borrow_amount(shares)
 }
 
+public(package) fun to_borrow_amount_round_up<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
+    self.state.to_borrow_amount_round_up(shares)
+}
+
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }

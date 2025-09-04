@@ -1524,8 +1524,7 @@ fun test_repayment_rounding() {
         request,
     );
 
-    // TODO: WAIT ON TONY FIX
-    // advance_time(&mut clock, 1000 * 100); // 100 seconds later
+    advance_time(&mut clock, 1000 * 100); // 100 seconds later
 
     // Partial repayment
     mm.deposit<USDC, USDT, USDT>(
