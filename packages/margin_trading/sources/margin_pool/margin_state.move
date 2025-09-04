@@ -80,10 +80,10 @@ public(package) fun increase_total_borrow(self: &mut State, amount: u64) {
 
 public(package) fun decrease_total_borrow(self: &mut State, amount: u64) {
     self.total_borrow = if (amount > self.total_borrow) {
-        0
-    } else {
-        self.total_borrow - amount
-    };
+            0
+        } else {
+            self.total_borrow - amount
+        };
 }
 
 public(package) fun to_supply_shares(self: &State, amount: u64): u64 {
