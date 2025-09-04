@@ -133,7 +133,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
-    let manager_id = id.to_inner();
+    let margin_manager_id = id.to_inner();
 
     let (
         balance_manager,
@@ -143,7 +143,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
 
     event::emit(MarginManagerEvent {
-        margin_manager_id: manager_id,
+        margin_manager_id,
         balance_manager_id: object::id(&balance_manager),
         owner: ctx.sender(),
         timestamp: clock.timestamp_ms(),
@@ -164,7 +164,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     };
 
     let hot_potato = ManagerHotPotato {
-        margin_manager_id: manager_id,
+        margin_manager_id,
     };
 
     (manager, hot_potato)
