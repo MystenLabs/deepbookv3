@@ -111,6 +111,7 @@ public struct LiquidationEvent has copy, drop {
 }
 
 // === Public Functions - Margin Manager ===
+/// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -121,7 +122,9 @@ public fun new<BaseAsset, QuoteAsset>(
     transfer::share_object(manager);
 }
 
-public fun custom_new<BaseAsset, QuoteAsset>(
+/// Creates a new margin manager and returns it along with an initializer.
+/// The initializer is used to ensure the margin manager is shared after creation.
+public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     clock: &Clock,
@@ -135,6 +138,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     (manager, initializer)
 }
 
+/// Shares the margin manager. The initializer is dropped in the process.
 public fun share<BaseAsset, QuoteAsset>(
     manager: MarginManager<BaseAsset, QuoteAsset>,
     initializer: ManagerInitializer,
