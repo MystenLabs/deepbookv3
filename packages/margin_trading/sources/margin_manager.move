@@ -126,7 +126,7 @@ public fun custom_new<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-): (MarginManager<BaseAsset, QuoteAsset>, ManagerSharing) {
+): (MarginManager<BaseAsset, QuoteAsset>, SharingHotPotato) {
     registry.load_inner();
     assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
