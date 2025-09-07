@@ -219,41 +219,24 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         ctx,
     );
 
-    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
-        registry,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
-    );
-    let (base_asset, quote_asset) = self.calculate_assets(pool);
-
-    if (self.borrowed_shares > 0) {
-        let risk_ratio = if (self.margin_pool_id.contains(&base_margin_pool.id())) {
-            let base_debt = base_margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
-            let assets_per_base =
-                math::div(math::mul(quote_asset, quote_per_dollar), base_per_dollar) + base_asset;
-            let max_risk_ratio = margin_constants::max_risk_ratio();
-            let risk_ratio = if (assets_per_base > math::mul(base_debt, max_risk_ratio)) {
-                max_risk_ratio
-            } else {
-                math::div(assets_per_base, base_debt)
-            };
-
-            risk_ratio
-        } else {
-            let quote_debt = quote_margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
-            let assets_per_quote =
-                math::div(math::mul(base_asset, base_per_dollar), quote_per_dollar) + quote_asset;
-            let max_risk_ratio = margin_constants::max_risk_ratio();
-            let risk_ratio = if (assets_per_quote > math::mul(quote_debt, max_risk_ratio)) {
-                max_risk_ratio
-            } else {
-                math::div(assets_per_quote, quote_debt)
-            };
-
-            risk_ratio
-        };
-        assert!(registry.can_borrow(pool.id(), risk_ratio), EBorrowRiskRatioExceeded);
+    if (self.margin_pool_id.contains(&base_margin_pool.id())) {
+        self.assert_risk_ratio(
+            registry,
+            base_price_info_object,
+            quote_price_info_object,
+            pool,
+            base_margin_pool,
+            clock,
+        );
+    } else if (self.margin_pool_id.contains(&quote_margin_pool.id())) {
+        self.assert_risk_ratio(
+            registry,
+            base_price_info_object,
+            quote_price_info_object,
+            pool,
+            quote_margin_pool,
+            clock,
+        );
     };
 
     coin
@@ -283,23 +266,14 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self.borrowed_shares = total_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
-
-    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
+    self.assert_risk_ratio(
         registry,
         base_price_info_object,
         quote_price_info_object,
+        pool,
+        base_margin_pool,
         clock,
     );
-    let (base_asset, quote_asset) = self.calculate_assets(pool);
-    let assets_per_base =
-        math::div(math::mul(quote_asset, quote_per_dollar), base_per_dollar) + base_asset;
-    let max_risk_ratio = margin_constants::max_risk_ratio();
-    let risk_ratio = if (assets_per_base > math::mul(total_borrow, max_risk_ratio)) {
-        max_risk_ratio
-    } else {
-        math::div(assets_per_base, total_borrow)
-    };
-    assert!(registry.can_borrow(pool.id(), risk_ratio), EBorrowRiskRatioExceeded);
 
     event::emit(LoanBorrowedEvent {
         margin_manager_id: self.id(),
@@ -335,23 +309,14 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     self.borrowed_shares = total_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
-
-    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
+    self.assert_risk_ratio(
         registry,
         base_price_info_object,
         quote_price_info_object,
+        pool,
+        quote_margin_pool,
         clock,
     );
-    let (base_asset, quote_asset) = self.calculate_assets(pool);
-    let assets_per_quote =
-        math::div(math::mul(base_asset, base_per_dollar), quote_per_dollar) + quote_asset;
-    let max_risk_ratio = margin_constants::max_risk_ratio();
-    let risk_ratio = if (assets_per_quote > math::mul(total_borrow, max_risk_ratio)) {
-        max_risk_ratio
-    } else {
-        math::div(assets_per_quote, total_borrow)
-    };
-    assert!(registry.can_borrow(pool.id(), risk_ratio), EBorrowRiskRatioExceeded);
 
     event::emit(LoanBorrowedEvent {
         margin_manager_id: self.id(),
@@ -715,6 +680,39 @@ fun can_borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     let no_current_loan = self.margin_pool_id.is_none();
 
     self.margin_pool_id.contains(&margin_pool.id()) || no_current_loan
+}
+
+fun assert_risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+    clock: &Clock,
+) {
+    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
+
+    let (assets_per_debt) = if (self.margin_pool_id.contains(&margin_pool.id())) {
+        math::div(math::mul(quote_asset, quote_per_dollar), base_per_dollar) + base_asset
+    } else {
+        math::div(math::mul(base_asset, base_per_dollar), quote_per_dollar) + quote_asset
+    };
+
+    let debt = margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
+    let max_risk_ratio = margin_constants::max_risk_ratio();
+    let risk_ratio = if (assets_per_debt > math::mul(debt, max_risk_ratio)) {
+        max_risk_ratio
+    } else {
+        math::div(assets_per_debt, debt)
+    };
+    assert!(registry.can_borrow(pool.id(), risk_ratio), EBorrowRiskRatioExceeded);
 }
 
 fun assets_per_dollar<BaseAsset, QuoteAsset>(
