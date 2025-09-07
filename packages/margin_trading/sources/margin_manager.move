@@ -435,41 +435,24 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
 
     if (assets_per_base <= debt_with_reward) {
         let max_to_repay = math::div(assets_per_base, liquidation_with_user);
-        if (repay_coin.value() >= max_to_repay) {
-            margin_pool.repay_coin(repay_coin.split(max_to_repay, ctx));
-            let mut base_out = self.liquidation_withdraw_base(
-                base_asset,
-                ctx,
-            );
-            base_out.join(repay_coin);
-            let quote_out = self.liquidation_withdraw_quote(
-                quote_asset,
-                ctx,
-            );
-            margin_pool.repay_shares(self.borrowed_shares, clock);
-            margin_pool.decrease_supply_absolute(debt - max_to_repay);
+        let repay_amount = max_to_repay.min(repay_coin.value());
+        let repay_ratio = math::div(repay_amount, max_to_repay);
+        margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
+        let mut base_out = self.liquidation_withdraw_base(
+            math::mul(base_asset, repay_ratio),
+            ctx,
+        );
+        base_out.join(repay_coin);
+        let quote_out = self.liquidation_withdraw_quote(
+            math::mul(quote_asset, repay_ratio),
+            ctx,
+        );
+        let repay_shares = math::mul(self.borrowed_shares, repay_ratio);
+        margin_pool.repay_shares(repay_shares, clock);
+        margin_pool.decrease_supply_absolute(math::mul(debt - repay_amount, repay_ratio));
+        self.borrowed_shares = self.borrowed_shares - repay_shares;
 
-            return (base_out, quote_out)
-        } else {
-            let repay_amount = repay_coin.value();
-            let repay_ratio = math::div(repay_coin.value(), max_to_repay);
-            margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
-            let mut base_out = self.liquidation_withdraw_base(
-                math::mul(base_asset, repay_ratio),
-                ctx,
-            );
-            base_out.join(repay_coin);
-            let quote_out = self.liquidation_withdraw_quote(
-                math::mul(quote_asset, repay_ratio),
-                ctx,
-            );
-            let repay_shares = math::mul(self.borrowed_shares, repay_ratio);
-            margin_pool.repay_shares(repay_shares, clock);
-            margin_pool.decrease_supply_absolute(math::mul(debt - repay_amount, repay_ratio));
-            self.borrowed_shares = self.borrowed_shares - repay_shares;
-
-            return (base_out, quote_out)
-        }
+        return (base_out, quote_out)
     };
 
     let liquidation_reward =
@@ -477,41 +460,24 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     let debt_with_reward = math::mul(debt, liquidation_reward);
     if (assets_per_base <= debt_with_reward) {
         let max_to_repay = math::div(assets_per_base, liquidation_with_user);
-        if (repay_coin.value() >= max_to_repay) {
-            margin_pool.repay_coin(repay_coin.split(max_to_repay, ctx));
-            let mut base_out = self.liquidation_withdraw_base(
-                base_asset,
-                ctx,
-            );
-            base_out.join(repay_coin);
-            let quote_out = self.liquidation_withdraw_quote(
-                quote_asset,
-                ctx,
-            );
-            margin_pool.repay_shares(self.borrowed_shares, clock);
-            margin_pool.increase_supply_absolute(max_to_repay - debt);
+        let repay_amount = max_to_repay.min(repay_coin.value());
+        let repay_ratio = math::div(repay_amount, max_to_repay);
+        margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
+        let mut base_out = self.liquidation_withdraw_base(
+            math::mul(base_asset, repay_ratio),
+            ctx,
+        );
+        base_out.join(repay_coin);
+        let quote_out = self.liquidation_withdraw_quote(
+            math::mul(quote_asset, repay_ratio),
+            ctx,
+        );
+        let repay_shares = math::mul(self.borrowed_shares, repay_ratio);
+        margin_pool.repay_shares(repay_shares, clock);
+        margin_pool.increase_supply_absolute(math::mul(max_to_repay - debt, repay_ratio));
+        self.borrowed_shares = self.borrowed_shares - repay_shares;
 
-            return (base_out, quote_out)
-        } else {
-            let repay_amount = repay_coin.value();
-            let repay_ratio = math::div(repay_coin.value(), max_to_repay);
-            margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
-            let mut base_out = self.liquidation_withdraw_base(
-                math::mul(base_asset, repay_ratio),
-                ctx,
-            );
-            base_out.join(repay_coin);
-            let quote_out = self.liquidation_withdraw_quote(
-                math::mul(quote_asset, repay_ratio),
-                ctx,
-            );
-            let repay_shares = math::mul(self.borrowed_shares, repay_ratio);
-            margin_pool.repay_shares(repay_shares, clock);
-            margin_pool.increase_supply_absolute(math::mul(max_to_repay - debt, repay_ratio));
-            self.borrowed_shares = self.borrowed_shares - repay_shares;
-
-            return (base_out, quote_out)
-        }
+        return (base_out, quote_out)
     };
 
     let target_ratio = registry.target_liquidation_risk_ratio(pool.id());
@@ -521,46 +487,26 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     let asset_ratio_to_give = math::div(debt_with_reward, assets_per_base);
     let max_to_repay = math::div(debt_with_reward, liquidation_with_user);
     let debt_repay = math::div(debt_with_reward, liquidation_reward);
-    let (base_out, quote_out) = if (repay_coin.value() >= max_to_repay) {
-        margin_pool.repay_coin(repay_coin.split(max_to_repay, ctx));
-        let mut base_out = self.liquidation_withdraw_base(
-            math::mul(base_asset, asset_ratio_to_give),
-            ctx,
-        );
-        base_out.join(repay_coin);
-        let quote_out = self.liquidation_withdraw_quote(
-            math::mul(quote_asset, asset_ratio_to_give),
-            ctx,
-        );
-        let repay_shares = math::mul(self.borrowed_shares, math::div(debt_repay, debt));
-        margin_pool.repay_shares(repay_shares, clock);
-        margin_pool.increase_supply_absolute(max_to_repay - debt_repay);
-        self.borrowed_shares = self.borrowed_shares - repay_shares;
 
-        (base_out, quote_out)
-    } else {
-        let repay_amount = repay_coin.value();
-        let repay_ratio = math::div(repay_amount, max_to_repay);
-        margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
-        let mut base_out = self.liquidation_withdraw_base(
-            math::mul(math::mul(base_asset, repay_ratio), asset_ratio_to_give),
-            ctx,
-        );
-        base_out.join(repay_coin);
-        let quote_out = self.liquidation_withdraw_quote(
-            math::mul(math::mul(quote_asset, repay_ratio), asset_ratio_to_give),
-            ctx,
-        );
-        let repay_shares = math::mul(
-            self.borrowed_shares,
-            math::mul(math::div(debt_repay, debt), repay_ratio),
-        );
-        margin_pool.repay_shares(repay_shares, clock);
-        margin_pool.increase_supply_absolute(math::mul(max_to_repay - debt_repay, repay_ratio));
-        self.borrowed_shares = self.borrowed_shares - repay_shares;
-
-        (base_out, quote_out)
-    };
+    let repay_amount = max_to_repay.min(repay_coin.value());
+    let repay_ratio = math::div(repay_amount, max_to_repay);
+    margin_pool.repay_coin(repay_coin.split(repay_amount, ctx));
+    let mut base_out = self.liquidation_withdraw_base(
+        math::mul(math::mul(base_asset, repay_ratio), asset_ratio_to_give),
+        ctx,
+    );
+    base_out.join(repay_coin);
+    let quote_out = self.liquidation_withdraw_quote(
+        math::mul(math::mul(quote_asset, repay_ratio), asset_ratio_to_give),
+        ctx,
+    );
+    let repay_shares = math::mul(
+        self.borrowed_shares,
+        math::mul(math::div(debt_repay, debt), repay_ratio),
+    );
+    margin_pool.repay_shares(repay_shares, clock);
+    margin_pool.increase_supply_absolute(math::mul(max_to_repay - debt_repay, repay_ratio));
+    self.borrowed_shares = self.borrowed_shares - repay_shares;
 
     (base_out, quote_out)
 }
