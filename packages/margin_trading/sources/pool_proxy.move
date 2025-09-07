@@ -3,7 +3,7 @@
 
 module margin_trading::pool_proxy;
 
-use deepbook::{math, order_info::OrderInfo, pool::Pool};
+use deepbook::{order_info::OrderInfo, pool::Pool};
 use margin_trading::{
     margin_manager::MarginManager,
     margin_pool::MarginPool,
@@ -107,20 +107,7 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
 ): OrderInfo {
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
-        margin_pool,
-    );
-    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
-
-    // The order is a bid, and quantity is less than the net base debt.
-    // The order is a ask, and quote quantity is less than the net quote debt.
-    assert!(
-        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
-            (!is_bid && quote_debt > quote_asset && math::mul(quantity, price) <= quote_debt - quote_asset),
-        ENotReduceOnlyOrder,
-    );
+    margin_manager.assert_place_reduce_only(margin_pool, is_bid);
 
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -157,26 +144,7 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 ): OrderInfo {
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
-        margin_pool,
-    );
-    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
-        pool,
-    );
-
-    let (_, quote_quantity, _) = if (pay_with_deep) {
-        pool.get_quote_quantity_out(quantity, clock)
-    } else {
-        pool.get_quote_quantity_out_input_fee(quantity, clock)
-    };
-
-    // The order is a bid, and quantity is less than the net base debt.
-    // The order is a ask, and quote quantity is less than the net quote debt.
-    assert!(
-        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
-            (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
-        ENotReduceOnlyOrder,
-    );
+    margin_manager.assert_place_reduce_only(margin_pool, is_bid);
 
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);

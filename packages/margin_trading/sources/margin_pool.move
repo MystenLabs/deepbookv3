@@ -23,6 +23,7 @@ const EDeepbookPoolAlreadyAllowed: u64 = 6;
 const EDeepbookPoolNotAllowed: u64 = 7;
 const EInvalidMarginPoolCap: u64 = 8;
 const EBorrowAmountTooLow: u64 = 9;
+const EInvalidRepayQuantity: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -330,32 +331,35 @@ public(package) fun borrow<Asset>(
     (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
 }
 
-public(package) fun repay_shares<Asset>(
+public(package) fun repay<Asset>(
     self: &mut MarginPool<Asset>,
     shares: u64,
+    coin: Coin<Asset>,
     clock: &Clock,
-): u64 {
-    self.state.decrease_borrow_shares(&self.config, shares, clock)
-}
-
-public(package) fun increase_borrow<Asset>(
-    self: &mut MarginPool<Asset>,
-    amount: u64,
-    clock: &Clock,
-): (u64, u64) {
-    self.state.increase_borrow(&self.config, amount, clock)
-}
-
-public(package) fun repay_coin<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>) {
+) {
+    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    assert!(coin.value() == amount, EInvalidRepayQuantity);
     self.vault.join(coin.into_balance());
 }
 
-public(package) fun decrease_supply_absolute<Asset>(self: &mut MarginPool<Asset>, amount: u64) {
-    self.state.decrease_supply_absolute(amount);
-}
+public(package) fun repay_liquidation<Asset>(
+    self: &mut MarginPool<Asset>,
+    shares: u64,
+    coin: Coin<Asset>,
+    clock: &Clock,
+): (u64, u64, u64) {
+    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    let coin_value = coin.value();
+    let (reward, default) = if (coin_value > amount) {
+        self.state.increase_supply_absolute(coin_value - amount);
+        (coin_value - amount, 0)
+    } else {
+        self.state.decrease_supply_absolute(amount - coin_value);
+        (0, amount - coin_value)
+    };
+    self.vault.join(coin.into_balance());
 
-public(package) fun increase_supply_absolute<Asset>(self: &mut MarginPool<Asset>, amount: u64) {
-    self.state.increase_supply_absolute(amount);
+    (amount, reward, default)
 }
 
 public(package) fun borrow_shares_to_amount<Asset>(

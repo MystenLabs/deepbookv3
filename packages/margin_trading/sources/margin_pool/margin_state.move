@@ -54,12 +54,12 @@ public(package) fun decrease_supply_shares(
     amount
 }
 
-public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
-    self.supply = self.supply - amount;
-}
-
 public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
     self.supply = self.supply + amount;
+}
+
+public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
+    self.supply = self.supply - amount;
 }
 
 public(package) fun increase_borrow(
