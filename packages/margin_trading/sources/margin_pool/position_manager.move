@@ -5,6 +5,7 @@
 /// It is used to track the supply and loan shares of the users.
 module margin_trading::position_manager;
 
+use deepbook::math;
 use sui::table::{Self, Table};
 
 public struct PositionManager has store {
@@ -18,7 +19,7 @@ public(package) fun create_position_manager(ctx: &mut TxContext): PositionManage
 }
 
 /// Increase the supply shares of the user
-public(package) fun increase_user_supply_shares(
+public(package) fun increase_user_supply(
     self: &mut PositionManager,
     user: address,
     supply_shares: u64,
@@ -31,20 +32,16 @@ public(package) fun increase_user_supply_shares(
 }
 
 /// Decrease the supply shares of the user
-public(package) fun decrease_user_supply_shares(
+public(package) fun decrease_user_supply(
     self: &mut PositionManager,
     user: address,
-    supply_shares: u64,
+    percentage: u64,
 ): u64 {
     let supply = self.supply_shares.borrow_mut(user);
-    *supply = *supply - supply_shares;
+    let decrease_shares = math::mul(*supply, percentage);
+    *supply = *supply - decrease_shares;
 
-    *supply
-}
-
-/// Get the supply shares of the user.
-public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
-    *self.supply_shares.borrow(user)
+    decrease_shares
 }
 
 public(package) fun add_supply_entry(self: &mut PositionManager, user: address) {

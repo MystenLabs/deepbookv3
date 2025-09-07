@@ -3,7 +3,7 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::math;
+use deepbook::constants;
 use margin_trading::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -252,19 +252,16 @@ public fun supply<Asset>(
     ctx: &TxContext,
 ) {
     registry.load_inner();
-    self.update_state(clock);
-
     let supplier = ctx.sender();
-
     let supply_amount = coin.value();
-    let supply_shares = self.state.to_supply_shares(supply_amount);
-    self.state.increase_total_supply(supply_amount);
-    self.positions.increase_user_supply_shares(supplier, supply_shares);
+
+    let supply_shares = self.state.increase_supply(&self.config, supply_amount, clock);
+    self.positions.increase_user_supply(supplier, supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+    assert!(self.state.supply() <= self.config.supply_cap(), ESupplyCapExceeded);
 
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
@@ -276,28 +273,21 @@ public fun supply<Asset>(
     });
 }
 
-/// Allows withdrawal from the margin pool. Returns the withdrawn coin and the new user supply amount.
+/// Allows withdrawal from the margin pool. Returns the withdrawn coin.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    amount: Option<u64>,
+    percentage: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    self.update_state(clock);
-
     let supplier = ctx.sender();
-
-    let user_supply_shares = self.positions.user_supply_shares(supplier);
-    let user_supply_amount = self.state.to_supply_amount(user_supply_shares);
-    let withdrawal_amount = amount.get_with_default(user_supply_amount);
-    let withdrawal_shares = self.state.to_supply_shares(withdrawal_amount);
-    assert!(withdrawal_shares <= user_supply_shares, ECannotWithdrawMoreThanSupply);
-    assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-
-    self.state.decrease_total_supply(withdrawal_amount);
-    self.positions.decrease_user_supply_shares(supplier, withdrawal_shares);
+    let percentage = percentage.min(constants::float_scaling());
+    let withdrawal_shares = self.positions.decrease_user_supply(supplier, percentage);
+    let withdrawal_amount = self
+        .state
+        .decrease_supply_shares(&self.config, withdrawal_shares, clock);
 
     let coin = self.vault.split(withdrawal_amount).into_coin(ctx);
 
@@ -319,72 +309,66 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 }
 
 // === Public-Package Functions ===
-public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let interest_accrued = self.state.update(&self.config, clock);
-    let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
-    if (protocol_profit_accrued > 0) {
-        self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
-        self.state.decrease_total_supply_with_index(protocol_profit_accrued);
-    }
-}
-
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
     amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Asset> {
+): (Coin<Asset>, u64, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
-    assert!(amount > 0, EInvalidLoanQuantity);
-
-    self.update_state(clock);
-    self.state.increase_total_borrow(amount);
-
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
 
-    let balance = self.vault.split(amount);
+    let (total_borrow, total_borrow_shares) = self
+        .state
+        .increase_borrow(&self.config, amount, clock);
 
-    balance.into_coin(ctx)
+    (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
 }
 
-/// Allows repaying the loan.
-public(package) fun repay<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>, clock: &Clock) {
-    self.update_state(clock);
-    self.state.decrease_total_borrow(coin.value());
-    self.vault.join(coin.into_balance());
-}
-
-public(package) fun repay_with_reward<Asset>(
+public(package) fun repay_shares<Asset>(
     self: &mut MarginPool<Asset>,
-    coin: Coin<Asset>,
-    repay_amount: u64,
-    reward_amount: u64,
-    default_amount: u64,
+    shares: u64,
     clock: &Clock,
-) {
-    self.update_state(clock);
-    self.state.decrease_total_borrow(repay_amount);
-    self.state.increase_total_supply_with_index(reward_amount);
-    self.state.decrease_total_supply_with_index(default_amount);
+): u64 {
+    self.state.decrease_borrow_shares(&self.config, shares, clock)
+}
+
+public(package) fun increase_borrow<Asset>(
+    self: &mut MarginPool<Asset>,
+    amount: u64,
+    clock: &Clock,
+): (u64, u64) {
+    self.state.increase_borrow(&self.config, amount, clock)
+}
+
+public(package) fun repay_coin<Asset>(self: &mut MarginPool<Asset>, coin: Coin<Asset>) {
     self.vault.join(coin.into_balance());
+}
+
+public(package) fun decrease_supply_absolute<Asset>(self: &mut MarginPool<Asset>, amount: u64) {
+    self.state.decrease_supply_absolute(amount);
+}
+
+public(package) fun increase_supply_absolute<Asset>(self: &mut MarginPool<Asset>, amount: u64) {
+    self.state.increase_supply_absolute(amount);
+}
+
+public(package) fun borrow_shares_to_amount<Asset>(
+    self: &MarginPool<Asset>,
+    shares: u64,
+    clock: &Clock,
+): u64 {
+    self.state.borrow_shares_to_amount(shares, &self.config, clock)
 }
 
 /// Returns the supply cap.
 public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.supply_cap()
-}
-
-public(package) fun to_borrow_shares<Asset>(self: &MarginPool<Asset>, amount: u64): u64 {
-    self.state.to_borrow_shares(amount)
-}
-
-public(package) fun to_borrow_amount<Asset>(self: &MarginPool<Asset>, shares: u64): u64 {
-    self.state.to_borrow_amount(shares)
 }
 
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
