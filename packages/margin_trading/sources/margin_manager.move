@@ -445,12 +445,12 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     );
     self.borrowed_shares = self.borrowed_shares - repay_shares;
 
-    let mut base_out = self.liquidation_withdraw_base(
+    let mut base_out = self.liquidation_withdraw(
         math::mul(math::mul(base_asset, repay_ratio), asset_ratio_to_give),
         ctx,
     );
     base_out.join(repay_coin);
-    let quote_out = self.liquidation_withdraw_quote(
+    let quote_out = self.liquidation_withdraw(
         math::mul(math::mul(quote_asset, repay_ratio), asset_ratio_to_give),
         ctx,
     );
@@ -618,28 +618,6 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     });
 
     repay_amount
-}
-
-fun liquidation_withdraw_base<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    withdraw_amount: u64,
-    ctx: &mut TxContext,
-): Coin<BaseAsset> {
-    self.liquidation_withdraw<BaseAsset, QuoteAsset, BaseAsset>(
-        withdraw_amount,
-        ctx,
-    )
-}
-
-fun liquidation_withdraw_quote<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    withdraw_amount: u64,
-    ctx: &mut TxContext,
-): Coin<QuoteAsset> {
-    self.liquidation_withdraw<BaseAsset, QuoteAsset, QuoteAsset>(
-        withdraw_amount,
-        ctx,
-    )
 }
 
 fun liquidation_withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(

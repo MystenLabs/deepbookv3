@@ -370,11 +370,6 @@ public(package) fun borrow_shares_to_amount<Asset>(
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
 }
 
-/// Returns the supply cap.
-public(package) fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.supply_cap()
-}
-
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
