@@ -63,7 +63,9 @@ public fun test_borrow<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    pool.borrow(amount, clock, ctx)
+    let (coin, _, _) = pool.borrow(amount, clock, ctx);
+
+    coin
 }
 
 #[test]
@@ -81,7 +83,7 @@ fun test_supply_and_withdraw_basic() {
 
     let withdrawn = pool.withdraw<USDC>(
         &registry,
-        option::some(50_000_000_000),
+        500_000_000,
         &clock,
         scenario.ctx(),
     ); // 50 tokens
@@ -92,7 +94,7 @@ fun test_supply_and_withdraw_basic() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_trading::margin_pool::ESupplyCapExceeded)]
+#[test, expected_failure(abort_code = margin_pool::ESupplyCapExceeded)]
 fun test_supply_cap_enforcement() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
     clock.set_for_testing(1000);
@@ -132,7 +134,7 @@ fun test_multiple_users_supply_withdraw() {
     scenario.next_tx(test_constants::user1());
     let withdrawn1 = pool.withdraw<USDC>(
         &registry,
-        option::some(25_000_000_000),
+        500_000_000,
         &clock,
         scenario.ctx(),
     );
@@ -141,7 +143,7 @@ fun test_multiple_users_supply_withdraw() {
     scenario.next_tx(test_constants::user2());
     let withdrawn2 = pool.withdraw<USDC>(
         &registry,
-        option::some(15_000_000_000),
+        500_000_000,
         &clock,
         scenario.ctx(),
     );
@@ -167,32 +169,8 @@ fun test_withdraw_all() {
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
     pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
 
-    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
     assert!(withdrawn.value() == supply_amount);
-
-    destroy(withdrawn);
-    test::return_shared(pool);
-    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
-}
-
-#[test, expected_failure(abort_code = margin_trading::margin_pool::ECannotWithdrawMoreThanSupply)]
-fun test_withdraw_more_than_supplied() {
-    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
-    clock.set_for_testing(1000);
-
-    scenario.next_tx(test_constants::admin());
-    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    scenario.next_tx(test_constants::user1());
-    let supply_coin = mint_coin<USDC>(50_000_000_000, scenario.ctx()); // 50 tokens
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
-
-    let withdrawn = pool.withdraw<USDC>(
-        &registry,
-        option::some(60_000_000_000),
-        &clock,
-        scenario.ctx(),
-    );
 
     destroy(withdrawn);
     test::return_shared(pool);
@@ -227,7 +205,7 @@ fun test_interest_accrual_over_time() {
     // Advance time by 1 day
     clock.set_for_testing(1000 + 86400000);
 
-    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
     assert!(withdrawn.value() >= supply_amount);
 
     destroy(withdrawn);
@@ -235,7 +213,7 @@ fun test_interest_accrual_over_time() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_trading::margin_pool::ENotEnoughAssetInPool)]
+#[test, expected_failure(abort_code = margin_pool::ENotEnoughAssetInPool)]
 fun test_not_enough_asset_in_pool() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
 
@@ -254,19 +232,14 @@ fun test_not_enough_asset_in_pool() {
 
     // Should fail due to outstanding loan
     scenario.next_tx(test_constants::user1());
-    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
 
     destroy(withdrawn);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[
-    test,
-    expected_failure(
-        abort_code = margin_trading::margin_pool::EMaxPoolBorrowPercentageExceeded,
-    ),
-]
+#[test, expected_failure(abort_code = margin_pool::EMaxPoolBorrowPercentageExceeded)]
 fun test_max_pool_borrow_percentage_exceeded() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
 
@@ -288,7 +261,7 @@ fun test_max_pool_borrow_percentage_exceeded() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_trading::margin_pool::EInvalidLoanQuantity)]
+#[test, expected_failure(abort_code = margin_pool::EBorrowAmountTooLow)]
 fun test_invalid_loan_quantity() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
 
@@ -310,7 +283,7 @@ fun test_invalid_loan_quantity() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_trading::margin_pool::EDeepbookPoolAlreadyAllowed)]
+#[test, expected_failure(abort_code = margin_pool::EDeepbookPoolAlreadyAllowed)]
 fun test_deepbook_pool_already_allowed() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
 
@@ -332,7 +305,7 @@ fun test_deepbook_pool_already_allowed() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_trading::margin_pool::EInvalidMarginPoolCap)]
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
 fun test_invalid_margin_pool_cap() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
 

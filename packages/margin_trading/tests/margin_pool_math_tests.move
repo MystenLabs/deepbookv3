@@ -8,7 +8,7 @@ use deepbook::{constants, math};
 use margin_trading::{
     margin_constants,
     margin_pool::MarginPool,
-    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
     test_constants::{Self, USDC},
     test_helpers::{Self, mint_coin, advance_time, interest_rate}
 };
@@ -100,6 +100,7 @@ fun test_borrow_supply_interest_ok_5() {
 fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     let duration_ms = duration * margin_constants::year_ms();
     let utilization_rate = math::div(borrow, supply);
+    // 100%
     let interest_rate =
         interest_rate(
             utilization_rate,
@@ -108,9 +109,9 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
             test_constants::optimal_utilization(),
             test_constants::excess_slope(),
         ) * duration;
-    let borrow_multiplier = constants::float_scaling() + interest_rate;
-    let supply_multiplier =
-        constants::float_scaling() + math::mul(constants::float_scaling() - test_constants::protocol_spread(), math::mul(interest_rate, utilization_rate));
+    let borrow_multiplier = constants::float_scaling() + interest_rate; // 200%
+    // 1 + 1*0.5 = 1.5
+    let supply_multiplier = constants::float_scaling() + math::mul(interest_rate, utilization_rate);
 
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
     scenario.next_tx(test_constants::admin());
@@ -123,7 +124,7 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     pool.supply(&registry, coin, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
-    let borrowed_coin = pool.borrow(
+    let (borrowed_coin, _, shares) = pool.borrow(
         borrow,
         &clock,
         scenario.ctx(),
@@ -132,43 +133,25 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     destroy(borrowed_coin);
 
     // 1 year passes
-    // Interest should be 5% + 0.1 * 50% = 10%
-    // Repayment should be 55 USDC for user 2
+    // Interest rate 100% on 50 USDC = 50 USDC interest
+    // Repayment should be 100 USDC for user 2
     advance_time(&mut clock, duration_ms);
     scenario.next_tx(test_constants::user2());
     let repay_coin = mint_coin<USDC>(math::mul(borrow, borrow_multiplier), scenario.ctx());
-    pool.repay(repay_coin, &clock);
+    pool.repay(shares, repay_coin, &clock);
 
-    // User 1 withdraws his entire balance
-    // Protocol spread is 10% of the 5 interest paid. user 1 should receive 104.5 USDC.
+    // User 1 withdraws his entire balance, receiving 150 USDC
     scenario.next_tx(test_constants::user1());
-    let withdrawn_coin = pool.withdraw(&registry, option::none(), &clock, scenario.ctx());
-    let expected_withdrawn_value = math::mul(supply, supply_multiplier) - 1;
-    assert!(
-        withdrawn_coin.value() == expected_withdrawn_value || withdrawn_coin.value() == expected_withdrawn_value - 1,
-    ); // -1 offset for precision loss
-    destroy(withdrawn_coin);
-
-    // Admin withdraws protocol profits
-    // Admin should receive 0.5 USDC
-    scenario.next_tx(test_constants::admin());
-    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
-    let protocol_profit = pool.withdraw_protocol_profit(
+    let withdrawn_coin = pool.withdraw(
         &registry,
-        &margin_pool_cap,
+        constants::float_scaling(),
         &clock,
         scenario.ctx(),
     );
-    let protocol_profit_expected = math::mul(
-        borrow,
-        math::mul(test_constants::protocol_spread(), interest_rate),
-    );
-    assert!(
-        protocol_profit.value() == protocol_profit_expected || protocol_profit.value() == protocol_profit_expected - 1,
-    ); // -1 offset for precision loss
-    destroy(protocol_profit);
+    let expected_withdrawn_value = math::mul(supply, supply_multiplier);
+    assert!(withdrawn_coin.value() == expected_withdrawn_value);
+    destroy(withdrawn_coin);
 
-    scenario.return_to_sender(margin_pool_cap);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
