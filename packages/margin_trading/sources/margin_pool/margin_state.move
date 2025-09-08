@@ -32,7 +32,7 @@ public(package) fun increase_supply(
 ): u64 {
     self.update(config, clock);
     let ratio = self.supply_ratio();
-    let shares = math::mul(amount, ratio);
+    let shares = math::div(amount, ratio);
     self.supply_shares = self.supply_shares + shares;
     self.supply = self.supply + amount;
 
@@ -47,7 +47,7 @@ public(package) fun decrease_supply_shares(
 ): u64 {
     self.update(config, clock);
     let ratio = self.supply_ratio();
-    let amount = math::div(shares, ratio);
+    let amount = math::mul(shares, ratio);
     self.supply_shares = self.supply_shares - shares;
     self.supply = self.supply - amount;
 
@@ -70,7 +70,7 @@ public(package) fun increase_borrow(
 ): (u64, u64) {
     self.update(config, clock);
     let ratio = self.borrow_ratio();
-    let shares = math::mul(amount, ratio);
+    let shares = math::div(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.borrow = self.borrow + amount;
 
@@ -85,7 +85,7 @@ public(package) fun decrease_borrow_shares(
 ): u64 {
     self.update(config, clock);
     let ratio = self.borrow_ratio();
-    let amount = math::div(shares, ratio);
+    let amount = math::mul(shares, ratio);
     self.borrow_shares = self.borrow_shares - shares;
     self.borrow = self.borrow - amount;
 
@@ -138,7 +138,7 @@ fun supply_ratio(self: &State): u64 {
     if (self.supply_shares == 0) {
         constants::float_scaling()
     } else {
-        math::div(self.supply_shares, self.supply)
+        math::div(self.supply, self.supply_shares)
     }
 }
 
@@ -146,6 +146,6 @@ fun borrow_ratio(self: &State): u64 {
     if (self.borrow_shares == 0) {
         constants::float_scaling()
     } else {
-        math::div(self.borrow_shares, self.borrow)
+        math::div(self.borrow, self.borrow_shares)
     }
 }
