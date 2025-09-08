@@ -16,14 +16,12 @@ use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{S
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
-const ECannotWithdrawMoreThanSupply: u64 = 3;
 const EMaxPoolBorrowPercentageExceeded: u64 = 4;
-const EInvalidLoanQuantity: u64 = 5;
-const EDeepbookPoolAlreadyAllowed: u64 = 6;
-const EDeepbookPoolNotAllowed: u64 = 7;
-const EInvalidMarginPoolCap: u64 = 8;
-const EBorrowAmountTooLow: u64 = 9;
-const EInvalidRepayQuantity: u64 = 10;
+const EDeepbookPoolAlreadyAllowed: u64 = 5;
+const EDeepbookPoolNotAllowed: u64 = 6;
+const EInvalidMarginPoolCap: u64 = 7;
+const EBorrowAmountTooLow: u64 = 8;
+const EInvalidRepayQuantity: u64 = 9;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -31,7 +29,6 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    protocol_profit: u64,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
 }
@@ -64,14 +61,6 @@ public struct MarginPoolConfigUpdated has copy, drop {
     margin_pool_id: ID,
     pool_cap_id: ID,
     margin_pool_config: MarginPoolConfig,
-    timestamp: u64,
-}
-
-public struct ProtocolProfitWithdrawn has copy, drop {
-    margin_pool_id: ID,
-    pool_cap_id: ID,
-    asset_type: TypeName,
-    profit: u64,
     timestamp: u64,
 }
 
@@ -110,7 +99,6 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        protocol_profit: 0,
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
@@ -215,34 +203,6 @@ public fun update_margin_pool_config<Asset>(
     });
 }
 
-/// Resets the protocol profit and returns the coin.
-public fun withdraw_protocol_profit<Asset>(
-    self: &mut MarginPool<Asset>,
-    registry: &MarginRegistry,
-    margin_pool_cap: &MarginPoolCap,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<Asset> {
-    registry.load_inner();
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-
-    let profit = self.protocol_profit;
-    self.protocol_profit = 0;
-    let balance = self.vault.split(profit);
-
-    let coin = balance.into_coin(ctx);
-
-    event::emit(ProtocolProfitWithdrawn {
-        margin_pool_id: self.id(),
-        pool_cap_id: margin_pool_cap.pool_cap_id(),
-        asset_type: type_name::with_defining_ids<Asset>(),
-        profit,
-        timestamp: clock.timestamp_ms(),
-    });
-
-    coin
-}
-
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(
@@ -290,6 +250,7 @@ public fun withdraw<Asset>(
         .state
         .decrease_supply_shares(&self.config, withdrawal_shares, clock);
 
+    assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdrawal_amount).into_coin(ctx);
 
     event::emit(AssetWithdrawn {
@@ -318,15 +279,14 @@ public(package) fun borrow<Asset>(
     ctx: &mut TxContext,
 ): (Coin<Asset>, u64, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
+    assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
+    let (total_borrow, total_borrow_shares) = self
+        .state
+        .increase_borrow(&self.config, amount, clock);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
-    assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-
-    let (total_borrow, total_borrow_shares) = self
-        .state
-        .increase_borrow(&self.config, amount, clock);
 
     (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
 }

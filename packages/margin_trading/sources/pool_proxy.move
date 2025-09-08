@@ -16,7 +16,6 @@ use token::deep::DEEP;
 // === Errors ===
 const ECannotStakeWithDeepMarginManager: u64 = 1;
 const EPoolNotEnabledForMarginTrading: u64 = 2;
-const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
 
 // === Public Proxy Functions - Trading ===

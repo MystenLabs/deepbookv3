@@ -333,7 +333,7 @@ fun test_place_reduce_only_limit_order_ok() {
         _admin_cap,
         _maintainer_cap,
         base_pool_id,
-        _quote_pool_id,
+        quote_pool_id,
         pool_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
@@ -341,6 +341,7 @@ fun test_place_reduce_only_limit_order_ok() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
@@ -354,39 +355,30 @@ fun test_place_reduce_only_limit_order_ok() {
     );
 
     // Borrow USDC to establish a base debt
-    let borrow_request = mm.borrow_base<USDC, USDT>(
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    mm.borrow_base<USDC, USDT>(
         &registry,
         &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
         500 * test_constants::usdc_multiplier(), // Borrow 500 USDC
         &clock,
         scenario.ctx(),
     );
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.prove_and_destroy_request<USDC, USDT, USDC>(
-        &registry,
-        &mut base_pool,
-        &pool,
-        &usdc_price, // USDC price
-        &usdt_price, // USDT price
-        &clock,
-        borrow_request,
-    );
 
     // Withdraw some USDC so we have debt but less assets (creating a net debt position)
-    let (withdrawn_coin, withdraw_request) = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn_coin = mm.withdraw<USDC, USDT, USDC>(
         &registry,
-        300 * test_constants::usdc_multiplier(), // Withdraw 300 USDC
-        scenario.ctx(),
-    );
-    mm.prove_and_destroy_request<USDC, USDT, USDC>(
-        &registry,
-        &mut base_pool,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
         &pool,
-        &usdc_price, // USDC price (reuse)
-        &usdt_price, // USDT price (reuse)
+        300 * test_constants::usdc_multiplier(), // Withdraw 300 USDC
         &clock,
-        withdraw_request,
+        scenario.ctx(),
     );
 
     // Destroy the withdrawn coin
@@ -413,6 +405,7 @@ fun test_place_reduce_only_limit_order_ok() {
     // Verify the order was placed successfully
     destroy(order_info);
     return_shared_3!(mm, pool, base_pool);
+    return_shared(quote_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -463,7 +456,7 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_limit_order_not_reduce_only() {
     let (
         mut scenario,
@@ -491,24 +484,18 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
         scenario.ctx(),
     );
 
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     // Borrow some USDT to establish relationship with quote pool
-    let borrow_request = mm.borrow_quote<USDC, USDT>(
+    mm.borrow_quote<USDC, USDT>(
         &registry,
         &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
         100 * test_constants::usdt_multiplier(), // Small borrow amount
         &clock,
         scenario.ctx(),
-    );
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.prove_and_destroy_request<USDC, USDT, USDT>(
-        &registry,
-        &mut quote_pool,
-        &pool,
-        &usdc_price, // USDC price
-        &usdt_price, // USDT price
-        &clock,
-        borrow_request,
     );
 
     // User has no USDC debt but has USDT debt, tries to buy USDC (is_bid = true)
@@ -546,7 +533,7 @@ fun test_place_reduce_only_market_order_ok() {
         _admin_cap,
         _maintainer_cap,
         base_pool_id,
-        _quote_pool_id,
+        quote_pool_id,
         pool_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
 
@@ -554,6 +541,7 @@ fun test_place_reduce_only_market_order_ok() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
@@ -566,40 +554,31 @@ fun test_place_reduce_only_market_order_ok() {
         scenario.ctx(),
     );
 
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     // Borrow USDC to establish a base debt
-    let borrow_request = mm.borrow_base<USDC, USDT>(
+    mm.borrow_base<USDC, USDT>(
         &registry,
         &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
         500 * test_constants::usdc_multiplier(), // Borrow 500 USDC
         &clock,
         scenario.ctx(),
     );
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.prove_and_destroy_request<USDC, USDT, USDC>(
-        &registry,
-        &mut base_pool,
-        &pool,
-        &usdc_price, // USDC price
-        &usdt_price, // USDT price
-        &clock,
-        borrow_request,
-    );
 
     // Withdraw some USDC so we have debt but less assets (creating a net debt position)
-    let (withdrawn_coin, withdraw_request) = mm.withdraw<USDC, USDT, USDC>(
+    let withdrawn_coin = mm.withdraw<USDC, USDT, USDC>(
         &registry,
-        300 * test_constants::usdc_multiplier(), // Withdraw 300 USDC
-        scenario.ctx(),
-    );
-    mm.prove_and_destroy_request<USDC, USDT, USDC>(
-        &registry,
-        &mut base_pool,
+        &base_pool,
+        &quote_pool,
+        &usdc_price,
+        &usdt_price,
         &pool,
-        &usdc_price, // USDC price (reuse)
-        &usdt_price, // USDT price (reuse)
+        300 * test_constants::usdc_multiplier(), // Withdraw 300 USDC
         &clock,
-        withdraw_request,
+        scenario.ctx(),
     );
 
     // Destroy the withdrawn coin
@@ -623,6 +602,7 @@ fun test_place_reduce_only_market_order_ok() {
     // Verify the order was placed successfully
     destroy(order_info);
     return_shared_3!(mm, pool, base_pool);
+    return_shared(quote_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -670,7 +650,7 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_market_order_not_reduce_only() {
     let (
         mut scenario,
@@ -698,24 +678,18 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
         scenario.ctx(),
     );
 
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     // Borrow some USDT to establish relationship with quote pool
-    let borrow_request = mm.borrow_quote<USDC, USDT>(
+    mm.borrow_quote<USDC, USDT>(
         &registry,
         &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
         100 * test_constants::usdt_multiplier(), // Small borrow amount
         &clock,
         scenario.ctx(),
-    );
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    mm.prove_and_destroy_request<USDC, USDT, USDT>(
-        &registry,
-        &mut quote_pool,
-        &pool,
-        &usdc_price, // USDC price
-        &usdt_price, // USDT price
-        &clock,
-        borrow_request,
     );
 
     // User has no USDC debt but has USDT debt, tries to buy USDC (is_bid = true)

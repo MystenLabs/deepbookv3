@@ -21,7 +21,7 @@ use margin_trading::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::calculate_target_amount
+    oracle::calculate_usd_price
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
@@ -405,7 +405,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // b) Debt + user_reward < Assets <= Debt + user_reward + pool_reward: There are enough assets to cover the debt, but pool may not get full rewards.
     // c) Debt + user_reward + pool_reward < Assets: There are enough assets to cover everything. We may not need to liquidate the full position.
     let debt = margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
-    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
+    let (base_price, quote_price) = asset_prices<BaseAsset, QuoteAsset>(
         registry,
         base_oracle,
         quote_oracle,
@@ -415,9 +415,9 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let debt_is_base =
         type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>();
     let assets_per_debt = if (debt_is_base) {
-        math::div(math::mul(quote_asset, quote_per_dollar), base_per_dollar) + base_asset
+        math::div(math::mul(quote_asset, quote_price), base_price) + base_asset
     } else {
-        math::div(math::mul(base_asset, base_per_dollar), quote_per_dollar) + quote_asset
+        math::div(math::mul(base_asset, base_price), quote_price) + quote_asset
     };
 
     let liquidation_reward_with_user_pool =
@@ -487,7 +487,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     margin_pool: &MarginPool<DebtAsset>,
     clock: &Clock,
 ): u64 {
-    let (base_per_dollar, quote_per_dollar) = assets_per_dollar<BaseAsset, QuoteAsset>(
+    let (base_price, quote_price) = asset_prices<BaseAsset, QuoteAsset>(
         registry,
         base_oracle,
         quote_oracle,
@@ -496,11 +496,10 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     let (base_asset, quote_asset) = self.calculate_assets(pool);
 
     let (assets_per_debt) = if (self.margin_pool_id.contains(&margin_pool.id())) {
-        math::div(math::mul(quote_asset, quote_per_dollar), base_per_dollar) + base_asset
+        math::div(math::mul(quote_asset, quote_price), base_price) + base_asset
     } else {
-        math::div(math::mul(base_asset, base_per_dollar), quote_per_dollar) + quote_asset
+        math::div(math::mul(base_asset, base_price), quote_price) + quote_asset
     };
-
     let debt = margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
     let max_risk_ratio = margin_constants::max_risk_ratio();
     if (assets_per_debt > math::mul(debt, max_risk_ratio)) {
@@ -508,6 +507,12 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     } else {
         math::div(assets_per_debt, debt)
     }
+}
+
+public fun borrowed_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    self.borrowed_shares
 }
 
 // === Public Functions - Read Only ===
@@ -531,14 +536,14 @@ public fun deepbook_pool<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
 // === Public-Package Functions ===
 public(package) fun assert_place_reduce_only<BaseAsset, QuoteAsset, DebtAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
+    _margin_pool: &MarginPool<DebtAsset>,
     is_bid: bool,
 ) {
     if (self.borrowed_shares == 0) {
         return
     };
 
-    if (self.margin_pool_id.contains(&margin_pool.id())) {
+    if (type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>()) {
         assert!(is_bid, ENotReduceOnlyOrder);
     } else {
         assert!(!is_bid, ENotReduceOnlyOrder);
@@ -698,20 +703,20 @@ fun can_borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     self.margin_pool_id.contains(&margin_pool.id()) || no_current_loan
 }
 
-fun assets_per_dollar<BaseAsset, QuoteAsset>(
+fun asset_prices<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
     clock: &Clock,
 ): (u64, u64) {
-    let base_per_dollar = calculate_target_amount<BaseAsset>(
+    let base_per_dollar = calculate_usd_price<BaseAsset>(
         base_oracle,
         registry,
         constants::float_scaling(),
         clock,
     );
 
-    let quote_per_dollar = calculate_target_amount<QuoteAsset>(
+    let quote_per_dollar = calculate_usd_price<QuoteAsset>(
         quote_oracle,
         registry,
         constants::float_scaling(),
