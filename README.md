@@ -11,6 +11,7 @@ DeepBook V3 is a next generation decentralized central limit order book (CLOB) b
 - [SDK Documentation](https://docs.sui.io/standards/deepbookv3-sdk)
 - [Example SDK Usage](https://github.com/MystenLabs/ts-sdks/tree/main/packages/deepbook-v3/examples)
 - [Whitepaper](https://cdn.prod.website-files.com/65fdccb65290aeb1c597b611/66059b44041261e3fe4a330d_deepbook_whitepaper.pdf)
+- [Rust SDK(Unofficial)](https://github.com/hoh-zone/sui-deepbookv3)
 
 ## DeepBook Architecture
 
