@@ -24,10 +24,10 @@ public(package) fun default(clock: &Clock): State {
 }
 
 // === Public-Package Functions ===
-/// Updates the index for the margin pool.
-public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
+/// Updates the index for the margin pool. Returns total supply shares and current interest accrued.
+public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): (u64, u64) {
     let current_timestamp = clock.timestamp_ms();
-    if (self.last_index_update_timestamp == current_timestamp) return 0;
+    if (self.last_index_update_timestamp == current_timestamp) return (0, 0);
 
     let time_adjusted_rate = config.time_adjusted_rate(
         self.utilization_rate(),
@@ -41,7 +41,9 @@ public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Cl
     self.update_borrow_index(new_borrow);
     self.last_index_update_timestamp = current_timestamp;
 
-    total_interest_accrued
+    let shares = math::div(self.total_supply, self.supply_index);
+
+    (shares, total_interest_accrued)
 }
 
 public(package) fun increase_total_supply(self: &mut State, amount: u64) {

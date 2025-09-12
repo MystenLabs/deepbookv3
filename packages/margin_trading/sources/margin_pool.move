@@ -8,7 +8,8 @@ use margin_trading::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
+    supply_referral::{Self, SupplyReferral}
 };
 use std::type_name::{Self, TypeName};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
@@ -30,7 +31,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    protocol_profit: u64,
+    supply_referral: SupplyReferral,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
 }
@@ -63,14 +64,6 @@ public struct MarginPoolConfigUpdated has copy, drop {
     margin_pool_id: ID,
     pool_cap_id: ID,
     margin_pool_config: MarginPoolConfig,
-    timestamp: u64,
-}
-
-public struct ProtocolProfitWithdrawn has copy, drop {
-    margin_pool_id: ID,
-    pool_cap_id: ID,
-    asset_type: TypeName,
-    profit: u64,
     timestamp: u64,
 }
 
@@ -109,7 +102,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        protocol_profit: 0,
+        supply_referral: supply_referral::new_referral_manager(ctx, clock),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
@@ -214,34 +207,6 @@ public fun update_margin_pool_config<Asset>(
     });
 }
 
-/// Resets the protocol profit and returns the coin.
-public fun withdraw_protocol_profit<Asset>(
-    self: &mut MarginPool<Asset>,
-    registry: &MarginRegistry,
-    margin_pool_cap: &MarginPoolCap,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<Asset> {
-    registry.load_inner();
-    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-
-    let profit = self.protocol_profit;
-    self.protocol_profit = 0;
-    let balance = self.vault.split(profit);
-
-    let coin = balance.into_coin(ctx);
-
-    event::emit(ProtocolProfitWithdrawn {
-        margin_pool_id: self.id(),
-        pool_cap_id: margin_pool_cap.pool_cap_id(),
-        asset_type: type_name::with_defining_ids<Asset>(),
-        profit,
-        timestamp: clock.timestamp_ms(),
-    });
-
-    coin
-}
-
 // === Public Functions * LENDING * ===
 /// Allows anyone to supply the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(
@@ -320,11 +285,11 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 
 // === Public-Package Functions ===
 public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Clock) {
-    let interest_accrued = self.state.update(&self.config, clock);
+    let (total_shares, interest_accrued) = self.state.update(&self.config, clock);
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
     if (protocol_profit_accrued > 0) {
-        self.protocol_profit = self.protocol_profit + protocol_profit_accrued;
         self.state.decrease_total_supply_with_index(protocol_profit_accrued);
+        self.fees_per_share = self.fees_per_share + math::div(protocol_profit_accrued, total_shares);
     }
 }
 
