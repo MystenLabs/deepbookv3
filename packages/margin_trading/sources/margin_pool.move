@@ -9,7 +9,7 @@ use margin_trading::{
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    supply_referral::{Self, SupplyReferral}
+    protocol_fees::{Self, ProtocolFees}
 };
 use std::type_name::{Self, TypeName};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
@@ -31,7 +31,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    supply_referral: SupplyReferral,
+    protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
 }
@@ -102,7 +102,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        supply_referral: supply_referral::new_referral_manager(ctx, clock),
+        protocol_fees: protocol_fees::default_protocol_fees(ctx, clock),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
@@ -289,7 +289,7 @@ public(package) fun update_state<Asset>(self: &mut MarginPool<Asset>, clock: &Cl
     let protocol_profit_accrued = math::mul(interest_accrued, self.config.protocol_spread());
     if (protocol_profit_accrued > 0) {
         self.state.decrease_total_supply_with_index(protocol_profit_accrued);
-        self.fees_per_share = self.fees_per_share + math::div(protocol_profit_accrued, total_shares);
+        self.protocol_fees.increase_fees_per_share(total_shares, protocol_profit_accrued);
     }
 }
 
