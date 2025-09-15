@@ -3,6 +3,7 @@
 
 module margin_trading::oracle;
 
+use deepbook::{constants, math};
 use margin_trading::margin_registry::MarginRegistry;
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
@@ -104,6 +105,30 @@ public(package) fun calculate_usd_currency_amount(
         )) as u64;
 
     target_currency_amount
+}
+
+// Calculates the amount in target currency based on amount in asset A.
+public(package) fun calculate_target_currency<AssetA, AssetB>(
+    registry: &MarginRegistry,
+    price_info_object_a: &PriceInfoObject,
+    price_info_object_b: &PriceInfoObject,
+    amount: u64,
+    clock: &Clock,
+): u64 {
+    let usd_value = calculate_usd_price<AssetA>(
+        price_info_object_a,
+        registry,
+        amount,
+        clock,
+    );
+    let target_value = calculate_target_amount<AssetB>(
+        price_info_object_b,
+        registry,
+        usd_value,
+        clock,
+    );
+
+    target_value
 }
 
 /// Calculates the amount in target currency based on usd amount

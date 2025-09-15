@@ -21,7 +21,7 @@ use margin_trading::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::calculate_usd_price
+    oracle::calculate_target_currency
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
@@ -405,20 +405,10 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // c) Debt + user_reward + pool_reward < Assets: There are enough assets to cover everything. We may not need to liquidate the full position.
     let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
     let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
-    let (base_price, quote_price) = asset_prices<BaseAsset, QuoteAsset>(
-        registry,
-        base_oracle,
-        quote_oracle,
-        clock,
-    );
     let (base_asset, quote_asset) = self.calculate_assets(pool);
     let debt_is_base =
         type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>();
-    let assets_per_debt = if (debt_is_base) {
-        math::div(math::mul(quote_asset, quote_price), base_price) + base_asset
-    } else {
-        math::div(math::mul(base_asset, base_price), quote_price) + quote_asset
-    };
+    let assets_per_debt = self.assets_per_debt(registry, pool, base_oracle, quote_oracle, clock);
 
     let liquidation_reward_with_user_pool =
         registry.user_liquidation_reward(pool.id()) + registry.pool_liquidation_reward(pool.id());
@@ -491,19 +481,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     margin_pool: &MarginPool<DebtAsset>,
     clock: &Clock,
 ): u64 {
-    let (base_price, quote_price) = asset_prices<BaseAsset, QuoteAsset>(
-        registry,
-        base_oracle,
-        quote_oracle,
-        clock,
-    );
-    let (base_asset, quote_asset) = self.calculate_assets(pool);
-
-    let assets_per_debt = if (self.margin_pool_id.contains(&margin_pool.id())) {
-        math::div(math::mul(quote_asset, quote_price), base_price) + base_asset
-    } else {
-        math::div(math::mul(base_asset, base_price), quote_price) + quote_asset
-    };
+    let assets_per_debt = self.assets_per_debt(registry, pool, base_oracle, quote_oracle, clock);
     let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
     let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let max_risk_ratio = margin_constants::max_risk_ratio();
@@ -714,25 +692,22 @@ fun can_borrow<BaseAsset, QuoteAsset, BorrowAsset>(
     self.margin_pool_id.contains(&margin_pool.id()) || no_current_loan
 }
 
-fun asset_prices<BaseAsset, QuoteAsset>(
+fun assets_per_debt<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
     clock: &Clock,
-): (u64, u64) {
-    let base_per_dollar = calculate_usd_price<BaseAsset>(
-        base_oracle,
-        registry,
-        constants::float_scaling(),
-        clock,
-    );
+): u64 {
+    if (self.margin_pool_id.is_none()) {
+        return 0
+    };
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
 
-    let quote_per_dollar = calculate_usd_price<QuoteAsset>(
-        quote_oracle,
-        registry,
-        constants::float_scaling(),
-        clock,
-    );
-
-    (base_per_dollar, quote_per_dollar)
+    if (self.borrowed_base_shares > 0) {
+        calculate_target_currency<QuoteAsset, BaseAsset>(registry, quote_oracle, base_oracle, quote_asset, clock) + base_asset
+    } else {
+        calculate_target_currency<BaseAsset, QuoteAsset>(registry, base_oracle, quote_oracle, base_asset, clock) + quote_asset
+    }
 }
