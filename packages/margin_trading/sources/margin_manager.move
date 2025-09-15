@@ -411,12 +411,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let assets_per_debt = self.assets_per_debt(registry, pool, base_oracle, quote_oracle, clock);
 
     let liquidation_reward_with_user_pool =
-        registry.user_liquidation_reward(pool.id()) + registry.pool_liquidation_reward(pool.id());
+        constants::float_scaling() + registry.user_liquidation_reward(pool.id()) + registry.pool_liquidation_reward(pool.id());
 
     let target_ratio = registry.target_liquidation_risk_ratio(pool.id());
     let numerator = math::mul(target_ratio, debt) - assets_per_debt;
-    let denominator =
-        target_ratio - (constants::float_scaling() + liquidation_reward_with_user_pool);
+    let denominator = target_ratio - liquidation_reward_with_user_pool;
     let debt_repay = math::div(numerator, denominator);
     // We have to pay the minimum between our current debt and the debt required to reach the target ratio.
     // In other words, if our assets are low, we pay off all debt (full liquidation)

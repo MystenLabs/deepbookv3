@@ -3,7 +3,6 @@
 
 module margin_trading::oracle;
 
-use deepbook::{constants, math};
 use margin_trading::margin_registry::MarginRegistry;
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
