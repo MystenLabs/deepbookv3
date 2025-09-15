@@ -400,7 +400,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     pool.cancel_all_orders(&mut self.balance_manager, &trade_proof, clock, ctx);
 
     // 2. Calculate the maximum debt that can be repaid. The margin manager can be in three scenarios:
-    // a) Assets <= Debt + user_reward: Full liquidation, repay as much debt as possible, lending pool may incurr bad debt.
+    // a) Assets <= Debt + user_reward: Full liquidation, repay as much debt as possible, lending pool may incur bad debt.
     // b) Debt + user_reward < Assets <= Debt + user_reward + pool_reward: There are enough assets to cover the debt, but pool may not get full rewards.
     // c) Debt + user_reward + pool_reward < Assets: There are enough assets to cover everything. We may not need to liquidate the full position.
     let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
@@ -422,8 +422,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // if our assets are high, we pay off some of the debt (partial liquidation)
     let debt_repay = debt_repay.min(debt);
     let debt_with_reward = math::mul(debt_repay, liquidation_reward_with_user_pool);
-    // for every unit of coin provided, how many units of base + quote asset will be given back
-    let asset_ratio_to_give = math::div(debt_with_reward, assets_per_debt);
     // max absolute debt amount that can be repaid
     let debt_can_repay = debt_with_reward.min(assets_per_debt);
     let liquidation_reward_with_user =
@@ -433,6 +431,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let repay_amount = max_to_repay.min(repay_coin.value());
     let repay_ratio = math::div(repay_amount, max_to_repay);
 
+    // Multiply total borrowed shares by two ratios: how much of the debt we are repaying,
+    // and how much of that debt the Coin is covering.
     let repay_shares = math::mul(
         borrowed_shares,
         math::mul(math::div(debt_repay, debt), repay_ratio),
@@ -448,6 +448,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         self.borrowed_quote_shares = self.borrowed_quote_shares - repay_shares;
     };
 
+    // for every unit of coin provided, how many units of base + quote asset will be given back
+    let asset_ratio_to_give = math::div(debt_with_reward, assets_per_debt);
     let base_out = self.liquidation_withdraw(
         math::mul(math::mul(base_asset, repay_ratio), asset_ratio_to_give),
         ctx,
