@@ -38,10 +38,9 @@ const EDeepbookPoolNotAllowedForLoan: u64 = 6;
 const EBorrowRiskRatioExceeded: u64 = 7;
 const EWithdrawRiskRatioExceeded: u64 = 8;
 const ECannotLiquidate: u64 = 9;
-const ERepaymentNotEnough: u64 = 10;
-const EIncorrectMarginPool: u64 = 11;
-const EInvalidManagerForSharing: u64 = 12;
-const ENotReduceOnlyOrder: u64 = 13;
+const EIncorrectMarginPool: u64 = 10;
+const EInvalidManagerForSharing: u64 = 11;
+const ENotReduceOnlyOrder: u64 = 12;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -54,8 +53,8 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
     trade_cap: TradeCap,
-    borrowed_shares: u64,
-    active_liquidation: bool, // without this, the margin manager can be liquidated multiple times within the same tx
+    borrowed_base_shares: u64,
+    borrowed_quote_shares: u64,
 }
 
 /// Hot potato to ensure manager is shared during creation
@@ -262,7 +261,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     let (coin, total_borrow, total_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_shares = total_shares;
+    self.borrowed_base_shares = total_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio(
@@ -306,7 +305,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         EDeepbookPoolNotAllowedForLoan,
     );
     let (coin, total_borrow, total_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_shares = total_shares;
+    self.borrowed_quote_shares = total_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio(
@@ -335,7 +334,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<BaseAsset>,
-    percentage: u64,
+    amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
@@ -345,7 +344,7 @@ public fun repay_base<BaseAsset, QuoteAsset>(
 
     self.repay<BaseAsset, QuoteAsset, BaseAsset>(
         margin_pool,
-        percentage,
+        amount,
         clock,
         ctx,
     )
@@ -357,7 +356,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     margin_pool: &mut MarginPool<QuoteAsset>,
-    percentage: u64,
+    amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
@@ -367,7 +366,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 
     self.repay<BaseAsset, QuoteAsset, QuoteAsset>(
         margin_pool,
-        percentage,
+        amount,
         clock,
         ctx,
     )
@@ -404,7 +403,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // a) Assets <= Debt + user_reward: Full liquidation, repay as much debt as possible, lending pool may incurr bad debt.
     // b) Debt + user_reward < Assets <= Debt + user_reward + pool_reward: There are enough assets to cover the debt, but pool may not get full rewards.
     // c) Debt + user_reward + pool_reward < Assets: There are enough assets to cover everything. We may not need to liquidate the full position.
-    let debt = margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
+    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let (base_price, quote_price) = asset_prices<BaseAsset, QuoteAsset>(
         registry,
         base_oracle,
@@ -445,7 +445,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let repay_ratio = math::div(repay_amount, max_to_repay);
 
     let repay_shares = math::mul(
-        self.borrowed_shares,
+        borrowed_shares,
         math::mul(math::div(debt_repay, debt), repay_ratio),
     );
     let (debt_repaid, pool_reward, pool_default) = margin_pool.repay_liquidation(
@@ -453,7 +453,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         repay_coin.split(repay_amount, ctx),
         clock,
     );
-    self.borrowed_shares = self.borrowed_shares - repay_shares;
+    if (debt_is_base) {
+        self.borrowed_base_shares = self.borrowed_base_shares - repay_shares;
+    } else {
+        self.borrowed_quote_shares = self.borrowed_quote_shares - repay_shares;
+    };
 
     let base_out = self.liquidation_withdraw(
         math::mul(math::mul(base_asset, repay_ratio), asset_ratio_to_give),
@@ -495,24 +499,19 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     );
     let (base_asset, quote_asset) = self.calculate_assets(pool);
 
-    let (assets_per_debt) = if (self.margin_pool_id.contains(&margin_pool.id())) {
+    let assets_per_debt = if (self.margin_pool_id.contains(&margin_pool.id())) {
         math::div(math::mul(quote_asset, quote_price), base_price) + base_asset
     } else {
         math::div(math::mul(base_asset, base_price), quote_price) + quote_asset
     };
-    let debt = margin_pool.borrow_shares_to_amount(self.borrowed_shares, clock);
+    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let max_risk_ratio = margin_constants::max_risk_ratio();
     if (assets_per_debt > math::mul(debt, max_risk_ratio)) {
         max_risk_ratio
     } else {
         math::div(assets_per_debt, debt)
     }
-}
-
-public fun borrowed_shares<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-): u64 {
-    self.borrowed_shares
 }
 
 // === Public Functions - Read Only ===
@@ -533,13 +532,19 @@ public fun deepbook_pool<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
     self.deepbook_pool
 }
 
+public fun borrowed_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): (u64, u64) {
+    (self.borrowed_base_shares, self.borrowed_quote_shares)
+}
+
 // === Public-Package Functions ===
 public(package) fun assert_place_reduce_only<BaseAsset, QuoteAsset, DebtAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     _margin_pool: &MarginPool<DebtAsset>,
     is_bid: bool,
 ) {
-    if (self.borrowed_shares == 0) {
+    if (self.borrowed_base_shares == 0 && self.borrowed_quote_shares == 0) {
         return
     };
 
@@ -614,8 +619,8 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-        borrowed_shares: 0,
-        active_liquidation: false,
+        borrowed_base_shares: 0,
+        borrowed_quote_shares: 0,
     }
 }
 
@@ -632,21 +637,27 @@ fun validate_owner<BaseAsset, QuoteAsset>(
 fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     margin_pool: &mut MarginPool<RepayAsset>,
-    percentage: u64,
+    amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let percentage = percentage.min(constants::float_scaling());
-    let repay_shares = math::mul(percentage, self.borrowed_shares);
-    let repay_amount = margin_pool.borrow_shares_to_amount(repay_shares, clock);
+    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let borrowed_amount = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let available_balance = self.balance_manager().balance<RepayAsset>();
-    assert!(available_balance >= repay_amount, ERepaymentNotEnough);
+    let repay_amount = amount.destroy_with_default(available_balance);
+    let repay_amount = repay_amount.min(borrowed_amount);
+    let repay_shares = math::mul(borrowed_shares, math::div(repay_amount, borrowed_amount));
 
     let coin: Coin<RepayAsset> = self.repay_withdraw(repay_amount, ctx);
     margin_pool.repay(repay_shares, coin, clock);
 
-    self.borrowed_shares = self.borrowed_shares - repay_shares;
-    if (self.borrowed_shares == 0) {
+    if (type_name::with_defining_ids<RepayAsset>() == type_name::with_defining_ids<BaseAsset>()) {
+        self.borrowed_base_shares = self.borrowed_base_shares - repay_shares;
+    } else {
+        self.borrowed_quote_shares = self.borrowed_quote_shares - repay_shares;
+    };
+
+    if (self.borrowed_base_shares == 0 && self.borrowed_quote_shares == 0) {
         self.margin_pool_id = option::none();
     };
 

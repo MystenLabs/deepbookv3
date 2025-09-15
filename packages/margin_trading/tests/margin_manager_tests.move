@@ -704,7 +704,7 @@ fun test_repay_fails_wrong_pool() {
     mm.repay_base<USDT, USDC>(
         &registry,
         &mut usdt_pool,
-        1_000_000_000,
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -763,7 +763,7 @@ fun test_repay_full_with_none() {
     let repaid_amount = mm.repay_quote<USDT, USDC>(
         &registry,
         &mut usdc_pool,
-        1_000_000_000,
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -824,8 +824,8 @@ fun test_repay_exact_amount_no_rounding_errors() {
         );
 
         // Get the borrowed shares and calculate exact amount (shares * index)
-        let borrowed_shares = mm.borrowed_shares();
-        let exact_amount = usdc_pool.borrow_shares_to_amount(borrowed_shares, &clock);
+        let (_, borrowed_quote_shares) = mm.borrowed_shares();
+        let exact_amount = usdc_pool.borrow_shares_to_amount(borrowed_quote_shares, &clock);
 
         // Deposit enough for repayment
         let repay_coin = mint_coin<USDC>(exact_amount + 1000, scenario.ctx()); // Add buffer
@@ -835,7 +835,7 @@ fun test_repay_exact_amount_no_rounding_errors() {
         let repaid_amount = mm.repay_quote<USDT, USDC>(
             &registry,
             &mut usdc_pool,
-            1_000_000_000,
+            option::none(),
             &clock,
             scenario.ctx(),
         );
@@ -844,12 +844,15 @@ fun test_repay_exact_amount_no_rounding_errors() {
         assert!(repaid_amount == exact_amount, 0);
 
         // Verify shares are zero or within 1 mist tolerance
-        let remaining_shares = mm.borrowed_shares();
-        assert!(remaining_shares <= 1, 1); // At most 1 share due to potential rounding
+        let (_, remaining_quote_shares) = mm.borrowed_shares();
+        assert!(remaining_quote_shares <= 1, 1); // At most 1 share due to potential rounding
 
         // Clean up any remaining debt
-        if (remaining_shares > 0) {
-            let remaining_amount = usdc_pool.borrow_shares_to_amount(remaining_shares, &clock);
+        if (remaining_quote_shares > 0) {
+            let remaining_amount = usdc_pool.borrow_shares_to_amount(
+                remaining_quote_shares,
+                &clock,
+            );
             if (remaining_amount > 0) {
                 mm.deposit<USDT, USDC, USDC>(
                     &registry,
@@ -859,7 +862,7 @@ fun test_repay_exact_amount_no_rounding_errors() {
                 mm.repay_quote<USDT, USDC>(
                     &registry,
                     &mut usdc_pool,
-                    1_000_000_000,
+                    option::none(),
                     &clock,
                     scenario.ctx(),
                 );

@@ -124,6 +124,26 @@ public(package) fun borrow_shares_to_amount(
     math::div(shares, ratio)
 }
 
+public(package) fun supply_shares_to_amount(
+    self: &State,
+    shares: u64,
+    config: &ProtocolConfig,
+    clock: &Clock,
+): u64 {
+    let now = clock.timestamp_ms();
+    let elapsed = now - self.last_update_timestamp;
+
+    let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
+    let supply = self.supply + math::mul(self.borrow, time_adjusted_rate);
+    let ratio = if (self.supply_shares == 0) {
+        constants::float_scaling()
+    } else {
+        math::div(self.supply_shares, supply)
+    };
+
+    math::div(shares, ratio)
+}
+
 fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock) {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;

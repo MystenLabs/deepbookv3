@@ -144,7 +144,7 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     scenario.next_tx(test_constants::user1());
     let withdrawn_coin = pool.withdraw(
         &registry,
-        constants::float_scaling(),
+        option::none(),
         &clock,
         scenario.ctx(),
     );

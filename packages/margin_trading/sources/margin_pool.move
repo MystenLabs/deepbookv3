@@ -3,7 +3,7 @@
 
 module margin_trading::margin_pool;
 
-use deepbook::constants;
+use deepbook::math;
 use margin_trading::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -77,8 +77,8 @@ public struct AssetWithdrawn has copy, drop {
     margin_pool_id: ID,
     asset_type: TypeName,
     supplier: address,
-    withdrawal_amount: u64,
-    withdrawal_shares: u64,
+    withdraw_amount: u64,
+    withdraw_shares: u64,
     timestamp: u64,
 }
 
@@ -238,27 +238,27 @@ public fun supply<Asset>(
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    percentage: u64,
+    amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
     let supplier = ctx.sender();
-    let percentage = percentage.min(constants::float_scaling());
-    let withdrawal_shares = self.positions.decrease_user_supply(supplier, percentage);
-    let withdrawal_amount = self
-        .state
-        .decrease_supply_shares(&self.config, withdrawal_shares, clock);
+    let supplied_shares = self.positions.user_supply_shares(supplier);
+    let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
+    let withdraw_amount = amount.destroy_with_default(supplied_amount);
+    let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
 
-    assert!(withdrawal_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    let coin = self.vault.split(withdrawal_amount).into_coin(ctx);
+    self.positions.decrease_user_supply(supplier, withdraw_shares);
+    assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
+    let coin = self.vault.split(withdraw_amount).into_coin(ctx);
 
     event::emit(AssetWithdrawn {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
         supplier,
-        withdrawal_amount,
-        withdrawal_shares,
+        withdraw_amount,
+        withdraw_shares,
         timestamp: clock.timestamp_ms(),
     });
 
@@ -302,6 +302,9 @@ public(package) fun repay<Asset>(
     self.vault.join(coin.into_balance());
 }
 
+// Repay a liquidation given some quantity of shares and a coin. If too much coin is given, then extra is used as reward.
+// If not enough coin given, then the difference is recorded as default.
+// Returns the applied amount paid, reward given, and default recorded.
 public(package) fun repay_liquidation<Asset>(
     self: &mut MarginPool<Asset>,
     shares: u64,

@@ -83,7 +83,7 @@ fun test_supply_and_withdraw_basic() {
 
     let withdrawn = pool.withdraw<USDC>(
         &registry,
-        500_000_000,
+        option::some(50_000_000_000),
         &clock,
         scenario.ctx(),
     ); // 50 tokens
@@ -134,7 +134,7 @@ fun test_multiple_users_supply_withdraw() {
     scenario.next_tx(test_constants::user1());
     let withdrawn1 = pool.withdraw<USDC>(
         &registry,
-        500_000_000,
+        option::some(25_000_000_000),
         &clock,
         scenario.ctx(),
     );
@@ -143,7 +143,7 @@ fun test_multiple_users_supply_withdraw() {
     scenario.next_tx(test_constants::user2());
     let withdrawn2 = pool.withdraw<USDC>(
         &registry,
-        500_000_000,
+        option::some(15_000_000_000),
         &clock,
         scenario.ctx(),
     );
@@ -169,7 +169,7 @@ fun test_withdraw_all() {
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
     pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
 
-    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
     assert!(withdrawn.value() == supply_amount);
 
     destroy(withdrawn);
@@ -205,7 +205,7 @@ fun test_interest_accrual_over_time() {
     // Advance time by 1 day
     clock.set_for_testing(1000 + 86400000);
 
-    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
     assert!(withdrawn.value() >= supply_amount);
 
     destroy(withdrawn);
@@ -232,7 +232,7 @@ fun test_not_enough_asset_in_pool() {
 
     // Should fail due to outstanding loan
     scenario.next_tx(test_constants::user1());
-    let withdrawn = pool.withdraw<USDC>(&registry, 1_000_000_000, &clock, scenario.ctx());
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
 
     destroy(withdrawn);
     test::return_shared(pool);
