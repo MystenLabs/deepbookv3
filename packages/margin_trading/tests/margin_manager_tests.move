@@ -9,7 +9,7 @@ use margin_trading::{
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
     margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
+    test_constants::{Self, USDC, USDT, INVALID_ASSET},
     test_helpers::{
         setup_margin_registry,
         create_margin_pool,
@@ -20,13 +20,10 @@ use margin_trading::{
         mint_coin,
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object,
-        build_btc_price_info_object,
-        setup_btc_usd_margin_trading,
         setup_usdc_usdt_margin_trading,
         destroy_2,
         return_shared_2,
-        return_shared_3,
-        advance_time
+        return_shared_3
     }
 };
 use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
@@ -170,7 +167,7 @@ fun test_margin_trading_with_oracle() {
 //     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 // }
 
-/// Test demonstrates depositing USD and borrowing BTC at near-max LTV
+// Test demonstrates depositing USD and borrowing BTC at near-max LTV
 // #[test]
 // fun test_usd_deposit_btc_borrow() {
 //     let (
