@@ -469,8 +469,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         out_amount = out_amount - base_out;
         let max_quote_out = calculate_target_currency<BaseAsset, QuoteAsset>(
             registry,
-            quote_oracle,
             base_oracle,
+            quote_oracle,
             out_amount,
             clock,
         );
@@ -489,8 +489,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         out_amount = out_amount - quote_out; // 101.941 - 40 = 61.941
         let max_base_out = calculate_target_currency<QuoteAsset, BaseAsset>(
             registry,
-            base_oracle,
             quote_oracle,
+            base_oracle,
             out_amount,
             clock,
         );
