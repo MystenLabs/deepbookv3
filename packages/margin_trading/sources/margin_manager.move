@@ -486,7 +486,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         (base_coin, quote_coin)
     } else {
         let quote_out = out_amount.min(quote_asset);
-        out_amount = out_amount - quote_out;
+        out_amount = out_amount - quote_out; // 101.941 - 40 = 61.941
         let max_base_out = calculate_target_currency<QuoteAsset, BaseAsset>(
             registry,
             base_oracle,
@@ -505,6 +505,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         );
         (base_coin, quote_coin)
     };
+    // We have 40 USDC which is used first in the second loop. Then SUI to reach the total of 101.941 USDC.
+
     event::emit(LiquidationEvent {
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
