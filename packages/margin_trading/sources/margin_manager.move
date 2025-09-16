@@ -529,6 +529,10 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
     margin_pool: &MarginPool<DebtAsset>,
     clock: &Clock,
 ): u64 {
+    assert!(
+        self.margin_pool_id.contains(&margin_pool.id()) || self.margin_pool_id.is_none(),
+        EIncorrectMarginPool,
+    );
     let (assets_in_debt_unit, _, _) = self.assets_in_debt_unit(
         registry,
         pool,
