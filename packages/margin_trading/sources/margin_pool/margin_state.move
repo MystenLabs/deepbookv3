@@ -77,6 +77,7 @@ public(package) fun increase_borrow(
     (self.borrow, self.borrow_shares)
 }
 
+/// Decrease borrowed shares and return the corresponding amount
 public(package) fun decrease_borrow_shares(
     self: &mut State,
     config: &ProtocolConfig,
