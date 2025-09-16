@@ -42,7 +42,7 @@ public struct MarginPoolCreated has copy, drop {
     timestamp: u64,
 }
 
-public struct DeepbookPoolEnabled has copy, drop {
+public struct DeepbookPoolUpdated has copy, drop {
     margin_pool_id: ID,
     deepbook_pool_id: ID,
     pool_cap_id: ID,
@@ -132,7 +132,7 @@ public fun enable_deepbook_pool_for_loan<Asset>(
     assert!(!self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolAlreadyAllowed);
     self.allowed_deepbook_pools.insert(deepbook_pool_id);
 
-    event::emit(DeepbookPoolEnabled {
+    event::emit(DeepbookPoolUpdated {
         margin_pool_id: self.id(),
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         deepbook_pool_id,
@@ -154,7 +154,7 @@ public fun disable_deepbook_pool_for_loan<Asset>(
     assert!(self.allowed_deepbook_pools.contains(&deepbook_pool_id), EDeepbookPoolNotAllowed);
     self.allowed_deepbook_pools.remove(&deepbook_pool_id);
 
-    event::emit(DeepbookPoolEnabled {
+    event::emit(DeepbookPoolUpdated {
         margin_pool_id: self.id(),
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         deepbook_pool_id,
