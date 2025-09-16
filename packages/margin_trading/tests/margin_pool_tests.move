@@ -652,7 +652,11 @@ fun test_invalid_repay_quantity() {
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(50 * test_constants::usdc_multiplier(), &clock, scenario.ctx());
+    let (borrowed_coin, _, shares) = pool.borrow(
+        50 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
     destroy(borrowed_coin);
 
     // Try to repay with wrong amount
