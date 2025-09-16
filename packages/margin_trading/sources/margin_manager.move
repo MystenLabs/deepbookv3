@@ -551,6 +551,12 @@ public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 // === Public Functions - Read Only ===
+public fun balance_manager<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): &BalanceManager {
+    &self.balance_manager
+}
+
 /// Returns (base_asset, quote_asset) for margin manager.
 public fun calculate_assets<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
@@ -589,12 +595,6 @@ public(package) fun assert_place_reduce_only<BaseAsset, QuoteAsset, DebtAsset>(
     } else {
         assert!(!is_bid, ENotReduceOnlyOrder);
     };
-}
-
-public(package) fun balance_manager<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-): &BalanceManager {
-    &self.balance_manager
 }
 
 /// Unwraps balance manager for trading in deepbook.
