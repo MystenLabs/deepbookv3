@@ -410,7 +410,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         base_oracle,
         quote_oracle,
         clock,
-    ); // SUI/USDC pool. We have 100 SUI, 350 USDC debt. This should be 400.
+    ); // SUI/USDC pool. We have 90 SUI and 40 USDC, 350 USDC debt. This should be 400 USDC. (assume 1 SUI = 4 USDC)
 
     let liquidation_reward_with_user_pool =
         constants::float_scaling() + registry.user_liquidation_reward(pool.id()) + registry.pool_liquidation_reward(pool.id()); // 1.05
