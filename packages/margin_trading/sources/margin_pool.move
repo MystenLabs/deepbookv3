@@ -304,15 +304,15 @@ public(package) fun repay<Asset>(
 
 // Repay a liquidation given some quantity of shares and a coin. If too much coin is given, then extra is used as reward.
 // If not enough coin given, then the difference is recorded as default.
-// Returns the applied amount paid, reward given, and default recorded.
+// Returns (applied amount repaid, reward given, and default recorded).
 public(package) fun repay_liquidation<Asset>(
     self: &mut MarginPool<Asset>,
     shares: u64,
     coin: Coin<Asset>,
     clock: &Clock,
 ): (u64, u64, u64) {
-    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    let coin_value = coin.value();
+    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
         (coin_value - amount, 0)

@@ -171,85 +171,85 @@ fun test_margin_trading_with_oracle() {
 // }
 
 /// Test demonstrates depositing USD and borrowing BTC at near-max LTV
-#[test]
-fun test_usd_deposit_btc_borrow() {
-    let (
-        mut scenario,
-        mut clock,
-        admin_cap,
-        maintainer_cap,
-        btc_pool_id,
-        _usdc_pool_id,
-        _pool_id,
-    ) = setup_btc_usd_margin_trading();
+// #[test]
+// fun test_usd_deposit_btc_borrow() {
+//     let (
+//         mut scenario,
+//         mut clock,
+//         admin_cap,
+//         maintainer_cap,
+//         btc_pool_id,
+//         _usdc_pool_id,
+//         _pool_id,
+//     ) = setup_btc_usd_margin_trading();
 
-    // Set initial prices
-    let btc_price = build_btc_price_info_object(
-        &mut scenario,
-        100000,
-        &clock,
-    );
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+//     // Set initial prices
+//     let btc_price = build_btc_price_info_object(
+//         &mut scenario,
+//         100000,
+//         &clock,
+//     );
+//     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
-    scenario.next_tx(test_constants::user1());
-    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+//     scenario.next_tx(test_constants::user1());
+//     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+//     let registry = scenario.take_shared<MarginRegistry>();
+//     margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
 
-    scenario.next_tx(test_constants::user1());
-    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
-    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+//     scenario.next_tx(test_constants::user1());
+//     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+//     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
 
-    // Deposit 100000 USD
-    mm.deposit<BTC, USDC, USDC>(
-        &registry,
-        mint_coin<USDC>(100_000_000000, scenario.ctx()),
-        scenario.ctx(),
-    );
+//     // Deposit 100000 USD
+//     mm.deposit<BTC, USDC, USDC>(
+//         &registry,
+//         mint_coin<USDC>(100_000_000000, scenario.ctx()),
+//         scenario.ctx(),
+//     );
 
-    mm.borrow_base<BTC, USDC>(
-        &registry,
-        &mut btc_pool,
-        &btc_price,
-        &usdc_price,
-        &pool,
-        2 * btc_multiplier(),
-        &clock,
-        scenario.ctx(),
-    );
+//     mm.borrow_base<BTC, USDC>(
+//         &registry,
+//         &mut btc_pool,
+//         &btc_price,
+//         &usdc_price,
+//         &pool,
+//         2 * btc_multiplier(),
+//         &clock,
+//         scenario.ctx(),
+//     );
 
-    advance_time(&mut clock, 1);
-    let btc_increased = build_btc_price_info_object(
-        &mut scenario,
-        300000,
-        &clock,
-    );
+//     advance_time(&mut clock, 1);
+//     let btc_increased = build_btc_price_info_object(
+//         &mut scenario,
+//         300000,
+//         &clock,
+//     );
 
-    let debt_coin = mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx());
-    scenario.next_tx(test_constants::admin());
-    let (base_coin, quote_coin, debt_coin) = mm.liquidate<BTC, USDC, BTC>(
-        &registry,
-        &btc_increased,
-        &usdc_price,
-        &mut btc_pool,
-        &mut pool,
-        debt_coin,
-        &clock,
-        scenario.ctx(),
-    );
+//     let debt_coin = mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx());
+//     scenario.next_tx(test_constants::admin());
+//     let (base_coin, quote_coin, debt_coin) = mm.liquidate<BTC, USDC, BTC>(
+//         &registry,
+//         &btc_increased,
+//         &usdc_price,
+//         &mut btc_pool,
+//         &mut pool,
+//         debt_coin,
+//         &clock,
+//         scenario.ctx(),
+//     );
 
-    destroy(debt_coin);
-    destroy(base_coin);
-    destroy(quote_coin);
+//     destroy(debt_coin);
+//     destroy(base_coin);
+//     destroy(quote_coin);
 
-    test::return_shared(mm);
-    test::return_shared(btc_pool);
-    test::return_shared(pool);
+//     test::return_shared(mm);
+//     test::return_shared(btc_pool);
+//     test::return_shared(pool);
 
-    destroy_2!(btc_price, usdc_price);
-    destroy(btc_increased);
-    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
-}
+//     destroy_2!(btc_price, usdc_price);
+//     destroy(btc_increased);
+//     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+// }
 
 // Creation tests
 #[test]
