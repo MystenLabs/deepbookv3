@@ -463,11 +463,9 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // user should receive as much assets possible in the debt asset first, then the collateral asset
 
     let mut out_amount = math::mul(repay_amount, liquidation_reward_with_user_pool); // 97.087 * 1.05 = 101.941
-    let mut base_out = 0;
-    let mut quote_out = 0;
 
-    if (debt_is_base) {
-        base_out = out_amount.min(base_asset);
+    let (base_coin, quote_coin) = if (debt_is_base) {
+        let base_out = out_amount.min(base_asset);
         out_amount = out_amount - base_out;
         let max_quote_out = calculate_target_currency<BaseAsset, QuoteAsset>(
             registry,
@@ -476,9 +474,18 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             out_amount,
             clock,
         );
-        quote_out = max_quote_out.min(quote_asset);
+        let quote_out = max_quote_out.min(quote_asset);
+        let base_coin = self.liquidation_withdraw(
+            base_out,
+            ctx,
+        );
+        let quote_coin = self.liquidation_withdraw(
+            quote_out,
+            ctx,
+        );
+        (base_coin, quote_coin)
     } else {
-        quote_out = out_amount.min(quote_asset);
+        let quote_out = out_amount.min(quote_asset);
         out_amount = out_amount - quote_out;
         let max_base_out = calculate_target_currency<QuoteAsset, BaseAsset>(
             registry,
@@ -487,18 +494,17 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             out_amount,
             clock,
         );
-        base_out = max_base_out.min(base_asset);
+        let base_out = max_base_out.min(base_asset);
+        let base_coin = self.liquidation_withdraw(
+            base_out,
+            ctx,
+        );
+        let quote_coin = self.liquidation_withdraw(
+            quote_out,
+            ctx,
+        );
+        (base_coin, quote_coin)
     };
-
-    let base_coin = self.liquidation_withdraw(
-        base_out,
-        ctx,
-    );
-    let quote_coin = self.liquidation_withdraw(
-        quote_out,
-        ctx,
-    );
-
     event::emit(LiquidationEvent {
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
