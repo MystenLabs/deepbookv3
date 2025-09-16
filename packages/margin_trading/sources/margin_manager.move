@@ -424,7 +424,6 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // if our assets are high, we pay off some of the debt (partial liquidation)
     let debt_repay = debt_repay.min(debt); // 187.5
     let debt_with_reward = math::mul(debt_repay, liquidation_reward_with_user_pool); // 187.5 * 1.05 = 196.875
-    // max absolute debt amount that can be repaid
     let debt_can_repay_with_rewards = debt_with_reward.min(assets_in_debt_unit); // 196.875
     let max_repay = math::div(debt_can_repay_with_rewards, liquidation_reward_with_user_pool); // 196.875 / 1.05 = 187.5
     let liquidation_reward_with_pool =
