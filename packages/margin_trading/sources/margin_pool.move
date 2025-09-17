@@ -4,14 +4,16 @@
 module margin_trading::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
-};
+use margin_trading::margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap};
+use margin_trading::margin_state::{Self, State};
+use margin_trading::position_manager::{Self, PositionManager};
+use margin_trading::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
 use std::type_name::{Self, TypeName};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -297,8 +299,7 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    assert!(coin.value() == amount, EInvalidRepayQuantity);
+    self.state.decrease_borrow_shares(&self.config, shares, clock);
     self.vault.join(coin.into_balance());
 }
 

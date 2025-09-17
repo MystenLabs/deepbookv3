@@ -1340,7 +1340,7 @@ fun test_min_position_size_requirement() {
 
 #[test]
 fun test_repayment_rounding() {
-    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
 
     let usdc_pool_id = create_margin_pool<USDC>(
         &mut scenario,
@@ -1422,8 +1422,7 @@ fun test_repayment_rounding() {
         scenario.ctx(),
     );
 
-    // TODO: WAIT ON TONY FIX
-    // advance_time(&mut clock, 1000 * 100); // 100 seconds later
+    advance_time(&mut clock, 1000 * 100); // 100 seconds later
 
     // Partial repayment
     mm.deposit<USDC, USDT, USDT>(
