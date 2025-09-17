@@ -5,33 +5,34 @@
 module margin_trading::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::margin_manager::{Self, MarginManager};
-use margin_trading::margin_pool::{Self, MarginPool};
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
-use margin_trading::test_helpers::{
-    setup_margin_registry,
-    create_margin_pool,
-    create_pool_for_testing,
-    enable_margin_trading_on_pool,
-    default_protocol_config,
-    cleanup_margin_test,
-    mint_coin,
-    build_demo_usdc_price_info_object,
-    build_demo_usdt_price_info_object,
-    build_btc_price_info_object,
-    setup_btc_usd_margin_trading,
-    setup_usdc_usdt_margin_trading,
-    destroy_2,
-    destroy_3,
-    return_shared_2,
-    return_shared_3,
-    advance_time,
-    get_margin_pool_caps,
-    return_to_sender_2
+use margin_trading::{
+    margin_manager::{Self, MarginManager},
+    margin_pool::{Self, MarginPool},
+    margin_registry::MarginRegistry,
+    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
+    test_helpers::{
+        setup_margin_registry,
+        create_margin_pool,
+        create_pool_for_testing,
+        enable_margin_trading_on_pool,
+        default_protocol_config,
+        cleanup_margin_test,
+        mint_coin,
+        build_demo_usdc_price_info_object,
+        build_demo_usdt_price_info_object,
+        build_btc_price_info_object,
+        setup_btc_usd_margin_trading,
+        setup_usdc_usdt_margin_trading,
+        destroy_2,
+        destroy_3,
+        return_shared_2,
+        return_shared_3,
+        advance_time,
+        get_margin_pool_caps,
+        return_to_sender_2
+    }
 };
-use sui::test_scenario::{Self as test, return_shared};
-use sui::test_utils::destroy;
+use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
 use token::deep::DEEP;
 
 #[test]
@@ -878,80 +879,80 @@ fun test_repay_exact_amount_no_rounding_errors() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// TODO: Fix liquidation test - risk ratio calculation seems off
-// #[test]
-// fun test_liquidation_reward_calculations() {
-//     let (
-//         mut scenario,
-//         mut clock,
-//         admin_cap,
-//         maintainer_cap,
-//         _btc_pool_id,
-//         usdc_pool_id,
-//         _pool_id,
-//     ) = setup_btc_usd_margin_trading();
+#[test]
+fun test_liquidation_reward_calculations() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+    ) = setup_btc_usd_margin_trading();
 
-//     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-//     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
-//     scenario.next_tx(test_constants::user1());
-//     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-//     let registry = scenario.take_shared<MarginRegistry>();
-//     margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
 
-//     scenario.next_tx(test_constants::user1());
-//     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
-//     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
 
-//     // Deposit 1 BTC worth $50k
-//     mm.deposit<BTC, USDC, BTC>(
-//         &registry,
-//         mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
-//         scenario.ctx(),
-//     );
+    // Deposit 1 BTC worth $50k
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
 
-//     // Borrow $45k (90% LTV - close to max)
-//     mm.borrow_quote<BTC, USDC>(
-//         &registry,
-//         &mut usdc_pool,
-//         &btc_price,
-//         &usdc_price,
-//         &pool,
-//         45_000_000_000,
-//         &clock,
-//         scenario.ctx(),
-//     );
+    // Borrow $45k (90% LTV - close to max)
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        45_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
 
-//     // Price drops severely to trigger liquidation
-//     // At $25k BTC price: $25k collateral / $45k debt = 55.6% ratio - well below 120%
-//     let btc_price_dropped = build_btc_price_info_object(&mut scenario, 25000, &clock);
+    // Price drops severely to trigger liquidation
+    // At $10k BTC price: ($10k BTC + $45k USDC) / $45k debt = $55k / $45k = 122% (still above 120%)
+    // At $8k BTC price: ($8k BTC + $45k USDC) / $45k debt = $53k / $45k = 117.8% (below 120% - triggers liquidation!)
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 8000, &clock);
 
-//     // Perform liquidation and check rewards
-//     scenario.next_tx(test_constants::liquidator());
-//     let debt_coin = mint_coin<USDC>(50_000_000_000, scenario.ctx());
+    // Perform liquidation and check rewards
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(50_000_000_000, scenario.ctx());
 
-//     let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
-//         &registry,
-//         &btc_price_dropped,
-//         &usdc_price,
-//         &mut usdc_pool,
-//         &mut pool,
-//         debt_coin,
-//         &clock,
-//         scenario.ctx(),
-//     );
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
 
-//     let liquidator_btc_reward = base_coin.value();
-//     let liquidator_usdc_reward = quote_coin.value();
+    let liquidator_btc_reward = base_coin.value();
+    let liquidator_usdc_reward = quote_coin.value();
 
-//     // Verify liquidator received rewards (should be non-zero)
-//     assert!(liquidator_btc_reward > 0 || liquidator_usdc_reward > 0);
+    // Verify liquidator received rewards (should be non-zero)
+    assert!(liquidator_btc_reward > 0 || liquidator_usdc_reward > 0);
 
-//     destroy_3!(remaining_debt, base_coin, quote_coin);
-//     return_shared_3!(mm, usdc_pool, pool);
-//     destroy_3!(btc_price, usdc_price, btc_price_dropped);
-//     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
-// }
+    destroy_3!(remaining_debt, base_coin, quote_coin);
+    return_shared_3!(mm, usdc_pool, pool);
+    destroy_3!(btc_price, usdc_price, btc_price_dropped);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
 
 // === Risk Ratio Calculation Tests ===
 

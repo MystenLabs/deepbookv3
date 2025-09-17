@@ -1,7 +1,6 @@
 module margin_trading::margin_state;
 
-use deepbook::constants;
-use deepbook::math;
+use deepbook::{constants, math};
 use margin_trading::protocol_config::ProtocolConfig;
 use sui::clock::Clock;
 
