@@ -122,7 +122,7 @@ public(package) fun calculate_and_claim(
     let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
     let fees = math::mul(shares, fees_per_share_delta);
 
-    referral.last_claim_share_ms = now;
+    referral.last_claim_timestamp = now;
     referral.last_claim_share_ms = referral_tracker.share_ms;
     referral.last_fees_per_share = self.fees_per_share;
 
