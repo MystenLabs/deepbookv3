@@ -167,7 +167,7 @@ fun test_zero_utilization() {
     scenario.next_tx(test_constants::user1());
     let supply = 100 * test_constants::usdc_multiplier();
     let coin = mint_coin<USDC>(supply, scenario.ctx());
-    pool.supply(&registry, coin, &clock, scenario.ctx());
+    pool.supply(&registry, coin, option::none(), &clock, scenario.ctx());
 
     advance_time(&mut clock, margin_constants::year_ms());
 
