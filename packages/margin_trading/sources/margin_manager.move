@@ -689,25 +689,19 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
-    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
-    let borrowed_amount = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
-    let available_balance = self.balance_manager().balance<RepayAsset>();
-    let available_balance_shares = margin_pool.borrow_amount_to_shares(available_balance, clock);
-    let to_repay_amount = amount.destroy_with_default(borrowed_amount);
-    let to_repay_shares = margin_pool.borrow_amount_to_shares(to_repay_amount, clock);
+    // Calculate the three constraints: total debt, available balance, and requested amount
+    let total_debt_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let total_debt_amount = margin_pool.borrow_shares_to_amount(total_debt_shares, clock);
+    let available_amount = self.balance_manager().balance<RepayAsset>();
+    let requested_amount = amount.destroy_with_default(total_debt_amount);
 
-    // return the corresponding shares of the smallest amount number, out of borrowed_amount, available_balance, and repay_amount
-    let repay_shares = if (
-        borrowed_amount <= available_balance && borrowed_amount <= to_repay_amount
-    ) {
-        borrowed_shares
-    } else if (borrowed_amount > available_balance && borrowed_amount <= to_repay_amount) {
-        available_balance_shares
+    // Find the minimum constraint (what we can actually repay)
+    let repay_amount = total_debt_amount.min(available_amount).min(requested_amount);
+    let repay_shares = if (repay_amount == total_debt_amount) {
+        total_debt_shares // Repaying full debt - use exact shares to avoid rounding errors
     } else {
-        to_repay_shares
+        margin_pool.borrow_amount_to_shares(repay_amount, clock)
     };
-
-    let repay_amount = borrowed_amount.min(available_balance).min(to_repay_amount);
 
     let coin: Coin<RepayAsset> = self.repay_withdraw(repay_amount, ctx);
     assert!(coin.value() == repay_amount, EIncorrectRepayAmount);
