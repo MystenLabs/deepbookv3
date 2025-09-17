@@ -3,29 +3,27 @@
 
 module margin_trading::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use margin_trading::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::calculate_target_currency
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use margin_trading::margin_constants;
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::oracle::calculate_target_currency;
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
 use token::deep::DEEP;
 
 // === Errors ===
@@ -578,6 +576,18 @@ public fun borrowed_shares<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): (u64, u64) {
     (self.borrowed_base_shares, self.borrowed_quote_shares)
+}
+
+public fun borrowed_base_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    self.borrowed_base_shares
+}
+
+public fun borrowed_quote_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    self.borrowed_quote_shares
 }
 
 // === Public-Package Functions ===
