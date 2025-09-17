@@ -41,6 +41,7 @@ const ECannotLiquidate: u64 = 9;
 const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
 const ENotReduceOnlyOrder: u64 = 12;
+const EIncorrectRepayAmount: u64 = 13;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -691,11 +692,25 @@ fun repay<BaseAsset, QuoteAsset, RepayAsset>(
     let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
     let borrowed_amount = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let available_balance = self.balance_manager().balance<RepayAsset>();
-    let repay_amount = amount.destroy_with_default(available_balance);
-    let repay_amount = repay_amount.min(borrowed_amount);
-    let repay_shares = math::mul(borrowed_shares, math::div(repay_amount, borrowed_amount));
+    let available_balance_shares = margin_pool.borrow_amount_to_shares(available_balance, clock);
+    let to_repay_amount = amount.destroy_with_default(borrowed_amount);
+    let to_repay_shares = margin_pool.borrow_amount_to_shares(to_repay_amount, clock);
+
+    // return the corresponding shares of the smallest amount number, out of borrowed_amount, available_balance, and repay_amount
+    let repay_shares = if (
+        borrowed_amount <= available_balance && borrowed_amount <= to_repay_amount
+    ) {
+        borrowed_shares
+    } else if (borrowed_amount > available_balance && borrowed_amount <= to_repay_amount) {
+        available_balance_shares
+    } else {
+        to_repay_shares
+    };
+
+    let repay_amount = borrowed_amount.min(available_balance).min(to_repay_amount);
 
     let coin: Coin<RepayAsset> = self.repay_withdraw(repay_amount, ctx);
+    assert!(coin.value() == repay_amount, EIncorrectRepayAmount);
     margin_pool.repay(repay_shares, coin, clock);
 
     if (type_name::with_defining_ids<RepayAsset>() == type_name::with_defining_ids<BaseAsset>()) {

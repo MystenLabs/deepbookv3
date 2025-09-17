@@ -331,6 +331,14 @@ public(package) fun borrow_shares_to_amount<Asset>(
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
 }
 
+public(package) fun borrow_amount_to_shares<Asset>(
+    self: &MarginPool<Asset>,
+    amount: u64,
+    clock: &Clock,
+): u64 {
+    self.state.borrow_amount_to_shares(amount, &self.config, clock)
+}
+
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
