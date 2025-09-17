@@ -101,7 +101,7 @@ fun test_supply_and_withdraw_basic() {
 
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     let withdrawn = pool.withdraw<USDC>(
         &registry,
@@ -127,7 +127,7 @@ fun test_supply_cap_enforcement() {
     let supply_coin = mint_coin<USDC>(test_constants::supply_cap() + 1, scenario.ctx());
 
     // This should fail due to supply cap
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
@@ -142,12 +142,12 @@ fun test_multiple_users_supply_withdraw() {
     // User1 supplies
     scenario.next_tx(test_constants::user1());
     let supply_coin1 = mint_coin<USDC>(50 * test_constants::usdc_multiplier(), scenario.ctx()); // 50 tokens
-    pool.supply<USDC>(&registry, supply_coin1, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin1, option::none(), &clock, scenario.ctx());
 
     // User2 supplies
     scenario.next_tx(test_constants::user2());
     let supply_coin2 = mint_coin<USDC>(30 * test_constants::usdc_multiplier(), scenario.ctx()); // 30 tokens
-    pool.supply<USDC>(&registry, supply_coin2, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin2, option::none(), &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let withdrawn1 = pool.withdraw<USDC>(
@@ -182,7 +182,7 @@ fun test_withdraw_all() {
     scenario.next_tx(test_constants::user1());
     let supply_amount = 100 * test_constants::usdc_multiplier();
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
     assert!(withdrawn.value() == supply_amount);
@@ -211,7 +211,7 @@ fun test_interest_accrual_over_time() {
     scenario.next_tx(test_constants::user1());
     let supply_amount = 100 * test_constants::usdc_multiplier();
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     clock.set_for_testing(margin_constants::year_ms());
 
@@ -231,7 +231,7 @@ fun test_not_enough_asset_in_pool() {
 
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx()); // 100 tokens
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
     let borrowed_coin = test_borrow(
@@ -259,7 +259,7 @@ fun test_max_pool_borrow_percentage_exceeded() {
 
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx()); // 100 tokens
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     // Above max utilization rate
     scenario.next_tx(test_constants::user2());
@@ -283,7 +283,7 @@ fun test_invalid_loan_quantity() {
 
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100 tokens
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
     let borrowed_coin = test_borrow(&mut pool, 0, &clock, scenario.ctx());
@@ -490,7 +490,7 @@ fun test_repay_liquidation_with_reward() {
     // User1 supplies
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
@@ -524,7 +524,7 @@ fun test_repay_liquidation_with_default() {
     // User1 supplies
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
@@ -590,7 +590,7 @@ fun test_invalid_repay_quantity() {
     // User1 supplies
     scenario.next_tx(test_constants::user1());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
@@ -620,7 +620,7 @@ fun test_borrow_exceeds_vault_balance() {
     scenario.next_tx(test_constants::user1());
     let supply_amount = 100 * test_constants::usdc_multiplier();
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
 
     // User2 borrows 70 USDC
     scenario.next_tx(test_constants::user2());
@@ -648,12 +648,12 @@ fun test_withdraw_exceeds_available_liquidity() {
     scenario.next_tx(test_constants::user1());
     let supply1 = 60 * test_constants::usdc_multiplier();
     let supply_coin1 = mint_coin<USDC>(supply1, scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin1, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin1, option::none(), &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
     let supply2 = 40 * test_constants::usdc_multiplier();
     let supply_coin2 = mint_coin<USDC>(supply2, scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin2, &clock, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin2, option::none(), &clock, scenario.ctx());
 
     // Someone borrows, reducing available liquidity
     scenario.next_tx(test_constants::liquidator());

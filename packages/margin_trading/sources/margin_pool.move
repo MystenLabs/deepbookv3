@@ -8,7 +8,8 @@ use margin_trading::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig}
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
+    protocol_fees::{Self, ProtocolFees, Referral}
 };
 use std::type_name::{Self, TypeName};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
@@ -29,6 +30,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
+    protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
 }
@@ -99,6 +101,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
+        protocol_fees: protocol_fees::default_protocol_fees(ctx, clock),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
     };
@@ -204,20 +207,26 @@ public fun update_margin_pool_config<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Allows anyone to supply the margin pool. Returns the new user supply amount.
+/// Supply to the margin pool. Returns the new user supply amount.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     coin: Coin<Asset>,
+    referral: Option<address>,
     clock: &Clock,
     ctx: &TxContext,
-) {
+): u64 {
     registry.load_inner();
-    let supplier = ctx.sender();
     let supply_amount = coin.value();
-
-    let supply_shares = self.state.increase_supply(&self.config, supply_amount, clock);
-    self.positions.increase_user_supply(supplier, supply_shares);
+    let (supply_shares, protocol_fees) = self
+        .state
+        .increase_supply(&self.config, supply_amount, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
+    let (total_user_supply, previous_referral) = self
+        .positions
+        .increase_user_supply(referral, supply_shares, ctx);
+    self.protocol_fees.decrease_shares(previous_referral, total_user_supply - supply_shares, clock);
+    self.protocol_fees.increase_shares(referral, total_user_supply, clock);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -227,14 +236,16 @@ public fun supply<Asset>(
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier,
+        supplier: ctx.sender(),
         supply_amount,
         supply_shares,
         timestamp: clock.timestamp_ms(),
     });
+
+    total_user_supply
 }
 
-/// Allows withdrawal from the margin pool. Returns the withdrawn coin.
+/// Withdraw from the margin pool. Returns the withdrawn coin.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
@@ -243,24 +254,42 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let supplier = ctx.sender();
-    let supplied_shares = self.positions.user_supply_shares(supplier);
+    let supplied_shares = self.positions.user_supply_shares(ctx);
     let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
 
-    self.positions.decrease_user_supply(supplier, withdraw_shares);
+    let (_, protocol_fees) = self
+        .state
+        .decrease_supply_shares(&self.config, withdraw_shares, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
+
+    let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
+    self.protocol_fees.decrease_shares(previous_referral, withdraw_shares, clock);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);
 
     event::emit(AssetWithdrawn {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier,
+        supplier: ctx.sender(),
         withdraw_amount,
         withdraw_shares,
         timestamp: clock.timestamp_ms(),
     });
+
+    coin
+}
+
+/// Withdraw the referral fees.
+public fun withdraw_referral_fees<Asset>(
+    self: &mut MarginPool<Asset>,
+    referral: &mut Referral,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    let referral_fees = self.protocol_fees.calculate_and_claim(referral, clock);
+    let coin = self.vault.split(referral_fees).into_coin(ctx);
 
     coin
 }
@@ -280,9 +309,10 @@ public(package) fun borrow<Asset>(
 ): (Coin<Asset>, u64, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (total_borrow, total_borrow_shares) = self
+    let (total_borrow, total_borrow_shares, protocol_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
@@ -297,7 +327,8 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     assert!(coin.value() == amount, EInvalidRepayQuantity);
     self.vault.join(coin.into_balance());
 }
@@ -311,7 +342,8 @@ public(package) fun repay_liquidation<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ): (u64, u64, u64) {
-    let amount = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);

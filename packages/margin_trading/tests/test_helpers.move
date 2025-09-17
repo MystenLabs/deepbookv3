@@ -401,12 +401,14 @@ public fun setup_usdc_usdt_margin_trading(): (
     usdc_pool.supply(
         &registry,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -473,12 +475,14 @@ public fun setup_btc_usd_margin_trading(): (
     btc_pool.supply(
         &registry,
         mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     usdc_pool.supply(
         &registry,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -575,12 +579,14 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     base_pool.supply(
         &registry,
         mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     quote_pool.supply(
         &registry,
         mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );

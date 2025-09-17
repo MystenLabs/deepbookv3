@@ -8,54 +8,73 @@ module margin_trading::position_manager;
 use sui::table::{Self, Table};
 
 public struct PositionManager has store {
-    supply_shares: Table<address, u64>,
+    positions: Table<address, Position>,
+}
+
+public struct Position has store {
+    shares: u64,
+    referral: Option<address>,
 }
 
 public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
     PositionManager {
-        supply_shares: table::new(ctx),
+        positions: table::new(ctx),
     }
 }
 
 /// Increase the supply shares of the user and return outstanding supply shares.
 public(package) fun increase_user_supply(
     self: &mut PositionManager,
-    user: address,
+    referral: Option<address>,
     supply_shares: u64,
-): u64 {
-    self.add_supply_entry(user);
-    let user_supply_shares = self.supply_shares.borrow_mut(user);
-    *user_supply_shares = *user_supply_shares + supply_shares;
+    ctx: &TxContext,
+): (u64, Option<address>) {
+    let user = ctx.sender();
+    self.add_supply_entry(referral, ctx);
+    let user_position = self.positions.borrow_mut(user);
+    let current_referral = user_position.referral;
+    user_position.shares = user_position.shares + supply_shares;
+    user_position.referral = referral;
 
-    *user_supply_shares
+    (user_position.shares, current_referral)
 }
 
 /// Decrease the supply shares of the user and return outstanding supply shares.
 public(package) fun decrease_user_supply(
     self: &mut PositionManager,
-    user: address,
     supply_shares: u64,
-): u64 {
-    let user_supply_shares = self.supply_shares.borrow_mut(user);
-    *user_supply_shares = *user_supply_shares - supply_shares;
+    ctx: &TxContext,
+): (u64, Option<address>) {
+    let user = ctx.sender();
+    let user_position = self.positions.borrow_mut(user);
+    user_position.shares = user_position.shares - supply_shares;
 
-    *user_supply_shares
+    (user_position.shares, user_position.referral)
 }
 
-public(package) fun add_supply_entry(self: &mut PositionManager, user: address) {
-    if (!self.supply_shares.contains(user)) {
+public(package) fun add_supply_entry(
+    self: &mut PositionManager,
+    referral: Option<address>,
+    ctx: &TxContext,
+) {
+    let user = ctx.sender();
+    if (!self.positions.contains(user)) {
         self
-            .supply_shares
+            .positions
             .add(
                 user,
-                0,
+                Position {
+                    shares: 0,
+                    referral,
+                },
             );
     }
 }
 
-public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
-    if (self.supply_shares.contains(user)) {
-        *self.supply_shares.borrow(user)
+public(package) fun user_supply_shares(self: &PositionManager, ctx: &TxContext): u64 {
+    let user = ctx.sender();
+    if (self.positions.contains(user)) {
+        self.positions.borrow(user).shares
     } else {
         0
     }

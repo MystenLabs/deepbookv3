@@ -58,6 +58,10 @@ public fun protocol_spread(): u64 {
     PROTOCOL_SPREAD
 }
 
+public fun protocol_spread_inverse(): u64 {
+    1_000_000_000 - PROTOCOL_SPREAD
+}
+
 public fun min_borrow(): u64 {
     MIN_BORROW
 }
