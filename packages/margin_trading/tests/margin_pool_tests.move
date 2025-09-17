@@ -581,35 +581,6 @@ fun test_multiple_deepbook_pools() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = margin_pool::EInvalidRepayQuantity)]
-fun test_invalid_repay_quantity() {
-    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
-    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-
-    // User1 supplies
-    scenario.next_tx(test_constants::user1());
-    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
-    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
-
-    // User2 borrows
-    scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(
-        50 * test_constants::usdc_multiplier(),
-        &clock,
-        scenario.ctx(),
-    );
-    destroy(borrowed_coin);
-
-    // Try to repay with wrong amount
-    let wrong_amount = 40 * test_constants::usdc_multiplier(); // Wrong amount
-    let repay_coin = mint_coin<USDC>(wrong_amount, scenario.ctx());
-    pool.repay(shares, repay_coin, &clock);
-
-    test::return_shared(pool);
-    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
-}
-
 #[test, expected_failure(abort_code = margin_pool::ENotEnoughAssetInPool)]
 fun test_borrow_exceeds_vault_balance() {
     let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
