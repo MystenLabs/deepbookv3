@@ -218,8 +218,10 @@ public fun supply<Asset>(
 ): u64 {
     registry.load_inner();
     let supply_amount = coin.value();
-    let (supply_shares, interest) = self.state.increase_supply(&self.config, supply_amount, clock);
-    self.update_protocol_fees(interest);
+    let (supply_shares, protocol_fees) = self
+        .state
+        .increase_supply(&self.config, supply_amount, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     let (total_user_supply, previous_referral) = self
         .positions
         .increase_user_supply(referral, supply_shares, ctx);
@@ -257,8 +259,10 @@ public fun withdraw<Asset>(
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
 
-    let (_, interest) = self.state.decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.update_protocol_fees(interest);
+    let (_, protocol_fees) = self
+        .state
+        .decrease_supply_shares(&self.config, withdraw_shares, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
 
     let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
     self.protocol_fees.decrease_shares(previous_referral, withdraw_shares, clock);
@@ -305,10 +309,10 @@ public(package) fun borrow<Asset>(
 ): (Coin<Asset>, u64, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (total_borrow, total_borrow_shares, interest) = self
+    let (total_borrow, total_borrow_shares, protocol_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
-    self.update_protocol_fees(interest);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
@@ -323,8 +327,8 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let (amount, interest) = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    self.update_protocol_fees(interest);
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     assert!(coin.value() == amount, EInvalidRepayQuantity);
     self.vault.join(coin.into_balance());
 }
@@ -338,8 +342,8 @@ public(package) fun repay_liquidation<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ): (u64, u64, u64) {
-    let (amount, interest) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
-    self.update_protocol_fees(interest);
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
@@ -363,11 +367,4 @@ public(package) fun borrow_shares_to_amount<Asset>(
 
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
-}
-
-fun update_protocol_fees<Asset>(self: &mut MarginPool<Asset>, interest: u64) {
-    if (interest == 0) return;
-    let protocol_fees = math::mul(interest, self.config.protocol_spread());
-    self.state.decrease_supply_absolute(protocol_fees);
-    self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
 }

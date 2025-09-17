@@ -7,8 +7,13 @@ use deepbook::math;
 use margin_trading::margin_constants;
 use sui::{clock::Clock, table::{Self, Table}};
 
+// === Errors ===
+const EInvalidFeesOnZeroShares: u64 = 1;
+
+// === Structs ===
 public struct ProtocolFees has store {
     referrals: Table<address, ReferralTracker>,
+    total_shares: u64,
     fees_per_share: u64,
 }
 
@@ -31,6 +36,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext, clock: &Clock): P
     let default_id = margin_constants::default_referral();
     let mut manager = ProtocolFees {
         referrals: table::new(ctx),
+        total_shares: 0,
         fees_per_share: 0,
     };
     manager
@@ -79,8 +85,13 @@ public(package) fun increase_fees_per_share(
     total_shares: u64,
     fees_accrued: u64,
 ) {
-    let fees_per_share_increase = math::div(fees_accrued, total_shares);
-    self.fees_per_share = self.fees_per_share + fees_per_share_increase;
+    assert!(!(self.total_shares == 0 && fees_accrued > 0), EInvalidFeesOnZeroShares);
+    if (self.total_shares > 0) {
+        let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
+        self.fees_per_share = self.fees_per_share + fees_per_share_increase;
+    };
+
+    self.total_shares = total_shares;
 }
 
 public(package) fun increase_shares(
