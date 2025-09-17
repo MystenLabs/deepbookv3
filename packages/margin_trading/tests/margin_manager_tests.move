@@ -1465,103 +1465,113 @@ fun test_repayment_rounding() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// #[test]
-// fun test_asset_rebalancing_between_pools() {
-//     let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+#[test]
+fun test_asset_rebalancing_between_pools() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
 
-//     let usdc_pool_id = create_margin_pool<USDC>(
-//         &mut scenario,
-//         &maintainer_cap,
-//         default_protocol_config(),
-//         &clock,
-//     );
-//     let usdt_pool_id = create_margin_pool<USDT>(
-//         &mut scenario,
-//         &maintainer_cap,
-//         default_protocol_config(),
-//         &clock,
-//     );
+    let usdc_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let usdt_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
 
-//     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-//     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
-//     scenario.next_tx(test_constants::admin());
-//     let registry = scenario.take_shared<MarginRegistry>();
-//     enable_margin_trading_on_pool<USDC, USDT>(
-//         pool_id,
-//         &mut registry,
-//         &admin_cap,
-//         &clock,
-//         &mut scenario,
-//     );
-//     return_shared(registry);
+    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_margin_trading_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
 
-//     scenario.next_tx(test_constants::admin());
-//     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
-//     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-//     let registry = scenario.take_shared<MarginRegistry>();
+    scenario.next_tx(test_constants::admin());
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
 
-//     usdc_pool.supply(
-//         &registry,
-//         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-//         &clock,
-//         scenario.ctx(),
-//     );
-//     usdt_pool.supply(
-//         &registry,
-//         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-//         &clock,
-//         scenario.ctx(),
-//     );
+    usdc_pool.supply(
+        &registry,
+        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    usdt_pool.supply(
+        &registry,
+        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
 
-//     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
-//     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+    usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
+    usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
-//     return_shared_2!(usdc_pool, usdt_pool);
-//     return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
+    return_shared_2!(usdc_pool, usdt_pool);
+    return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
-//     scenario.next_tx(test_constants::user1());
-//     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-//     margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
 
-//     scenario.next_tx(test_constants::user1());
-//     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
 
-//     // Deposit assets in both base and quote
-//     mm.deposit<USDC, USDT, USDC>(
-//         &registry,
-//         mint_coin<USDC>(10_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-//         scenario.ctx(),
-//     );
-//     mm.deposit<USDC, USDT, USDT>(
-//         &registry,
-//         mint_coin<USDT>(10_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-//         scenario.ctx(),
-//     );
+    // Get margin pools for withdraw API
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
 
-//     // Withdraw from one type
-//     let (usdc_withdrawn, withdraw_request) = mm.withdraw<USDC, USDT, USDC>(
-//         &registry,
-//         5_000 * test_constants::usdc_multiplier(),
-//         scenario.ctx(),
-//     );
+    // Deposit assets in both base and quote
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        mint_coin<USDC>(10_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(10_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
 
-//     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-//     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
-//     // No debt, so withdrawal should succeed without proving
-//     destroy(withdraw_request);
-//     assert!(usdc_withdrawn.value() == 5_000 * test_constants::usdc_multiplier());
+    // Withdraw from one type (using new API)
+    let usdc_withdrawn = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &usdc_pool,
+        &usdt_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        5_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
 
-//     // Deposit back different asset
-//     mm.deposit<USDC, USDT, USDT>(
-//         &registry,
-//         mint_coin<USDT>(5_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-//         scenario.ctx(),
-//     );
+    // No debt, so withdrawal should succeed
+    assert!(usdc_withdrawn.value() == 5_000 * test_constants::usdc_multiplier());
 
-//     destroy(usdc_withdrawn);
-//     return_shared_2!(mm, pool);
-//     destroy_2!(usdc_price, usdt_price);
-//     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
-// }
+    // Deposit back different asset
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(5_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    destroy(usdc_withdrawn);
+    return_shared_3!(mm, usdc_pool, usdt_pool);
+    return_shared(pool);
+    destroy_2!(usdc_price, usdt_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
