@@ -29,14 +29,14 @@ public(package) fun increase_supply(
     config: &ProtocolConfig,
     amount: u64,
     clock: &Clock,
-): u64 {
-    self.update(config, clock);
+): (u64, u64) {
+    let protocol_fees = self.update(config, clock);
     let ratio = self.supply_ratio();
     let shares = math::div(amount, ratio);
     self.supply_shares = self.supply_shares + shares;
     self.supply = self.supply + amount;
 
-    shares
+    (shares, protocol_fees)
 }
 
 public(package) fun decrease_supply_shares(
@@ -44,14 +44,14 @@ public(package) fun decrease_supply_shares(
     config: &ProtocolConfig,
     shares: u64,
     clock: &Clock,
-): u64 {
-    self.update(config, clock);
+): (u64, u64) {
+    let protocol_fees = self.update(config, clock);
     let ratio = self.supply_ratio();
     let amount = math::mul(shares, ratio);
     self.supply_shares = self.supply_shares - shares;
     self.supply = self.supply - amount;
 
-    amount
+    (amount, protocol_fees)
 }
 
 public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
@@ -67,14 +67,14 @@ public(package) fun increase_borrow(
     config: &ProtocolConfig,
     amount: u64,
     clock: &Clock,
-): (u64, u64) {
-    self.update(config, clock);
+): (u64, u64, u64) {
+    let protocol_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let shares = math::div(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.borrow = self.borrow + amount;
 
-    (self.borrow, self.borrow_shares)
+    (self.borrow, self.borrow_shares, protocol_fees)
 }
 
 /// Decrease borrowed shares and return the corresponding amount
@@ -83,14 +83,14 @@ public(package) fun decrease_borrow_shares(
     config: &ProtocolConfig,
     shares: u64,
     clock: &Clock,
-): u64 {
-    self.update(config, clock);
+): (u64, u64) {
+    let protocol_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let amount = math::mul(shares, ratio);
     self.borrow_shares = self.borrow_shares - shares;
     self.borrow = self.borrow - amount;
 
-    amount
+    (amount, protocol_fees)
 }
 
 public(package) fun utilization_rate(self: &State): u64 {
@@ -105,6 +105,10 @@ public(package) fun supply(self: &State): u64 {
     self.supply
 }
 
+public(package) fun supply_shares(self: &State): u64 {
+    self.supply_shares
+}
+
 public(package) fun borrow_shares_to_amount(
     self: &State,
     shares: u64,
@@ -115,7 +119,8 @@ public(package) fun borrow_shares_to_amount(
     let elapsed = now - self.last_update_timestamp;
 
     let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    let borrow = self.borrow + math::mul(self.borrow, time_adjusted_rate);
+    let interest = math::mul(self.borrow, time_adjusted_rate);
+    let borrow = self.borrow + interest;
     let ratio = if (self.borrow_shares == 0) {
         constants::float_scaling()
     } else {
@@ -135,7 +140,9 @@ public(package) fun supply_shares_to_amount(
     let elapsed = now - self.last_update_timestamp;
 
     let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    let supply = self.supply + math::mul(self.borrow, time_adjusted_rate);
+    let interest = math::mul(self.borrow, time_adjusted_rate);
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+    let supply = self.supply + interest - protocol_fees;
     let ratio = if (self.supply_shares == 0) {
         constants::float_scaling()
     } else {
@@ -145,14 +152,18 @@ public(package) fun supply_shares_to_amount(
     math::div(shares, ratio)
 }
 
-fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock) {
+fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
 
     let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    self.supply = self.supply + math::mul(self.borrow, time_adjusted_rate);
-    self.borrow = self.borrow + math::mul(self.borrow, time_adjusted_rate);
+    let interest = math::mul(self.borrow, time_adjusted_rate);
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+    self.supply = self.supply + interest - protocol_fees;
+    self.borrow = self.borrow + interest;
     self.last_update_timestamp = now;
+
+    protocol_fees
 }
 
 fun supply_ratio(self: &State): u64 {

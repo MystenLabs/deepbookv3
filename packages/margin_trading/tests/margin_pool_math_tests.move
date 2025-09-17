@@ -111,7 +111,8 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
         ) * duration;
     let borrow_multiplier = constants::float_scaling() + interest_rate; // 200%
     // 1 + 1*0.5 = 1.5
-    let supply_multiplier = constants::float_scaling() + math::mul(interest_rate, utilization_rate);
+    let supply_multiplier =
+        constants::float_scaling() + math::mul(test_constants::protocol_spread_inverse(), math::mul(interest_rate, utilization_rate));
 
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
     scenario.next_tx(test_constants::admin());
@@ -121,7 +122,7 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     // At time 0, user1 supplies 100 USDC. User 2 borrows 50 USDC.
     scenario.next_tx(test_constants::user1());
     let coin = mint_coin<USDC>(supply, scenario.ctx());
-    pool.supply(&registry, coin, &clock, scenario.ctx());
+    pool.supply(&registry, coin, option::none(), &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user2());
     let (borrowed_coin, _, shares) = pool.borrow(
@@ -154,4 +155,36 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
 
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_zero_utilization() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply = 100 * test_constants::usdc_multiplier();
+    let coin = mint_coin<USDC>(supply, scenario.ctx());
+    pool.supply(&registry, coin, option::none(), &clock, scenario.ctx());
+
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // Withdraw should give back same amount
+    scenario.next_tx(test_constants::user1());
+    let withdrawn_coin = pool.withdraw(&registry, option::none(), &clock, scenario.ctx());
+    assert!(withdrawn_coin.value() == supply);
+    destroy(withdrawn_coin);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_high_utilization_interest() {
+    let duration = 1;
+    let borrow = 79 * test_constants::usdc_multiplier(); // Just below optimal utilization
+    let supply = 100 * test_constants::usdc_multiplier();
+    test_borrow_supply(duration, borrow, supply);
 }
