@@ -846,14 +846,14 @@ fun test_repay_exact_amount_no_rounding_errors() {
         // Verify no rounding error: repaid amount should equal calculated amount
         assert!(repaid_amount == exact_amount, 0);
 
-        // Verify shares are zero or within 1 mist tolerance
-        let (_, remaining_quote_shares) = mm.borrowed_shares();
-        assert!(remaining_quote_shares <= 1, 1); // At most 1 share due to potential rounding
+        // Verify shares are zero
+        let borrowed_quote_shares = mm.borrowed_quote_shares();
+        assert!(borrowed_quote_shares == 0, 0);
 
         // Clean up any remaining debt
-        if (remaining_quote_shares > 0) {
+        if (borrowed_quote_shares > 0) {
             let remaining_amount = usdc_pool.borrow_shares_to_amount(
-                remaining_quote_shares,
+                borrowed_quote_shares,
                 &clock,
             );
             if (remaining_amount > 0) {
