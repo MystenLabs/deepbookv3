@@ -327,7 +327,7 @@ public(package) fun repay<Asset>(
     clock: &Clock,
 ) {
     self.state.decrease_borrow_shares(&self.config, shares, clock);
-    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    let (_, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
     self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
 
     self.vault.join(coin.into_balance());
