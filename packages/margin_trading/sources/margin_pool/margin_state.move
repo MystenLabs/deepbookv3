@@ -120,8 +120,7 @@ public(package) fun borrow_shares_to_amount(
 
     let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
     let interest = math::mul(self.borrow, time_adjusted_rate);
-    let protocol_fees = math::mul(interest, config.protocol_spread());
-    let borrow = self.borrow + interest + protocol_fees;
+    let borrow = self.borrow + interest;
     let ratio = if (self.borrow_shares == 0) {
         constants::float_scaling()
     } else {
