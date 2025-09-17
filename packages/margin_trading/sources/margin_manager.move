@@ -580,6 +580,18 @@ public fun borrowed_shares<BaseAsset, QuoteAsset>(
     (self.borrowed_base_shares, self.borrowed_quote_shares)
 }
 
+public fun borrowed_base_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    self.borrowed_base_shares
+}
+
+public fun borrowed_quote_shares<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    self.borrowed_quote_shares
+}
+
 // === Public-Package Functions ===
 public(package) fun assert_place_reduce_only<BaseAsset, QuoteAsset, DebtAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,

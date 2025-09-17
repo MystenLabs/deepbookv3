@@ -22,7 +22,6 @@ const EDeepbookPoolAlreadyAllowed: u64 = 5;
 const EDeepbookPoolNotAllowed: u64 = 6;
 const EInvalidMarginPoolCap: u64 = 7;
 const EBorrowAmountTooLow: u64 = 8;
-const EInvalidRepayQuantity: u64 = 9;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -327,9 +326,10 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    self.state.decrease_borrow_shares(&self.config, shares, clock);
+    let (_, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
     self.protocol_fees.increase_fees_per_share(self.state.supply_shares(), protocol_fees);
-    assert!(coin.value() == amount, EInvalidRepayQuantity);
+
     self.vault.join(coin.into_balance());
 }
 
