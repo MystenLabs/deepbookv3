@@ -1029,12 +1029,14 @@ fun test_risk_ratio_with_multiple_assets() {
     usdc_pool.supply(
         &registry,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -1214,6 +1216,7 @@ fun test_max_leverage_enforcement() {
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(10_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -1295,6 +1298,7 @@ fun test_min_position_size_requirement() {
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -1378,12 +1382,14 @@ fun test_repayment_rounding() {
     usdc_pool.supply(
         &registry,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
@@ -1504,12 +1510,14 @@ fun test_asset_rebalancing_between_pools() {
     usdc_pool.supply(
         &registry,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
     usdt_pool.supply(
         &registry,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
         &clock,
         scenario.ctx(),
     );
