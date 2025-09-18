@@ -1,0 +1,81 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Position manager is responsible for managing the positions of the users.
+/// It is used to track the supply and loan shares of the users.
+module margin_trading::position_manager;
+
+use sui::table::{Self, Table};
+
+public struct PositionManager has store {
+    positions: Table<address, Position>,
+}
+
+public struct Position has store {
+    shares: u64,
+    referral: Option<address>,
+}
+
+public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
+    PositionManager {
+        positions: table::new(ctx),
+    }
+}
+
+/// Increase the supply shares of the user and return outstanding supply shares.
+public(package) fun increase_user_supply(
+    self: &mut PositionManager,
+    referral: Option<address>,
+    supply_shares: u64,
+    ctx: &TxContext,
+): (u64, Option<address>) {
+    let user = ctx.sender();
+    self.add_supply_entry(referral, ctx);
+    let user_position = self.positions.borrow_mut(user);
+    let current_referral = user_position.referral;
+    user_position.shares = user_position.shares + supply_shares;
+    user_position.referral = referral;
+
+    (user_position.shares, current_referral)
+}
+
+/// Decrease the supply shares of the user and return outstanding supply shares.
+public(package) fun decrease_user_supply(
+    self: &mut PositionManager,
+    supply_shares: u64,
+    ctx: &TxContext,
+): (u64, Option<address>) {
+    let user = ctx.sender();
+    let user_position = self.positions.borrow_mut(user);
+    user_position.shares = user_position.shares - supply_shares;
+
+    (user_position.shares, user_position.referral)
+}
+
+public(package) fun add_supply_entry(
+    self: &mut PositionManager,
+    referral: Option<address>,
+    ctx: &TxContext,
+) {
+    let user = ctx.sender();
+    if (!self.positions.contains(user)) {
+        self
+            .positions
+            .add(
+                user,
+                Position {
+                    shares: 0,
+                    referral,
+                },
+            );
+    }
+}
+
+public(package) fun user_supply_shares(self: &PositionManager, ctx: &TxContext): u64 {
+    let user = ctx.sender();
+    if (self.positions.contains(user)) {
+        self.positions.borrow(user).shares
+    } else {
+        0
+    }
+}
