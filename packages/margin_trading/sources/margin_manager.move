@@ -311,8 +311,6 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    std::debug::print(&risk_ratio);
-
     assert!(registry.can_borrow(pool.id(), risk_ratio), EBorrowRiskRatioExceeded);
 
     event::emit(LoanBorrowedEvent {

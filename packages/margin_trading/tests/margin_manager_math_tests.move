@@ -878,8 +878,20 @@ use token::deep::DEEP;
 //     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 // }
 
+const ENoError: u64 = 0;
+const ECannotLiquidate: u64 = 1;
+
 #[test]
-fun test_liquidation_tony() {
+fun test_liquidation_tony_0() {
+    test_liquidation(ENoError);
+}
+
+#[test, expected_failure(abort_code = margin_manager::ECannotLiquidate)]
+fun test_liquidation_tony_1() {
+    test_liquidation(ECannotLiquidate);
+}
+
+fun test_liquidation(error_code: u64) {
     let (
         mut scenario,
         clock,
@@ -921,16 +933,52 @@ fun test_liquidation_tony() {
         scenario.ctx(),
     );
 
+    assert!(
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 1_250_000_000,
+        0,
+    );
+
     // Perform liquidation and check rewards
     scenario.next_tx(test_constants::liquidator());
-    let repay_coin = mint_coin<USDC>(50 * test_constants::usdc_multiplier(), scenario.ctx());
 
-    // At BTC price 40, Risk ratio = (40 + 200) / 200 = 1.2, still cannot liquidate
-    let btc_price_40 = build_btc_price_info_object(&mut scenario, 8000, &clock);
+    if (error_code == ECannotLiquidate) {
+        // At BTC price 40, Risk ratio = (40 + 200) / 200 = 1.2, still cannot liquidate
+        let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
+        let btc_price_40 = build_btc_price_info_object(&mut scenario, 40, &clock);
+        assert!(
+            mm.risk_ratio(&registry, &btc_price_40, &usdc_price, &pool, &usdc_pool, &clock) == 1_200_000_000,
+            0,
+        );
 
-    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        let (_base_coin, _quote_coin, _remaining_repay_coin) = mm.liquidate<BTC, USDC, USDC>(
+            &registry,
+            &btc_price_40,
+            &usdc_price,
+            &mut usdc_pool,
+            &mut pool,
+            repay_coin,
+            &clock,
+            scenario.ctx(),
+        );
+        abort
+    };
+
+    // At BTC price 10, Risk ratio = (18 + 200) / 200 = 218 / 200 = 1.09 < 1.1, can liquidate
+    let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
+    let btc_price_18 = build_btc_price_info_object(&mut scenario, 18, &clock);
+    assert!(
+        mm.risk_ratio(&registry, &btc_price_18, &usdc_price, &pool, &usdc_pool, &clock) == 1_090_000_000,
+        0,
+    );
+
+    // 164.8 USDC will be used to liquidate. 160 USDC for repayment of loan, 4.8 for pool liquidation fee.
+    // Since 160 USDC is used for repayment, the liquidator should receive 160 * 0.02 = 3.2 as a reward.
+    // Risk ratio after liquidation = (218 - 160 * 1.05) / (200 - 160) = 1.25 (our target liquidation)
+    // Remaining_repay_coin = 500 - 164.8 = 335.2 USDC
+    // The liquidator should receive 160 * 1.05 = 168 USDC as reward, as there's USDC in the manager.
+    let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, USDC, USDC>(
         &registry,
-        &btc_price_40,
+        &btc_price_18,
         &usdc_price,
         &mut usdc_pool,
         &mut pool,
@@ -938,16 +986,15 @@ fun test_liquidation_tony() {
         &clock,
         scenario.ctx(),
     );
+    std::debug::print(&quote_coin.value());
 
-    let liquidator_btc_reward = base_coin.value();
-    let liquidator_usdc_reward = quote_coin.value();
+    assert!(base_coin.value() == 0, 0); // 0 BTC
+    assert!(quote_coin.value() == 168 * test_constants::usdc_multiplier(), 0); // 168 USDC
+    assert!(remaining_repay_coin.value() == 335_200_000, 0); // 335.2 USDC
 
-    // Verify liquidator received rewards (should be non-zero)
-    assert!(liquidator_btc_reward > 0 || liquidator_usdc_reward > 0);
-
-    destroy_3!(remaining_debt, base_coin, quote_coin);
+    destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
-    destroy_3!(btc_price, usdc_price, btc_price_40);
+    destroy_3!(btc_price, usdc_price, btc_price_18);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
