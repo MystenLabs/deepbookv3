@@ -314,7 +314,6 @@ public fun build_btc_price_info_object(
     price_usd: u64,
     clock: &Clock,
 ): PriceInfoObject {
-    // BTC price with 8 decimal places (e.g., 60000_00000000 = $60,000)
     build_pyth_price_info_object(
         scenario,
         test_constants::btc_price_feed_id(),

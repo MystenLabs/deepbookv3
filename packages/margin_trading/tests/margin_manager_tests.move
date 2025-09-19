@@ -5,34 +5,33 @@
 module margin_trading::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::{
-    margin_manager::{Self, MarginManager},
-    margin_pool::{Self, MarginPool},
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
-    test_helpers::{
-        setup_margin_registry,
-        create_margin_pool,
-        create_pool_for_testing,
-        enable_margin_trading_on_pool,
-        default_protocol_config,
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_demo_usdt_price_info_object,
-        build_btc_price_info_object,
-        setup_btc_usd_margin_trading,
-        setup_usdc_usdt_margin_trading,
-        destroy_2,
-        destroy_3,
-        return_shared_2,
-        return_shared_3,
-        advance_time,
-        get_margin_pool_caps,
-        return_to_sender_2
-    }
+use margin_trading::margin_manager::{Self, MarginManager};
+use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
+use margin_trading::test_helpers::{
+    setup_margin_registry,
+    create_margin_pool,
+    create_pool_for_testing,
+    enable_margin_trading_on_pool,
+    default_protocol_config,
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_demo_usdt_price_info_object,
+    build_btc_price_info_object,
+    setup_btc_usd_margin_trading,
+    setup_usdc_usdt_margin_trading,
+    destroy_2,
+    destroy_3,
+    return_shared_2,
+    return_shared_3,
+    advance_time,
+    get_margin_pool_caps,
+    return_to_sender_2
 };
-use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
+use sui::test_scenario::{Self as test, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 #[test]
@@ -206,7 +205,7 @@ fun test_usd_deposit_btc_borrow() {
     // Deposit 100000 USD
     mm.deposit<BTC, USDC, USDC>(
         &registry,
-        mint_coin<USDC>(100_000_000000, scenario.ctx()),
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         scenario.ctx(),
     );
 
@@ -224,7 +223,7 @@ fun test_usd_deposit_btc_borrow() {
     advance_time(&mut clock, 1);
     let btc_increased = build_btc_price_info_object(
         &mut scenario,
-        300000,
+        1_000_000,
         &clock,
     );
 
@@ -910,7 +909,7 @@ fun test_liquidation_reward_calculations() {
         scenario.ctx(),
     );
 
-    // Borrow $45k (90% LTV - close to max)
+    // Borrow $45k
     mm.borrow_quote<BTC, USDC>(
         &registry,
         &mut usdc_pool,
@@ -923,9 +922,9 @@ fun test_liquidation_reward_calculations() {
     );
 
     // Price drops severely to trigger liquidation
-    // At $10k BTC price: ($10k BTC + $45k USDC) / $45k debt = $55k / $45k = 122% (still above 120%)
-    // At $8k BTC price: ($8k BTC + $45k USDC) / $45k debt = $53k / $45k = 117.8% (below 120% - triggers liquidation!)
-    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 8000, &clock);
+    // At $10k BTC price: ($10k BTC + $45k USDC) / $45k debt = $55k / $45k = 122% (still above 110%)
+    // At $2k BTC price: ($2k BTC + $45k USDC) / $45k debt = $47k / $45k = 104.4% (below 110% - triggers liquidation!)
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 2000, &clock);
 
     // Perform liquidation and check rewards
     scenario.next_tx(test_constants::liquidator());
