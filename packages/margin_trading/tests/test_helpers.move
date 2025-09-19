@@ -4,28 +4,31 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
-use margin_trading::{
-    margin_pool::{Self, MarginPool},
-    margin_registry::{
-        Self,
-        MarginRegistry,
-        MarginAdminCap,
-        MaintainerCap,
-        PoolConfig,
-        MarginPoolCap
-    },
-    oracle::{Self, PythConfig},
-    protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, USDT, BTC}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    PoolConfig,
+    MarginPoolCap
 };
-use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
-};
+use margin_trading::oracle::{Self, PythConfig};
+use margin_trading::protocol_config::{Self, ProtocolConfig};
+use margin_trading::test_constants::{Self, USDC, USDT, BTC, SUI};
+use pyth::i64;
+use pyth::price;
+use pyth::price_feed;
+use pyth::price_identifier;
+use pyth::price_info::{Self, PriceInfoObject};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
@@ -321,6 +324,22 @@ public fun build_btc_price_info_object(
     )
 }
 
+/// Build a SUI price info object at a given price
+public fun build_sui_price_info_object(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    clock: &Clock,
+): PriceInfoObject {
+    build_pyth_price_info_object(
+        scenario,
+        test_constants::sui_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        100000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
 /// Create a test PythConfig for all test coins
 public fun create_test_pyth_config(): PythConfig {
     let mut coin_data_vec = vector[];
@@ -345,6 +364,13 @@ public fun create_test_pyth_config(): PythConfig {
         test_constants::btc_price_feed_id(),
     );
     coin_data_vec.push_back(btc_data);
+
+    // Add SUI configuration (9 decimals)
+    let sui_data = oracle::test_coin_type_data<test_constants::SUI>(
+        9, // decimals
+        test_constants::sui_price_feed_id(),
+    );
+    coin_data_vec.push_back(sui_data);
 
     oracle::new_pyth_config(
         coin_data_vec,
@@ -496,6 +522,80 @@ public fun setup_btc_usd_margin_trading(): (
     scenario.return_to_sender(usdc_pool_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id)
+}
+
+/// Helper function to set up a complete BTC/SUI margin trading environment
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, deepbook_pool_id)
+public fun setup_btc_sui_margin_trading(): (
+    Scenario,
+    Clock,
+    MarginAdminCap,
+    MaintainerCap,
+    ID,
+    ID,
+    ID,
+) {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    clock.set_for_testing(1000000);
+    let btc_pool_id = create_margin_pool<BTC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    let sui_pool_id = create_margin_pool<SUI>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let (btc_pool_cap, sui_pool_cap) = get_margin_pool_caps(&mut scenario, btc_pool_id);
+
+    let pool_id = create_pool_for_testing<BTC, SUI>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_margin_trading_on_pool<BTC, SUI>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    btc_pool.supply(
+        &registry,
+        mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+    sui_pool.supply(
+        &registry,
+        mint_coin<SUI>(1_000_000 * test_constants::sui_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    btc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &btc_pool_cap, &clock);
+    sui_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &sui_pool_cap, &clock);
+
+    test::return_shared(btc_pool);
+    test::return_shared(sui_pool);
+    test::return_shared(registry);
+    scenario.return_to_sender(btc_pool_cap);
+    scenario.return_to_sender(sui_pool_cap);
+
+    (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, pool_id)
 }
 
 public fun advance_time(clock: &mut Clock, ms: u64) {
