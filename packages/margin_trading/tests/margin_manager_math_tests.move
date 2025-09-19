@@ -5,22 +5,20 @@
 module margin_trading::margin_manager_math_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::{
-    margin_manager::{Self, MarginManager},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, BTC, SUI, btc_multiplier, sui_multiplier},
-    test_helpers::{
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_btc_price_info_object,
-        build_sui_price_info_object,
-        setup_btc_usd_margin_trading,
-        setup_btc_sui_margin_trading,
-        destroy_3,
-        return_shared_3
-    }
+use margin_trading::margin_manager::{Self, MarginManager};
+use margin_trading::margin_pool::MarginPool;
+use margin_trading::margin_registry::MarginRegistry;
+use margin_trading::test_constants::{Self, USDC, BTC, SUI, btc_multiplier, sui_multiplier};
+use margin_trading::test_helpers::{
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_btc_price_info_object,
+    build_sui_price_info_object,
+    setup_btc_usd_margin_trading,
+    setup_btc_sui_margin_trading,
+    destroy_3,
+    return_shared_3
 };
 use sui::test_utils::destroy;
 
@@ -46,6 +44,16 @@ fun test_liquidation_2_ok() {
 #[test, expected_failure(abort_code = margin_manager::EWithdrawRiskRatioExceeded)]
 fun test_liquidation_cannot_withdraw() {
     test_liquidation_2(ECannotWithdraw);
+}
+
+#[test]
+fun test_btc_sui_volatile_pair_ok() {
+    test_btc_sui_liquidation(ENoError);
+}
+
+#[test, expected_failure(abort_code = margin_manager::ECannotLiquidate)]
+fun test_btc_sui_cannot_liquidate() {
+    test_btc_sui_liquidation(ECannotLiquidate);
 }
 
 fun test_liquidation(error_code: u64) {
@@ -281,20 +289,7 @@ fun test_liquidation_2(error_code: u64) {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// === Edge Case Tests with Non-Stablecoin Pairs ===
-
-#[test]
-fun test_btc_sui_volatile_pair_liquidation() {
-    test_btc_sui_liquidation(ENoError);
-}
-
-#[test, expected_failure(abort_code = margin_manager::ECannotLiquidate)]
-fun test_btc_sui_cannot_liquidate() {
-    test_btc_sui_liquidation(ECannotLiquidate);
-}
-
 /// Test liquidation with BTC/SUI pair where both assets are volatile
-/// This tests cross-asset risk calculations with different decimal precisions
 /// BTC: 8 decimals, SUI: 9 decimals
 fun test_btc_sui_liquidation(error_code: u64) {
     let (
@@ -349,8 +344,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &sui_pool,
         &clock,
     );
-    // Allow some tolerance due to precision
-    assert!(actual_risk_ratio >= 2_200_000_000 && actual_risk_ratio <= 2_300_000_000, 0);
+    assert!(actual_risk_ratio == 2_250_000_000, 0);
 
     // Perform liquidation test
     scenario.next_tx(test_constants::liquidator());
@@ -369,7 +363,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
             &sui_pool,
             &clock,
         );
-        assert!(safe_risk_ratio > 1_200_000_000, 0); // Should be > 1.2, safe from liquidation
+        assert!(safe_risk_ratio > test_constants::liquidation_risk_ratio(), 0);
 
         let (_base_coin, _quote_coin, _remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
             &registry,
@@ -384,10 +378,10 @@ fun test_btc_sui_liquidation(error_code: u64) {
         abort
     };
 
-    // Create a liquidatable scenario: BTC drops to $3,000, SUI rises to $100
-    // BTC value: 0.1 * $3,000 = $300, SUI borrowed value: 200 * $100 = $20,000
-    // Risk ratio = (300 + 20000) / 20000 = 1.015 < 1.1, can liquidate
-    let btc_price_crash = build_btc_price_info_object(&mut scenario, 3000, &clock);
+    // Create a liquidatable scenario: BTC drops to $15,000, SUI rises to $100
+    // BTC value: 0.1 * $15,000 = $1500, SUI borrowed value: 200 * $100 = $20,000
+    // Risk ratio = (1500 + 20000) / 20000 = 1.075 < 1.1, can liquidate
+    let btc_price_crash = build_btc_price_info_object(&mut scenario, 15000, &clock);
     let sui_price_spike = build_sui_price_info_object(&mut scenario, 100, &clock);
     let repay_coin = mint_coin<SUI>(3000 * sui_multiplier(), scenario.ctx());
 
@@ -399,9 +393,14 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &sui_pool,
         &clock,
     );
-    assert!(liquidation_risk_ratio < 1_100_000_000, 0); // Should be liquidatable
+    assert!(liquidation_risk_ratio == 1_075_000_000, 0); // Should be liquidatable
 
-    // Mixed reward liquidation: 200 SUI from manager + 0.1 BTC for remaining reward
+    // 180.25 SUI total is used. 175 SUI for repayment, 5.25 SUI for pool liquidation fee.
+    // The liquidator should receive 175 * 0.02 = 3.5 SUI as a reward.
+    // Risk ratio after liquidation = (21500 - 175 * 1.05 * 100) / (20000 - 175 * 100) = 1.25 (our target liquidation)
+    // Remaining_repay_coin = 3000 - 180.25 = 2819.75 SUI
+    // The liquidator should receive 175 * 1.05 = 183.75 SUI = 183.75 * 100 = 18375 USD.
+    // Since there's enough SUI, no BTC is paid out
     let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
         &registry,
         &btc_price_crash,
@@ -413,10 +412,9 @@ fun test_btc_sui_liquidation(error_code: u64) {
         scenario.ctx(),
     );
 
-    // Exact assertions following test_liquidation_2 pattern
-    assert!(base_coin.value() == 10000000, 0); // 0.1 BTC exact (8 decimals)
-    assert!(quote_coin.value() == 200000000000, 0); // 200 SUI exact (9 decimals)
-    assert!(remaining_repay_coin.value() == 2800866666668, 0); // 2800.866666668 SUI exact
+    assert!(base_coin.value() == 0, 0); // 0.1 BTC exact (8 decimals)
+    assert!(quote_coin.value() == 183_750_000_000, 0); // 200 SUI exact (9 decimals)
+    assert!(remaining_repay_coin.value() == 2819_750_000_000, 0);
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, sui_pool, pool);
