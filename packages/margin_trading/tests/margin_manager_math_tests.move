@@ -5,23 +5,26 @@
 module margin_trading::margin_manager_math_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::margin_manager::{Self, MarginManager};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::test_constants::{Self, USDC, BTC, btc_multiplier};
-use margin_trading::test_helpers::{
-    cleanup_margin_test,
-    mint_coin,
-    build_demo_usdc_price_info_object,
-    build_btc_price_info_object,
-    setup_btc_usd_margin_trading,
-    destroy_3,
-    return_shared_3
+use margin_trading::{
+    margin_manager::{Self, MarginManager},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    test_constants::{Self, USDC, BTC, btc_multiplier},
+    test_helpers::{
+        cleanup_margin_test,
+        mint_coin,
+        build_demo_usdc_price_info_object,
+        build_btc_price_info_object,
+        setup_btc_usd_margin_trading,
+        destroy_3,
+        return_shared_3
+    }
 };
 use sui::test_utils::destroy;
 
 const ENoError: u64 = 0;
 const ECannotLiquidate: u64 = 1;
+const ECannotWithdraw: u64 = 2;
 
 #[test]
 fun test_liquidation_ok() {
@@ -31,6 +34,16 @@ fun test_liquidation_ok() {
 #[test, expected_failure(abort_code = margin_manager::ECannotLiquidate)]
 fun test_liquidation_cannot_liquidate() {
     test_liquidation(ECannotLiquidate);
+}
+
+#[test]
+fun test_liquidation_2_ok() {
+    test_liquidation_2(ENoError);
+}
+
+#[test, expected_failure(abort_code = margin_manager::EWithdrawRiskRatioExceeded)]
+fun test_liquidation_cannot_withdraw() {
+    test_liquidation_2(ECannotWithdraw);
 }
 
 fun test_liquidation(error_code: u64) {
@@ -140,8 +153,7 @@ fun test_liquidation(error_code: u64) {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test]
-fun test_liquidation_2() {
+fun test_liquidation_2(error_code: u64) {
     let (
         mut scenario,
         clock,
@@ -203,14 +215,31 @@ fun test_liquidation_2() {
     );
     withdraw_usdc.burn_for_testing();
 
-    // Perform liquidation and check rewards
-    scenario.next_tx(test_constants::liquidator());
-
     // Risk ratio is now (500 + 100) / 200 = 3.0
     assert!(
         mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_000_000_000,
         0,
     );
+
+    if (error_code == ECannotWithdraw) {
+        // At BTC price 500, we try to withdraw half BTC. (250 + 100) / 200 = 1.75 < 2.0, cannot withdraw
+        let withdraw_usdc_2 = mm.withdraw<BTC, USDC, BTC>(
+            &registry,
+            &btc_pool,
+            &usdc_pool,
+            &btc_price,
+            &usdc_price,
+            &pool,
+            5000_0000,
+            &clock,
+            scenario.ctx(),
+        );
+        withdraw_usdc_2.burn_for_testing();
+        abort
+    };
+
+    // Perform liquidation and check rewards
+    scenario.next_tx(test_constants::liquidator());
 
     // At BTC price 115, Risk ratio = (115 + 100) / 200 = 1.075 < 1.1, can liquidate
     let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
