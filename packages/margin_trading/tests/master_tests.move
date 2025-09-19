@@ -5,20 +5,21 @@
 module margin_trading::margin_master_tests;
 
 use deepbook::math;
-use margin_trading::margin_constants;
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::test_constants::{Self, USDC, USDT};
-use margin_trading::test_helpers::{
-    setup_margin_registry,
-    create_margin_pool,
-    default_protocol_config,
-    cleanup_margin_test,
-    mint_coin,
-    advance_time
+use margin_trading::{
+    margin_constants,
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{
+        setup_margin_registry,
+        create_margin_pool,
+        default_protocol_config,
+        cleanup_margin_test,
+        mint_coin,
+        advance_time
+    }
 };
-use sui::test_scenario::return_shared;
-use sui::test_utils::destroy;
+use sui::{test_scenario::return_shared, test_utils::destroy};
 
 /// A comprehensive master test demonstrating the core margin trading workflow with exact interest calculations:
 /// 1. Setup margin pools for USDC and USDT

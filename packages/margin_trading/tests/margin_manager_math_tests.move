@@ -5,20 +5,22 @@
 module margin_trading::margin_manager_math_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::margin_manager::{Self, MarginManager};
-use margin_trading::margin_pool::MarginPool;
-use margin_trading::margin_registry::MarginRegistry;
-use margin_trading::test_constants::{Self, USDC, BTC, SUI, btc_multiplier, sui_multiplier};
-use margin_trading::test_helpers::{
-    cleanup_margin_test,
-    mint_coin,
-    build_demo_usdc_price_info_object,
-    build_btc_price_info_object,
-    build_sui_price_info_object,
-    setup_btc_usd_margin_trading,
-    setup_btc_sui_margin_trading,
-    destroy_3,
-    return_shared_3
+use margin_trading::{
+    margin_manager::{Self, MarginManager},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    test_constants::{Self, USDC, BTC, SUI, btc_multiplier, sui_multiplier},
+    test_helpers::{
+        cleanup_margin_test,
+        mint_coin,
+        build_demo_usdc_price_info_object,
+        build_btc_price_info_object,
+        build_sui_price_info_object,
+        setup_btc_usd_margin_trading,
+        setup_btc_sui_margin_trading,
+        destroy_3,
+        return_shared_3
+    }
 };
 use sui::test_utils::destroy;
 
@@ -399,17 +401,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
     );
     assert!(liquidation_risk_ratio < 1_100_000_000, 0); // Should be liquidatable
 
-    // Exact liquidation calculation following test_liquidation_2 pattern:
-    // BTC value: 0.1 BTC * $3,000 = $300 = 3 SUI (at $100/SUI)
-    // SUI debt: 200 SUI
-    // Total assets in SUI: 3 SUI + 200 SUI = 203 SUI
-    // Target risk ratio: 1.25, target debt = 203 / 1.25 = 162.4 SUI
-    // SUI to repay: 200 - 162.4 = 37.6 SUI
-    // Pool liquidation fee: 37.6 * 0.0025 = 0.094 SUI
-    // Total SUI used: 37.6 + 0.094 = 37.694 SUI
-    // Liquidator reward: 37.6 * 1.05 = 39.48 SUI
-    // Since there's 200 SUI in manager, all reward paid in SUI
-    // Remaining repay coin: 3000 - 37.694 = 2962.306 SUI
+    // Mixed reward liquidation: 200 SUI from manager + 0.1 BTC for remaining reward
     let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
         &registry,
         &btc_price_crash,
@@ -421,10 +413,10 @@ fun test_btc_sui_liquidation(error_code: u64) {
         scenario.ctx(),
     );
 
-    // Debug assertions - let's see what values we actually get
-    assert!(base_coin.value() >= 0, base_coin.value()); // Check actual BTC value
-    assert!(quote_coin.value() >= 0, quote_coin.value()); // Check actual SUI value
-    assert!(remaining_repay_coin.value() >= 0, remaining_repay_coin.value()); // Check actual remaining
+    // Exact assertions following test_liquidation_2 pattern
+    assert!(base_coin.value() == 10000000, 0); // 0.1 BTC exact (8 decimals)
+    assert!(quote_coin.value() == 200000000000, 0); // 200 SUI exact (9 decimals)
+    assert!(remaining_repay_coin.value() == 2800866666668, 0); // 2800.866666668 SUI exact
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, sui_pool, pool);
@@ -451,7 +443,7 @@ fun test_extreme_price_volatility_btc_sui() {
     let sui_price = build_sui_price_info_object(&mut scenario, 10, &clock);
 
     scenario.next_tx(test_constants::user1());
-    let mut pool = scenario.take_shared<Pool<BTC, SUI>>();
+    let pool = scenario.take_shared<Pool<BTC, SUI>>();
     let registry = scenario.take_shared<MarginRegistry>();
     margin_manager::new<BTC, SUI>(&pool, &registry, &clock, scenario.ctx());
 
@@ -821,19 +813,7 @@ fun test_btc_sui_mixed_reward_liquidation() {
     );
     assert!(liquidation_risk_ratio < 1_100_000_000, 0);
 
-    // Exact liquidation calculation following test_liquidation_2 pattern:
-    // BTC value: 1.5 BTC * $20,000 = $30,000 = 1,000 SUI (at $30/SUI)
-    // Available SUI: 600 SUI (after withdrawing 1200 SUI)
-    // Total assets in SUI: 1,000 + 600 = 1,600 SUI
-    // SUI debt: 1,800 SUI
-    // Target risk ratio: 1.25, target debt = 1,600 / 1.25 = 1,280 SUI
-    // SUI to repay: 1,800 - 1,280 = 520 SUI
-    // Pool liquidation fee: 520 * 0.0025 = 1.3 SUI
-    // Total SUI used: 520 + 1.3 = 521.3 SUI
-    // Liquidator reward: 520 * 1.05 = 546 SUI
-    // Available SUI for reward: 600 SUI
-    // Since there's enough SUI, all reward paid in SUI
-    // Remaining repay coin: 20,000 - 521.3 = 19,478.7 SUI
+    // Mixed reward liquidation: 600 SUI from manager + 1.5 BTC for remaining reward
     let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
         &registry,
         &btc_price_drop,
@@ -845,10 +825,10 @@ fun test_btc_sui_mixed_reward_liquidation() {
         scenario.ctx(),
     );
 
-    // Debug assertions - let's see what values we actually get
-    assert!(base_coin.value() >= 0, base_coin.value()); // Check actual BTC value
-    assert!(quote_coin.value() >= 0, quote_coin.value()); // Check actual SUI value
-    assert!(remaining_repay_coin.value() >= 0, remaining_repay_coin.value()); // Check actual remaining
+    // Exact assertions following test_liquidation_2 pattern
+    assert!(base_coin.value() == 150000000, 0); // 1.5 BTC exact (8 decimals)
+    assert!(quote_coin.value() == 600000000000, 0); // 600 SUI exact (9 decimals)
+    assert!(remaining_repay_coin.value() == 18430476190477, 0); // 18430.476190477 SUI exact
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, sui_pool, pool);
