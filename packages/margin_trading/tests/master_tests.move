@@ -4,6 +4,8 @@
 #[test_only]
 module margin_trading::margin_master_tests;
 
+use deepbook::math;
+use margin_trading::margin_constants;
 use margin_trading::margin_pool::MarginPool;
 use margin_trading::margin_registry::MarginRegistry;
 use margin_trading::test_constants::{Self, USDC, USDT};
@@ -18,14 +20,14 @@ use margin_trading::test_helpers::{
 use sui::test_scenario::return_shared;
 use sui::test_utils::destroy;
 
-/// A comprehensive master test demonstrating the core margin trading workflow:
+/// A comprehensive master test demonstrating the core margin trading workflow with exact interest calculations:
 /// 1. Setup margin pools for USDC and USDT
-/// 2. Users supply assets to pools with referral system
-/// 3. Users borrow from pools with interest accrual
-/// 4. Time progression to demonstrate interest accumulation
-/// 5. Users withdraw from pools with earned interest
-/// 6. Pool liquidation scenarios
-/// 7. Comprehensive cleanup
+/// 2. Users supply assets to pools (no referral to avoid protocol fees)
+/// 3. Users borrow from pools creating debt positions
+/// 4. Time progression by exactly 1 year with precise interest accrual calculations
+/// 5. Verify exact interest amounts based on utilization rates and interest rate model
+/// 6. Users repay and withdraw with earned interest
+/// 7. Pool liquidation scenarios and comprehensive cleanup
 #[test]
 fun test_comprehensive_margin_trading_flow() {
     let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
@@ -98,16 +100,106 @@ fun test_comprehensive_margin_trading_flow() {
     destroy(borrowed_usdc2);
 
     // === Phase 4: Time Progression and Interest Accrual ===
+    // Interest Rate Model:
+    // - Base rate: 5%
+    // - Base slope: 10%
+    // - Optimal utilization: 80%
+    // - Excess slope: 200%
+    // Formula: if utilization < 80% then rate = 5% + 10% * utilization
+    //          else rate = 5% + 10% * 80% + 200% * (utilization - 80%)
 
-    // Advance time by 6 months to accrue interest
-    advance_time(&mut clock, 180 * 24 * 60 * 60 * 1000);
+    // Advance time by exactly 1 year for precise interest calculations
+    advance_time(&mut clock, margin_constants::year_ms());
 
-    // Verify that debt has grown due to interest
+    // Calculate expected interest for USDC loan manually
+    // Step 1: Calculate utilization rate
+    // Total supply: 175000 USDC (100000 + 75000)
+    // Total borrow: 35000 USDC (15000 + 20000 from User2)
+    // Utilization rate = borrow / supply = 35000 / 175000 = 0.2 = 200_000_000 (with 9 decimals)
+    let total_supply_usdc = 175000 * test_constants::usdc_multiplier();
+    let total_borrow_usdc = 35000 * test_constants::usdc_multiplier();
+    let utilization_rate_usdc = math::div(total_borrow_usdc, total_supply_usdc);
+
+    // Step 2: Calculate interest rate
+    // Since 20% < 80% optimal, use base rate + base_slope * utilization
+    // Interest rate = 5% + 10% * 20% = 5% + 2% = 7%
+    let base_rate = test_constants::base_rate(); // 50_000_000 (5%)
+    let base_slope = test_constants::base_slope(); // 100_000_000 (10%)
+    let interest_rate_usdc = base_rate + math::mul(utilization_rate_usdc, base_slope);
+
+    // Step 3: Calculate time-adjusted rate for 1 year
+    let time_adjusted_rate_usdc = math::div(
+        math::mul(margin_constants::year_ms(), interest_rate_usdc),
+        margin_constants::year_ms(),
+    ); // This should equal interest_rate_usdc since time = 1 year
+
+    // Step 4: Calculate interest on total borrow
+    let interest_usdc = math::mul(total_borrow_usdc, time_adjusted_rate_usdc);
+
+    // Step 5: Calculate new total borrow (for reference)
+    let _new_total_borrow_usdc = total_borrow_usdc + interest_usdc;
+
+    // Step 6: Calculate expected debt for User1's shares
+    // User1's debt = (User1's shares / total shares) * new total borrow
+    // But we need to calculate this using the same logic as borrow_shares_to_amount
+    // Expected debt = shares / (total_shares / new_total_borrow) = shares * new_total_borrow / total_shares
+
+    // For now, let's verify the actual calculation matches our manual one
     let debt_after_interest1 = usdc_pool.borrow_shares_to_amount(usdc_borrow_shares1, &clock);
-    assert!(debt_after_interest1 > 15000 * test_constants::usdc_multiplier(), 1);
 
+    // The actual calculation in borrow_shares_to_amount:
+    // 1. Calculate interest on total pool borrow: interest = total_borrow * time_adjusted_rate
+    // 2. New total borrow = total_borrow + interest
+    // 3. ratio = total_borrow_shares / new_total_borrow
+    // 4. user_debt = user_shares / ratio = user_shares * new_total_borrow / total_borrow_shares
+
+    // Since User1 has 15000 out of 35000 total borrow, their share ratio is 15000/35000
+    // After interest, total borrow becomes 35000 * (1 + 7%) = 37450
+    // User1's debt = (15000/35000) * 37450 = 16050 USDC
+    let new_total_borrow_after_interest =
+        total_borrow_usdc + math::mul(total_borrow_usdc, interest_rate_usdc);
+    let user1_borrow_ratio = math::div(
+        15000 * test_constants::usdc_multiplier(),
+        total_borrow_usdc,
+    );
+    let expected_usdc_debt = math::mul(user1_borrow_ratio, new_total_borrow_after_interest);
+
+    // Allow small tolerance for rounding in share calculations
+    let tolerance = 1000; // Small tolerance for rounding
+    assert!(
+        debt_after_interest1 >= expected_usdc_debt - tolerance &&
+        debt_after_interest1 <= expected_usdc_debt + tolerance,
+        1,
+    );
+
+    // Calculate expected interest for USDT loan manually
+    // Total supply: 80000 USDT (50000 + 30000)
+    // Total borrow: 10000 USDT (only User2's loan)
+    // Utilization rate = borrow / supply = 10000 / 80000 = 0.125 = 125_000_000 (with 9 decimals)
+    let total_supply_usdt = 80000 * test_constants::usdt_multiplier();
+    let total_borrow_usdt = 10000 * test_constants::usdt_multiplier();
+    let utilization_rate_usdt = math::div(total_borrow_usdt, total_supply_usdt);
+
+    // Interest rate = 5% + 10% * 12.5% = 5% + 1.25% = 6.25%
+    let interest_rate_usdt = base_rate + math::mul(utilization_rate_usdt, base_slope);
+
+    // Calculate time-adjusted rate for 1 year (for reference)
+    let _time_adjusted_rate_usdt = interest_rate_usdt; // Since time = 1 year
+
+    // For USDT, User2 has all 10000 out of 10000 total borrow, so ratio is 100%
+    // After interest, total borrow becomes 10000 * (1 + 6.25%) = 10625 USDT
+    // User2's debt = 100% * 10625 = 10625 USDT
     let debt_after_interest2 = usdt_pool.borrow_shares_to_amount(usdt_borrow_shares1, &clock);
-    assert!(debt_after_interest2 > 10000 * test_constants::usdt_multiplier(), 2);
+    let new_total_borrow_usdt_after_interest =
+        total_borrow_usdt + math::mul(total_borrow_usdt, interest_rate_usdt);
+    let expected_usdt_debt = new_total_borrow_usdt_after_interest; // User2 has 100% of the borrow
+
+    // Allow small tolerance for rounding in share calculations
+    assert!(
+        debt_after_interest2 >= expected_usdt_debt - tolerance &&
+        debt_after_interest2 <= expected_usdt_debt + tolerance,
+        2,
+    );
 
     // === Phase 5: Repayment Operations ===
 
@@ -176,6 +268,7 @@ fun test_comprehensive_margin_trading_flow() {
         &clock,
         scenario.ctx(),
     );
+    // Should be more than originally supplied due to interest earned
     assert!(withdrawn_usdt1.value() >= 50000 * test_constants::usdt_multiplier(), 11);
     destroy(withdrawn_usdt1);
 
