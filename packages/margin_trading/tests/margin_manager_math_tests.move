@@ -525,6 +525,10 @@ fun test_liquidation_base_debt() {
     assert!(quote_coin.value() == 499999980, 0); // ~500 USDC. Rounding is due to conversion of BTC to USDC.
     assert!(remaining_repay_coin.value() == 64031746, 0); // 0.6403 BTC
 
+    // The loans should be defaulted
+    assert!(mm.borrowed_base_shares() == 0, 0); // 0 BTC
+    assert!(mm.borrowed_quote_shares() == 0, 0); // 0 USDC
+
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
     destroy_3!(btc_price, usdc_price, btc_price_3000);
