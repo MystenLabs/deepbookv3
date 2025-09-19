@@ -4,31 +4,28 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::{Self, Pool};
-use deepbook::registry::{Self, Registry};
-use margin_trading::margin_pool::{Self, MarginPool};
-use margin_trading::margin_registry::{
-    Self,
-    MarginRegistry,
-    MarginAdminCap,
-    MaintainerCap,
-    PoolConfig,
-    MarginPoolCap
+use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
+use margin_trading::{
+    margin_pool::{Self, MarginPool},
+    margin_registry::{
+        Self,
+        MarginRegistry,
+        MarginAdminCap,
+        MaintainerCap,
+        PoolConfig,
+        MarginPoolCap
+    },
+    oracle::{Self, PythConfig},
+    protocol_config::{Self, ProtocolConfig},
+    test_constants::{Self, USDC, USDT, BTC}
 };
-use margin_trading::oracle::{Self, PythConfig};
-use margin_trading::protocol_config::{Self, ProtocolConfig};
-use margin_trading::test_constants::{Self, USDC, USDT, BTC};
-use pyth::i64;
-use pyth::price;
-use pyth::price_feed;
-use pyth::price_identifier;
-use pyth::price_info::{Self, PriceInfoObject};
-use sui::clock::{Self, Clock};
-use sui::coin::{Self, Coin};
-use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
-use sui::test_utils::destroy;
+use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, Coin},
+    test_scenario::{Self as test, Scenario, begin, return_shared},
+    test_utils::destroy
+};
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
