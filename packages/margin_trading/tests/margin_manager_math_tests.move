@@ -47,6 +47,11 @@ fun test_liquidation_cannot_withdraw() {
 }
 
 #[test]
+fun test_liquidation_2_partial_ok() {
+    test_liquidation_2_partial();
+}
+
+#[test]
 fun test_btc_sui_volatile_pair_ok() {
     test_btc_sui_liquidation(ENoError);
 }
@@ -281,6 +286,132 @@ fun test_liquidation_2(error_code: u64) {
     assert!(base_coin.value() == 72826087, 0); // ~0.72826087 BTC
     assert!(quote_coin.value() == 100 * test_constants::usdc_multiplier(), 0); // 100 USDC
     assert!(remaining_repay_coin.value() == 319_750_000, 0); // 319.75 USDC
+
+    destroy_3!(remaining_repay_coin, base_coin, quote_coin);
+    return_shared_3!(mm, usdc_pool, pool);
+    destroy_3!(btc_price, usdc_price, btc_price_115);
+    destroy(btc_pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+fun test_liquidation_2_partial() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+    ) = setup_btc_usd_margin_trading();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+
+    // Deposit 1 BTC worth $500
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // Borrow $200 USDC. Risk ratio = (500 + 200) / 200 = 3.5
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        200 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_500_000_000,
+        0,
+    );
+
+    // Now we withdraw 100 USDC. This should be allowed since risk ratio >= 2;
+    let withdraw_usdc = mm.withdraw<BTC, USDC, USDC>(
+        &registry,
+        &btc_pool,
+        &usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        100 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    withdraw_usdc.burn_for_testing();
+
+    // Risk ratio is now (500 + 100) / 200 = 3.0
+    assert!(
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_000_000_000,
+        0,
+    );
+
+    // Perform liquidation and check rewards
+    scenario.next_tx(test_constants::liquidator());
+
+    // At BTC price 115, Risk ratio = (115 + 100) / 200 = 1.075 < 1.1, can liquidate
+    let repay_coin = mint_coin<USDC>(90_125_000, scenario.ctx());
+    let btc_price_115 = build_btc_price_info_object(&mut scenario, 115, &clock);
+    assert!(
+        mm.risk_ratio(&registry, &btc_price_115, &usdc_price, &pool, &usdc_pool, &clock) == 1_075_000_000,
+        0,
+    );
+
+    // 90.125 USDC will be used to liquidate. 87.5 USDC for repayment of loan, 2.625 for pool liquidation fee.
+    // Since 87.5 USDC is used for repayment, the liquidator should receive 87.5 * 0.02 = 1.75 as a reward.
+    // Risk ratio after liquidation = (215 - 87.5 * 1.05) / (200 - 87.5) = 1.094 (not at target since this is a partial liquidation)
+    // Remaining_repay_coin = 0 USDC
+    // The liquidator should receive 87.5 * 1.05 = 91.875 USDC. The net profit is 91.875 - 90.125 = 1.75 USDC
+    // 1.75 USDC / 87.5 USDC = 2% reward
+    // Since there's 100 USDC in the manager, only USDC will be paid out
+    let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_115,
+        &usdc_price,
+        &mut usdc_pool,
+        &mut pool,
+        repay_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(base_coin.value() == 0, 0); // 0 BTC
+    assert!(quote_coin.value() == 91_875_000, 0); // 91.875 USDC
+    assert!(remaining_repay_coin.value() == 0, 0); // 0 USDC
+    destroy_3!(remaining_repay_coin, base_coin, quote_coin);
+
+    // Since risk ratio still < 1.1, can liquidate again
+    let repay_coin = mint_coin<USDC>(90_125_000, scenario.ctx());
+    let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_115,
+        &usdc_price,
+        &mut usdc_pool,
+        &mut pool,
+        repay_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(base_coin.value() == 72826087, 0); // ~0.72826087 BTC
+    assert!(quote_coin.value() == 8_125_000, 0); // 8.125 USDC
+    assert!(remaining_repay_coin.value() == 0, 0); // 0 USDC
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
