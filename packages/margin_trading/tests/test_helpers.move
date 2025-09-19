@@ -4,28 +4,31 @@
 #[test_only]
 module margin_trading::test_helpers;
 
-use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
-use margin_trading::{
-    margin_pool::{Self, MarginPool},
-    margin_registry::{
-        Self,
-        MarginRegistry,
-        MarginAdminCap,
-        MaintainerCap,
-        PoolConfig,
-        MarginPoolCap
-    },
-    oracle::{Self, PythConfig},
-    protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, USDT, BTC}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use margin_trading::margin_pool::{Self, MarginPool};
+use margin_trading::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    PoolConfig,
+    MarginPoolCap
 };
-use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
-};
+use margin_trading::oracle::{Self, PythConfig};
+use margin_trading::protocol_config::{Self, ProtocolConfig};
+use margin_trading::test_constants::{Self, USDC, USDT, BTC};
+use pyth::i64;
+use pyth::price;
+use pyth::price_feed;
+use pyth::price_identifier;
+use pyth::price_info::{Self, PriceInfoObject};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
@@ -282,9 +285,9 @@ public fun build_demo_usdc_price_info_object(
     build_pyth_price_info_object(
         scenario,
         test_constants::usdc_price_feed_id(),
-        100000000,
+        1 * test_constants::pyth_multiplier(),
         50000,
-        8,
+        test_constants::pyth_decimals(),
         clock.timestamp_ms() / 1000,
     )
 }
@@ -298,9 +301,9 @@ public fun build_demo_usdt_price_info_object(
     build_pyth_price_info_object(
         scenario,
         test_constants::usdt_price_feed_id(),
-        100000000,
+        1 * test_constants::pyth_multiplier(),
         50000,
-        8,
+        test_constants::pyth_decimals(),
         clock.timestamp_ms() / 1000,
     )
 }
@@ -315,9 +318,9 @@ public fun build_btc_price_info_object(
     build_pyth_price_info_object(
         scenario,
         test_constants::btc_price_feed_id(),
-        price_usd * 100000000,
+        price_usd * test_constants::pyth_multiplier(),
         1000000,
-        8,
+        test_constants::pyth_decimals(),
         clock.timestamp_ms() / 1000,
     )
 }

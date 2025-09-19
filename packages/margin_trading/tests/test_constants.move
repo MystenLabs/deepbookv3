@@ -20,6 +20,7 @@ const USDC_MULTIPLIER: u64 = 1000000;
 const USDT_MULTIPLIER: u64 = 1000000;
 const DEEP_MULTIPLIER: u64 = 1000000;
 const BTC_MULTIPLIER: u64 = 100000000;
+const PYTH_DECIMALS: u64 = 8;
 
 // === Margin Pool Constants ===
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
@@ -150,4 +151,12 @@ public fun deep_multiplier(): u64 {
 
 public fun btc_multiplier(): u64 {
     BTC_MULTIPLIER
+}
+
+public fun pyth_multiplier(): u64 {
+    10u64.pow(PYTH_DECIMALS as u8)
+}
+
+public fun pyth_decimals(): u64 {
+    PYTH_DECIMALS
 }
