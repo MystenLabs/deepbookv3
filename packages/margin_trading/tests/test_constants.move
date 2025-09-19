@@ -14,12 +14,14 @@ const LIQUIDATOR: address = @0xC;
 public struct USDC has drop {}
 public struct USDT has drop {}
 public struct BTC has drop {}
+public struct SUI has drop {}
 public struct INVALID_ASSET has drop {}
 
 const USDC_MULTIPLIER: u64 = 1000000;
 const USDT_MULTIPLIER: u64 = 1000000;
 const DEEP_MULTIPLIER: u64 = 1000000;
 const BTC_MULTIPLIER: u64 = 100000000;
+const SUI_MULTIPLIER: u64 = 1000000000; // 9 decimals
 const PYTH_DECIMALS: u64 = 8;
 
 // === Margin Pool Constants ===
@@ -46,6 +48,7 @@ const POOL_LIQUIDATION_REWARD: u64 = 30_000_000; // 3%
 const USDC_PRICE_FEED_ID: vector<u8> = b"USDC0000000000000000000000000000";
 const USDT_PRICE_FEED_ID: vector<u8> = b"USDT0000000000000000000000000000";
 const BTC_PRICE_FEED_ID: vector<u8> = b"BTC00000000000000000000000000000";
+const SUI_PRICE_FEED_ID: vector<u8> = b"SUI00000000000000000000000000000";
 
 public fun supply_cap(): u64 {
     SUPPLY_CAP
@@ -137,6 +140,10 @@ public fun btc_price_feed_id(): vector<u8> {
     BTC_PRICE_FEED_ID
 }
 
+public fun sui_price_feed_id(): vector<u8> {
+    SUI_PRICE_FEED_ID
+}
+
 public fun usdc_multiplier(): u64 {
     USDC_MULTIPLIER
 }
@@ -151,6 +158,10 @@ public fun deep_multiplier(): u64 {
 
 public fun btc_multiplier(): u64 {
     BTC_MULTIPLIER
+}
+
+public fun sui_multiplier(): u64 {
+    SUI_MULTIPLIER
 }
 
 public fun pyth_multiplier(): u64 {
