@@ -525,7 +525,7 @@ fun test_extreme_price_volatility_btc_sui() {
     );
     // Should be high risk ratio since both assets crashed
     // BTC: $10,000, SUI debt: $20,000, ratio should be (10000 + 20000) / 20000 = 1.5
-    assert!(crash_risk_ratio >= 1_400_000_000 && crash_risk_ratio <= 1_600_000_000, 0); // Should be around 1.5
+    assert!(crash_risk_ratio == 1_500_000_000, 0); // Should be around 1.5
 
     // Test that we can withdraw when risk ratio is very high
     let withdraw_sui = mm.withdraw<BTC, SUI, SUI>(
@@ -823,7 +823,6 @@ fun test_btc_sui_mixed_reward_liquidation() {
         scenario.ctx(),
     );
 
-    // Exact assertions following test_liquidation_2 pattern
     assert!(base_coin.value() == 150000000, 0); // 1.5 BTC exact (8 decimals)
     assert!(quote_coin.value() == 600000000000, 0); // 600 SUI exact (9 decimals)
     assert!(remaining_repay_coin.value() == 18430476190477, 0); // 18430.476190477 SUI exact
