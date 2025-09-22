@@ -14,12 +14,15 @@ const LIQUIDATOR: address = @0xC;
 public struct USDC has drop {}
 public struct USDT has drop {}
 public struct BTC has drop {}
+public struct SUI has drop {}
 public struct INVALID_ASSET has drop {}
 
 const USDC_MULTIPLIER: u64 = 1000000;
 const USDT_MULTIPLIER: u64 = 1000000;
 const DEEP_MULTIPLIER: u64 = 1000000;
 const BTC_MULTIPLIER: u64 = 100000000;
+const SUI_MULTIPLIER: u64 = 1000000000; // 9 decimals
+const PYTH_DECIMALS: u64 = 8;
 
 // === Margin Pool Constants ===
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
@@ -35,16 +38,17 @@ const EXCESS_SLOPE: u64 = 2_000_000_000; // 200%
 
 // === Pool Configuration Constants ===
 const MIN_WITHDRAW_RISK_RATIO: u64 = 2_000_000_000; // 200%
-const MIN_BORROW_RISK_RATIO: u64 = 1_500_000_000; // 150%
-const LIQUIDATION_RISK_RATIO: u64 = 1_200_000_000; // 120%
-const TARGET_LIQUIDATION_RISK_RATIO: u64 = 1_300_000_000; // 130%
-const USER_LIQUIDATION_REWARD: u64 = 50_000_000; // 5%
-const POOL_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
+const MIN_BORROW_RISK_RATIO: u64 = 1_250_000_000; // 125%
+const LIQUIDATION_RISK_RATIO: u64 = 1_100_000_000; // 110%
+const TARGET_LIQUIDATION_RISK_RATIO: u64 = 1_250_000_000; // 125%
+const USER_LIQUIDATION_REWARD: u64 = 20_000_000; // 2%
+const POOL_LIQUIDATION_REWARD: u64 = 30_000_000; // 3%
 
 // === Pyth Price Feed IDs for Testing ===
 const USDC_PRICE_FEED_ID: vector<u8> = b"USDC0000000000000000000000000000";
 const USDT_PRICE_FEED_ID: vector<u8> = b"USDT0000000000000000000000000000";
 const BTC_PRICE_FEED_ID: vector<u8> = b"BTC00000000000000000000000000000";
+const SUI_PRICE_FEED_ID: vector<u8> = b"SUI00000000000000000000000000000";
 
 public fun supply_cap(): u64 {
     SUPPLY_CAP
@@ -136,6 +140,10 @@ public fun btc_price_feed_id(): vector<u8> {
     BTC_PRICE_FEED_ID
 }
 
+public fun sui_price_feed_id(): vector<u8> {
+    SUI_PRICE_FEED_ID
+}
+
 public fun usdc_multiplier(): u64 {
     USDC_MULTIPLIER
 }
@@ -150,4 +158,16 @@ public fun deep_multiplier(): u64 {
 
 public fun btc_multiplier(): u64 {
     BTC_MULTIPLIER
+}
+
+public fun sui_multiplier(): u64 {
+    SUI_MULTIPLIER
+}
+
+public fun pyth_multiplier(): u64 {
+    10u64.pow(PYTH_DECIMALS as u8)
+}
+
+public fun pyth_decimals(): u64 {
+    PYTH_DECIMALS
 }

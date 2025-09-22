@@ -206,7 +206,7 @@ fun test_usd_deposit_btc_borrow() {
     // Deposit 100000 USD
     mm.deposit<BTC, USDC, USDC>(
         &registry,
-        mint_coin<USDC>(100_000_000000, scenario.ctx()),
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         scenario.ctx(),
     );
 
@@ -224,7 +224,7 @@ fun test_usd_deposit_btc_borrow() {
     advance_time(&mut clock, 1);
     let btc_increased = build_btc_price_info_object(
         &mut scenario,
-        300000,
+        1_000_000,
         &clock,
     );
 
@@ -910,7 +910,7 @@ fun test_liquidation_reward_calculations() {
         scenario.ctx(),
     );
 
-    // Borrow $45k (90% LTV - close to max)
+    // Borrow $45k
     mm.borrow_quote<BTC, USDC>(
         &registry,
         &mut usdc_pool,
@@ -923,9 +923,9 @@ fun test_liquidation_reward_calculations() {
     );
 
     // Price drops severely to trigger liquidation
-    // At $10k BTC price: ($10k BTC + $45k USDC) / $45k debt = $55k / $45k = 122% (still above 120%)
-    // At $8k BTC price: ($8k BTC + $45k USDC) / $45k debt = $53k / $45k = 117.8% (below 120% - triggers liquidation!)
-    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 8000, &clock);
+    // At $10k BTC price: ($10k BTC + $45k USDC) / $45k debt = $55k / $45k = 122% (still above 110%)
+    // At $2k BTC price: ($2k BTC + $45k USDC) / $45k debt = $47k / $45k = 104.4% (below 110% - triggers liquidation!)
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 2000, &clock);
 
     // Perform liquidation and check rewards
     scenario.next_tx(test_constants::liquidator());
