@@ -8,7 +8,7 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::constants;
+use deepbook::{constants, registry::Registry};
 use std::type_name::{Self, TypeName};
 use sui::{
     bag::{Self, Bag},
@@ -333,6 +333,12 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
     );
 
     coin
+}
+
+public fun register_manager(balance_manager: &BalanceManager, registry: &mut Registry) {
+    let owner = balance_manager.owner();
+    let manager_id = balance_manager.id();
+    registry.add_balance_manager(owner, manager_id);
 }
 
 public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {

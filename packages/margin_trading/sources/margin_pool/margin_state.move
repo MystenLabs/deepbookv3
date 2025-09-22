@@ -66,13 +66,13 @@ public(package) fun decrease_supply_shares(
     (amount, protocol_fees)
 }
 
-/// Increase the supply given an absolute amount. Used when the supply needs to be 
+/// Increase the supply given an absolute amount. Used when the supply needs to be
 /// increased without increasing shares.
 public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
     self.supply = self.supply + amount;
 }
 
-/// Decrease the supply given an absolute amount. Used when the supply needs to be 
+/// Decrease the supply given an absolute amount. Used when the supply needs to be
 /// decreased without decreasing shares.
 public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
     self.supply = self.supply - amount;

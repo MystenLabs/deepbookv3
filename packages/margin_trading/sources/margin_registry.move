@@ -49,7 +49,7 @@ public struct MarginRegistryInner has store {
     allowed_versions: VecSet<u64>,
     pool_registry: Table<ID, PoolConfig>,
     margin_pools: Table<TypeName, ID>,
-    margin_managers: Table<address, vector<ID>>,
+    margin_managers: Table<address, VecSet<ID>>,
     allowed_maintainers: VecSet<ID>,
 }
 
@@ -427,12 +427,13 @@ public fun get_deepbook_pool_margin_pool_ids(
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }
 
-public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): vector<ID> {
+/// Get the margin manager IDs for a given owner
+public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): VecSet<ID> {
     let inner = self.load_inner();
     if (inner.margin_managers.contains(owner)) {
-        *inner.margin_managers.borrow<address, vector<ID>>(owner)
+        *inner.margin_managers.borrow<address, VecSet<ID>>(owner)
     } else {
-        vector::empty()
+        vec_set::empty()
     }
 }
 
@@ -469,12 +470,12 @@ public(package) fun add_margin_manager(
     let owner = ctx.sender();
     let inner = self.load_inner_mut();
     if (!inner.margin_managers.contains(owner)) {
-        inner.margin_managers.add(owner, vector::empty());
+        inner.margin_managers.add(owner, vec_set::empty());
     };
     let margin_manager_ids = inner.margin_managers.borrow_mut(owner);
-    margin_manager_ids.push_back(margin_manager_id);
+    margin_manager_ids.insert(margin_manager_id);
     assert!(
-        margin_manager_ids.length() < margin_constants::max_margin_managers(),
+        margin_manager_ids.length() <= margin_constants::max_margin_managers(),
         EMaxMarginManagersReached,
     );
 }
