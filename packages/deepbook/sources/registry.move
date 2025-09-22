@@ -148,6 +148,27 @@ public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdm
     stable_coins.remove(&stable_type);
 }
 
+/// Adds the BalanceManagerKey dynamic field to the registry
+public fun init_balance_manager_map(
+    self: &mut Registry,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+) {
+    let _: &mut RegistryInner = self.load_inner_mut();
+    if (
+        !dynamic_field::exists_(
+            &self.id,
+            BalanceManagerKey {},
+        )
+    ) {
+        dynamic_field::add(
+            &mut self.id,
+            BalanceManagerKey {},
+            table::new<address, VecSet<ID>>(ctx),
+        );
+    };
+}
+
 /// Returns whether the given coin is whitelisted
 public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
     let _: &RegistryInner = self.load_inner();
@@ -217,26 +238,8 @@ public(package) fun load_inner(self: &Registry): &RegistryInner {
 }
 
 /// Adds a balance_manager to the registry
-public(package) fun add_balance_manager(
-    self: &mut Registry,
-    owner: address,
-    manager_id: ID,
-    ctx: &mut TxContext,
-) {
+public(package) fun add_balance_manager(self: &mut Registry, owner: address, manager_id: ID) {
     let _: &mut RegistryInner = self.load_inner_mut();
-    if (
-        !dynamic_field::exists_(
-            &self.id,
-            BalanceManagerKey {},
-        )
-    ) {
-        dynamic_field::add(
-            &mut self.id,
-            BalanceManagerKey {},
-            table::new<address, VecSet<ID>>(ctx),
-        );
-    };
-
     let balance_manager_map: &mut Table<address, VecSet<ID>> = dynamic_field::borrow_mut(
         &mut self.id,
         BalanceManagerKey {},

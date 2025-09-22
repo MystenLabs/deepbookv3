@@ -335,14 +335,10 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
     coin
 }
 
-public fun register_manager(
-    balance_manager: &BalanceManager,
-    registry: &mut Registry,
-    ctx: &mut TxContext,
-) {
+public fun register_manager(balance_manager: &BalanceManager, registry: &mut Registry) {
     let owner = balance_manager.owner();
     let manager_id = balance_manager.id();
-    registry.add_balance_manager(owner, manager_id, ctx);
+    registry.add_balance_manager(owner, manager_id);
 }
 
 public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
