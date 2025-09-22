@@ -11,7 +11,7 @@ const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 const MIN_MIN_BORROW: u64 = 1000;
-const MAX_MARGIN_MANAGERS: u64 = 1000;
+const MAX_MARGIN_MANAGERS: u64 = 100;
 const DEFAULT_REFERRAL: address = @0x0;
 
 public fun margin_version(): u64 {
