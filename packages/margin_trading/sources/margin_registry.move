@@ -34,6 +34,7 @@ const EPackageVersionDisabled: u64 = 10;
 const EVersionAlreadyEnabled: u64 = 11;
 const ECannotDisableCurrentVersion: u64 = 12;
 const EVersionNotEnabled: u64 = 13;
+const EMaxMarginManagersReached: u64 = 14;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -48,6 +49,7 @@ public struct MarginRegistryInner has store {
     allowed_versions: VecSet<u64>,
     pool_registry: Table<ID, PoolConfig>,
     margin_pools: Table<TypeName, ID>,
+    margin_managers: Table<address, vector<ID>>,
     allowed_maintainers: VecSet<ID>,
 }
 
@@ -114,6 +116,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         allowed_versions: vec_set::singleton(margin_constants::margin_version()),
         pool_registry: table::new(ctx),
         margin_pools: table::new(ctx),
+        margin_managers: table::new(ctx),
         allowed_maintainers: vec_set::empty(),
     };
 
@@ -424,6 +427,15 @@ public fun get_deepbook_pool_margin_pool_ids(
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }
 
+public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): vector<ID> {
+    let inner = self.load_inner();
+    if (inner.margin_managers.contains(owner)) {
+        *inner.margin_managers.borrow<address, vector<ID>>(owner)
+    } else {
+        vector::empty()
+    }
+}
+
 // === Public-Package Functions ===
 #[allow(lint(self_transfer))]
 public(package) fun register_margin_pool(
@@ -447,6 +459,24 @@ public(package) fun register_margin_pool(
     };
 
     transfer::public_transfer(margin_pool_cap, ctx.sender());
+}
+
+public(package) fun add_margin_manager(
+    self: &mut MarginRegistry,
+    margin_manager_id: ID,
+    ctx: &TxContext,
+) {
+    let owner = ctx.sender();
+    let inner = self.load_inner_mut();
+    if (!inner.margin_managers.contains(owner)) {
+        inner.margin_managers.add(owner, vector::empty());
+    };
+    let margin_manager_ids = inner.margin_managers.borrow_mut(owner);
+    margin_manager_ids.push_back(margin_manager_id);
+    assert!(
+        margin_manager_ids.length() < margin_constants::max_margin_managers(),
+        EMaxMarginManagersReached,
+    );
 }
 
 public(package) fun load_inner_mut(self: &mut MarginRegistry): &mut MarginRegistryInner {
@@ -549,6 +579,7 @@ public fun new_for_testing(ctx: &mut TxContext): MarginAdminCap {
         allowed_versions: vec_set::singleton(margin_constants::margin_version()),
         pool_registry: table::new(ctx),
         margin_pools: table::new(ctx),
+        margin_managers: table::new(ctx),
         allowed_maintainers: vec_set::empty(),
     };
 

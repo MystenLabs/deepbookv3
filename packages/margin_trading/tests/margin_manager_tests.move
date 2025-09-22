@@ -67,8 +67,8 @@ fun test_margin_manager_creation() {
 
     scenario.next_tx(test_constants::admin());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
     return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -86,9 +86,9 @@ fun test_margin_trading_with_oracle() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::admin());
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -144,8 +144,8 @@ fun test_btc_usd_margin_trading() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -196,8 +196,8 @@ fun test_usd_deposit_btc_borrow() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -277,8 +277,8 @@ fun test_margin_manager_creation_ok() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -300,9 +300,9 @@ fun test_margin_manager_creation_fails_when_not_enabled() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     // should fail
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     abort
 }
@@ -330,8 +330,8 @@ fun test_deposit_with_base_quote_deep_assets() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -379,8 +379,8 @@ fun test_deposit_with_invalid_asset_fails() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -408,9 +408,9 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -471,9 +471,9 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -527,9 +527,9 @@ fun test_borrow_fails_from_both_pools() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -582,9 +582,9 @@ fun test_borrow_fails_with_zero_amount() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -625,9 +625,9 @@ fun test_borrow_fails_when_risk_ratio_below_150() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -673,9 +673,9 @@ fun test_repay_fails_wrong_pool() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -729,9 +729,9 @@ fun test_repay_full_with_none() {
 
     // Create margin manager and borrow
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -790,9 +790,9 @@ fun test_repay_exact_amount_no_rounding_errors() {
     ) = setup_usdc_usdt_margin_trading();
 
     scenario.next_tx(test_constants::user1());
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -896,8 +896,8 @@ fun test_liquidation_reward_calculations() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -978,8 +978,8 @@ fun test_risk_ratio_with_zero_assets() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1024,7 +1024,7 @@ fun test_risk_ratio_with_multiple_assets() {
     scenario.next_tx(test_constants::admin());
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
 
     usdc_pool.supply(
         &registry,
@@ -1049,7 +1049,7 @@ fun test_risk_ratio_with_multiple_assets() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1114,8 +1114,8 @@ fun test_risk_ratio_with_oracle_price_changes() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -1211,7 +1211,7 @@ fun test_max_leverage_enforcement() {
 
     scenario.next_tx(test_constants::admin());
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
 
     usdt_pool.supply(
         &registry,
@@ -1227,7 +1227,7 @@ fun test_max_leverage_enforcement() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1293,7 +1293,7 @@ fun test_min_position_size_requirement() {
 
     scenario.next_tx(test_constants::admin());
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
 
     usdt_pool.supply(
         &registry,
@@ -1309,7 +1309,7 @@ fun test_min_position_size_requirement() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1377,7 +1377,7 @@ fun test_repayment_rounding() {
     scenario.next_tx(test_constants::admin());
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
 
     usdc_pool.supply(
         &registry,
@@ -1402,7 +1402,7 @@ fun test_repayment_rounding() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1505,7 +1505,7 @@ fun test_asset_rebalancing_between_pools() {
     scenario.next_tx(test_constants::admin());
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
 
     usdc_pool.supply(
         &registry,
@@ -1530,7 +1530,7 @@ fun test_asset_rebalancing_between_pools() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();

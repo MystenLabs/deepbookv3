@@ -45,8 +45,8 @@ fun test_place_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -100,8 +100,8 @@ fun test_place_limit_order_incorrect_pool() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut wrong_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(wrong_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -154,8 +154,8 @@ fun test_place_limit_order_pool_not_enabled() {
     // Create margin manager with the enabled pool
     scenario.next_tx(test_constants::user1());
     let margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(margin_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&margin_pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&margin_pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -202,8 +202,8 @@ fun test_place_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -249,8 +249,8 @@ fun test_place_market_order_incorrect_pool() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut wrong_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(wrong_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -294,8 +294,8 @@ fun test_place_market_order_pool_not_enabled() {
 
     scenario.next_tx(test_constants::user1());
     let margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(margin_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&margin_pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&margin_pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -339,10 +339,10 @@ fun test_place_reduce_only_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -428,10 +428,10 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut wrong_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(wrong_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -470,9 +470,9 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -539,10 +539,10 @@ fun test_place_reduce_only_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -625,10 +625,10 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut wrong_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(wrong_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -664,9 +664,9 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -729,8 +729,8 @@ fun test_stake_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -769,8 +769,8 @@ fun test_stake_with_deep_margin_manager() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<DEEP, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<DEEP, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<DEEP, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<DEEP, USDT>>();
@@ -802,8 +802,8 @@ fun test_modify_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -863,8 +863,8 @@ fun test_cancel_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -922,8 +922,8 @@ fun test_cancel_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -995,8 +995,8 @@ fun test_cancel_all_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1033,8 +1033,8 @@ fun test_withdraw_settled_amounts_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1064,8 +1064,8 @@ fun test_unstake_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1095,8 +1095,8 @@ fun test_submit_proposal_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1155,8 +1155,8 @@ fun test_vote_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1228,8 +1228,8 @@ fun test_claim_rebates_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();

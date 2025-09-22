@@ -89,8 +89,8 @@ fun test_liquidation(error_code: u64) {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -198,8 +198,8 @@ fun test_liquidation_quote_debt(error_code: u64) {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -324,8 +324,8 @@ fun test_liquidation_quote_debt_partial() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -450,8 +450,8 @@ fun test_liquidation_base_debt_default() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -559,8 +559,8 @@ fun test_liquidation_base_debt() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -671,8 +671,8 @@ fun test_btc_sui_liquidation(error_code: u64) {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, SUI>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, SUI>(&pool, &registry, &clock, scenario.ctx());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, SUI>(&pool, &mut registry, &clock, scenario.ctx());
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, SUI>>();
