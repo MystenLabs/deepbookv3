@@ -463,9 +463,10 @@ public(package) fun register_margin_pool(
 
 public(package) fun add_margin_manager(
     self: &mut MarginRegistry,
-    owner: address,
     margin_manager_id: ID,
+    ctx: &TxContext,
 ) {
+    let owner = ctx.sender();
     let inner = self.load_inner_mut();
     if (!inner.margin_managers.contains(owner)) {
         inner.margin_managers.add(owner, vector::empty());

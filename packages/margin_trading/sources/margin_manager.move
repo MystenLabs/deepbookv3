@@ -684,7 +684,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         withdraw_cap,
         trade_cap,
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-    registry.add_margin_manager(owner, id.to_inner());
+    registry.add_margin_manager(id.to_inner(), ctx);
 
     event::emit(MarginManagerEvent {
         margin_manager_id,
