@@ -427,6 +427,7 @@ public fun get_deepbook_pool_margin_pool_ids(
     (config.base_margin_pool_id, config.quote_margin_pool_id)
 }
 
+/// Get the margin manager IDs for a given owner
 public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): VecSet<ID> {
     let inner = self.load_inner();
     if (inner.margin_managers.contains(owner)) {

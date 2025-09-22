@@ -169,6 +169,19 @@ public fun init_balance_manager_map(
     };
 }
 
+/// Get the balance manager IDs for a given owner
+public fun get_balance_manager_ids(self: &Registry, owner: address): VecSet<ID> {
+    let balance_manager_map: &Table<address, VecSet<ID>> = dynamic_field::borrow(
+        &self.id,
+        BalanceManagerKey {},
+    );
+    if (balance_manager_map.contains(owner)) {
+        *balance_manager_map.borrow<address, VecSet<ID>>(owner);
+    } else {
+        vec_set::empty()
+    }
+}
+
 /// Returns whether the given coin is whitelisted
 public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
     let _: &RegistryInner = self.load_inner();
