@@ -190,10 +190,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 
   const tx = new Transaction();
 
-  dbClient.deepBookAdmin.adjustTickSize("SUI_USDC", 0.0001)(tx);
-
-  dbClient.deepBookAdmin.adjustTickSize("TLP_SUI", 0.00001)(tx);
-  dbClient.deepBookAdmin.adjustMinLotSize("TLP_SUI", 0.1, 1)(tx);
+  dbClient.deepBookAdmin.adjustTickSize("SUI_USDC", 0.00001)(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
