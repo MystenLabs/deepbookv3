@@ -105,7 +105,7 @@ public struct LiquidationEvent has copy, drop {
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
+    registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -117,7 +117,7 @@ public fun new<BaseAsset, QuoteAsset>(
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
+    registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
@@ -667,7 +667,7 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
+    registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginManager<BaseAsset, QuoteAsset> {
@@ -676,6 +676,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
 
     let id = object::new(ctx);
     let margin_manager_id = id.to_inner();
+    let owner = ctx.sender();
 
     let (
         balance_manager,
@@ -683,17 +684,18 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         withdraw_cap,
         trade_cap,
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
+    registry.add_margin_manager(owner, id.to_inner());
 
     event::emit(MarginManagerEvent {
         margin_manager_id,
         balance_manager_id: object::id(&balance_manager),
-        owner: ctx.sender(),
+        owner,
         timestamp: clock.timestamp_ms(),
     });
 
     MarginManager<BaseAsset, QuoteAsset> {
         id,
-        owner: ctx.sender(),
+        owner,
         deepbook_pool: pool.id(),
         margin_pool_id: option::none(),
         balance_manager,
