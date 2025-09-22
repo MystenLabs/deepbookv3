@@ -176,7 +176,7 @@ public fun get_balance_manager_ids(self: &Registry, owner: address): VecSet<ID> 
         BalanceManagerKey {},
     );
     if (balance_manager_map.contains(owner)) {
-        *balance_manager_map.borrow<address, VecSet<ID>>(owner);
+        *balance_manager_map.borrow<address, VecSet<ID>>(owner)
     } else {
         vec_set::empty()
     }
