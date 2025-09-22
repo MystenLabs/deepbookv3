@@ -336,8 +336,8 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
 }
 
 public fun register_manager(
-    registry: &mut Registry,
     balance_manager: &BalanceManager,
+    registry: &mut Registry,
     ctx: &mut TxContext,
 ) {
     let owner = balance_manager.owner();
