@@ -148,10 +148,10 @@ public(package) fun supply_shares_to_amount(
     let ratio = if (self.supply_shares == 0) {
         constants::float_scaling()
     } else {
-        math::div(self.supply_shares, supply)
+        math::div(supply, self.supply_shares)
     };
 
-    math::div(shares, ratio)
+    math::mul(shares, ratio)
 }
 
 /// Convert the borrow shares to the corresponding amount.

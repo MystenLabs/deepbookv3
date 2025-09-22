@@ -22,7 +22,7 @@ use margin_trading::{
         return_shared_3
     }
 };
-use sui::test_utils::destroy;
+use sui::{test_scenario::return_shared, test_utils::destroy};
 
 const ENoError: u64 = 0;
 const ECannotLiquidate: u64 = 1;
@@ -79,7 +79,7 @@ fun test_liquidation(error_code: u64) {
         clock,
         admin_cap,
         maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
     ) = setup_btc_usd_margin_trading();
@@ -95,6 +95,7 @@ fun test_liquidation(error_code: u64) {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
 
     // Deposit 1 BTC worth $50
     mm.deposit<BTC, USDC, BTC>(
@@ -116,7 +117,7 @@ fun test_liquidation(error_code: u64) {
     );
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 1_250_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool,&usdc_pool, &clock) == 1_250_000_000,
         0,
     );
 
@@ -128,7 +129,7 @@ fun test_liquidation(error_code: u64) {
         let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
         let btc_price_40 = build_btc_price_info_object(&mut scenario, 40, &clock);
         assert!(
-            mm.risk_ratio(&registry, &btc_price_40, &usdc_price, &pool, &usdc_pool, &clock) == 1_200_000_000,
+            mm.risk_ratio(&registry, &btc_price_40, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 1_200_000_000,
             0,
         );
 
@@ -149,7 +150,7 @@ fun test_liquidation(error_code: u64) {
     let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
     let btc_price_18 = build_btc_price_info_object(&mut scenario, 18, &clock);
     assert!(
-        mm.risk_ratio(&registry, &btc_price_18, &usdc_price, &pool, &usdc_pool, &clock) == 1_090_000_000,
+        mm.risk_ratio(&registry, &btc_price_18, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 1_090_000_000,
         0,
     );
 
@@ -176,6 +177,7 @@ fun test_liquidation(error_code: u64) {
 
     destroy_3!(remaining_repay_coin, base_coin, quote_coin);
     return_shared_3!(mm, usdc_pool, pool);
+    return_shared(btc_pool);
     destroy_3!(btc_price, usdc_price, btc_price_18);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -224,7 +226,7 @@ fun test_liquidation_quote_debt(error_code: u64) {
     );
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_500_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_500_000_000,
         0,
     );
 
@@ -244,7 +246,7 @@ fun test_liquidation_quote_debt(error_code: u64) {
 
     // Risk ratio is now (500 + 100) / 200 = 3.0
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_000_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_000_000_000,
         0,
     );
 
@@ -272,7 +274,7 @@ fun test_liquidation_quote_debt(error_code: u64) {
     let repay_coin = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
     let btc_price_115 = build_btc_price_info_object(&mut scenario, 115, &clock);
     assert!(
-        mm.risk_ratio(&registry, &btc_price_115, &usdc_price, &pool, &usdc_pool, &clock) == 1_075_000_000,
+        mm.risk_ratio(&registry, &btc_price_115, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 1_075_000_000,
         0,
     );
 
@@ -350,7 +352,7 @@ fun test_liquidation_quote_debt_partial() {
     );
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_500_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_500_000_000,
         0,
     );
 
@@ -370,7 +372,7 @@ fun test_liquidation_quote_debt_partial() {
 
     // Risk ratio is now (500 + 100) / 200 = 3.0
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &usdc_pool, &clock) == 3_000_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_000_000_000,
         0,
     );
 
@@ -381,7 +383,7 @@ fun test_liquidation_quote_debt_partial() {
     let repay_coin = mint_coin<USDC>(90_125_000, scenario.ctx());
     let btc_price_115 = build_btc_price_info_object(&mut scenario, 115, &clock);
     assert!(
-        mm.risk_ratio(&registry, &btc_price_115, &usdc_price, &pool, &usdc_pool, &clock) == 1_075_000_000,
+        mm.risk_ratio(&registry, &btc_price_115, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 1_075_000_000,
         0,
     );
 
@@ -476,7 +478,7 @@ fun test_liquidation_base_debt_default() {
     );
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &clock) == 3_500_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_500_000_000,
         0,
     );
 
@@ -496,7 +498,7 @@ fun test_liquidation_base_debt_default() {
 
     // Risk ratio is now (500 + 100) / 200 = 3.0
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &clock) == 3_000_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_000_000_000,
         0,
     );
 
@@ -585,7 +587,7 @@ fun test_liquidation_base_debt() {
     );
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &clock) == 3_500_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_500_000_000,
         0,
     );
 
@@ -605,7 +607,7 @@ fun test_liquidation_base_debt() {
 
     // Risk ratio is now (500 + 100) / 200 = 3.0
     assert!(
-        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &clock) == 3_000_000_000,
+        mm.risk_ratio(&registry, &btc_price, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 3_000_000_000,
         0,
     );
 
@@ -618,7 +620,7 @@ fun test_liquidation_base_debt() {
     let btc_price_2200 = build_btc_price_info_object(&mut scenario, 2200, &clock);
 
     assert!(
-        mm.risk_ratio(&registry, &btc_price_2200, &usdc_price, &pool, &btc_pool, &clock) == 1_068_181_825,
+        mm.risk_ratio(&registry, &btc_price_2200, &usdc_price, &pool, &btc_pool, &usdc_pool, &clock) == 1_068_181_825,
         0,
     );
 
@@ -702,6 +704,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &btc_price,
         &sui_price,
         &pool,
+        &btc_pool,
         &sui_pool,
         &clock,
     );
@@ -721,6 +724,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
             &btc_price,
             &sui_price,
             &pool,
+            &btc_pool,
             &sui_pool,
             &clock,
         );
@@ -751,6 +755,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         &btc_price_crash,
         &sui_price_spike,
         &pool,
+        &btc_pool,
         &sui_pool,
         &clock,
     );
