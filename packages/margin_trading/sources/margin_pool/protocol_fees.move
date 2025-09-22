@@ -128,6 +128,7 @@ public(package) fun calculate_and_claim(
 
     let now = clock.timestamp_ms();
     let elapsed = now - referral.last_claim_timestamp;
+    if (elapsed == 0) return 0;
     let share_ms_delta = referral_tracker.share_ms - referral.last_claim_share_ms;
     let shares = math::div(share_ms_delta, elapsed);
     let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
