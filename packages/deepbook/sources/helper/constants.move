@@ -20,8 +20,8 @@ const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
 const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
 const EWMA_DF_KEY: vector<u8> = b"ewma";
 const REFERRAL_DF_KEY: vector<u8> = b"referral";
-const REFERRAL_MAX_BPS: u64 = 1_000_000; // 10 bps
-const REFERRAL_MULTIPLE: u64 = 100_000; // 1 bp
+const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
+const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -248,12 +248,12 @@ public fun referral_df_key(): vector<u8> {
     REFERRAL_DF_KEY
 }
 
-public fun referral_max_bps(): u64 {
-    REFERRAL_MAX_BPS
+public fun referral_max_multiplier(): u64 {
+    REFERRAL_MAX_MULTIPLIER
 }
 
-public fun referral_multiple(): u64 {
-    REFERRAL_MULTIPLE
+public fun referral_multiplier(): u64 {
+    REFERRAL_MULTIPLIER
 }
 
 #[test_only]

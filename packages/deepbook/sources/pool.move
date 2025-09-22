@@ -51,7 +51,7 @@ const EMinimumQuantityOutNotMet: u64 = 12;
 const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
-const EInvalidReferralBPS: u64 = 16;
+const EInvalidReferralMultiplier: u64 = 16;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -94,7 +94,7 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
 }
 
 public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
-    additional_bps: u64,
+    multiplier: u64,
     base: Balance<BaseAsset>,
     quote: Balance<QuoteAsset>,
     deep: Balance<DEEP>,
@@ -692,11 +692,11 @@ public fun burn_deep<BaseAsset, QuoteAsset>(
 /// Mint a DeepBookReferral and set the additional bps for the referral.
 public fun mint_referral<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    additional_bps: u64,
+    multiplier: u64,
     ctx: &mut TxContext,
 ) {
-    assert!(additional_bps <= constants::referral_max_bps(), EInvalidReferralBPS);
-    assert!(additional_bps % constants::referral_multiple() == 0, EInvalidReferralBPS);
+    assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
+    assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = balance_manager::mint_referral(ctx);
     self
@@ -704,7 +704,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
         .add(
             referral_id,
             ReferralRewards<BaseAsset, QuoteAsset> {
-                additional_bps,
+                multiplier,
                 base: balance::zero(),
                 quote: balance::zero(),
                 deep: balance::zero(),
@@ -712,20 +712,20 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
         );
 }
 
-/// Update the additional bps for the referral.
-public fun update_referral_bps<BaseAsset, QuoteAsset>(
+/// Update the multiplier for the referral.
+public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
-    additional_bps: u64,
+    multiplier: u64,
 ) {
-    assert!(additional_bps <= constants::referral_max_bps(), EInvalidReferralBPS);
-    assert!(additional_bps % constants::referral_multiple() == 0, EInvalidReferralBPS);
+    assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
+    assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = object::id(referral);
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
-    referral_rewards.additional_bps = additional_bps;
+    referral_rewards.multiplier = multiplier;
 }
 
 /// Claim the rewards for the referral.
@@ -1435,15 +1435,14 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
 ) {
-    let referral_id = balance_manager::get_referral_id(balance_manager);
+    let referral_id = balance_manager.get_referral_id();
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
-        let referral_bps = referral_rewards.additional_bps;
-        let multiplier = math::div(referral_bps, order_info.taker_fee());
-        let referral_fee = math::mul(order_info.paid_fees(), multiplier);
+        let referral_multiplier = referral_rewards.multiplier;
+        let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
         if (order_info.fee_is_deep()) {
             referral_rewards
                 .deep
