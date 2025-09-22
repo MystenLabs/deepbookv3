@@ -265,14 +265,6 @@ public(package) fun new(
     }
 }
 
-public(package) fun taker_fee(self: &OrderInfo): u64 {
-    if (self.fills.length() > 0) {
-        self.fills[0].taker_fee()
-    } else {
-        0
-    }
-}
-
 public(package) fun market_order(self: &OrderInfo): bool {
     self.market_order
 }
