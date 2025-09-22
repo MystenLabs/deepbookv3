@@ -215,7 +215,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     );
 
     if (self.margin_pool_id.contains(&base_margin_pool.id())) {
-        let risk_ratio = self.risk_ratio(
+        let risk_ratio = self.risk_ratio_int(
             registry,
             base_oracle,
             quote_oracle,
@@ -225,7 +225,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         );
         assert!(registry.can_withdraw(pool.id(), risk_ratio), EWithdrawRiskRatioExceeded);
     } else if (self.margin_pool_id.contains(&quote_margin_pool.id())) {
-        let risk_ratio = self.risk_ratio(
+        let risk_ratio = self.risk_ratio_int(
             registry,
             base_oracle,
             quote_oracle,
@@ -262,7 +262,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self.borrowed_base_shares = total_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
-    let risk_ratio = self.risk_ratio(
+    let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
         quote_oracle,
@@ -305,7 +305,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     self.borrowed_quote_shares = total_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
-    let risk_ratio = self.risk_ratio(
+    let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
         quote_oracle,
@@ -384,7 +384,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     // 1. Check that we can liquidate, cancel all open orders.
     assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
     assert!(self.margin_pool_id.contains(&margin_pool.id()), EIncorrectMarginPool);
-    let risk_ratio = self.risk_ratio(
+    let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
         quote_oracle,
@@ -519,34 +519,36 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     (base_coin, quote_coin, repay_coin)
 }
 
-// Get the risk ratio of the margin manager.
-public fun risk_ratio<BaseAsset, QuoteAsset, DebtAsset>(
+// Returns the risk ratio of the margin manager given the corresponding margin pools.
+public fun risk_ratio<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
     pool: &Pool<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): u64 {
-    assert!(
-        self.margin_pool_id.contains(&margin_pool.id()) || self.margin_pool_id.is_none(),
-        EIncorrectMarginPool,
-    );
-    let (assets_in_debt_unit, _, _) = self.assets_in_debt_unit(
-        registry,
-        pool,
-        base_oracle,
-        quote_oracle,
-        clock,
-    );
-    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
-    let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
-    let max_risk_ratio = margin_constants::max_risk_ratio();
-    if (assets_in_debt_unit > math::mul(debt, max_risk_ratio)) {
-        max_risk_ratio
+    let debt_is_base = self.borrowed_base_shares > 0;
+    if (debt_is_base) {
+        self.risk_ratio_int(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            clock,
+        )
     } else {
-        math::div(assets_in_debt_unit, debt)
+        self.risk_ratio_int(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            quote_margin_pool,
+            clock,
+        )
     }
 }
 
@@ -632,6 +634,37 @@ public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, Qu
 }
 
 // === Private Functions ===
+// Get the risk ratio of the margin manager.
+fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+    clock: &Clock,
+): u64 {
+    assert!(
+        self.margin_pool_id.contains(&margin_pool.id()) || self.margin_pool_id.is_none(),
+        EIncorrectMarginPool,
+    );
+    let (assets_in_debt_unit, _, _) = self.assets_in_debt_unit(
+        registry,
+        pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
+    let max_risk_ratio = margin_constants::max_risk_ratio();
+    if (assets_in_debt_unit > math::mul(debt, max_risk_ratio)) {
+        max_risk_ratio
+    } else {
+        math::div(assets_in_debt_unit, debt)
+    }
+}
+
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
