@@ -22,6 +22,7 @@ const EWMA_DF_KEY: vector<u8> = b"ewma";
 const REFERRAL_DF_KEY: vector<u8> = b"referral";
 const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
 const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
+const MAX_BALANCE_MANAGERS: u64 = 100;
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -254,6 +255,10 @@ public fun referral_max_multiplier(): u64 {
 
 public fun referral_multiplier(): u64 {
     REFERRAL_MULTIPLIER
+}
+
+public fun max_balance_managers(): u64 {
+    MAX_BALANCE_MANAGERS
 }
 
 #[test_only]

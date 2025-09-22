@@ -6,7 +6,13 @@ module deepbook::registry;
 
 use deepbook::constants;
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, dynamic_field, vec_set::{Self, VecSet}, versioned::{Self, Versioned}};
+use sui::{
+    bag::{Self, Bag},
+    dynamic_field,
+    table::{Self, Table},
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 // === Errors ===
 const EPoolAlreadyExists: u64 = 1;
@@ -17,6 +23,7 @@ const EVersionAlreadyEnabled: u64 = 5;
 const ECannotDisableCurrentVersion: u64 = 6;
 const ECoinAlreadyWhitelisted: u64 = 7;
 const ECoinNotWhitelisted: u64 = 8;
+const EMaxBalanceManagersReached: u64 = 9;
 
 public struct REGISTRY has drop {}
 
@@ -43,6 +50,7 @@ public struct PoolKey has copy, drop, store {
 }
 
 public struct StableCoinKey has copy, drop, store {}
+public struct BalanceManagerKey has copy, drop, store {}
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
     let registry_inner = RegistryInner {
@@ -206,6 +214,44 @@ public(package) fun load_inner(self: &Registry): &RegistryInner {
     assert!(inner.allowed_versions.contains(&package_version), EPackageVersionNotEnabled);
 
     inner
+}
+
+/// Adds a balance_manager to the registry
+public fun add_balance_manager(
+    self: &mut Registry,
+    owner: address,
+    manager_id: ID,
+    ctx: &mut TxContext,
+) {
+    let _: &mut RegistryInner = self.load_inner_mut();
+    if (
+        !dynamic_field::exists_(
+            &self.id,
+            BalanceManagerKey {},
+        )
+    ) {
+        dynamic_field::add(
+            &mut self.id,
+            BalanceManagerKey {},
+            table::new<address, VecSet<ID>>(ctx),
+        );
+    };
+
+    let balance_manager_map: &mut Table<address, VecSet<ID>> = dynamic_field::borrow_mut(
+        &mut self.id,
+        BalanceManagerKey {},
+    );
+    if (!balance_manager_map.contains(owner)) {
+        balance_manager_map.add(owner, vec_set::empty());
+    };
+    let balance_manager_ids = balance_manager_map.borrow_mut(owner);
+    if (!balance_manager_ids.contains(&manager_id)) {
+        balance_manager_ids.insert(manager_id);
+    };
+    assert!(
+        balance_manager_ids.length() <= constants::max_balance_managers(),
+        EMaxBalanceManagersReached,
+    );
 }
 
 /// Get the pool id for the given base and quote assets.
