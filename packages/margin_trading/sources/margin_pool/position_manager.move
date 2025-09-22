@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Position manager is responsible for managing the positions of the users.
+/// Position manager is responsible for managing users' positions.
 /// It is used to track the supply and loan shares of the users.
 module margin_trading::position_manager;
 
@@ -16,6 +16,8 @@ public struct Position has store {
     referral: Option<address>,
 }
 
+// === Public-Package Functions ===
+/// Initialize the position manager.
 public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
     PositionManager {
         positions: table::new(ctx),

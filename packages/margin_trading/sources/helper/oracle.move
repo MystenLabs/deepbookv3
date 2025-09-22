@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Oracle module for margin trading.
 module margin_trading::oracle;
 
 use margin_trading::margin_registry::MarginRegistry;
