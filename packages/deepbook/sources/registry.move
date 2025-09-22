@@ -217,7 +217,7 @@ public(package) fun load_inner(self: &Registry): &RegistryInner {
 }
 
 /// Adds a balance_manager to the registry
-public fun add_balance_manager(
+public(package) fun add_balance_manager(
     self: &mut Registry,
     owner: address,
     manager_id: ID,
