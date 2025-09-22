@@ -3,7 +3,7 @@
 
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 3; // Update version during upgrades
+const CURRENT_VERSION: u64 = 4; // Update version during upgrades
 const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -15,6 +15,13 @@ const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
+const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
+const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
+const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
+const EWMA_DF_KEY: vector<u8> = b"ewma";
+const REFERRAL_DF_KEY: vector<u8> = b"referral";
+const REFERRAL_MAX_BPS: u64 = 1_000_000; // 10 bps
+const REFERRAL_MULTIPLE: u64 = 100_000; // 1 bp
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -219,6 +226,34 @@ public fun max_fan_out(): u64 {
 
 public fun fee_penalty_multiplier(): u64 {
     FEE_PENALTY_MULTIPLIER
+}
+
+public fun default_ewma_alpha(): u64 {
+    DEFAULT_EWMA_ALPHA
+}
+
+public fun default_z_score_threshold(): u64 {
+    DEFAULT_Z_SCORE_THRESHOLD
+}
+
+public fun default_additional_taker_fee(): u64 {
+    DEFAULT_ADDITIONAL_TAKER_FEE
+}
+
+public fun ewma_df_key(): vector<u8> {
+    EWMA_DF_KEY
+}
+
+public fun referral_df_key(): vector<u8> {
+    REFERRAL_DF_KEY
+}
+
+public fun referral_max_bps(): u64 {
+    REFERRAL_MAX_BPS
+}
+
+public fun referral_multiple(): u64 {
+    REFERRAL_MULTIPLE
 }
 
 #[test_only]

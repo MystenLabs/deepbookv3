@@ -7,6 +7,7 @@ module deepbook::state_tests;
 use deepbook::{
     balances,
     constants,
+    ewma_tests::test_init_ewma_state,
     order_info_tests::{create_order_info_base, create_order_info},
     state,
     utils
@@ -38,8 +39,9 @@ fun process_create_ok() {
         test.ctx().epoch(),
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 1 * constants::usdc_unit();
     let quantity = 1 * constants::sui_unit();
     let mut order_info1 = create_order_info_base(
@@ -49,8 +51,10 @@ fun process_create_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info1,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -70,6 +74,7 @@ fun process_create_ok() {
     );
     let (settled, owed) = state.process_create(
         &mut order_info2,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -89,6 +94,7 @@ fun process_create_ok() {
     );
     let (settled, owed) = state.process_create(
         &mut order_info3,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -107,6 +113,7 @@ fun process_create_ok() {
     // total fees = 0.002001001 + 0.003999499 = 0.0060005 = 6000500
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -116,7 +123,7 @@ fun process_create_ok() {
     // Alice has 1 open order remaining. The first two orders have been filled.
     let alice = state.account(id_from_address(ALICE));
     assert!(alice.total_volume() == 2_001_001_000, 0);
-    assert!(alice.open_orders().size() == 1, 0);
+    assert!(alice.open_orders().length() == 1, 0);
     assert!(alice.open_orders().contains(&order_info3.order_id()), 0);
     // she traded BOB for 2.001001 SUI
     assert_eq(alice.settled_balances(), balances::new(2_001_001_000, 0, 0));
@@ -125,7 +132,7 @@ fun process_create_ok() {
     // Bob has 1 open order after the partial fill.
     let bob = state.account(id_from_address(BOB));
     assert!(bob.total_volume() == 2_001_001_000, 0);
-    assert!(bob.open_orders().size() == 1, 0);
+    assert!(bob.open_orders().length() == 1, 0);
     assert!(bob.open_orders().contains(&taker_order.order_id()), 0);
     // Bob's balances have been settled already
     assert_eq(bob.settled_balances(), balances::new(0, 0, 0));
@@ -152,8 +159,9 @@ fun process_create_expired_ok() {
         test.ctx().epoch(),
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 1 * constants::usdc_unit();
     let quantity = 10 * constants::sui_unit();
     let balance_manager_id = id_from_address(ALICE);
@@ -181,8 +189,10 @@ fun process_create_expired_ok() {
         fill_limit_reached,
         order_inserted,
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info1,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -192,6 +202,7 @@ fun process_create_expired_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -208,6 +219,7 @@ fun process_create_expired_ok() {
     taker_order2.match_maker(&mut order, 10);
     let (settled, owed) = state.process_create(
         &mut taker_order2,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -267,8 +279,9 @@ fun process_create_deep_price_ok() {
         order_inserted,
     );
 
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let price = 13 * constants::usdc_unit();
     let quantity = 13 * constants::sui_unit();
     let mut order_info = create_order_info_base(
@@ -278,8 +291,10 @@ fun process_create_deep_price_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -289,6 +304,7 @@ fun process_create_deep_price_ok() {
     taker_order.match_maker(&mut order_info.to_order(), 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -309,8 +325,9 @@ fun process_create_stake_req_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -341,8 +358,10 @@ fun process_create_stake_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -362,6 +381,7 @@ fun process_create_stake_req_ok() {
     taker_order.match_maker(&mut order_info.to_order(), 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -379,8 +399,9 @@ fun process_create_after_raising_steak_req_ok() {
     test.next_tx(ALICE);
     // alice and bob stake 100 DEEP each
     // default stake required is 100
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -409,8 +430,10 @@ fun process_create_after_raising_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -428,6 +451,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -450,6 +474,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -485,6 +510,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -506,6 +532,7 @@ fun process_create_after_raising_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -524,8 +551,9 @@ fun process_create_after_lowering_steak_req_ok() {
     test.next_tx(ALICE);
     // alice and bob stake 50 DEEP each
     // default stake required is 100
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -553,8 +581,10 @@ fun process_create_after_lowering_steak_req_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -572,6 +602,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -594,6 +625,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -614,6 +646,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -648,6 +681,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -669,6 +703,7 @@ fun process_create_after_lowering_steak_req_ok() {
     taker_order.match_maker(&mut order, 0);
     let (settled, owed) = state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -693,10 +728,13 @@ fun process_cancel_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -737,10 +775,13 @@ fun process_cancel_after_partial_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -759,6 +800,7 @@ fun process_cancel_after_partial_ok() {
     taker_order.match_maker(&mut order, 0);
     state.process_create(
         &mut taker_order,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -793,8 +835,9 @@ fun process_cancel_after_modify_epoch_change_ok() {
 
     test.next_tx(ALICE);
     // stake 100 DEEP
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -812,8 +855,10 @@ fun process_cancel_after_modify_epoch_change_ok() {
         true,
         test.ctx().epoch(),
     );
+    let ewma_state = test_init_ewma_state(test.ctx());
     state.process_create(
         &mut order_info,
+        &ewma_state,
         object::id_from_address(@0x0),
         test.ctx(),
     );
@@ -875,8 +920,9 @@ fun process_stake_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     let (settled, owed) = state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -921,8 +967,9 @@ fun process_proposal_no_stake_e() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_proposal(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -941,8 +988,9 @@ fun process_proposal_no_stake_e2() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -966,8 +1014,9 @@ fun process_proposal_already_proposed_e() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -1002,8 +1051,9 @@ fun process_proposal_already_proposed_next_epoch_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),
@@ -1042,8 +1092,9 @@ fun process_proposal_vote_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(ALICE);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut state = state::empty(stable_pool, test.ctx());
+    let mut state = state::empty(whitelisted, stable_pool, test.ctx());
     state.process_stake(
         id_from_address(POOL_ID),
         id_from_address(ALICE),

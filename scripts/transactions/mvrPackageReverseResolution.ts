@@ -28,59 +28,59 @@ const mainnetPlugin = namedPackagesPlugin({
   //     "0x4e9264ba30222c1701457ed3d4745c74fd9d736c6609558aafd46ec734e60d78",
   // };
 
-  const latestSha = "releases/core/3";
+  const latestSha = "releases/metadata/2";
   const repository = "https://github.com/mystenlabs/mvr";
 
   const data = {
-    core: {
-      packageInfo:
-        "0xb68f1155b210ef649fa86c5a1b85d419b1593e08e2ee58d400d1090d36c93543",
-      sha: latestSha,
-      version: "3",
-      path: "packages/mvr",
-    },
-    "subnames-proxy": {
-      packageInfo:
-        "0x04de61f83f793aa89349263e04af8e186cffbbb4f4582422afd054a8bfb2c706",
-      sha: latestSha,
-      version: "1",
-      path: "packages/proxy",
-    },
+    // core: {
+    //   packageInfo:
+    //     "0xb68f1155b210ef649fa86c5a1b85d419b1593e08e2ee58d400d1090d36c93543",
+    //   sha: latestSha,
+    //   version: "3",
+    //   path: "packages/mvr",
+    // },
+    // "subnames-proxy": {
+    //   packageInfo:
+    //     "0x04de61f83f793aa89349263e04af8e186cffbbb4f4582422afd054a8bfb2c706",
+    //   sha: latestSha,
+    //   version: "1",
+    //   path: "packages/proxy",
+    // },
     metadata: {
       packageInfo:
         "0x7ffeae2cd612960c7f208c68da064aa462e2fbb23fcf64faf2af9c2f67e7d4ca",
       sha: latestSha,
-      version: "1",
+      version: "2",
       path: "packages/package_info",
     },
-    "public-names": {
-      packageInfo:
-        "0xe91836471642e44ba0c52b1f5223fcfa74686272192390295f7c8cbb2f44b51c",
-      sha: latestSha,
-      version: "1",
-      path: "packages/public_names",
-    },
+    // "public-names": {
+    //   packageInfo:
+    //     "0xe91836471642e44ba0c52b1f5223fcfa74686272192390295f7c8cbb2f44b51c",
+    //   sha: latestSha,
+    //   version: "1",
+    //   path: "packages/public_names",
+    // },
   };
 
   for (const [name, { packageInfo, sha, version, path }] of Object.entries(
     data
   )) {
-    transaction.moveCall({
-      target: "@mvr/metadata::package_info::set_metadata",
-      arguments: [
-        transaction.object(packageInfo),
-        transaction.pure.string("default"),
-        transaction.pure.string(`@mvr/${name}`),
-      ],
-    });
+    // transaction.moveCall({
+    //   target: "@mvr/metadata::package_info::set_metadata",
+    //   arguments: [
+    //     transaction.object(packageInfo),
+    //     transaction.pure.string("default"),
+    //     transaction.pure.string(`@mvr/${name}`),
+    //   ],
+    // });
 
-    transaction.moveCall({
-      target: `@mvr/metadata::package_info::unset_git_versioning`,
-      arguments: [
-        transaction.object(packageInfo),
-        transaction.pure.u64(version),
-      ],
-    });
+    // transaction.moveCall({
+    //   target: `@mvr/metadata::package_info::unset_git_versioning`,
+    //   arguments: [
+    //     transaction.object(packageInfo),
+    //     transaction.pure.u64(version),
+    //   ],
+    // });
 
     const git = transaction.moveCall({
       target: `@mvr/metadata::git::new`,

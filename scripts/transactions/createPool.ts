@@ -22,11 +22,11 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   const tx = new Transaction();
 
   dbClient.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "XBTC", //8
-    quoteCoinKey: "USDC", //6
-    tickSize: 1,
-    lotSize: 0.00001,
-    minSize: 0.00001,
+    baseCoinKey: "IKA", // 9
+    quoteCoinKey: "USDC", // 6
+    tickSize: 0.000001, // 6 decimals
+    lotSize: 10,
+    minSize: 10,
     whitelisted: false,
     stablePool: false,
   })(tx);

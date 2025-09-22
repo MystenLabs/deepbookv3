@@ -1,0 +1,883 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+#[test_only]
+module margin_trading::margin_pool_tests;
+
+use margin_trading::{
+    margin_constants,
+    margin_pool::{Self, MarginPool},
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
+    protocol_config,
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{Self, mint_coin, advance_time}
+};
+use std::unit_test::assert_eq;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    test_scenario::{Self as test, Scenario, return_shared},
+    test_utils::destroy
+};
+
+fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
+    let (mut scenario, admin_cap) = test_helpers::setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    let maintainer_cap = margin_registry::mint_maintainer_cap(
+        &mut registry,
+        &admin_cap,
+        &clock,
+        scenario.ctx(),
+    );
+    test::return_shared(registry);
+
+    let protocol_config = test_helpers::default_protocol_config();
+    let pool_id = test_helpers::create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        protocol_config,
+        &clock,
+    );
+    scenario.next_tx(test_constants::admin());
+
+    (scenario, clock, admin_cap, maintainer_cap, pool_id)
+}
+
+fun cleanup_test(
+    registry: MarginRegistry,
+    admin_cap: MarginAdminCap,
+    maintainer_cap: MaintainerCap,
+    clock: Clock,
+    scenario: Scenario,
+) {
+    return_shared(registry);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    destroy(clock);
+    scenario.end();
+}
+
+fun setup_usdt_pool_with_cap(
+    scenario: &mut Scenario,
+    maintainer_cap: &MaintainerCap,
+    clock: &Clock,
+): MarginPoolCap {
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let config2 = test_helpers::default_protocol_config();
+    let _pool_id2 = margin_pool::create_margin_pool<USDT>(
+        &mut registry,
+        config2,
+        maintainer_cap,
+        clock,
+        scenario.ctx(),
+    );
+    test::return_shared(registry);
+
+    scenario.next_tx(test_constants::admin());
+    scenario.take_from_sender<MarginPoolCap>()
+}
+
+public fun test_borrow<Asset>(
+    pool: &mut MarginPool<Asset>,
+    amount: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    let (coin, _, _) = pool.borrow(amount, clock, ctx);
+
+    coin
+}
+
+#[test]
+fun test_supply_and_withdraw_basic() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    let withdrawn = pool.withdraw<USDC>(
+        &registry,
+        option::some(50 * test_constants::usdc_multiplier()),
+        &clock,
+        scenario.ctx(),
+    ); // 50 tokens
+    assert!(withdrawn.value() == 50 * test_constants::usdc_multiplier());
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::ESupplyCapExceeded)]
+fun test_supply_cap_enforcement() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(test_constants::supply_cap() + 1, scenario.ctx());
+
+    // This should fail due to supply cap
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_multiple_users_supply_withdraw() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 supplies
+    scenario.next_tx(test_constants::user1());
+    let supply_coin1 = mint_coin<USDC>(50 * test_constants::usdc_multiplier(), scenario.ctx()); // 50 tokens
+    pool.supply<USDC>(&registry, supply_coin1, option::none(), &clock, scenario.ctx());
+
+    // User2 supplies
+    scenario.next_tx(test_constants::user2());
+    let supply_coin2 = mint_coin<USDC>(30 * test_constants::usdc_multiplier(), scenario.ctx()); // 30 tokens
+    pool.supply<USDC>(&registry, supply_coin2, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let withdrawn1 = pool.withdraw<USDC>(
+        &registry,
+        option::some(25 * test_constants::usdc_multiplier()),
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(withdrawn1.value() == 25 * test_constants::usdc_multiplier());
+
+    scenario.next_tx(test_constants::user2());
+    let withdrawn2 = pool.withdraw<USDC>(
+        &registry,
+        option::some(15 * test_constants::usdc_multiplier()),
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(withdrawn2.value() == 15 * test_constants::usdc_multiplier());
+
+    destroy(withdrawn1);
+    destroy(withdrawn2);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_withdraw_all() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+    assert!(withdrawn.value() == supply_amount);
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_create_margin_pool_with_config() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_interest_accrual_over_time() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    clock.set_for_testing(margin_constants::year_ms());
+
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+    assert!(withdrawn.value() >= supply_amount);
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::ENotEnoughAssetInPool)]
+fun test_not_enough_asset_in_pool() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx()); // 100 tokens
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let borrowed_coin = test_borrow(
+        &mut pool,
+        80 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    ); // 80 tokens
+    destroy(borrowed_coin);
+
+    // Should fail due to outstanding loan
+    scenario.next_tx(test_constants::user1());
+    let withdrawn = pool.withdraw<USDC>(&registry, option::none(), &clock, scenario.ctx());
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EMaxPoolBorrowPercentageExceeded)]
+fun test_max_pool_borrow_percentage_exceeded() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx()); // 100 tokens
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    // Above max utilization rate
+    scenario.next_tx(test_constants::user2());
+    let borrowed_coin = test_borrow(
+        &mut pool,
+        85 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    ); // 85 tokens > 80%
+
+    destroy(borrowed_coin);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EBorrowAmountTooLow)]
+fun test_invalid_loan_quantity() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100 tokens
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let borrowed_coin = test_borrow(&mut pool, 0, &clock, scenario.ctx());
+
+    destroy(borrowed_coin);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EDeepbookPoolAlreadyAllowed)]
+fun test_deepbook_pool_already_allowed() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+
+    let deepbook_pool_id = object::id_from_address(@0x123);
+
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &margin_pool_cap, &clock);
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &margin_pool_cap, &clock);
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
+fun test_invalid_margin_pool_cap() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    let wrong_margin_pool_cap = setup_usdt_pool_with_cap(&mut scenario, &maintainer_cap, &clock);
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_pool_id = object::id_from_address(@0x123);
+
+    // Try to use wrong cap with the first pool (should fail)
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &wrong_margin_pool_cap, &clock);
+
+    scenario.return_to_sender(wrong_margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
+fun test_disable_with_invalid_margin_pool_cap() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    let correct_cap = scenario.take_from_sender<MarginPoolCap>();
+    let wrong_cap = setup_usdt_pool_with_cap(&mut scenario, &maintainer_cap, &clock);
+
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_pool_id = object::id_from_address(@0x123);
+
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &correct_cap, &clock);
+
+    pool.disable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &wrong_cap, &clock);
+
+    scenario.return_to_sender(correct_cap);
+    scenario.return_to_sender(wrong_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_disable_deepbook_pool_for_loan() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+    let deepbook_pool_id = object::id_from_address(@0x123);
+
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &margin_pool_cap, &clock);
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id));
+
+    pool.disable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &margin_pool_cap, &clock);
+    assert!(!pool.deepbook_pool_allowed(deepbook_pool_id));
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EDeepbookPoolNotAllowed)]
+fun test_disable_deepbook_pool_not_allowed() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+    let deepbook_pool_id = object::id_from_address(@0x123);
+
+    // disable without enabling first
+    pool.disable_deepbook_pool_for_loan(&registry, deepbook_pool_id, &margin_pool_cap, &clock);
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_update_interest_params() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+
+    let new_interest_config = protocol_config::new_interest_config(
+        100_000_000, // base_rate: 10%
+        200_000_000, // base_slope: 20%
+        700_000_000, // optimal_utilization: 70%
+        3_000_000_000, // excess_slope: 300%
+    );
+
+    pool.update_interest_params(&registry, new_interest_config, &margin_pool_cap, &clock);
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
+fun test_update_interest_params_with_invalid_cap() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let correct_cap = scenario.take_from_sender<MarginPoolCap>();
+    let wrong_cap = setup_usdt_pool_with_cap(&mut scenario, &maintainer_cap, &clock);
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Create new interest config
+    let new_interest_config = protocol_config::new_interest_config(
+        100_000_000,
+        200_000_000,
+        700_000_000,
+        3_000_000_000,
+    );
+
+    pool.update_interest_params(&registry, new_interest_config, &wrong_cap, &clock);
+
+    scenario.return_to_sender(correct_cap);
+    scenario.return_to_sender(wrong_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_update_margin_pool_config() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+
+    let new_margin_pool_config = protocol_config::new_margin_pool_config(
+        2_000_000_000_000_000, // supply_cap: 2M tokens
+        900_000_000, // max_utilization_rate: 90%
+        5_000_000, // protocol_spread: 0.5%
+        100_000_000, // min_borrow: 0.1 token
+    );
+
+    pool.update_margin_pool_config(&registry, new_margin_pool_config, &margin_pool_cap, &clock);
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
+fun test_update_margin_pool_config_with_invalid_cap() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // Get the first pool's cap
+    let correct_cap = scenario.take_from_sender<MarginPoolCap>();
+    let wrong_cap = setup_usdt_pool_with_cap(&mut scenario, &maintainer_cap, &clock);
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Create new margin pool config
+    let new_margin_pool_config = protocol_config::new_margin_pool_config(
+        2_000_000_000_000_000,
+        900_000_000,
+        5_000_000,
+        100_000_000,
+    );
+
+    // Try to update with wrong cap
+    pool.update_margin_pool_config(&registry, new_margin_pool_config, &wrong_cap, &clock);
+
+    scenario.return_to_sender(correct_cap);
+    scenario.return_to_sender(wrong_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_repay_liquidation_with_reward() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 supplies
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    // User2 borrows
+    scenario.next_tx(test_constants::user2());
+    let (borrowed_coin, _, shares) = pool.borrow(
+        50 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(borrowed_coin);
+
+    // Liquidation with extra amount (reward scenario)
+    let repay_amount = pool.borrow_shares_to_amount(shares, &clock);
+    let extra_amount = 5 * test_constants::usdc_multiplier();
+    let liquidation_coin = mint_coin<USDC>(repay_amount + extra_amount, scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(shares, liquidation_coin, &clock);
+
+    assert!(amount == repay_amount);
+    assert!(reward == extra_amount);
+    assert!(default == 0);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_repay_liquidation_with_default() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 supplies
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    // User2 borrows
+    scenario.next_tx(test_constants::user2());
+    let (borrowed_coin, _, shares) = pool.borrow(
+        50 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(borrowed_coin);
+
+    // Liquidation with insufficient amount (default scenario)
+    let repay_amount = pool.borrow_shares_to_amount(shares, &clock);
+    let insufficient_amount = repay_amount - 10 * test_constants::usdc_multiplier();
+    let liquidation_coin = mint_coin<USDC>(insufficient_amount, scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(shares, liquidation_coin, &clock);
+
+    assert!(amount == repay_amount);
+    assert!(reward == 0);
+    assert!(default == 10 * test_constants::usdc_multiplier());
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_multiple_deepbook_pools() {
+    let (scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+
+    let deepbook_pool_id1 = object::id_from_address(@0x123);
+    let deepbook_pool_id2 = object::id_from_address(@0x456);
+    let deepbook_pool_id3 = object::id_from_address(@0x789);
+
+    // Enable multiple pools
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id1, &margin_pool_cap, &clock);
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id2, &margin_pool_cap, &clock);
+    pool.enable_deepbook_pool_for_loan(&registry, deepbook_pool_id3, &margin_pool_cap, &clock);
+
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id1));
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id2));
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id3));
+
+    // Disable one pool
+    pool.disable_deepbook_pool_for_loan(&registry, deepbook_pool_id2, &margin_pool_cap, &clock);
+
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id1));
+    assert!(!pool.deepbook_pool_allowed(deepbook_pool_id2));
+    assert!(pool.deepbook_pool_allowed(deepbook_pool_id3));
+
+    scenario.return_to_sender(margin_pool_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::ENotEnoughAssetInPool)]
+fun test_borrow_exceeds_vault_balance() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 supplies 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    // User2 borrows 70 USDC
+    scenario.next_tx(test_constants::user2());
+    let first_borrow = 70 * test_constants::usdc_multiplier();
+    let (borrowed_coin1, _, _) = pool.borrow(first_borrow, &clock, scenario.ctx());
+    destroy(borrowed_coin1);
+
+    // User3 tries to borrow $1 more than what's left in the vault
+    scenario.next_tx(test_constants::liquidator());
+    let second_borrow = 31 * test_constants::usdc_multiplier();
+    let (borrowed_coin2, _, _) = pool.borrow(second_borrow, &clock, scenario.ctx());
+
+    destroy(borrowed_coin2);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::ENotEnoughAssetInPool)]
+fun test_withdraw_exceeds_available_liquidity() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 and User2 both supply
+    scenario.next_tx(test_constants::user1());
+    let supply1 = 60 * test_constants::usdc_multiplier();
+    let supply_coin1 = mint_coin<USDC>(supply1, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin1, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let supply2 = 40 * test_constants::usdc_multiplier();
+    let supply_coin2 = mint_coin<USDC>(supply2, scenario.ctx());
+    pool.supply<USDC>(&registry, supply_coin2, option::none(), &clock, scenario.ctx());
+
+    // Someone borrows, reducing available liquidity
+    scenario.next_tx(test_constants::liquidator());
+    let borrow_amount = 75 * test_constants::usdc_multiplier();
+    let (borrowed_coin, _, _) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+
+    // Now only 25 USDC left in vault
+    // User1 tries to withdraw their full 60 USDC, but only 25 is available
+    scenario.next_tx(test_constants::user1());
+    let withdrawn = pool.withdraw<USDC>(
+        &registry,
+        option::none(), // withdraw all
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_liquidation_exact_amount() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(1000 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let (borrowed_coin, _, shares) = pool.borrow(
+        500 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(borrowed_coin);
+
+    let exact_amount = pool.borrow_shares_to_amount(shares, &clock);
+    let liquidation_coin = mint_coin<USDC>(exact_amount, scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(shares, liquidation_coin, &clock);
+
+    assert!(amount == exact_amount);
+    assert!(reward == 0);
+    assert!(default == 0);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_liquidation_zero_shares() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(1000 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    let liquidation_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(0, liquidation_coin, &clock);
+
+    assert!(amount == 0);
+    assert!(reward == 100 * test_constants::usdc_multiplier()); // all reward
+    assert!(default == 0);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_supply_withdrawal_with_interest() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Two users supply
+    scenario.next_tx(test_constants::user1());
+    let supply1 = 1000 * test_constants::usdc_multiplier();
+    let coin1 = mint_coin<USDC>(supply1, scenario.ctx());
+    pool.supply(&registry, coin1, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let supply2 = 500 * test_constants::usdc_multiplier();
+    let coin2 = mint_coin<USDC>(supply2, scenario.ctx());
+    pool.supply(&registry, coin2, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::liquidator());
+    let (borrowed_coin, _, _) = pool.borrow(
+        750 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(borrowed_coin);
+
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // User1 withdraws 20% of initial deposit
+    scenario.next_tx(test_constants::user1());
+    let withdrawn1 = pool.withdraw(
+        &registry,
+        option::some(200 * test_constants::usdc_multiplier()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(withdrawn1.value(), 200 * test_constants::usdc_multiplier());
+    destroy(withdrawn1);
+
+    // User2 tries to withdraw all
+    scenario.next_tx(test_constants::user2());
+    let withdrawn2 = pool.withdraw(
+        &registry,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(withdrawn2.value() > supply2);
+    destroy(withdrawn2);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_partial_liquidation_half_shares() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 1000 * test_constants::usdc_multiplier();
+    let (borrowed_coin, _, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    let half_shares = total_shares / 2;
+    let half_amount = pool.borrow_shares_to_amount(half_shares, &clock);
+    let liquidation_coin = mint_coin<USDC>(half_amount + 10000, scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(half_shares, liquidation_coin, &clock);
+
+    assert!(amount == half_amount);
+    assert!(reward == 10000);
+    assert!(default == 0);
+
+    let remaining_shares = total_shares - half_shares;
+    let remaining_amount = pool.borrow_shares_to_amount(remaining_shares, &clock);
+    // remaining amount should include accrued interest
+    assert!(remaining_amount > borrow_amount / 2);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_partial_liquidation_with_default() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_coin = mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 2000 * test_constants::usdc_multiplier();
+    let (borrowed_coin, _, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+
+    advance_time(&mut clock, margin_constants::year_ms() / 6);
+
+    // Partial liquidation of 30% shares with insufficient payment
+    let partial_shares = total_shares / 2;
+    let required_amount = pool.borrow_shares_to_amount(partial_shares, &clock);
+    let insufficient_amount = (required_amount * 90) / 100;
+    let liquidation_coin = mint_coin<USDC>(insufficient_amount, scenario.ctx());
+    let (amount, reward, default) = pool.repay_liquidation(
+        partial_shares,
+        liquidation_coin,
+        &clock,
+    );
+
+    assert!(amount == required_amount);
+    assert!(reward == 0);
+    assert!(default == required_amount - insufficient_amount);
+
+    let remaining_shares = total_shares - partial_shares;
+    let remaining_amount = pool.borrow_shares_to_amount(remaining_shares, &clock);
+    assert!(remaining_amount > 0);
+
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_full_liquidation_with_interest() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 10000 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+    pool.supply(&registry, supply_coin, option::none(), &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 3000 * test_constants::usdc_multiplier();
+    let (borrowed_coin, _, borrow_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    destroy(borrowed_coin);
+
+    let initial_debt = pool.borrow_shares_to_amount(borrow_shares, &clock);
+    assert!(initial_debt == borrow_amount);
+
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // Check debt has grown substantially due to interest
+    let debt_after_interest = pool.borrow_shares_to_amount(borrow_shares, &clock);
+    assert!(debt_after_interest > initial_debt);
+
+    scenario.next_tx(test_constants::liquidator());
+    let liquidation_coin = mint_coin<USDC>(debt_after_interest + 1000, scenario.ctx());
+    let (_, reward, default) = pool.repay_liquidation(
+        borrow_shares,
+        liquidation_coin,
+        &clock,
+    );
+    assert!(reward > 0);
+    assert!(default == 0);
+
+    // User should be able to withdraw supply plus interest earned
+    scenario.next_tx(test_constants::user1());
+    let withdrawn = pool.withdraw(&registry, option::none(), &clock, scenario.ctx());
+    let interest_earned = withdrawn.value() - supply_amount;
+    assert!(withdrawn.value() > supply_amount);
+    assert!(interest_earned > 0);
+
+    destroy(withdrawn);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}

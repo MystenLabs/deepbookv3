@@ -69,20 +69,24 @@ public struct TradeParamsUpdateEvent has copy, drop {
 }
 
 // === Public-Package Functions ===
-public(package) fun empty(stable_pool: bool, ctx: &TxContext): Governance {
-    let default_taker = if (stable_pool) {
+public(package) fun empty(whitelisted: bool, stable_pool: bool, ctx: &TxContext): Governance {
+    let default_taker = if (whitelisted) {
+        0
+    } else if (stable_pool) {
         MAX_TAKER_STABLE
     } else {
         MAX_TAKER_VOLATILE
     };
-    let default_maker = if (stable_pool) {
+    let default_maker = if (whitelisted) {
+        0
+    } else if (stable_pool) {
         MAX_MAKER_STABLE
     } else {
         MAX_MAKER_VOLATILE
     };
     Governance {
         epoch: ctx.epoch(),
-        whitelisted: false,
+        whitelisted,
         stable: stable_pool,
         proposals: vec_map::empty(),
         trade_params: trade_params::new(
@@ -98,13 +102,6 @@ public(package) fun empty(stable_pool: bool, ctx: &TxContext): Governance {
         voting_power: 0,
         quorum: 0,
     }
-}
-
-/// Whitelist a pool. This pool can be used as a DEEP reference price for
-/// other pools. This pool will have zero fees.
-public(package) fun set_whitelist(self: &mut Governance, whitelisted: bool) {
-    self.whitelisted = whitelisted;
-    self.reset_trade_params();
 }
 
 public(package) fun whitelisted(self: &Governance): bool {
@@ -169,7 +166,7 @@ public(package) fun add_proposal(
     };
 
     let voting_power = stake_to_voting_power(stake_amount);
-    if (self.proposals.size() == MAX_PROPOSALS) {
+    if (self.proposals.length() == MAX_PROPOSALS) {
         self.remove_lowest_proposal(voting_power);
     };
 
@@ -262,7 +259,7 @@ fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
     let mut cur_lowest_votes = constants::max_u64();
     let (keys, values) = self.proposals.into_keys_values();
 
-    self.proposals.size().do!(|i| {
+    self.proposals.length().do!(|i| {
         let proposal_votes = values[i].votes;
         if (proposal_votes < voting_power && proposal_votes <= cur_lowest_votes) {
             removal_id = option::some(keys[i]);
@@ -272,19 +269,6 @@ fun remove_lowest_proposal(self: &mut Governance, voting_power: u64) {
 
     assert!(removal_id.is_some(), EMaxProposalsReachedNotEnoughVotes);
     self.proposals.remove(removal_id.borrow());
-}
-
-fun reset_trade_params(self: &mut Governance) {
-    self.proposals = vec_map::empty();
-    let stake = self.trade_params.stake_required();
-    if (self.whitelisted) {
-        self.trade_params = trade_params::new(0, 0, 0);
-    } else if (self.stable) {
-        self.trade_params = trade_params::new(MAX_TAKER_STABLE, MAX_MAKER_STABLE, stake);
-    } else {
-        self.trade_params = trade_params::new(MAX_TAKER_VOLATILE, MAX_MAKER_VOLATILE, stake);
-    };
-    self.next_trade_params = self.trade_params;
 }
 
 fun to_trade_params(proposal: &Proposal): TradeParams {
