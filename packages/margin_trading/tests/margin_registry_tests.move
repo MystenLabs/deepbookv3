@@ -4,15 +4,13 @@
 #[test_only]
 module margin_trading::margin_registry_tests;
 
-use margin_trading::margin_constants;
-use margin_trading::margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap};
-use margin_trading::test_constants::{Self, USDC, USDT};
-use margin_trading::test_helpers::{Self, default_protocol_config};
-use sui::clock::Clock;
-use sui::test_scenario::{Scenario, return_shared};
-use sui::test_utils::destroy;
-
-// === Setup helpers ===
+use margin_trading::{
+    margin_constants,
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{Self, default_protocol_config}
+};
+use sui::{clock::Clock, test_scenario::{Scenario, return_shared}, test_utils::destroy};
 
 fun setup_test_with_margin_pools(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();
@@ -64,8 +62,6 @@ fun cleanup_test(
     scenario.end();
 }
 
-// === Test mint_maintainer_cap ===
-
 #[test]
 fun test_mint_maintainer_cap_ok() {
     let (
@@ -88,8 +84,6 @@ fun test_mint_maintainer_cap_ok() {
 
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
-
-// === Test revoke_maintainer_cap ===
 
 #[test]
 fun test_revoke_maintainer_cap_ok() {
@@ -133,8 +127,6 @@ fun test_revoke_random_cap_should_fail() {
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// === Test register_deepbook_pool ===
-
 #[test]
 fun test_register_deepbook_pool_ok() {
     let (
@@ -166,8 +158,6 @@ fun test_register_deepbook_pool_ok() {
 
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
-
-// === Test new_pool_config ===
 
 #[test]
 fun test_new_pool_config_ok() {
@@ -423,8 +413,6 @@ fun test_new_pool_config_target_too_low() {
     destroy(pool_config);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
-
-// === Test new_pool_config_with_leverage ===
 
 #[test]
 fun test_new_pool_config_with_leverage_ok() {
