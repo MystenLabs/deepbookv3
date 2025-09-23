@@ -524,12 +524,11 @@ fun test_oracle_max_age_exceeded() {
         &clock,
     );
 
-    // Cleanup (this won't be reached due to expected failure)
     destroy(old_price_info);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test] // This should pass with a recent timestamp
+#[test]
 fun test_oracle_max_age_within_limit() {
     let (
         mut scenario,
@@ -568,11 +567,8 @@ fun test_oracle_max_age_within_limit() {
         1000000, // 1 USDC (6 decimals)
         &clock,
     );
-
-    // Verify we got a reasonable USD value (should be close to 1 USD in 9 decimal format)
     assert!(usd_value > 900_000_000 && usd_value < 1_100_000_000, 0);
 
-    // Cleanup
     destroy(recent_price_info);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
