@@ -658,7 +658,7 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
     let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
     let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
     let max_risk_ratio = margin_constants::max_risk_ratio();
-    if (assets_in_debt_unit > math::mul(debt, max_risk_ratio)) {
+    if (assets_in_debt_unit >= math::mul(debt, max_risk_ratio)) {
         max_risk_ratio
     } else {
         math::div(assets_in_debt_unit, debt)
