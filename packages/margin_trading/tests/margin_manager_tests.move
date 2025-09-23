@@ -1617,11 +1617,9 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
         scenario.ctx(),
     );
 
-    // Verify no loans exist
-    assert!(mm.borrowed_base_shares() == 0, 0);
-    assert!(mm.borrowed_quote_shares() == 0, 1);
+    assert!(mm.borrowed_base_shares() == 0);
+    assert!(mm.borrowed_quote_shares() == 0);
 
-    // Call risk_ratio function - should return MAX_RISK_RATIO since debt = 0 but assets > 0
     let risk_ratio = mm.risk_ratio<BTC, USDC>(
         &registry,
         &btc_price,
@@ -1632,9 +1630,7 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
         &clock,
     );
 
-    // Should return MAX_RISK_RATIO from margin_constants
-    let expected_max_risk_ratio = margin_constants::max_risk_ratio();
-    assert!(risk_ratio == expected_max_risk_ratio, 2);
+    assert!(risk_ratio == margin_constants::max_risk_ratio());
 
     return_shared_2!(btc_pool, usdc_pool);
     return_shared_2!(mm, pool);
@@ -1667,15 +1663,13 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
 
-    // Verify completely empty - no assets, no loans
-    assert!(mm.borrowed_base_shares() == 0, 0);
-    assert!(mm.borrowed_quote_shares() == 0, 1);
+    assert!(mm.borrowed_base_shares() == 0);
+    assert!(mm.borrowed_quote_shares() == 0);
 
     let (base_assets, quote_assets) = mm.calculate_assets<BTC, USDC>(&pool);
-    assert!(base_assets == 0, 2);
-    assert!(quote_assets == 0, 3);
+    assert!(base_assets == 0);
+    assert!(quote_assets == 0);
 
-    // Call risk_ratio function - should return MAX_RISK_RATIO since debt = 0 (avoids division by zero)
     let risk_ratio = mm.risk_ratio<BTC, USDC>(
         &registry,
         &btc_price,
@@ -1686,9 +1680,7 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
         &clock,
     );
 
-    // Should return MAX_RISK_RATIO from margin_constants (avoids division by zero)
-    let expected_max_risk_ratio = margin_constants::max_risk_ratio();
-    assert!(risk_ratio == expected_max_risk_ratio, 4);
+    assert!(risk_ratio == margin_constants::max_risk_ratio());
 
     return_shared_2!(btc_pool, usdc_pool);
     return_shared_2!(mm, pool);
