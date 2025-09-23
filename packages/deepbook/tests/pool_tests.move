@@ -3241,7 +3241,7 @@ fun mint_referral_max_multiplier_e() {
         pool.mint_referral(2_100_000_000, test.ctx());
     };
 
-    abort(0)
+    abort (0)
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
@@ -3254,7 +3254,7 @@ fun mint_referral_not_multiple_of_multiplier_e() {
         pool.mint_referral(100_000_001, test.ctx());
     };
 
-    abort(0)
+    abort (0)
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
@@ -3276,7 +3276,7 @@ fun test_update_referral_multiplier_e() {
         pool.update_referral_multiplier(&referral, 2_100_000_000);
     };
 
-    abort(0)
+    abort (0)
 }
 
 #[test]
@@ -3294,16 +3294,12 @@ fun test_process_order_referral_ok() {
     let balance_manager_id_alice;
     test.next_tx(ALICE);
     {
-        balance_manager_id_alice = create_acct_and_share_with_funds_typed<
-            SUI,
-            USDC,
-            SUI,
-            DEEP,
-        >(
-            ALICE,
-            1000000 * constants::float_scaling(),
-            &mut test,
-        );
+        balance_manager_id_alice =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                ALICE,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
     };
 
     test.next_tx(ALICE);

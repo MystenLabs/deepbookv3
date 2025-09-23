@@ -4,9 +4,20 @@
 #[test_only]
 module deepbook::balance_manager_tests;
 
-use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, DeepBookReferral};
-use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
-use sui::test_utils;
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    DeepBookReferral
+};
+use sui::{
+    coin::mint_for_testing,
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared},
+    test_utils
+};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
