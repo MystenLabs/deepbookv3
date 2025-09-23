@@ -1462,7 +1462,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             referral_rewards
                 .deep
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-        } else if (order_info.is_bid()) {
+        } else if (!order_info.is_bid()) {
             referral_rewards
                 .base
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
