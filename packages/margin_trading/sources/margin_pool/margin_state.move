@@ -170,10 +170,10 @@ public(package) fun borrow_shares_to_amount(
     let ratio = if (self.borrow_shares == 0) {
         constants::float_scaling()
     } else {
-        math::div(self.borrow_shares, borrow)
+        math::div(borrow, self.borrow_shares)
     };
 
-    math::div(shares, ratio)
+    math::mul(shares, ratio)
 }
 
 // === Private Functions ===
