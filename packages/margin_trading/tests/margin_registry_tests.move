@@ -7,6 +7,7 @@ module margin_trading::margin_registry_tests;
 use margin_trading::{
     margin_constants,
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
+    oracle,
     test_constants::{Self, USDC, USDT},
     test_helpers::{Self, default_protocol_config}
 };
@@ -480,5 +481,98 @@ fun test_new_pool_config_with_leverage_too_high() {
     );
 
     destroy(pool_config);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth::pyth::E_STALE_PRICE_UPDATE)]
+fun test_oracle_max_age_exceeded() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _usdt_pool_id,
+    ) = setup_test_with_margin_pools();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    let pyth_config = test_helpers::create_test_pyth_config();
+    registry.add_config<oracle::PythConfig>(&admin_cap, pyth_config);
+
+    let current_time_ms = 10000000; // 10 million milliseconds = 10,000 seconds
+    clock.set_for_testing(current_time_ms);
+
+    // Create a price info object with timestamp that's older than 60 seconds
+    let old_timestamp_seconds = (current_time_ms / 1000) - 65; // 65 seconds ago
+
+    let old_price_info = test_helpers::build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        1 * test_constants::pyth_multiplier(), // $1.00 price
+        50000, // confidence
+        test_constants::pyth_decimals(), // exponent
+        old_timestamp_seconds, // timestamp 70 seconds ago
+    );
+
+    // This should fail with Pyth error because price is older than 60 seconds
+    let _usd_value = oracle::calculate_usd_price<USDC>(
+        &old_price_info,
+        &registry,
+        1000000, // 1 USDC (6 decimals)
+        &clock,
+    );
+
+    // Cleanup (this won't be reached due to expected failure)
+    destroy(old_price_info);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test] // This should pass with a recent timestamp
+fun test_oracle_max_age_within_limit() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _usdt_pool_id,
+    ) = setup_test_with_margin_pools();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    let pyth_config = test_helpers::create_test_pyth_config();
+    registry.add_config<oracle::PythConfig>(&admin_cap, pyth_config);
+
+    let current_time_ms = 10000000; // 10 million milliseconds = 10,000 seconds
+    clock.set_for_testing(current_time_ms);
+
+    // Create a price info object with recent timestamp (30 seconds ago, within 60 second limit)
+    let recent_timestamp_seconds = (current_time_ms / 1000) - 30; // 30 seconds ago
+
+    let recent_price_info = test_helpers::build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        1 * test_constants::pyth_multiplier(), // $1.00 price
+        50000, // confidence
+        test_constants::pyth_decimals(), // exponent
+        recent_timestamp_seconds, // timestamp 30 seconds ago
+    );
+
+    // This should succeed because price is within 60 second limit
+    let usd_value = oracle::calculate_usd_price<USDC>(
+        &recent_price_info,
+        &registry,
+        1000000, // 1 USDC (6 decimals)
+        &clock,
+    );
+
+    // Verify we got a reasonable USD value (should be close to 1 USD in 9 decimal format)
+    assert!(usd_value > 900_000_000 && usd_value < 1_100_000_000, 0);
+
+    // Cleanup
+    destroy(recent_price_info);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
