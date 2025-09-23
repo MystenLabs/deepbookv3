@@ -694,7 +694,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     multiplier: u64,
     ctx: &mut TxContext,
-) {
+): ID {
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
@@ -710,6 +710,8 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
                 deep: balance::zero(),
             },
         );
+
+    referral_id
 }
 
 /// Update the multiplier for the referral.
@@ -1263,6 +1265,19 @@ public fun quorum<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): u6
 
 public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
+}
+
+public fun get_referral_balances<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookReferral,
+): (u64, u64, u64) {
+    let referral_id = object::id(referral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    let base = referral_rewards.base.value();
+    let quote = referral_rewards.quote.value();
+    let deep = referral_rewards.deep.value();
+
+    (base, quote, deep)
 }
 
 // === Public-Package Functions ===
