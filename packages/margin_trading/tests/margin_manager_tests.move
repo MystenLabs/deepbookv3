@@ -6,6 +6,7 @@ module margin_trading::margin_manager_tests;
 
 use deepbook::pool::Pool;
 use margin_trading::{
+    margin_constants,
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
     margin_registry::MarginRegistry,
@@ -1581,5 +1582,116 @@ fun test_asset_rebalancing_between_pools() {
     return_shared_3!(mm, usdc_pool, usdt_pool);
     return_shared(pool);
     destroy_2!(usdc_price, usdt_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+    ) = setup_btc_usd_margin_trading();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Deposit 1 BTC worth $50k (but don't borrow anything)
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // Verify no loans exist
+    assert!(mm.borrowed_base_shares() == 0, 0);
+    assert!(mm.borrowed_quote_shares() == 0, 1);
+
+    // Call risk_ratio function - should return MAX_RISK_RATIO since debt = 0 but assets > 0
+    let risk_ratio = mm.risk_ratio<BTC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Should return MAX_RISK_RATIO from margin_constants
+    let expected_max_risk_ratio = margin_constants::max_risk_ratio();
+    assert!(risk_ratio == expected_max_risk_ratio, 2);
+
+    return_shared_2!(btc_pool, usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_risk_ratio_returns_max_when_completely_empty() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+    ) = setup_btc_usd_margin_trading();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Verify completely empty - no assets, no loans
+    assert!(mm.borrowed_base_shares() == 0, 0);
+    assert!(mm.borrowed_quote_shares() == 0, 1);
+
+    let (base_assets, quote_assets) = mm.calculate_assets<BTC, USDC>(&pool);
+    assert!(base_assets == 0, 2);
+    assert!(quote_assets == 0, 3);
+
+    // Call risk_ratio function - should return MAX_RISK_RATIO since debt = 0 (avoids division by zero)
+    let risk_ratio = mm.risk_ratio<BTC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Should return MAX_RISK_RATIO from margin_constants (avoids division by zero)
+    let expected_max_risk_ratio = margin_constants::max_risk_ratio();
+    assert!(risk_ratio == expected_max_risk_ratio, 4);
+
+    return_shared_2!(btc_pool, usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
