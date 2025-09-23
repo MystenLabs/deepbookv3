@@ -567,7 +567,7 @@ fun test_oracle_max_age_within_limit() {
         1000000, // 1 USDC (6 decimals)
         &clock,
     );
-    assert!(usd_value > 900_000_000 && usd_value < 1_100_000_000, 0);
+    assert!(usd_value > 900_000_000 && usd_value < 1_100_000_000);
 
     destroy(recent_price_info);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
