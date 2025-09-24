@@ -906,7 +906,10 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
 ) {
     assert!(alpha <= constants::max_ewma_alpha(), EInvalidEWMAAlpha);
     assert!(z_score_threshold <= constants::max_z_score_threshold(), EInvalidZScoreThreshold);
-    assert!(additional_taker_fee <= constants::max_additional_taker_fee(), EInvalidAdditionalTakerFee);
+    assert!(
+        additional_taker_fee <= constants::max_additional_taker_fee(),
+        EInvalidAdditionalTakerFee,
+    );
     let _ = self.load_inner_mut();
     let ewma_state = self.update_ewma_state(clock, ctx);
     ewma_state.set_alpha(alpha);
@@ -1379,7 +1382,9 @@ public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
     inner
 }
 
-public(package) fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
+public(package) fun load_ewma_state<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): EWMAState {
     *self.id.borrow(constants::ewma_df_key())
 }
 

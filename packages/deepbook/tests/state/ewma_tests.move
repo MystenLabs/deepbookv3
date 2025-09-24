@@ -47,7 +47,7 @@ fun test_update_ewma_state() {
     let mut test = begin(@0xF);
     let gas_price1 = 1_000;
     let taker_fee = 100_000_000;
-    advance_scenario_with_gas_price(&mut test, gas_price1);
+    advance_scenario_with_gas_price(&mut test, gas_price1, 1000);
     let mut ewma_state = test_init_ewma_state(test.ctx());
     assert_eq!(ewma_state.mean(), 1_000 * constants::float_scaling());
     assert_eq!(ewma_state.variance(), 0);
@@ -57,7 +57,7 @@ fun test_update_ewma_state() {
     // difference 2000 - 1010 = 990
     // diff squared = 980100
     let gas_price2 = 2_000;
-    advance_scenario_with_gas_price(&mut test, gas_price2);
+    advance_scenario_with_gas_price(&mut test, gas_price2, 1000);
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
     ewma_state.update(&clock, test.ctx());
@@ -70,7 +70,7 @@ fun test_update_ewma_state() {
     assert_eq!(ewma_state.z_score(test.ctx()), constants::float_scaling());
 
     let gas_price3 = 3_000;
-    advance_scenario_with_gas_price(&mut test, gas_price3);
+    advance_scenario_with_gas_price(&mut test, gas_price3, 1000);
     clock.set_for_testing(1000 + 10);
     ewma_state.update(&clock, test.ctx());
     // mean = 0.99 * 1_010_000_000_000 + 0.01 * 3_000_000_000_000 = 1_029_900_000_000
@@ -87,7 +87,7 @@ fun test_update_ewma_state() {
     assert_eq!(new_taker_fee, taker_fee);
 
     let gas_price4 = 4_000;
-    advance_scenario_with_gas_price(&mut test, gas_price4);
+    advance_scenario_with_gas_price(&mut test, gas_price4, 1000);
     clock.set_for_testing(1000 + 20);
     ewma_state.update(&clock, test.ctx());
     // mean = 0.99 * 1_029_900_000_000 + 0.01 * 4_000_000_000_000 = 1059.601 * 10^9
@@ -117,7 +117,7 @@ fun test_update_ewma_state() {
 
     // lower gas fee
     let low_gas_fee = 10;
-    advance_scenario_with_gas_price(&mut test, low_gas_fee);
+    advance_scenario_with_gas_price(&mut test, low_gas_fee, 1000);
     clock.set_for_testing(1000 + 30);
     ewma_state.update(&clock, test.ctx());
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
@@ -128,13 +128,12 @@ fun test_update_ewma_state() {
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee);
 
-
     test_utils::destroy(clock);
     end(test);
 }
 
-fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64) {
-    let ts = test.ctx().epoch_timestamp_ms() + 1000;
+fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {
+    let ts = test.ctx().epoch_timestamp_ms() + timestamp_advance;
     let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
     test.next_with_context(ctx);
 }

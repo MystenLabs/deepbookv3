@@ -3495,7 +3495,7 @@ fun test_enable_ewma_params_ok() {
     };
 
     let gas_price = 1_000;
-    advance_scenario_with_gas_price(&mut test, gas_price);
+    advance_scenario_with_gas_price(&mut test, gas_price, 1000);
     test.next_tx(ALICE);
     {
         let order_info = place_market_order<SUI, USDC>(
@@ -3529,7 +3529,7 @@ fun test_enable_ewma_params_ok() {
     };
 
     // pay with high gas price
-    advance_scenario_with_gas_price(&mut test, gas_price * 5);
+    advance_scenario_with_gas_price(&mut test, gas_price * 5, 1000);
     test.next_tx(ALICE);
     {
         let order_info = place_market_order<SUI, USDC>(
@@ -3556,7 +3556,7 @@ fun test_enable_ewma_params_ok() {
     };
 
     // pay with high gas price, but disabled ewma
-    advance_scenario_with_gas_price(&mut test, gas_price * 5);
+    advance_scenario_with_gas_price(&mut test, gas_price * 5, 1000);
     test.next_tx(ALICE);
     {
         let order_info = place_market_order<SUI, USDC>(
@@ -5981,8 +5981,8 @@ fun remove_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) 
     test_utils::destroy(admin_cap);
 }
 
-fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64) {
-    let ts = test.ctx().epoch_timestamp_ms() + 1000;
+fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {
+    let ts = test.ctx().epoch_timestamp_ms() + timestamp_advance;
     let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
     test.next_with_context(ctx);
 }
