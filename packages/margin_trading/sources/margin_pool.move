@@ -239,7 +239,7 @@ public fun supply<Asset>(
     let balance = coin.into_balance();
     self.vault.join(balance);
 
-    assert!(self.state.supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
 
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
@@ -305,6 +305,26 @@ public fun withdraw_referral_fees<Asset>(
 // === Public-View Functions ===
 public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
     self.allowed_deepbook_pools.contains(&deepbook_pool_id)
+}
+
+public fun total_supply<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.total_supply()
+}
+
+public fun supply_shares<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.supply_shares()
+}
+
+public fun total_borrow<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.total_borrow()
+}
+
+public fun borrow_shares<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.borrow_shares()
+}
+
+public fun last_update_timestamp<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.last_update_timestamp()
 }
 
 // === Public-Package Functions ===
