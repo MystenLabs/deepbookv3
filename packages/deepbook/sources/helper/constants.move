@@ -15,14 +15,18 @@ const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
-const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
-const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
-const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
 const EWMA_DF_KEY: vector<u8> = b"ewma";
 const REFERRAL_DF_KEY: vector<u8> = b"referral";
 const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
 const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
 const MAX_BALANCE_MANAGERS: u64 = 100;
+
+const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
+const MAX_EWMA_ALPHA: u64 = 100_000_000; // 10% smoothing factor. at 3 TPS ~ one minute alpha
+const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
+const MAX_Z_SCORE_THRESHOLD: u64 = 10_000_000_000; // 10 standard deviations
+const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
+const MAX_ADDITIONAL_TAKER_FEE: u64 = 2_000_000_000; // 20 bps
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -239,6 +243,18 @@ public fun default_z_score_threshold(): u64 {
 
 public fun default_additional_taker_fee(): u64 {
     DEFAULT_ADDITIONAL_TAKER_FEE
+}
+
+public fun max_ewma_alpha(): u64 {
+    MAX_EWMA_ALPHA
+}
+
+public fun max_z_score_threshold(): u64 {
+    MAX_Z_SCORE_THRESHOLD
+}
+
+public fun max_additional_taker_fee(): u64 {
+    MAX_ADDITIONAL_TAKER_FEE
 }
 
 public fun ewma_df_key(): vector<u8> {
