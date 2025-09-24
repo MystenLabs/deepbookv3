@@ -52,6 +52,9 @@ const EInvalidStake: u64 = 13;
 const EPoolNotRegistered: u64 = 14;
 const EPoolCannotBeBothWhitelistedAndStable: u64 = 15;
 const EInvalidReferralMultiplier: u64 = 16;
+const EInvalidEWMAAlpha: u64 = 17;
+const EInvalidZScoreThreshold: u64 = 18;
+const EInvalidAdditionalTakerFee: u64 = 19;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -901,6 +904,9 @@ public fun set_ewma_params<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    assert!(alpha <= constants::max_ewma_alpha(), EInvalidEWMAAlpha);
+    assert!(z_score_threshold <= constants::max_z_score_threshold(), EInvalidZScoreThreshold);
+    assert!(additional_taker_fee <= constants::max_additional_taker_fee(), EInvalidAdditionalTakerFee);
     let _ = self.load_inner_mut();
     let ewma_state = self.update_ewma_state(clock, ctx);
     ewma_state.set_alpha(alpha);
@@ -1373,6 +1379,10 @@ public(package) fun load_inner_mut<BaseAsset, QuoteAsset>(
     inner
 }
 
+public(package) fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
+    *self.id.borrow(constants::ewma_df_key())
+}
+
 // === Private Functions ===
 fun place_order_int<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1491,8 +1501,4 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     ewma_state.update(clock, ctx);
 
     ewma_state
-}
-
-fun load_ewma_state<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): EWMAState {
-    *self.id.borrow(constants::ewma_df_key())
 }

@@ -3453,6 +3453,131 @@ fun test_process_order_referral_ok() {
     end(test);
 }
 
+#[test]
+fun test_enable_ewma_params_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let clock = clock::create_for_testing(test.ctx());
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.enable_ewma_state(&admin_cap, true, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(ewma_state.enabled(), 0);
+        assert!(ewma_state.alpha() == constants::default_ewma_alpha(), 1);
+        assert!(ewma_state.z_score_threshold() == constants::default_z_score_threshold(), 2);
+        assert!(ewma_state.additional_taker_fee() == constants::default_additional_taker_fee(), 3);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.set_ewma_params(&admin_cap, 10_000_000, 3_000_000_000, 1_000_000, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(ewma_state.enabled(), 0);
+        assert!(ewma_state.alpha() == 10_000_000, 1);
+        assert!(ewma_state.z_score_threshold() == 3_000_000_000, 2);
+        assert!(ewma_state.additional_taker_fee() == 1_000_000, 3);
+        return_shared(pool);
+    };
+
+    let balance_manager_id_alice;
+    test.next_tx(ALICE);
+    {
+        balance_manager_id_alice =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                ALICE,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    let gas_price = 1_000;
+    advance_scenario_with_gas_price(&mut test, gas_price);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    // pay with high gas price
+    advance_scenario_with_gas_price(&mut test, gas_price * 5);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 300_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.enable_ewma_state(&admin_cap, false, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(!ewma_state.enabled(), 0);
+        return_shared(pool);
+    };
+
+    // pay with high gas price, but disabled ewma
+    advance_scenario_with_gas_price(&mut test, gas_price * 5);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test_utils::destroy(clock);
+    test_utils::destroy(admin_cap);
+    end(test);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
 /// Trying to place an order that's expiring should fail
 fun place_order_expired_order_skipped() {
@@ -5854,4 +5979,10 @@ fun remove_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) 
     };
     return_shared(registry);
     test_utils::destroy(admin_cap);
+}
+
+fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64) {
+    let ts = test.ctx().epoch_timestamp_ms() + 1000;
+    let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
+    test.next_with_context(ctx);
 }
