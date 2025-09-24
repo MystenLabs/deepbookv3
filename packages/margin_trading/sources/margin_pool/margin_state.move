@@ -10,7 +10,8 @@ module margin_trading::margin_state;
 
 use deepbook::{constants, math};
 use margin_trading::protocol_config::ProtocolConfig;
-use sui::clock::Clock;
+use std::string::String;
+use sui::{clock::Clock, vec_map::{Self, VecMap}};
 
 public struct State has drop, store {
     supply: u64,
@@ -18,6 +19,7 @@ public struct State has drop, store {
     supply_shares: u64,
     borrow_shares: u64,
     last_update_timestamp: u64,
+    extra_fields: VecMap<String, u64>,
 }
 
 // === Public-Package Functions ===
@@ -29,6 +31,7 @@ public(package) fun default(clock: &Clock): State {
         supply_shares: 0,
         borrow_shares: 0,
         last_update_timestamp: clock.timestamp_ms(),
+        extra_fields: vec_map::empty(),
     }
 }
 

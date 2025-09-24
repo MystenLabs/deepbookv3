@@ -24,8 +24,8 @@ use margin_trading::{
     oracle::calculate_target_currency
 };
 use pyth::price_info::PriceInfoObject;
-use std::type_name;
-use sui::{clock::Clock, coin::Coin, event};
+use std::{string::String, type_name};
+use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -55,6 +55,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     trade_cap: TradeCap,
     borrowed_base_shares: u64,
     borrowed_quote_shares: u64,
+    extra_fields: VecMap<String, u64>,
 }
 
 /// Hot potato to ensure manager is shared during creation
@@ -704,6 +705,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         trade_cap,
         borrowed_base_shares: 0,
         borrowed_quote_shares: 0,
+        extra_fields: vec_map::empty(),
     }
 }
 

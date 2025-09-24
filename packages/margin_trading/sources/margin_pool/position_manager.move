@@ -5,10 +5,12 @@
 /// It is used to track the supply and loan shares of the users.
 module margin_trading::position_manager;
 
-use sui::table::{Self, Table};
+use std::string::String;
+use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 public struct PositionManager has store {
     positions: Table<address, Position>,
+    extra_fields: VecMap<String, u64>,
 }
 
 public struct Position has store {
@@ -21,6 +23,7 @@ public struct Position has store {
 public(package) fun create_position_manager(ctx: &mut TxContext): PositionManager {
     PositionManager {
         positions: table::new(ctx),
+        extra_fields: vec_map::empty(),
     }
 }
 
