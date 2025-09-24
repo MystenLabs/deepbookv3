@@ -4,8 +4,20 @@
 #[test_only]
 module deepbook::balance_manager_tests;
 
-use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
-use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    DeepBookReferral
+};
+use sui::{
+    coin::mint_for_testing,
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared},
+    test_utils
+};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -525,6 +537,62 @@ fun test_withdraw_balance_too_low_e() {
     };
 
     abort 0
+}
+
+#[test]
+fun test_referral_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let referral_id1;
+    let referral_id2;
+    test.next_tx(alice);
+    {
+        referral_id1 = balance_manager::mint_referral(test.ctx());
+        referral_id2 = balance_manager::mint_referral(test.ctx());
+    };
+
+    test.next_tx(alice);
+    {
+        let referral1 = test.take_shared_by_id<DeepBookReferral>(referral_id1);
+        assert!(referral1.referral_owner() == alice, 0);
+        let referral2 = test.take_shared_by_id<DeepBookReferral>(referral_id2);
+        assert!(referral2.referral_owner() == alice, 0);
+
+        let mut balance_manager = balance_manager::new(test.ctx());
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_referral(&referral1, &trade_cap);
+        assert!(balance_manager.get_referral_id() == option::some(referral_id1), 0);
+        balance_manager.set_referral(&referral2, &trade_cap);
+        assert!(balance_manager.get_referral_id() == option::some(referral_id2), 0);
+
+        balance_manager.unset_referral(&trade_cap);
+        assert!(balance_manager.get_referral_id() == option::none(), 0);
+
+        transfer::public_share_object(balance_manager);
+        return_shared(referral1);
+        return_shared(referral2);
+        test_utils::destroy(trade_cap);
+    };
+
+    end(test);
+}
+
+#[test]
+fun test_unset_no_referral_ok() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    test.next_tx(alice);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.unset_referral(&trade_cap);
+        assert!(balance_manager.get_referral_id() == option::none(), 0);
+
+        transfer::public_share_object(balance_manager);
+        test_utils::destroy(trade_cap);
+    };
+
+    end(test);
 }
 
 public(package) fun deposit_into_account<T>(

@@ -16,7 +16,7 @@ use sui::{
     coin::Coin,
     dynamic_field as df,
     event,
-    object::id_from_bytes,
+    object::id_from_address,
     vec_set::{Self, VecSet}
 };
 
@@ -175,7 +175,7 @@ public fun unset_referral(balance_manager: &mut BalanceManager, trade_cap: &Trad
     let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
 
     event::emit(DeepBookReferralSetEvent {
-        referral_id: id_from_bytes(b""),
+        referral_id: id_from_address(@0x0),
         balance_manager_id: balance_manager.id.to_inner(),
     });
 }
@@ -353,6 +353,10 @@ public fun owner(balance_manager: &BalanceManager): address {
 /// Returns the owner of the balance_manager.
 public fun id(balance_manager: &BalanceManager): ID {
     balance_manager.id.to_inner()
+}
+
+public fun referral_owner(referral: &DeepBookReferral): address {
+    referral.owner
 }
 
 // === Public-Package Functions ===

@@ -694,7 +694,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     multiplier: u64,
     ctx: &mut TxContext,
-) {
+): ID {
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
@@ -710,6 +710,8 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
                 deep: balance::zero(),
             },
         );
+
+    referral_id
 }
 
 /// Update the multiplier for the referral.
@@ -1265,6 +1267,19 @@ public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
 }
 
+public fun get_referral_balances<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookReferral,
+): (u64, u64, u64) {
+    let referral_id = object::id(referral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    let base = referral_rewards.base.value();
+    let quote = referral_rewards.quote.value();
+    let deep = referral_rewards.deep.value();
+
+    (base, quote, deep)
+}
+
 // === Public-Package Functions ===
 public(package) fun create_pool<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
@@ -1447,7 +1462,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             referral_rewards
                 .deep
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-        } else if (order_info.is_bid()) {
+        } else if (!order_info.is_bid()) {
             referral_rewards
                 .base
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
