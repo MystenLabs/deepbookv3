@@ -6,12 +6,13 @@ module margin_trading::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
 use margin_trading::margin_constants;
-use std::type_name::{Self, TypeName};
+use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
     clock::Clock,
     dynamic_field as df,
     event,
     table::{Self, Table},
+    vec_map::{Self, VecMap},
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
 };
@@ -60,6 +61,7 @@ public struct PoolConfig has copy, drop, store {
     user_liquidation_reward: u64, // fractional reward for liquidating a position, in 9 decimals
     pool_liquidation_reward: u64, // fractional reward for the pool, in 9 decimals
     enabled: bool, // whether the pool is enabled for margin trading
+    extra_fields: VecMap<String, u64>,
 }
 
 public struct RiskRatios has copy, drop, store {
@@ -366,6 +368,7 @@ public fun new_pool_config<BaseAsset, QuoteAsset>(
         user_liquidation_reward,
         pool_liquidation_reward,
         enabled: false,
+        extra_fields: vec_map::empty(),
     }
 }
 

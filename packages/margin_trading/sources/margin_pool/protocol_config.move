@@ -5,6 +5,8 @@ module margin_trading::protocol_config;
 
 use deepbook::{constants, math};
 use margin_trading::margin_constants;
+use std::string::String;
+use sui::vec_map::{Self, VecMap};
 
 const EInvalidRiskParam: u64 = 1;
 const EInvalidProtocolSpread: u64 = 2;
@@ -12,6 +14,7 @@ const EInvalidProtocolSpread: u64 = 2;
 public struct ProtocolConfig has copy, drop, store {
     margin_pool_config: MarginPoolConfig,
     interest_config: InterestConfig,
+    extra_fields: VecMap<String, u64>,
 }
 
 public struct MarginPoolConfig has copy, drop, store {
@@ -35,6 +38,7 @@ public fun new_protocol_config(
     ProtocolConfig {
         margin_pool_config,
         interest_config,
+        extra_fields: vec_map::empty(),
     }
 }
 

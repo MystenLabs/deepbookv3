@@ -5,7 +5,8 @@ module margin_trading::protocol_fees;
 
 use deepbook::math;
 use margin_trading::margin_constants;
-use sui::{clock::Clock, table::{Self, Table}};
+use std::string::String;
+use sui::{clock::Clock, table::{Self, Table}, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const EInvalidFeesOnZeroShares: u64 = 1;
@@ -15,6 +16,7 @@ public struct ProtocolFees has store {
     referrals: Table<address, ReferralTracker>,
     total_shares: u64,
     fees_per_share: u64,
+    extra_fields: VecMap<String, u64>,
 }
 
 public struct ReferralTracker has store {
@@ -38,6 +40,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext, clock: &Clock): P
         referrals: table::new(ctx),
         total_shares: 0,
         fees_per_share: 0,
+        extra_fields: vec_map::empty(),
     };
     manager
         .referrals

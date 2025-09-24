@@ -11,8 +11,15 @@ use margin_trading::{
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
     protocol_fees::{Self, ProtocolFees, Referral}
 };
-use std::type_name::{Self, TypeName};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, event, vec_set::{Self, VecSet}};
+use std::{string::String, type_name::{Self, TypeName}};
+use sui::{
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    event,
+    vec_map::{Self, VecMap},
+    vec_set::{Self, VecSet}
+};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -32,6 +39,7 @@ public struct MarginPool<phantom Asset> has key, store {
     protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
+    extra_fields: VecMap<String, u64>,
 }
 
 // === Events ===
@@ -103,6 +111,7 @@ public fun create_margin_pool<Asset>(
         protocol_fees: protocol_fees::default_protocol_fees(ctx, clock),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
+        extra_fields: vec_map::empty(),
     };
     transfer::share_object(margin_pool);
 
