@@ -44,6 +44,55 @@ const mainnetPlugin = namedPackagesPlugin({
     ],
   });
 
+  // Set all metadata for payment-kit
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      appCap,
+      transaction.pure.string("description"), // key
+      transaction.pure.string(""), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      appCap,
+      transaction.pure.string("documentation_url"), // key
+      transaction.pure.string(""), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      appCap,
+      transaction.pure.string("homepage_url"), // key
+      transaction.pure.string(""), // value
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/core::move_registry::set_metadata`,
+    arguments: [
+      transaction.object(
+        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+      ),
+      appCap,
+      transaction.pure.string("icon_url"), // key
+      transaction.pure.string("https://svg-host.vercel.app/mystenlogo.svg"), // value
+    ],
+  });
+
   // Set testnet information for payment-kit
   const appInfo = transaction.moveCall({
     target: `@mvr/core::app_info::new`,
