@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
+use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
@@ -54,6 +55,13 @@ async fn order_update_test() -> Result<(), anyhow::Error> {
 async fn pool_price_test() -> Result<(), anyhow::Error> {
     let handler = PoolPriceHandler::new(DeepbookEnv::Mainnet);
     data_test("pool_price", handler, ["pool_prices"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deep_burned_test() -> Result<(), anyhow::Error> {
+    let handler = DeepBurnedHandler::new(DeepbookEnv::Mainnet);
+    data_test("deep_burned", handler, ["deep_burned"]).await?;
     Ok(())
 }
 
