@@ -67,6 +67,43 @@ macro_rules! event_type_fn {
     };
 }
 
+/// Generates a function that returns the `StructTag` for an event type with phantom type parameters.
+/// This macro handles events with phantom types like DeepBurned<phantom BaseAsset, phantom QuoteAsset>.
+/// Since phantom types don't affect BCS deserialization, any concrete type will work.
+macro_rules! phantom_event_type_fn {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $($path:ident)::+, $($phantom_type:ty),+
+    ) => {
+        $(#[$meta])*
+        fn $fn_name(&self) -> StructTag {
+            match self {
+                DeepbookEnv::Mainnet => {
+                    use models::deepbook::$($path)::+ as Event;
+                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
+                },
+                DeepbookEnv::Testnet => {
+                    use models::deepbook_testnet::$($path)::+ as Event;
+                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
+                }
+            }
+        }
+    };
+}
+
+// Default to <SUI, SUI> for the type parameters since they don't affect BCS deserialization
+macro_rules! phantom_event_type_fn_2 {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $($path:ident)::+
+    ) => {
+        phantom_event_type_fn!(
+            $(#[$meta])*
+            $fn_name, $($path)::+, models::sui::sui::SUI, models::sui::sui::SUI
+        );
+    };
+}
+
 impl DeepbookEnv {
     pub fn remote_store_url(&self) -> Url {
         let remote_store_url = match self {
@@ -93,4 +130,5 @@ impl DeepbookEnv {
     event_type_fn!(rebate_event_type, state::RebateEvent);
     event_type_fn!(proposal_event_type, state::ProposalEvent);
     event_type_fn!(price_added_event_type, deep_price::PriceAdded);
+    phantom_event_type_fn_2!(deep_burned_event_type, pool::DeepBurned);
 }

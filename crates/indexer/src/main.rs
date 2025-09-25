@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
+use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
@@ -98,6 +99,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
     indexer
         .concurrent_pipeline(BalancesHandler::new(env), Default::default())
+        .await?;
+    indexer
+        .concurrent_pipeline(DeepBurnedHandler::new(env), Default::default())
         .await?;
     indexer
         .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())

@@ -6,6 +6,7 @@ use sui_types::full_checkpoint_content::CheckpointTransaction;
 use sui_types::transaction::{Command, TransactionDataAPI};
 
 pub mod balances_handler;
+pub mod deep_burned_handler;
 pub mod flash_loan_handler;
 pub mod order_fill_handler;
 pub mod order_update_handler;
