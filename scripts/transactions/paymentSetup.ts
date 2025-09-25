@@ -53,7 +53,9 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       appCap,
       transaction.pure.string("description"), // key
-      transaction.pure.string(""), // value
+      transaction.pure.string(
+        "A robust, open-source payment processing toolkit for the Sui blockchain that provides secure payment verification, receipt management, and duplicate prevention."
+      ), // value
     ],
   });
 
@@ -65,7 +67,7 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       appCap,
       transaction.pure.string("documentation_url"), // key
-      transaction.pure.string(""), // value
+      transaction.pure.string("https://github.com/MystenLabs/sui-payment-kit"), // value
     ],
   });
 
@@ -77,7 +79,7 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       appCap,
       transaction.pure.string("homepage_url"), // key
-      transaction.pure.string(""), // value
+      transaction.pure.string("https://github.com/MystenLabs/sui-payment-kit"), // value
     ],
   });
 
