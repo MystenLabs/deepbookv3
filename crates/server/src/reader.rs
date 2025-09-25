@@ -185,6 +185,8 @@ impl Reader {
         Vec<(
             String,
             String,
+            String,
+            String,
             i64,
             i64,
             i64,
@@ -221,6 +223,8 @@ impl Reader {
             .order_by(schema::order_fills::checkpoint_timestamp_ms.desc()) // Ensures latest trades come first
             .limit(limit) // Apply limit to get the most recent trades
             .select((
+                schema::order_fills::event_digest,
+                schema::order_fills::digest,
                 schema::order_fills::maker_order_id,
                 schema::order_fills::taker_order_id,
                 schema::order_fills::price,
@@ -236,6 +240,8 @@ impl Reader {
                 schema::order_fills::maker_fee,
             ))
             .load::<(
+                String,
+                String,
                 String,
                 String,
                 i64,
