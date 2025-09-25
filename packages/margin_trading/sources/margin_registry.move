@@ -440,6 +440,46 @@ public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): VecSet
     }
 }
 
+public fun base_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.base_margin_pool_id
+}
+
+public fun quote_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.quote_margin_pool_id
+}
+
+public fun min_withdraw_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.risk_ratios.min_withdraw_risk_ratio
+}
+
+public fun min_borrow_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.risk_ratios.min_borrow_risk_ratio
+}
+
+public fun liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.risk_ratios.liquidation_risk_ratio
+}
+
+public fun target_liquidation_risk_ratio(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.risk_ratios.target_liquidation_risk_ratio
+}
+
+public fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.user_liquidation_reward
+}
+
+public fun pool_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
+    let config = self.get_pool_config(deepbook_pool_id);
+    config.pool_liquidation_reward
+}
+
 // === Public-Package Functions ===
 #[allow(lint(self_transfer))]
 public(package) fun register_margin_pool(
@@ -500,7 +540,7 @@ public(package) fun load_inner(self: &MarginRegistry): &MarginRegistryInner {
 }
 
 /// Get the pool configuration for a deepbook pool
-public(package) fun get_pool_config(self: &MarginRegistry, deepbook_pool_id: ID): &PoolConfig {
+public fun get_pool_config(self: &MarginRegistry, deepbook_pool_id: ID): &PoolConfig {
     let inner = self.load_inner();
     assert!(inner.pool_registry.contains(deepbook_pool_id), EPoolNotRegistered);
     inner.pool_registry.borrow(deepbook_pool_id)
@@ -527,24 +567,6 @@ public(package) fun can_liquidate(
 ): bool {
     let config = self.get_pool_config(deepbook_pool_id);
     risk_ratio < config.risk_ratios.liquidation_risk_ratio
-}
-
-public(package) fun target_liquidation_risk_ratio(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-): u64 {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.risk_ratios.target_liquidation_risk_ratio
-}
-
-public(package) fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.user_liquidation_reward
-}
-
-public(package) fun pool_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
-    let config = self.get_pool_config(deepbook_pool_id);
-    config.pool_liquidation_reward
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
