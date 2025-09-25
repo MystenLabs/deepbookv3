@@ -573,8 +573,18 @@ public fun calculate_assets<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
+public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
+    self.owner
+}
+
 public fun deepbook_pool<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
     self.deepbook_pool
+}
+
+public fun margin_pool_id<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): Option<ID> {
+    self.margin_pool_id
 }
 
 public fun borrowed_shares<BaseAsset, QuoteAsset>(
