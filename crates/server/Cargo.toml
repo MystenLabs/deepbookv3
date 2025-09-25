@@ -23,10 +23,10 @@ tokio-util.workspace = true
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 axum = { version = "0.7", features = ["json"] }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "7f45ba185ff0773331d256469c49aefb82542102" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "7f45ba185ff0773331d256469c49aefb82542102" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
+sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
 tower-http = { version = "0.5", features = ["cors"] }
-sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "7f45ba185ff0773331d256469c49aefb82542102" }
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
 
 [[bin]]
 name = "deepbook-server"
