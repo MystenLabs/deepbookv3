@@ -327,6 +327,26 @@ public fun last_update_timestamp<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.last_update_timestamp()
 }
 
+public fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.supply_cap()
+}
+
+public fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.max_utilization_rate()
+}
+
+public fun protocol_spread<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.protocol_spread()
+}
+
+public fun min_borrow<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.min_borrow()
+}
+
+public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.interest_rate(self.state.utilization_rate())
+}
+
 // === Public-Package Functions ===
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(
