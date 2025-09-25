@@ -47,8 +47,7 @@ impl Processor for DeepBurnedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                // For generic events, we need to check if the base type matches
-                // The event type will have type parameters, but we match on the base
+                // Match base type (ignore type parameters)
                 if ev.type_.address != self.event_type.address
                     || ev.type_.module != self.event_type.module
                     || ev.type_.name != self.event_type.name
@@ -56,7 +55,7 @@ impl Processor for DeepBurnedHandler {
                     continue;
                 }
 
-                // Use SUI for phantom type parameters - they don't affect deserialization
+                // Can use <SUI,SUI> since it doesn't affect deserialization
                 let event: DeepBurnedEvent<SUI, SUI> = bcs::from_bytes(&ev.contents)?;
                 let data = DeepBurned {
                     digest: digest.to_string(),
