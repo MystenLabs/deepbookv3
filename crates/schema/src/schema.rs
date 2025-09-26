@@ -29,10 +29,16 @@ diesel::table! {
 }
 
 diesel::table! {
-    cp_sequence_numbers (cp_sequence_number) {
-        cp_sequence_number -> Int8,
-        tx_lo -> Int8,
-        epoch -> Int8,
+    deep_burned (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        burned_amount -> Int8,
     }
 }
 
@@ -131,9 +137,9 @@ diesel::table! {
         quote_asset_decimals -> Int2,
         quote_asset_symbol -> Text,
         quote_asset_name -> Text,
-        min_size -> Int4,
-        lot_size -> Int4,
-        tick_size -> Int4,
+        min_size -> Int8,
+        lot_size -> Int8,
+        tick_size -> Int8,
     }
 }
 
@@ -250,7 +256,7 @@ diesel::table! {
 diesel::allow_tables_to_appear_in_same_query!(
     assets,
     balances,
-    cp_sequence_numbers,
+    deep_burned,
     flashloans,
     order_fills,
     order_updates,
