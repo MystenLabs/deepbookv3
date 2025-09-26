@@ -1,12 +1,12 @@
 use move_core_types::account_address::AccountAddress;
 use move_core_types::language_storage::StructTag as MoveStructTag;
-use move_types::MoveStruct;
 use std::str::FromStr;
 use sui_sdk_types::StructTag;
 use sui_types::full_checkpoint_content::CheckpointTransaction;
 use sui_types::transaction::{Command, TransactionDataAPI};
 
 pub mod balances_handler;
+pub mod deep_burned_handler;
 pub mod flash_loan_handler;
 pub mod order_fill_handler;
 pub mod order_update_handler;
@@ -42,14 +42,4 @@ pub(crate) fn try_extract_move_call_package(tx: &CheckpointTransaction) -> Optio
     } else {
         None
     }
-}
-
-fn struct_tag<T: MoveStruct>(
-    package_id_override: Option<AccountAddress>,
-) -> move_core_types::language_storage::StructTag {
-    let mut event_type = convert_struct_tag(T::struct_type());
-    if let Some(package_id_override) = package_id_override {
-        event_type.address = package_id_override;
-    }
-    event_type
 }

@@ -5,7 +5,7 @@
 module deepbook::pool_tests;
 
 use deepbook::{
-    balance_manager::{BalanceManager, TradeCap},
+    balance_manager::{BalanceManager, TradeCap, DeepBookReferral},
     balance_manager_tests::{
         USDC,
         USDT,
@@ -467,6 +467,16 @@ fun test_swap_exact_amount_with_input_ask_bid() {
     test_swap_exact_amount_with_input(false);
 }
 
+#[test]
+fun test_get_quantity_out_input_fee_bid_ask_zero() {
+    test_get_quantity_out_zero(true);
+}
+
+#[test]
+fun test_get_quantity_out_input_fee_ask_bid_zero() {
+    test_get_quantity_out_zero(false);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
 fun test_cancel_all_orders_bid_e() {
     test_cancel_all_orders(true, true);
@@ -888,6 +898,119 @@ fun test_get_order() {
     assert!(order.epoch() == 0, 0);
     assert!(order.status() == constants::live(), 0);
     assert!(order.expire_timestamp() == constants::max_u64(), 0);
+
+    end(test);
+}
+
+#[test]
+fun test_place_cancel_whitelisted_pool() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    let pool_id = setup_pool_with_default_fees<SUI, DEEP>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let order_info_1 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_1.order_id(),
+        &mut test,
+    );
+
+    let order_info_2 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        true,
+        false,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_2.order_id(),
+        &mut test,
+    );
+
+    let order_info_3 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_3.order_id(),
+        &mut test,
+    );
+
+    let order_info_4 = place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100 * constants::float_scaling(),
+        1 * constants::float_scaling(),
+        false,
+        false,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    cancel_order<SUI, DEEP>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        order_info_4.order_id(),
+        &mut test,
+    );
 
     end(test);
 }
@@ -1547,7 +1670,7 @@ public(package) fun validate_open_orders<BaseAsset, QuoteAsset>(
         );
 
         assert!(
-            pool.account_open_orders(&balance_manager).size() ==
+            pool.account_open_orders(&balance_manager).length() ==
             expected_open_orders,
             1,
         );
@@ -3069,6 +3192,392 @@ fun place_and_cancel_order_empty_e() {
     end(test);
 }
 
+#[test]
+fun mint_referral_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let mut i = 1;
+        while (i <= 20) {
+            pool.mint_referral(100_000_000 * i, test.ctx());
+            i = i + 1;
+        };
+        return_shared(pool);
+    };
+
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        assert!(base == 0, 0);
+        assert!(quote == 0, 0);
+        assert!(deep == 0, 0);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
+fun mint_referral_max_multiplier_e() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.mint_referral(2_100_000_000, test.ctx());
+    };
+
+    abort (0)
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
+fun mint_referral_not_multiple_of_multiplier_e() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.mint_referral(100_000_001, test.ctx());
+    };
+
+    abort (0)
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
+fun test_update_referral_multiplier_e() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        pool.update_referral_multiplier(&referral, 2_100_000_000);
+    };
+
+    abort (0)
+}
+
+#[test]
+fun test_process_order_referral_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    let balance_manager_id_alice;
+    test.next_tx(ALICE);
+    {
+        balance_manager_id_alice =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                ALICE,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_referral(&referral, &trade_cap);
+        return_shared(balance_manager);
+        return_shared(referral);
+        test_utils::destroy(trade_cap);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        test_utils::assert_eq(base, 0);
+        test_utils::assert_eq(quote, 0);
+        // 10bps fee, 0.1x multiplier
+        test_utils::assert_eq(deep, 15_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // increase multiplier from 0.1x to 2x
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        pool.update_referral_multiplier(&referral, 2_000_000_000);
+        return_shared(pool);
+        return_shared(referral);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        test_utils::assert_eq(base, 0);
+        test_utils::assert_eq(quote, 0);
+        // 10bps fee, 2x multiplier = 300_000_000
+        // + 10bps fee, 0.1x multiplier = 15_000_000
+        test_utils::assert_eq(deep, 315_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            false,
+            &mut test,
+        );
+
+        // fees paid in USDC = 1.5 filled @ $2 = 3_000_000_000
+        // 10bps of that = 3_000_000
+        // penalty 1.25x = 3_750_000
+        test_utils::assert_eq(order_info.paid_fees(), 3_750_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        test_utils::assert_eq(base, 0);
+        // fees paid in USDC = 3_750_000 with 2x multiple = 7_500_000
+        test_utils::assert_eq(quote, 7_500_000);
+        test_utils::assert_eq(deep, 315_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            false,
+            false,
+            &mut test,
+        );
+
+        // fees paid in SUI = 1.5 filled @ $1 = 1_500_000_000
+        // 10bps of that = 1_500_000
+        // penalty 1.25x = 1_875_000
+        test_utils::assert_eq(order_info.paid_fees(), 1_875_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        // fees paid in SUI = 1_875_000 with 2x multiple = 3_750_000
+        test_utils::assert_eq(base, 3_750_000);
+        test_utils::assert_eq(quote, 7_500_000);
+        test_utils::assert_eq(deep, 315_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun test_enable_ewma_params_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let admin_cap = registry::get_admin_cap_for_testing(test.ctx());
+    let clock = clock::create_for_testing(test.ctx());
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.enable_ewma_state(&admin_cap, true, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(ewma_state.enabled(), 0);
+        assert!(ewma_state.alpha() == constants::default_ewma_alpha(), 1);
+        assert!(ewma_state.z_score_threshold() == constants::default_z_score_threshold(), 2);
+        assert!(ewma_state.additional_taker_fee() == constants::default_additional_taker_fee(), 3);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.set_ewma_params(&admin_cap, 10_000_000, 3_000_000_000, 1_000_000, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(ewma_state.enabled(), 0);
+        assert!(ewma_state.alpha() == 10_000_000, 1);
+        assert!(ewma_state.z_score_threshold() == 3_000_000_000, 2);
+        assert!(ewma_state.additional_taker_fee() == 1_000_000, 3);
+        return_shared(pool);
+    };
+
+    let balance_manager_id_alice;
+    test.next_tx(ALICE);
+    {
+        balance_manager_id_alice =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                ALICE,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    let gas_price = 1_000;
+    advance_scenario_with_gas_price(&mut test, gas_price, 1000);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    // pay with high gas price
+    advance_scenario_with_gas_price(&mut test, gas_price * 5, 1000);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 300_000_000);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        pool.enable_ewma_state(&admin_cap, false, &clock, test.ctx());
+        let ewma_state = pool.load_ewma_state();
+        assert!(!ewma_state.enabled(), 0);
+        return_shared(pool);
+    };
+
+    // pay with high gas price, but disabled ewma
+    advance_scenario_with_gas_price(&mut test, gas_price * 5, 1000);
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000,
+            true,
+            true,
+            &mut test,
+        );
+        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+    };
+
+    test_utils::destroy(clock);
+    test_utils::destroy(admin_cap);
+    end(test);
+}
+
 #[test, expected_failure(abort_code = ::deepbook::order_info::EInvalidExpireTimestamp)]
 /// Trying to place an order that's expiring should fail
 fun place_order_expired_order_skipped() {
@@ -3493,6 +4002,100 @@ fun test_swap_exact_amount_with_input(is_bid: bool) {
     base_out.burn_for_testing();
     quote_out.burn_for_testing();
     deep_out.burn_for_testing();
+
+    end(test);
+}
+
+fun test_get_quantity_out_zero(is_bid: bool) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let alice_client_order_id = 1;
+    let alice_price = 2 * constants::float_scaling();
+    let alice_quantity = 2 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = false;
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        alice_client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        alice_price,
+        alice_quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    set_time(200, &mut test);
+
+    let base_in = if (is_bid) {
+        constants::min_size()
+    } else {
+        0
+    };
+    let quote_in = if (is_bid) {
+        0
+    } else {
+        2 * constants::min_size()
+    };
+
+    let (base, quote, deep_required) = get_quantity_out_input_fee<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+    let expected_base = if (is_bid) {
+        constants::min_size()
+    } else {
+        0
+    };
+    let expected_quote = if (is_bid) {
+        0
+    } else {
+        2 * constants::min_size()
+    };
+
+    assert!(base == expected_base, constants::e_order_info_mismatch());
+    assert!(quote == expected_quote, constants::e_order_info_mismatch());
+    assert!(deep_required == 0, constants::e_order_info_mismatch());
+
+    let (base, quote, _) = get_quantity_out<SUI, USDC>(
+        pool_id,
+        base_in,
+        quote_in,
+        &mut test,
+    );
+
+    let expected_base = if (is_bid) {
+        0
+    } else {
+        constants::min_size()
+    };
+    let expected_quote = if (is_bid) {
+        2 * constants::min_size()
+    } else {
+        0
+    };
+
+    assert!(base == expected_base, constants::e_order_info_mismatch());
+    assert!(quote == expected_quote, constants::e_order_info_mismatch());
 
     end(test);
 }
@@ -5376,4 +5979,10 @@ fun remove_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) 
     };
     return_shared(registry);
     test_utils::destroy(admin_cap);
+}
+
+fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {
+    let ts = test.ctx().epoch_timestamp_ms() + timestamp_advance;
+    let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
+    test.next_with_context(ctx);
 }
