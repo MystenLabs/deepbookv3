@@ -1,6 +1,6 @@
 use crate::schema::{
-    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices,
-    pools, proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
+    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices, pools, proposals,
+    rebates, stakes, sui_error_transactions, trade_params_update, votes,
 };
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};
