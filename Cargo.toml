@@ -23,8 +23,8 @@ url = "2.5.4"
 prometheus = "0.13.4"
 tokio-util = "0.7.13"
 
-sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
-telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
-move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
-sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "12e3430b7e6ae842baff2d32b5d2f3a03ffe7c12" }
+sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
+telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
+sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
+move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
+sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
