@@ -865,6 +865,8 @@ async fn trades(
         .into_iter()
         .map(
             |(
+                event_digest,
+                digest,
                 maker_order_id,
                 taker_order_id,
                 price,
@@ -905,6 +907,8 @@ async fn trades(
                 };
 
                 HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
                     ("trade_id".to_string(), Value::from(trade_id.to_string())),
                     ("maker_order_id".to_string(), Value::from(maker_order_id)),
                     ("taker_order_id".to_string(), Value::from(taker_order_id)),
