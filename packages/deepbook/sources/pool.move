@@ -96,6 +96,7 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
+#[deprecated, allow(unused_field)]
 public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     multiplier: u64,
     base: Balance<BaseAsset>,
@@ -103,7 +104,25 @@ public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     deep: Balance<DEEP>,
 }
 
+public struct ReferralReward<phantom BaseAsset, phantom QuoteAsset> has store {
+    pool_id: ID,
+    multiplier: u64,
+    base: Balance<BaseAsset>,
+    quote: Balance<QuoteAsset>,
+    deep: Balance<DEEP>,
+}
+
+#[deprecated, allow(unused_field)]
 public struct ReferralClaimedEvent<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
+    referral_id: ID,
+    owner: address,
+    base_amount: u64,
+    quote_amount: u64,
+    deep_amount: u64,
+}
+
+public struct ReferralClaimed has copy, drop, store {
+    pool_id: ID,
     referral_id: ID,
     owner: address,
     base_amount: u64,
@@ -710,11 +729,13 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = balance_manager::mint_referral(ctx);
+    let pool_id = self.id();
     self
         .id
         .add(
             referral_id,
-            ReferralRewards<BaseAsset, QuoteAsset> {
+            ReferralReward<BaseAsset, QuoteAsset> {
+                pool_id,
                 multiplier,
                 base: balance::zero(),
                 quote: balance::zero(),
@@ -757,7 +778,8 @@ public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     let quote = referral_rewards.quote.withdraw_all().into_coin(ctx);
     let deep = referral_rewards.deep.withdraw_all().into_coin(ctx);
 
-    event::emit(ReferralClaimedEvent<BaseAsset, QuoteAsset> {
+    event::emit(ReferralClaimed {
+        pool_id: self.id(),
         referral_id,
         owner: ctx.sender(),
         base_amount: base.value(),
