@@ -19,6 +19,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    deep_burned (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        burned_amount -> Int8,
+    }
+}
+
+diesel::table! {
     flashloans (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -230,6 +243,7 @@ diesel::table! {
 
 diesel::allow_tables_to_appear_in_same_query!(
     balances,
+    deep_burned,
     flashloans,
     order_fills,
     order_updates,
