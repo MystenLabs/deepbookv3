@@ -756,7 +756,7 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+    let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     referral_rewards.multiplier = multiplier;
@@ -771,7 +771,7 @@ public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+    let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     let base = referral_rewards.base.withdraw_all().into_coin(ctx);
@@ -1311,7 +1311,7 @@ public fun get_referral_balances<BaseAsset, QuoteAsset>(
     referral: &DeepBookReferral,
 ): (u64, u64, u64) {
     let referral_id = object::id(referral);
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    let referral_rewards: &ReferralReward<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
     let base = referral_rewards.base.value();
     let quote = referral_rewards.quote.value();
     let deep = referral_rewards.deep.value();
@@ -1498,7 +1498,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     let referral_id = balance_manager.get_referral_id();
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
-        let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
         let referral_multiplier = referral_rewards.multiplier;
