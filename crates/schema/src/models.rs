@@ -1,5 +1,5 @@
 use crate::schema::{
-    balances, balances_summary, deep_burned, flashloans, order_fills, order_updates, pool_prices,
+    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices,
     pools, proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
 };
 use diesel::deserialize::FromSql;
@@ -93,10 +93,12 @@ pub struct OrderFillSummary {
 }
 
 #[derive(QueryableByName, Debug, Serialize, FieldCount)]
-#[diesel(table_name = balances_summary)]
 pub struct BalancesSummary {
+    #[diesel(sql_type = Text)]
     pub asset: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub amount: i64,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
     pub deposit: bool,
 }
 
