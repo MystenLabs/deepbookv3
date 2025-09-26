@@ -96,6 +96,7 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
+#[deprecated, allow(unused_field)]
 public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     multiplier: u64,
     base: Balance<BaseAsset>,
@@ -103,12 +104,38 @@ public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     deep: Balance<DEEP>,
 }
 
+public struct ReferralReward<phantom BaseAsset, phantom QuoteAsset> has store {
+    pool_id: ID,
+    multiplier: u64,
+    base: Balance<BaseAsset>,
+    quote: Balance<QuoteAsset>,
+    deep: Balance<DEEP>,
+}
+
+#[deprecated, allow(unused_field)]
 public struct ReferralClaimedEvent<phantom BaseAsset, phantom QuoteAsset> has copy, drop, store {
     referral_id: ID,
     owner: address,
     base_amount: u64,
     quote_amount: u64,
     deep_amount: u64,
+}
+
+public struct ReferralClaimed has copy, drop, store {
+    pool_id: ID,
+    referral_id: ID,
+    owner: address,
+    base_amount: u64,
+    quote_amount: u64,
+    deep_amount: u64,
+}
+
+public struct ReferralFeeEvent has copy, drop, store {
+    pool_id: ID,
+    referral_id: ID,
+    base_fee: u64,
+    quote_fee: u64,
+    deep_fee: u64,
 }
 
 // === Public-Mutative Functions * POOL CREATION * ===
@@ -702,11 +729,13 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = balance_manager::mint_referral(ctx);
+    let pool_id = self.id();
     self
         .id
         .add(
             referral_id,
-            ReferralRewards<BaseAsset, QuoteAsset> {
+            ReferralReward<BaseAsset, QuoteAsset> {
+                pool_id,
                 multiplier,
                 base: balance::zero(),
                 quote: balance::zero(),
@@ -727,7 +756,7 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+    let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     referral_rewards.multiplier = multiplier;
@@ -742,14 +771,15 @@ public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
     let referral_id = object::id(referral);
-    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+    let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     let base = referral_rewards.base.withdraw_all().into_coin(ctx);
     let quote = referral_rewards.quote.withdraw_all().into_coin(ctx);
     let deep = referral_rewards.deep.withdraw_all().into_coin(ctx);
 
-    event::emit(ReferralClaimedEvent<BaseAsset, QuoteAsset> {
+    event::emit(ReferralClaimed {
+        pool_id: self.id(),
         referral_id,
         owner: ctx.sender(),
         base_amount: base.value(),
@@ -1281,7 +1311,7 @@ public fun get_referral_balances<BaseAsset, QuoteAsset>(
     referral: &DeepBookReferral,
 ): (u64, u64, u64) {
     let referral_id = object::id(referral);
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    let referral_rewards: &ReferralReward<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
     let base = referral_rewards.base.value();
     let quote = referral_rewards.quote.value();
     let deep = referral_rewards.deep.value();
@@ -1468,24 +1498,38 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     let referral_id = balance_manager.get_referral_id();
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
-        let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        let referral_rewards: &mut ReferralReward<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
         let referral_multiplier = referral_rewards.multiplier;
         let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
+        let mut base_fee = 0;
+        let mut quote_fee = 0;
+        let mut deep_fee = 0;
         if (order_info.fee_is_deep()) {
             referral_rewards
                 .deep
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            deep_fee = referral_fee;
         } else if (!order_info.is_bid()) {
             referral_rewards
                 .base
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            base_fee = referral_fee;
         } else {
             referral_rewards
                 .quote
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-        }
+            quote_fee = referral_fee;
+        };
+
+        event::emit(ReferralFeeEvent {
+            pool_id: self.id(),
+            referral_id,
+            base_fee,
+            quote_fee,
+            deep_fee,
+        });
     };
 }
 
