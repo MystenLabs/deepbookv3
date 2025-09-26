@@ -1,6 +1,16 @@
-// Copyright (c) Mysten Labs, Inc.
-// SPDX-License-Identifier: Apache-2.0
 // @generated automatically by Diesel CLI.
+
+diesel::table! {
+    assets (asset_type) {
+        asset_type -> Text,
+        name -> Text,
+        symbol -> Text,
+        decimals -> Int2,
+        ucid -> Nullable<Int4>,
+        package_id -> Nullable<Text>,
+        package_address_url -> Nullable<Text>,
+    }
+}
 
 diesel::table! {
     balances (event_digest) {
@@ -19,15 +29,10 @@ diesel::table! {
 }
 
 diesel::table! {
-    deep_burned (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        pool_id -> Text,
-        burned_amount -> Int8,
+    cp_sequence_numbers (cp_sequence_number) {
+        cp_sequence_number -> Int8,
+        tx_lo -> Int8,
+        epoch -> Int8,
     }
 }
 
@@ -230,20 +235,22 @@ diesel::table! {
 }
 
 diesel::table! {
-    assets (asset_type) {
-        asset_type -> Text,
-        name -> Text,
-        symbol -> Text,
-        decimals -> Int2,
-        ucid -> Nullable<Int4>,
-        package_id -> Nullable<Text>,
-        package_address_url -> Nullable<Text>,
+    watermarks (pipeline) {
+        pipeline -> Text,
+        epoch_hi_inclusive -> Int8,
+        checkpoint_hi_inclusive -> Int8,
+        tx_hi -> Int8,
+        timestamp_ms_hi_inclusive -> Int8,
+        reader_lo -> Int8,
+        pruner_timestamp -> Timestamp,
+        pruner_hi -> Int8,
     }
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
+    assets,
     balances,
-    deep_burned,
+    cp_sequence_numbers,
     flashloans,
     order_fills,
     order_updates,
@@ -255,13 +262,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     sui_error_transactions,
     trade_params_update,
     votes,
-    assets,
+    watermarks,
 );
-
-diesel::table! {
-    balances_summary (asset) {
-        asset -> Text,
-        amount -> Int8,
-        deposit -> Bool,
-    }
-}
