@@ -26,7 +26,7 @@ const MAX_EWMA_ALPHA: u64 = 100_000_000; // 10% smoothing factor. at 3 TPS ~ one
 const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
 const MAX_Z_SCORE_THRESHOLD: u64 = 10_000_000_000; // 10 standard deviations
 const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
-const MAX_ADDITIONAL_TAKER_FEE: u64 = 2_000_000_000; // 20 bps
+const MAX_ADDITIONAL_TAKER_FEE: u64 = 2_000_000; // 20 bps
 
 // Restrictions on limit orders.
 // No restriction on the order.
