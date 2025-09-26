@@ -250,9 +250,9 @@ pub struct Pools {
     pub quote_asset_decimals: i16,
     pub quote_asset_symbol: String,
     pub quote_asset_name: String,
-    pub min_size: i32,
-    pub lot_size: i32,
-    pub tick_size: i32,
+    pub min_size: i64,
+    pub lot_size: i64,
+    pub tick_size: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
