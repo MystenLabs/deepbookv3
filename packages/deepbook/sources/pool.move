@@ -1492,6 +1492,9 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             .borrow_mut(referral_id);
         let referral_multiplier = referral_rewards.multiplier;
         let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
+        if (referral_fee == 0) {
+            return
+        };
         let mut base_fee = 0;
         let mut quote_fee = 0;
         let mut deep_fee = 0;
