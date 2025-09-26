@@ -111,6 +111,14 @@ public struct ReferralClaimedEvent<phantom BaseAsset, phantom QuoteAsset> has co
     deep_amount: u64,
 }
 
+public struct ReferralFeeEvent has copy, drop, store {
+    pool_id: ID,
+    referral_id: ID,
+    base_fee: u64,
+    quote_fee: u64,
+    deep_fee: u64,
+}
+
 // === Public-Mutative Functions * POOL CREATION * ===
 /// Create a new pool. The pool is registered in the registry.
 /// Checks are performed to ensure the tick size, lot size,
@@ -1473,19 +1481,33 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             .borrow_mut(referral_id);
         let referral_multiplier = referral_rewards.multiplier;
         let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
+        let mut base_fee = 0;
+        let mut quote_fee = 0;
+        let mut deep_fee = 0;
         if (order_info.fee_is_deep()) {
             referral_rewards
                 .deep
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            deep_fee = referral_fee;
         } else if (!order_info.is_bid()) {
             referral_rewards
                 .base
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            base_fee = referral_fee;
         } else {
             referral_rewards
                 .quote
                 .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-        }
+            quote_fee = referral_fee;
+        };
+
+        event::emit(ReferralFeeEvent {
+            pool_id: self.id(),
+            referral_id,
+            base_fee,
+            quote_fee,
+            deep_fee,
+        });
     };
 }
 
