@@ -1,11 +1,12 @@
 #!/bin/bash
 
 export RUST_BACKTRACE=1
-export RUST_LOG=debug
+export RUST_LOG=${RUST_LOG:-info}
 
-# if FIRST_CHECKPOINT is set, include it, otherwise exclude it
+# Build command arguments
+args=(--database-url "$DATABASE_URL" --env "$NETWORK")
 if [ -n "$FIRST_CHECKPOINT" ]; then
-    /opt/mysten/bin/deepbook-indexer --database-url "$DATABASE_URL" --env "$NETWORK" --first-checkpoint "$FIRST_CHECKPOINT"
-else
-    /opt/mysten/bin/deepbook-indexer --database-url "$DATABASE_URL" --env "$NETWORK"
+    args+=(--first-checkpoint "$FIRST_CHECKPOINT")
 fi
+
+exec /opt/mysten/bin/deepbook-indexer "${args[@]}"
