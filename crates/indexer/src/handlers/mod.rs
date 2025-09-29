@@ -41,7 +41,9 @@ pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bo
     // Check if transaction has deepbook events from any version
     if let Some(events) = &tx.events {
         let has_deepbook_event = events.data.iter().any(|event| {
-            deepbook_addresses.iter().any(|addr| event.type_.address == *addr)
+            deepbook_addresses
+                .iter()
+                .any(|addr| event.type_.address == *addr)
         });
 
         if has_deepbook_event {
@@ -53,7 +55,9 @@ pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bo
     let txn_kind = tx.transaction.transaction_data().kind();
     let has_deepbook_call = txn_kind.iter_commands().any(|cmd| {
         if let Command::MoveCall(move_call) = cmd {
-            deepbook_packages.iter().any(|pkg| *pkg == move_call.package)
+            deepbook_packages
+                .iter()
+                .any(|pkg| *pkg == move_call.package)
         } else {
             false
         }
