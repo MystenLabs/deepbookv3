@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::test_helpers;
+module deepbook_margin::test_helpers;
 
 use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
-use margin_trading::{
+use deepbook_margin::{
     margin_pool::{Self, MarginPool},
     margin_registry::{
         Self,
@@ -190,7 +190,7 @@ public fun create_pool_for_testing<BaseAsset, QuoteAsset>(scenario: &mut Scenari
 }
 
 /// Enable margin trading on a DeepBook pool
-public fun enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
+public fun enable_deepbook_margin_on_pool<BaseAsset, QuoteAsset>(
     pool_id: ID,
     margin_registry: &mut MarginRegistry,
     admin_cap: &MarginAdminCap,
@@ -375,7 +375,7 @@ public fun create_test_pyth_config(): PythConfig {
     )
 }
 
-public fun setup_usdc_usdt_margin_trading(): (
+public fun setup_usdc_usdt_deepbook_margin(): (
     Scenario,
     Clock,
     MarginAdminCap,
@@ -406,7 +406,7 @@ public fun setup_usdc_usdt_margin_trading(): (
     let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDT, USDC>(
+    enable_deepbook_margin_on_pool<USDT, USDC>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -449,7 +449,7 @@ public fun setup_usdc_usdt_margin_trading(): (
 
 /// Helper function to set up a complete BTC/USD margin trading environment
 /// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, deepbook_pool_id)
-public fun setup_btc_usd_margin_trading(): (
+public fun setup_btc_usd_deepbook_margin(): (
     Scenario,
     Clock,
     MarginAdminCap,
@@ -480,7 +480,7 @@ public fun setup_btc_usd_margin_trading(): (
     let pool_id = create_pool_for_testing<BTC, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<BTC, USDC>(
+    enable_deepbook_margin_on_pool<BTC, USDC>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -523,7 +523,7 @@ public fun setup_btc_usd_margin_trading(): (
 
 /// Helper function to set up a complete BTC/SUI margin trading environment
 /// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, deepbook_pool_id)
-public fun setup_btc_sui_margin_trading(): (
+public fun setup_btc_sui_deepbook_margin(): (
     Scenario,
     Clock,
     MarginAdminCap,
@@ -554,7 +554,7 @@ public fun setup_btc_sui_margin_trading(): (
     let pool_id = create_pool_for_testing<BTC, SUI>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<BTC, SUI>(
+    enable_deepbook_margin_on_pool<BTC, SUI>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -657,7 +657,7 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     // Enable margin trading
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<BaseAsset, QuoteAsset>(
+    enable_deepbook_margin_on_pool<BaseAsset, QuoteAsset>(
         pool_id,
         &mut registry,
         &admin_cap,

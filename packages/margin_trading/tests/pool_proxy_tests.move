@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::pool_proxy_tests;
+module deepbook_margin::pool_proxy_tests;
 
 use deepbook::{constants, pool::Pool};
-use margin_trading::{
+use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
@@ -16,7 +16,7 @@ use margin_trading::{
         setup_margin_registry,
         create_margin_pool,
         create_pool_for_testing,
-        enable_margin_trading_on_pool,
+        enable_deepbook_margin_on_pool,
         default_protocol_config,
         cleanup_margin_test,
         mint_coin,
@@ -142,7 +142,7 @@ fun test_place_limit_order_pool_not_enabled() {
 
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         margin_pool_id,
         &mut registry,
         &admin_cap,
@@ -283,7 +283,7 @@ fun test_place_market_order_pool_not_enabled() {
 
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         margin_pool_id,
         &mut registry,
         &admin_cap,

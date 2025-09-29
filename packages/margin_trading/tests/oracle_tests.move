@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::oracle_tests;
+module deepbook_margin::oracle_tests;
 
-use margin_trading::oracle::{
+use deepbook_margin::oracle::{
     calculate_usd_currency_amount,
     calculate_target_currency_amount,
     test_conversion_config
@@ -76,7 +76,7 @@ fun test_calculate_usd_currency_2() {
     assert!(target_currency_amount == 380 * 1_000_000_000, 0); // 380 USDC
 }
 
-#[test, expected_failure(abort_code = ::margin_trading::oracle::EInvalidPythPrice)]
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
 fun test_calculate_usd_currency_invalid_pyth_price() {
     let target_decimals: u8 = 9;
     let base_decimals: u8 = 6;
@@ -141,7 +141,7 @@ fun test_calculate_target_currency_2() {
     assert!(target_currency_amount == 27, 1); // 27 TOKEN
 }
 
-#[test, expected_failure(abort_code = ::margin_trading::oracle::EInvalidPythPrice)]
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
 fun test_calculate_target_currency_invalid_pyth_price() {
     let target_decimals: u8 = 9;
     let base_decimals: u8 = 9;

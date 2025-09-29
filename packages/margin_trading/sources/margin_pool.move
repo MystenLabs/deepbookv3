@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::margin_pool;
+module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use margin_trading::{
+use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},

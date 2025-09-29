@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Registry holds all margin pools.
-module margin_trading::margin_registry;
+module deepbook_margin::margin_registry;
 
 use deepbook::{constants, math, pool::Pool};
-use margin_trading::margin_constants;
+use deepbook_margin::margin_constants;
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
     clock::Clock,
