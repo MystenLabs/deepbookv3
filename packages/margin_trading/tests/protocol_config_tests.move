@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::protocol_config_tests;
+module deepbook_margin::protocol_config_tests;
 
 use deepbook::math;
-use margin_trading::{
+use deepbook_margin::{
     margin_constants,
     protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig},
     test_constants
 };
-use sui::test_utils::{assert_eq, destroy};
+use std::unit_test::assert_eq;
+use sui::test_utils::destroy;
 
 /// Create a test protocol config with default values
 fun create_test_protocol_config(): ProtocolConfig {
@@ -63,7 +64,7 @@ fun test_interest_rate_below_optimal() {
 
     // Test at 0% utilization - should be base rate only
     let rate_at_0 = config.interest_rate(0);
-    assert_eq(rate_at_0, test_constants::base_rate()); // 5%
+    assert_eq!(rate_at_0, test_constants::base_rate()); // 5%
 
     // Test at 40% utilization (half of optimal 80%)
     // Formula: base_rate + (utilization * base_slope)
@@ -71,15 +72,15 @@ fun test_interest_rate_below_optimal() {
     let rate_at_40 = config.interest_rate(400_000_000);
     let expected_40 =
         test_constants::base_rate() + math::mul(400_000_000, test_constants::base_slope());
-    assert_eq(rate_at_40, expected_40);
-    assert_eq(rate_at_40, 90_000_000); // 9%
+    assert_eq!(rate_at_40, expected_40);
+    assert_eq!(rate_at_40, 90_000_000); // 9%
 
     // Test at 60% utilization (still below optimal)
     let rate_at_60 = config.interest_rate(600_000_000);
     let expected_60 =
         test_constants::base_rate() + math::mul(600_000_000, test_constants::base_slope());
-    assert_eq(rate_at_60, expected_60);
-    assert_eq(rate_at_60, 110_000_000); // 11%
+    assert_eq!(rate_at_60, expected_60);
+    assert_eq!(rate_at_60, 110_000_000); // 11%
 
     destroy(config);
 }
@@ -94,10 +95,10 @@ fun test_interest_rate_at_optimal() {
     // 5% + (80% * 10%) = 5% + 8% = 13%
     let rate_at_optimal = config.interest_rate(test_constants::optimal_utilization());
     let expected =
-        test_constants::base_rate() + 
+        test_constants::base_rate() +
         math::mul(test_constants::optimal_utilization(), test_constants::base_slope());
-    assert_eq(rate_at_optimal, expected);
-    assert_eq(rate_at_optimal, 130_000_000); // 13%
+    assert_eq!(rate_at_optimal, expected);
+    assert_eq!(rate_at_optimal, 130_000_000); // 13%
 
     destroy(config);
 }
@@ -112,20 +113,20 @@ fun test_interest_rate_above_optimal() {
     // 5% + (80% * 10%) + (10% * 200%) = 5% + 8% + 20% = 33%
     let rate_at_90 = config.interest_rate(900_000_000);
     let base_plus_optimal =
-        test_constants::base_rate() + 
+        test_constants::base_rate() +
         math::mul(test_constants::optimal_utilization(), test_constants::base_slope());
     let excess = math::mul(100_000_000, test_constants::excess_slope()); // 10% * 200%
     let expected_90 = base_plus_optimal + excess;
-    assert_eq(rate_at_90, expected_90);
-    assert_eq(rate_at_90, 330_000_000); // 33%
+    assert_eq!(rate_at_90, expected_90);
+    assert_eq!(rate_at_90, 330_000_000); // 33%
 
     // Test at 100% utilization
     // 5% + (80% * 10%) + (20% * 200%) = 5% + 8% + 40% = 53%
     let rate_at_100 = config.interest_rate(1_000_000_000);
     let excess_100 = math::mul(200_000_000, test_constants::excess_slope()); // 20% * 200%
     let expected_100 = base_plus_optimal + excess_100;
-    assert_eq(rate_at_100, expected_100);
-    assert_eq(rate_at_100, 530_000_000); // 53%
+    assert_eq!(rate_at_100, expected_100);
+    assert_eq!(rate_at_100, 530_000_000); // 53%
 
     destroy(config);
 }
@@ -148,13 +149,13 @@ fun test_interest_rate_zero_base_rate() {
     let config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
 
     // At 0% utilization - should be 0
-    assert_eq(config.interest_rate(0), 0);
+    assert_eq!(config.interest_rate(0), 0);
 
     // At 50% utilization - should be 50% * 10% = 5%
-    assert_eq(config.interest_rate(500_000_000), 50_000_000);
+    assert_eq!(config.interest_rate(500_000_000), 50_000_000);
 
     // At 90% utilization - 80% * 10% + 10% * 200% = 8% + 20% = 28%
-    assert_eq(config.interest_rate(900_000_000), 280_000_000);
+    assert_eq!(config.interest_rate(900_000_000), 280_000_000);
 
     destroy(config);
 }
@@ -177,13 +178,13 @@ fun test_interest_rate_different_slopes() {
     let config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
 
     // At 30% utilization - 2% + (30% * 5%) = 2% + 1.5% = 3.5%
-    assert_eq(config.interest_rate(300_000_000), 35_000_000);
+    assert_eq!(config.interest_rate(300_000_000), 35_000_000);
 
     // At 60% utilization (optimal) - 2% + (60% * 5%) = 2% + 3% = 5%
-    assert_eq(config.interest_rate(600_000_000), 50_000_000);
+    assert_eq!(config.interest_rate(600_000_000), 50_000_000);
 
     // At 80% utilization - 2% + (60% * 5%) + (20% * 300%) = 2% + 3% + 60% = 65%
-    assert_eq(config.interest_rate(800_000_000), 650_000_000);
+    assert_eq!(config.interest_rate(800_000_000), 650_000_000);
 
     destroy(config);
 }
@@ -203,16 +204,16 @@ fun test_time_adjusted_rate_precision() {
     // Test for 1 second
     let rate_1_second = config.time_adjusted_rate(utilization, second_ms);
     let expected_1_second = math::div(math::mul(second_ms, interest_rate), year_ms);
-    assert_eq(rate_1_second, expected_1_second);
+    assert_eq!(rate_1_second, expected_1_second);
 
     // Test for 1 minute
     let rate_1_minute = config.time_adjusted_rate(utilization, minute_ms);
     let expected_1_minute = math::div(math::mul(minute_ms, interest_rate), year_ms);
-    assert_eq(rate_1_minute, expected_1_minute);
+    assert_eq!(rate_1_minute, expected_1_minute);
 
     // Verify that 60 seconds equals 1 minute
     let rate_60_seconds = config.time_adjusted_rate(utilization, 60 * second_ms);
-    assert_eq(rate_60_seconds, rate_1_minute);
+    assert_eq!(rate_60_seconds, rate_1_minute);
 
     destroy(config);
 }
@@ -225,16 +226,16 @@ fun test_protocol_config_getters() {
     let config = create_test_protocol_config();
 
     // Test margin pool config getters
-    assert_eq(config.supply_cap(), test_constants::supply_cap());
-    assert_eq(config.max_utilization_rate(), test_constants::max_utilization_rate());
-    assert_eq(config.protocol_spread(), test_constants::protocol_spread());
-    assert_eq(config.min_borrow(), test_constants::min_borrow());
+    assert_eq!(config.supply_cap(), test_constants::supply_cap());
+    assert_eq!(config.max_utilization_rate(), test_constants::max_utilization_rate());
+    assert_eq!(config.protocol_spread(), test_constants::protocol_spread());
+    assert_eq!(config.min_borrow(), test_constants::min_borrow());
 
     // Test interest config getters
-    assert_eq(config.base_rate(), test_constants::base_rate());
-    assert_eq(config.base_slope(), test_constants::base_slope());
-    assert_eq(config.optimal_utilization(), test_constants::optimal_utilization());
-    assert_eq(config.excess_slope(), test_constants::excess_slope());
+    assert_eq!(config.base_rate(), test_constants::base_rate());
+    assert_eq!(config.base_slope(), test_constants::base_slope());
+    assert_eq!(config.optimal_utilization(), test_constants::optimal_utilization());
+    assert_eq!(config.excess_slope(), test_constants::excess_slope());
 
     destroy(config);
 }

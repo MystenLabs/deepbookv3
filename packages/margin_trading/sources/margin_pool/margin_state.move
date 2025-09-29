@@ -6,10 +6,10 @@
 /// the interest and protocol fees are updated.
 /// Shares represent the constant amount and are used to calculate
 /// amounts after interest and protocol fees are applied.
-module margin_trading::margin_state;
+module deepbook_margin::margin_state;
 
 use deepbook::{constants, math};
-use margin_trading::protocol_config::ProtocolConfig;
+use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
 use sui::{clock::Clock, vec_map::{Self, VecMap}};
 

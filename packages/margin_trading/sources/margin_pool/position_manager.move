@@ -3,7 +3,7 @@
 
 /// Position manager is responsible for managing users' positions.
 /// It is used to track the supply and loan shares of the users.
-module margin_trading::position_manager;
+module deepbook_margin::position_manager;
 
 use std::string::String;
 use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};

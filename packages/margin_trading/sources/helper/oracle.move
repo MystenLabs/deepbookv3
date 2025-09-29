@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Oracle module for margin trading.
-module margin_trading::oracle;
+module deepbook_margin::oracle;
 
-use margin_trading::margin_registry::MarginRegistry;
+use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};

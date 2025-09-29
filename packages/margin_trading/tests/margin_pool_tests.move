@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::margin_pool_tests;
+module deepbook_margin::margin_pool_tests;
 
-use margin_trading::{
+use deepbook_margin::{
     margin_constants,
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
