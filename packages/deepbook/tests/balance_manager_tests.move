@@ -628,6 +628,34 @@ public(package) fun create_acct_and_share_with_funds(
     }
 }
 
+public(package) fun create_caps(sender: address, balance_manager_id: ID, test: &mut Scenario) {
+    test.next_tx(sender);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
+        let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        transfer::public_transfer(deposit_cap, sender);
+        transfer::public_transfer(withdraw_cap, sender);
+        transfer::public_transfer(trade_cap, sender);
+        return_shared(balance_manager);
+    }
+}
+
+public(package) fun asset_balance<Asset>(
+    sender: address,
+    balance_manager_id: ID,
+    test: &mut Scenario,
+): u64 {
+    test.next_tx(sender);
+    {
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id);
+        let balance = balance_manager.balance<Asset>();
+        return_shared(balance_manager);
+        balance
+    }
+}
+
 public(package) fun create_acct_and_share_with_funds_typed<
     BaseAsset,
     QuoteAsset,

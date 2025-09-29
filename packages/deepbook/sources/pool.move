@@ -6,7 +6,15 @@ module deepbook::pool;
 
 use deepbook::{
     account::Account,
-    balance_manager::{Self, BalanceManager, TradeProof, DeepBookReferral, TradeCap, DepositCap, WithdrawCap},
+    balance_manager::{
+        Self,
+        BalanceManager,
+        TradeProof,
+        DeepBookReferral,
+        TradeCap,
+        DepositCap,
+        WithdrawCap
+    },
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -269,7 +277,17 @@ public fun swap_exact_base_for_quote_with_manager<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     let quote_in = coin::zero(ctx);
 
-    self.swap_exact_quantity_with_manager(balance_manager, trade_cap, deposit_cap, withdraw_cap, base_in, quote_in, min_quote_out, clock, ctx)
+    self.swap_exact_quantity_with_manager(
+        balance_manager,
+        trade_cap,
+        deposit_cap,
+        withdraw_cap,
+        base_in,
+        quote_in,
+        min_quote_out,
+        clock,
+        ctx,
+    )
 }
 
 /// Swap exact quote quantity without needing a `balance_manager`.
@@ -311,7 +329,17 @@ public fun swap_exact_quote_for_base_with_manager<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
     let base_in = coin::zero(ctx);
 
-    self.swap_exact_quantity_with_manager(balance_manager, trade_cap, deposit_cap, withdraw_cap, base_in, quote_in, min_base_out, clock, ctx)
+    self.swap_exact_quantity_with_manager(
+        balance_manager,
+        trade_cap,
+        deposit_cap,
+        withdraw_cap,
+        base_in,
+        quote_in,
+        min_base_out,
+        clock,
+        ctx,
+    )
 }
 
 /// Swap exact quantity without needing a balance_manager.
@@ -402,18 +430,19 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>) {
-    let mut base_quantity_mut = base_in.value();
+    let mut adjusted_base_quantity = base_in.value();
     let base_quantity = base_in.value();
     let quote_quantity = quote_in.value();
-    assert!((base_quantity_mut > 0) != (quote_quantity > 0), EInvalidQuantityIn);
+    assert!((adjusted_base_quantity > 0) != (quote_quantity > 0), EInvalidQuantityIn);
 
     let is_bid = quote_quantity > 0;
     if (is_bid) {
-        (base_quantity_mut, _, _) = self.get_quantity_out(0, quote_quantity, clock)
+        (adjusted_base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock)
     } else {
-        base_quantity_mut = base_quantity_mut - base_quantity_mut % self.load_inner().book.lot_size();
+        adjusted_base_quantity =
+            adjusted_base_quantity - adjusted_base_quantity % self.load_inner().book.lot_size();
     };
-    if (base_quantity_mut < self.load_inner().book.min_size()) {
+    if (adjusted_base_quantity < self.load_inner().book.min_size()) {
         return (base_in, quote_in)
     };
 
@@ -425,7 +454,7 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
         &trade_proof,
         0,
         constants::self_matching_allowed(),
-        base_quantity_mut,
+        adjusted_base_quantity,
         is_bid,
         true,
         clock,
