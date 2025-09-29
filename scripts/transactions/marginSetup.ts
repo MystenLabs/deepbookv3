@@ -144,7 +144,7 @@ const mainnetPlugin = namedPackagesPlugin({
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0xa81a2328b7bbf70ab196d6aca400b5b0721dec7615bf272d95e0b0df04517e72"
+    "0xb5b39d11ddbd0abb0166cd369c155409a2cca9868659bda6d9ce3804c510b949"
   ); // multisig address
 
   console.dir(res, { depth: null });
