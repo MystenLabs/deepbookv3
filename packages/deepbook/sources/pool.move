@@ -6,7 +6,7 @@ module deepbook::pool;
 
 use deepbook::{
     account::Account,
-    balance_manager::{Self, BalanceManager, TradeProof, DeepBookReferral},
+    balance_manager::{Self, BalanceManager, TradeProof, DeepBookReferral, TradeCap},
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -279,6 +279,94 @@ public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
 }
 
 /// Swap exact quantity without needing a balance_manager.
+public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_cap: &TradeCap,
+    base_in: Coin<BaseAsset>,
+    quote_in: Coin<QuoteAsset>,
+    deep_in: Coin<DEEP>,
+    min_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+    let mut base_quantity_mut = base_in.value();
+    let base_quantity = base_in.value();
+    let quote_quantity = quote_in.value();
+    let deep_quantity = deep_in.value();
+    let taker_fee = self.load_inner().state.governance().trade_params().taker_fee();
+    let input_fee_rate = math::mul(
+        taker_fee,
+        constants::fee_penalty_multiplier(),
+    );
+    assert!((base_quantity_mut > 0) != (quote_quantity > 0), EInvalidQuantityIn);
+
+    let pay_with_deep = deep_in.value() > 0;
+    let is_bid = quote_quantity > 0;
+    if (is_bid) {
+        (base_quantity_mut, _, _) = if (pay_with_deep) {
+            self.get_quantity_out(0, quote_quantity, clock)
+        } else {
+            self.get_quantity_out_input_fee(0, quote_quantity, clock)
+        }
+    } else {
+        if (!pay_with_deep) {
+            base_quantity_mut =
+                math::div(
+                    base_quantity_mut,
+                    constants::float_scaling() + input_fee_rate,
+                );
+        }
+    };
+    base_quantity_mut = base_quantity_mut - base_quantity_mut % self.load_inner().book.lot_size();
+    if (base_quantity_mut < self.load_inner().book.min_size()) {
+        return (base_in, quote_in, deep_in)
+    };
+
+    let trade_proof = balance_manager.generate_proof_as_trader(trade_cap, ctx);
+    balance_manager.deposit(base_in, ctx);
+    balance_manager.deposit(quote_in, ctx);
+    balance_manager.deposit(deep_in, ctx);
+
+    let order_info = self.place_market_order(
+        balance_manager,
+        &trade_proof,
+        0,
+        constants::self_matching_allowed(),
+        base_quantity_mut,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    );
+
+    let (deep_fee, non_deep_fee_quantity) = if (pay_with_deep) {
+        (order_info.paid_fees(), 0)
+    } else {
+        (0, order_info.paid_fees())
+    };
+    let (base_out, quote_out) = if (is_bid) {
+        let quote_left = quote_quantity - order_info.cumulative_quote_quantity() - non_deep_fee_quantity;
+        (order_info.executed_quantity(), quote_left)
+    } else {
+        let base_left = base_quantity - order_info.executed_quantity() - non_deep_fee_quantity;
+        (base_left, order_info.cumulative_quote_quantity())
+    };
+    let deep_out = deep_quantity - deep_fee;
+    if (is_bid) {
+        assert!(base_out >= min_out, EMinimumQuantityOutNotMet);
+    } else {
+        assert!(quote_out >= min_out, EMinimumQuantityOutNotMet);
+    };
+
+    let base_out = balance_manager.withdraw(base_out, ctx);
+    let quote_out = balance_manager.withdraw(quote_out, ctx);
+    let deep_out = balance_manager.withdraw(deep_out, ctx);
+
+    (base_out, quote_out, deep_out)
+}
+
+/// Swap exact quantity without needing a balance_manager.
 public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     base_in: Coin<BaseAsset>,
@@ -288,65 +376,21 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
-    let mut base_quantity = base_in.value();
-    let quote_quantity = quote_in.value();
-    let taker_fee = self.load_inner().state.governance().trade_params().taker_fee();
-    let input_fee_rate = math::mul(
-        taker_fee,
-        constants::fee_penalty_multiplier(),
-    );
-    assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidQuantityIn);
-
-    let pay_with_deep = deep_in.value() > 0;
-    let is_bid = quote_quantity > 0;
-    if (is_bid) {
-        (base_quantity, _, _) = if (pay_with_deep) {
-            self.get_quantity_out(0, quote_quantity, clock)
-        } else {
-            self.get_quantity_out_input_fee(0, quote_quantity, clock)
-        }
-    } else {
-        if (!pay_with_deep) {
-            base_quantity =
-                math::div(
-                    base_quantity,
-                    constants::float_scaling() + input_fee_rate,
-                );
-        }
-    };
-    base_quantity = base_quantity - base_quantity % self.load_inner().book.lot_size();
-    if (base_quantity < self.load_inner().book.min_size()) {
-        return (base_in, quote_in, deep_in)
-    };
-
     let mut temp_balance_manager = balance_manager::new(ctx);
-    let trade_proof = temp_balance_manager.generate_proof_as_owner(ctx);
-    temp_balance_manager.deposit(base_in, ctx);
-    temp_balance_manager.deposit(quote_in, ctx);
-    temp_balance_manager.deposit(deep_in, ctx);
-
-    self.place_market_order(
+    let trade_cap = temp_balance_manager.mint_trade_cap(ctx);
+    
+    let (base_out, quote_out, deep_out) = self.swap_exact_quantity_with_manager(
         &mut temp_balance_manager,
-        &trade_proof,
-        0,
-        constants::self_matching_allowed(),
-        base_quantity,
-        is_bid,
-        pay_with_deep,
+        &trade_cap,
+        base_in,
+        quote_in,
+        deep_in,
+        min_out,
         clock,
         ctx,
     );
 
-    let base_out = temp_balance_manager.withdraw_all<BaseAsset>(ctx);
-    let quote_out = temp_balance_manager.withdraw_all<QuoteAsset>(ctx);
-    let deep_out = temp_balance_manager.withdraw_all<DEEP>(ctx);
-
-    if (is_bid) {
-        assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
-    } else {
-        assert!(quote_out.value() >= min_out, EMinimumQuantityOutNotMet);
-    };
-
+    trade_cap.delete_trade_cap();
     temp_balance_manager.delete();
 
     (base_out, quote_out, deep_out)

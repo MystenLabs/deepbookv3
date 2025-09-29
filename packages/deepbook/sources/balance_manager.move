@@ -484,6 +484,15 @@ public(package) fun delete(balance_manager: BalanceManager) {
     balances.destroy_empty();
 }
 
+public(package) fun delete_trade_cap(trade_cap: TradeCap) {
+    let TradeCap {
+        id,
+        balance_manager_id: _,
+    } = trade_cap;
+
+    id.delete();
+}
+
 public(package) fun trader(trade_proof: &TradeProof): address {
     trade_proof.trader
 }
