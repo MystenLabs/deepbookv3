@@ -25,4 +25,4 @@ jobs:
         uses: actions/setup-node@v4
       - run: npm i @mysten/prettier-plugin-move
       - run: npx prettier-move -c $PWD/../packages/deepbook/**/*.move
-      - run: npx prettier-move -c $PWD/../packages/margin_trading/**/*.move
+      - run: npx prettier-move -c $PWD/../packages/deepbook_margin/**/*.move
