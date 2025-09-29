@@ -6,7 +6,15 @@ module deepbook::pool;
 
 use deepbook::{
     account::Account,
-    balance_manager::{Self, BalanceManager, TradeProof, DeepBookReferral},
+    balance_manager::{
+        Self,
+        BalanceManager,
+        TradeProof,
+        DeepBookReferral,
+        TradeCap,
+        DepositCap,
+        WithdrawCap
+    },
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -254,6 +262,34 @@ public fun swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Swap exact base for quote with a `balance_manager`.
+/// Assumes fees are paid in DEEP. Assumes balance manager has enough DEEP for fees.
+public fun swap_exact_base_for_quote_with_manager<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_cap: &TradeCap,
+    deposit_cap: &DepositCap,
+    withdraw_cap: &WithdrawCap,
+    base_in: Coin<BaseAsset>,
+    min_quote_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let quote_in = coin::zero(ctx);
+
+    self.swap_exact_quantity_with_manager(
+        balance_manager,
+        trade_cap,
+        deposit_cap,
+        withdraw_cap,
+        base_in,
+        quote_in,
+        min_quote_out,
+        clock,
+        ctx,
+    )
+}
+
 /// Swap exact quote quantity without needing a `balance_manager`.
 /// DEEP quantity can be overestimated. Returns three `Coin` objects:
 /// base, quote, and deep. Some quote quantity may be left over if the
@@ -272,6 +308,34 @@ public fun swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         base_in,
         quote_in,
         deep_in,
+        min_base_out,
+        clock,
+        ctx,
+    )
+}
+
+/// Swap exact quote for base with a `balance_manager`.
+/// Assumes fees are paid in DEEP. Assumes balance manager has enough DEEP for fees.
+public fun swap_exact_quote_for_base_with_manager<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_cap: &TradeCap,
+    deposit_cap: &DepositCap,
+    withdraw_cap: &WithdrawCap,
+    quote_in: Coin<QuoteAsset>,
+    min_base_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let base_in = coin::zero(ctx);
+
+    self.swap_exact_quantity_with_manager(
+        balance_manager,
+        trade_cap,
+        deposit_cap,
+        withdraw_cap,
+        base_in,
+        quote_in,
         min_base_out,
         clock,
         ctx,
@@ -350,6 +414,71 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     temp_balance_manager.delete();
 
     (base_out, quote_out, deep_out)
+}
+
+/// Swap exact quantity with a `balance_manager`.
+/// Assumes fees are paid in DEEP. Assumes balance manager has enough DEEP for fees.
+public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_cap: &TradeCap,
+    deposit_cap: &DepositCap,
+    withdraw_cap: &WithdrawCap,
+    base_in: Coin<BaseAsset>,
+    quote_in: Coin<QuoteAsset>,
+    min_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    let mut adjusted_base_quantity = base_in.value();
+    let base_quantity = base_in.value();
+    let quote_quantity = quote_in.value();
+    assert!((adjusted_base_quantity > 0) != (quote_quantity > 0), EInvalidQuantityIn);
+
+    let is_bid = quote_quantity > 0;
+    if (is_bid) {
+        (adjusted_base_quantity, _, _) = self.get_quantity_out(0, quote_quantity, clock)
+    } else {
+        adjusted_base_quantity =
+            adjusted_base_quantity - adjusted_base_quantity % self.load_inner().book.lot_size();
+    };
+    if (adjusted_base_quantity < self.load_inner().book.min_size()) {
+        return (base_in, quote_in)
+    };
+
+    balance_manager.deposit_with_cap(deposit_cap, base_in, ctx);
+    balance_manager.deposit_with_cap(deposit_cap, quote_in, ctx);
+    let trade_proof = balance_manager.generate_proof_as_trader(trade_cap, ctx);
+    let order_info = self.place_market_order(
+        balance_manager,
+        &trade_proof,
+        0,
+        constants::self_matching_allowed(),
+        adjusted_base_quantity,
+        is_bid,
+        true,
+        clock,
+        ctx,
+    );
+
+    let (base_out, quote_out) = if (is_bid) {
+        let quote_left = quote_quantity - order_info.cumulative_quote_quantity();
+        (order_info.executed_quantity(), quote_left)
+    } else {
+        let base_left = base_quantity - order_info.executed_quantity();
+        (base_left, order_info.cumulative_quote_quantity())
+    };
+
+    let base_out = balance_manager.withdraw_with_cap(withdraw_cap, base_out, ctx);
+    let quote_out = balance_manager.withdraw_with_cap(withdraw_cap, quote_out, ctx);
+
+    if (is_bid) {
+        assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
+    } else {
+        assert!(quote_out.value() >= min_out, EMinimumQuantityOutNotMet);
+    };
+
+    (base_out, quote_out)
 }
 
 /// Modifies an order given order_id and new_quantity.

@@ -5,13 +5,15 @@
 module deepbook::pool_tests;
 
 use deepbook::{
-    balance_manager::{BalanceManager, TradeCap, DeepBookReferral},
+    balance_manager::{BalanceManager, TradeCap, DeepBookReferral, DepositCap, WithdrawCap},
     balance_manager_tests::{
         USDC,
         USDT,
         SPAM,
         create_acct_and_share_with_funds,
-        create_acct_and_share_with_funds_typed
+        create_acct_and_share_with_funds_typed,
+        create_caps,
+        asset_balance
     },
     big_vector::BigVector,
     constants,
@@ -25,7 +27,7 @@ use deepbook::{
 };
 use sui::{
     clock::{Self, Clock},
-    coin::{Coin, mint_for_testing},
+    coin::{Self, Coin, mint_for_testing},
     sui::SUI,
     test_scenario::{Scenario, begin, end, return_shared},
     test_utils
@@ -449,12 +451,22 @@ fun test_self_matching_cancel_maker_ask() {
 
 #[test]
 fun test_swap_exact_amount_bid_ask() {
-    test_swap_exact_amount(true);
+    test_swap_exact_amount(true, false);
 }
 
 #[test]
 fun test_swap_exact_amount_ask_bid() {
-    test_swap_exact_amount(false);
+    test_swap_exact_amount(false, false);
+}
+
+#[test]
+fun test_swap_exact_amount_bid_ask_with_manager() {
+    test_swap_exact_amount(true, true);
+}
+
+#[test]
+fun test_swap_exact_amount_ask_bid_with_manager() {
+    test_swap_exact_amount(false, true);
 }
 
 #[test]
@@ -574,42 +586,82 @@ fun test_mid_price_ok() {
 
 #[test]
 fun test_swap_exact_not_fully_filled_bid_ok() {
-    test_swap_exact_not_fully_filled(true, false, false, false);
+    test_swap_exact_not_fully_filled(true, false, false, false, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_bid_with_manager_ok() {
+    test_swap_exact_not_fully_filled(true, false, false, false, true);
 }
 
 #[test]
 fun test_swap_exact_not_fully_filled_ask_ok() {
-    test_swap_exact_not_fully_filled(false, false, false, false);
+    test_swap_exact_not_fully_filled(false, false, false, false, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_ask_with_manager_ok() {
+    test_swap_exact_not_fully_filled(false, false, false, false, true);
 }
 
 #[test]
 fun test_swap_exact_not_fully_filled_bid_low_qty_ok() {
-    test_swap_exact_not_fully_filled(true, true, false, false);
+    test_swap_exact_not_fully_filled(true, true, false, false, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_bid_with_manager_low_qty_ok() {
+    test_swap_exact_not_fully_filled(true, true, false, false, true);
 }
 
 #[test]
 fun test_swap_exact_not_fully_filled_ask_low_qty_ok() {
-    test_swap_exact_not_fully_filled(false, true, false, false);
+    test_swap_exact_not_fully_filled(false, true, false, false, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_ask_with_manager_low_qty_ok() {
+    test_swap_exact_not_fully_filled(false, true, false, false, true);
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
 fun test_swap_exact_not_fully_filled_bid_min_e() {
-    test_swap_exact_not_fully_filled(true, false, true, false);
+    test_swap_exact_not_fully_filled(true, false, true, false, false);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
+fun test_swap_exact_not_fully_filled_bid_with_manager_min_e() {
+    test_swap_exact_not_fully_filled(true, false, true, false, true);
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
 fun test_swap_exact_not_fully_filled_ask_min_e() {
-    test_swap_exact_not_fully_filled(false, false, true, false);
+    test_swap_exact_not_fully_filled(false, false, true, false, false);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EMinimumQuantityOutNotMet)]
+fun test_swap_exact_not_fully_filled_ask_with_manager_min_e() {
+    test_swap_exact_not_fully_filled(false, false, true, false, true);
 }
 
 #[test]
 fun test_swap_exact_not_fully_filled_maker_partial_bid_ok() {
-    test_swap_exact_not_fully_filled(true, false, false, true);
+    test_swap_exact_not_fully_filled(true, false, false, true, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_maker_partial_bid_with_manager_ok() {
+    test_swap_exact_not_fully_filled(true, false, false, true, true);
 }
 
 #[test]
 fun test_swap_exact_not_fully_filled_maker_partial_ask_ok() {
-    test_swap_exact_not_fully_filled(false, false, false, true);
+    test_swap_exact_not_fully_filled(false, false, false, true, false);
+}
+
+#[test]
+fun test_swap_exact_not_fully_filled_maker_partial_ask_with_manager_ok() {
+    test_swap_exact_not_fully_filled(false, false, false, true, true);
 }
 
 #[test]
@@ -2362,6 +2414,7 @@ fun test_swap_exact_not_fully_filled(
     low_quantity: bool,
     minimum_enforced: bool,
     partially_filled_maker: bool,
+    with_manager: bool,
 ) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
@@ -2487,30 +2540,79 @@ fun test_swap_exact_not_fully_filled(
         0
     };
 
+    let initial_bob_balances = 1000000 * constants::float_scaling();
+    let bob_balance_manager_id = create_acct_and_share_with_funds(
+        BOB,
+        initial_bob_balances,
+        &mut test,
+    );
+    create_caps(BOB, bob_balance_manager_id, &mut test);
+    let bob_sui_balance_before = asset_balance<SUI>(BOB, bob_balance_manager_id, &mut test);
+    let bob_usdc_balance_before = asset_balance<USDC>(BOB, bob_balance_manager_id, &mut test);
+    let bob_deep_balance_before = asset_balance<DEEP>(BOB, bob_balance_manager_id, &mut test);
+
     let (base_out, quote_out, deep_out) = if (is_bid) {
-        place_swap_exact_base_for_quote<SUI, USDC>(
-            pool_id,
-            BOB,
-            base_in,
-            deep_in,
-            min_out,
-            &mut test,
-        )
+        if (with_manager) {
+            let deep_out = coin::zero(test.ctx());
+            let (base_out, quote_out) = place_exact_base_for_quote_with_manager<SUI, USDC>(
+                pool_id,
+                BOB,
+                bob_balance_manager_id,
+                base_in,
+                min_out,
+                &mut test,
+            );
+
+            (base_out, quote_out, deep_out)
+        } else {
+            place_swap_exact_base_for_quote<SUI, USDC>(
+                pool_id,
+                BOB,
+                base_in,
+                deep_in,
+                min_out,
+                &mut test,
+            )
+        }
     } else {
-        place_swap_exact_quote_for_base<SUI, USDC>(
-            pool_id,
-            BOB,
-            quote_in,
-            deep_in,
-            min_out,
-            &mut test,
-        )
+        if (with_manager) {
+            let deep_out = coin::zero(test.ctx());
+            let (base_out, quote_out) = place_exact_quote_for_base_with_manager<SUI, USDC>(
+                pool_id,
+                BOB,
+                bob_balance_manager_id,
+                quote_in,
+                min_out,
+                &mut test,
+            );
+
+            (base_out, quote_out, deep_out)
+        } else {
+            place_swap_exact_quote_for_base<SUI, USDC>(
+                pool_id,
+                BOB,
+                quote_in,
+                deep_in,
+                min_out,
+                &mut test,
+            )
+        }
     };
+    let bob_sui_balance_after = asset_balance<SUI>(BOB, bob_balance_manager_id, &mut test);
+    let bob_usdc_balance_after = asset_balance<USDC>(BOB, bob_balance_manager_id, &mut test);
+    let bob_deep_balance_after = asset_balance<DEEP>(BOB, bob_balance_manager_id, &mut test);
 
     if (low_quantity) {
         assert!(base_out.value() == base_in);
         assert!(quote_out.value() == quote_in);
-        assert!(deep_out.value() == deep_in);
+        if (with_manager) {
+            assert!(deep_out.value() == 0);
+            assert!(bob_sui_balance_before == bob_sui_balance_after);
+            assert!(bob_usdc_balance_before == bob_usdc_balance_after);
+            assert!(bob_deep_balance_before == bob_deep_balance_after);
+        } else {
+            assert!(deep_out.value() == deep_in);
+        };
     } else if (!partially_filled_maker) {
         if (is_bid) {
             assert!(
@@ -2532,14 +2634,27 @@ fun test_swap_exact_not_fully_filled(
             );
         };
 
-        assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        if (with_manager) {
+            assert!(
+                bob_deep_balance_before == bob_deep_balance_after + deep_in - residual,
+                constants::e_order_info_mismatch(),
+            );
+            assert!(
+                deep_required == deep_required_2 &&
+                deep_required == bob_deep_balance_before - bob_deep_balance_after,
+                constants::e_order_info_mismatch(),
+            );
+        } else {
+            assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+            assert!(
+                deep_required == deep_required_2 &&
+                deep_required == deep_in - deep_out.value(),
+                constants::e_order_info_mismatch(),
+            );
+        };
+
         assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
         assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(
-            deep_required == deep_required_2 &&
-            deep_required == deep_in - deep_out.value(),
-            constants::e_order_info_mismatch(),
-        );
     } else {
         if (is_bid) {
             assert!(
@@ -2561,17 +2676,30 @@ fun test_swap_exact_not_fully_filled(
             );
         };
 
-        assert!(
-            deep_out.value() == constants::float_scaling() / 10 + residual,
-            constants::e_order_info_mismatch(),
-        );
+        if (with_manager) {
+            assert!(
+                bob_deep_balance_before - bob_deep_balance_after == constants::float_scaling() / 10,
+                constants::e_order_info_mismatch(),
+            );
+            assert!(
+                deep_required == deep_required_2 &&
+                deep_required == bob_deep_balance_before - bob_deep_balance_after,
+                constants::e_order_info_mismatch(),
+            )
+        } else {
+            assert!(
+                deep_out.value() == constants::float_scaling() / 10 + residual,
+                constants::e_order_info_mismatch(),
+            );
+            assert!(
+                deep_required == deep_required_2 &&
+                deep_required == deep_in - deep_out.value(),
+                constants::e_order_info_mismatch(),
+            );
+        };
+
         assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
         assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
-        assert!(
-            deep_required == deep_required_2 &&
-            deep_required == deep_in - deep_out.value(),
-            constants::e_order_info_mismatch(),
-        );
     };
 
     base_out.burn_for_testing();
@@ -3711,7 +3839,7 @@ fun test_cancel_all_orders(is_bid: bool, has_open_orders: bool) {
 /// Alice places a bid order, Bob places a swap_exact_amount order
 /// Make sure the assets returned to Bob are correct
 /// Make sure expired orders are skipped over
-fun test_swap_exact_amount(is_bid: bool) {
+fun test_swap_exact_amount(is_bid: bool, with_manager: bool) {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
     let balance_manager_id_alice = create_acct_and_share_with_funds(
@@ -3805,25 +3933,63 @@ fun test_swap_exact_amount(is_bid: bool) {
         )
     };
 
+    let initial_bob_balances = 1000000 * constants::float_scaling();
+    let bob_balance_manager_id = create_acct_and_share_with_funds(
+        BOB,
+        initial_bob_balances,
+        &mut test,
+    );
+    create_caps(BOB, bob_balance_manager_id, &mut test);
+    let bob_deep_balance_before = asset_balance<DEEP>(BOB, bob_balance_manager_id, &mut test);
+
     let (base_out, quote_out, deep_out) = if (is_bid) {
-        place_swap_exact_base_for_quote<SUI, USDC>(
-            pool_id,
-            BOB,
-            base_in,
-            deep_in,
-            0,
-            &mut test,
-        )
+        if (with_manager) {
+            let deep_out = coin::zero(test.ctx());
+            let (base_out, quote_out) = place_exact_base_for_quote_with_manager<SUI, USDC>(
+                pool_id,
+                BOB,
+                bob_balance_manager_id,
+                base_in,
+                0,
+                &mut test,
+            );
+
+            (base_out, quote_out, deep_out)
+        } else {
+            place_swap_exact_base_for_quote<SUI, USDC>(
+                pool_id,
+                BOB,
+                base_in,
+                deep_in,
+                0,
+                &mut test,
+            )
+        }
     } else {
-        place_swap_exact_quote_for_base<SUI, USDC>(
-            pool_id,
-            BOB,
-            quote_in,
-            deep_in,
-            0,
-            &mut test,
-        )
+        if (with_manager) {
+            let deep_out = coin::zero(test.ctx());
+            let (base_out, quote_out) = place_exact_quote_for_base_with_manager<SUI, USDC>(
+                pool_id,
+                BOB,
+                bob_balance_manager_id,
+                quote_in,
+                0,
+                &mut test,
+            );
+
+            (base_out, quote_out, deep_out)
+        } else {
+            place_swap_exact_quote_for_base<SUI, USDC>(
+                pool_id,
+                BOB,
+                quote_in,
+                deep_in,
+                0,
+                &mut test,
+            )
+        }
     };
+    let bob_deep_balance_after = asset_balance<DEEP>(BOB, bob_balance_manager_id, &mut test);
 
     if (is_bid) {
         assert!(base_out.value() == residual, constants::e_order_info_mismatch());
@@ -3839,14 +4005,27 @@ fun test_swap_exact_amount(is_bid: bool) {
         assert!(quote_out.value() == 2 * residual, constants::e_order_info_mismatch());
     };
 
-    assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+    if (with_manager) {
+        assert!(
+            deep_required == bob_deep_balance_before - bob_deep_balance_after,
+            constants::e_order_info_mismatch(),
+        );
+        assert!(
+            deep_required == deep_required_2 &&
+            deep_required == bob_deep_balance_before - bob_deep_balance_after,
+            constants::e_order_info_mismatch(),
+        );
+    } else {
+        assert!(deep_out.value() == residual, constants::e_order_info_mismatch());
+        assert!(
+            deep_required == deep_required_2 &&
+            deep_required == deep_in - deep_out.value(),
+            constants::e_order_info_mismatch(),
+        );
+    };
+
     assert!(base == base_2 && base == base_out.value(), constants::e_order_info_mismatch());
     assert!(quote == quote_2 && quote == quote_out.value(), constants::e_order_info_mismatch());
-    assert!(
-        deep_required == deep_required_2 &&
-        deep_required == deep_in - deep_out.value(),
-        constants::e_order_info_mismatch(),
-    );
 
     base_out.burn_for_testing();
     quote_out.burn_for_testing();
@@ -5388,6 +5567,53 @@ fun place_swap_exact_base_for_quote<BaseAsset, QuoteAsset>(
     }
 }
 
+fun place_exact_base_for_quote_with_manager<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    trader: address,
+    balance_manager_id: ID,
+    base_in: u64,
+    min_quote_out: u64,
+    test: &mut Scenario,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    test.next_tx(trader);
+    {
+        let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(
+            pool_id,
+        );
+        let clock = test.take_shared<Clock>();
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let trade_cap = test.take_from_sender<TradeCap>();
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+
+        // Place order in pool
+        let (base_out, quote_out) = pool.swap_exact_base_for_quote_with_manager<
+            BaseAsset,
+            QuoteAsset,
+        >(
+            &mut balance_manager,
+            &trade_cap,
+            &deposit_cap,
+            &withdraw_cap,
+            mint_for_testing<BaseAsset>(base_in, test.ctx()),
+            min_quote_out,
+            &clock,
+            test.ctx(),
+        );
+
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+        test.return_to_sender(trade_cap);
+        test.return_to_sender(deposit_cap);
+        test.return_to_sender(withdraw_cap);
+
+        (base_out, quote_out)
+    }
+}
+
 fun place_swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
     pool_id: ID,
     trader: address,
@@ -5415,6 +5641,53 @@ fun place_swap_exact_quote_for_base<BaseAsset, QuoteAsset>(
         return_shared(clock);
 
         (base_out, quote_out, deep_out)
+    }
+}
+
+fun place_exact_quote_for_base_with_manager<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    trader: address,
+    balance_manager_id: ID,
+    quote_in: u64,
+    min_base_out: u64,
+    test: &mut Scenario,
+): (Coin<BaseAsset>, Coin<QuoteAsset>) {
+    test.next_tx(trader);
+    {
+        let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(
+            pool_id,
+        );
+        let clock = test.take_shared<Clock>();
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let trade_cap = test.take_from_sender<TradeCap>();
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+
+        // Place order in pool
+        let (base_out, quote_out) = pool.swap_exact_quote_for_base_with_manager<
+            BaseAsset,
+            QuoteAsset,
+        >(
+            &mut balance_manager,
+            &trade_cap,
+            &deposit_cap,
+            &withdraw_cap,
+            mint_for_testing<QuoteAsset>(quote_in, test.ctx()),
+            min_base_out,
+            &clock,
+            test.ctx(),
+        );
+
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+        test.return_to_sender(trade_cap);
+        test.return_to_sender(deposit_cap);
+        test.return_to_sender(withdraw_cap);
+
+        (base_out, quote_out)
     }
 }
 
