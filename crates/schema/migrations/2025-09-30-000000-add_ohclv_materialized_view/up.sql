@@ -1,8 +1,15 @@
--- Create OHCLV data with materialized views 
+-- Create OHCLV data with materialized views
 
-CREATE TYPE time_interval AS ENUM ('1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w');
+-- Create time_interval type if it doesn't exist
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'time_interval') THEN
+        CREATE TYPE time_interval AS ENUM ('1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w');
+    END IF;
+END$$;
 
-CREATE MATERIALIZED VIEW ohclv_data AS
+-- Create materialized view if it doesn't exist
+CREATE MATERIALIZED VIEW IF NOT EXISTS ohclv_data AS
 WITH interval_data AS (
     -- 1 minute intervals
     SELECT
@@ -155,9 +162,10 @@ SELECT DISTINCT ON (pool_id, interval, bucket_time)
     ) as last_trade_timestamp
 FROM interval_data;
 
-CREATE INDEX idx_ohclv_pool_interval_time ON ohclv_data (pool_id, interval, bucket_time DESC);
-CREATE INDEX idx_ohclv_time ON ohclv_data (bucket_time DESC);
-CREATE INDEX idx_ohclv_pool_time ON ohclv_data (pool_id, bucket_time DESC);
+-- Create indexes if they don't exist
+CREATE INDEX IF NOT EXISTS idx_ohclv_pool_interval_time ON ohclv_data (pool_id, interval, bucket_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ohclv_time ON ohclv_data (bucket_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ohclv_pool_time ON ohclv_data (pool_id, bucket_time DESC);
 
 CREATE OR REPLACE FUNCTION refresh_ohclv_data()
 RETURNS void AS $$

@@ -10,4 +10,4 @@ DROP INDEX IF EXISTS idx_ohclv_pool_time;
 
 DROP MATERIALIZED VIEW IF EXISTS ohclv_data;
 
-DROP TYPE IF EXISTS time_interval;
+DROP TYPE IF EXISTS time_interval CASCADE;
