@@ -18,7 +18,7 @@ fun create_test_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(), // 80%
-        test_constants::protocol_spread(), // 10%
+        test_constants::referral_spread(), // 10%
         test_constants::min_borrow(),
     );
     let interest_config = protocol_config::new_interest_config(
@@ -44,13 +44,13 @@ fun create_custom_interest_config(
 fun create_custom_margin_pool_config(
     supply_cap: u64,
     max_utilization_rate: u64,
-    protocol_spread: u64,
+    referral_spread: u64,
     min_borrow: u64,
 ): MarginPoolConfig {
     protocol_config::new_margin_pool_config(
         supply_cap,
         max_utilization_rate,
-        protocol_spread,
+        referral_spread,
         min_borrow,
     )
 }
@@ -137,7 +137,7 @@ fun test_interest_rate_zero_base_rate() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -166,7 +166,7 @@ fun test_interest_rate_different_slopes() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -190,30 +190,123 @@ fun test_interest_rate_different_slopes() {
 }
 
 #[test]
-/// Test time adjusted rate precision with small time intervals
-fun test_time_adjusted_rate_precision() {
+/// Test calculate_interest_with_borrow precision with small time intervals
+fun test_calculate_interest_with_borrow_precision() {
     let config = create_test_protocol_config();
     let year_ms = margin_constants::year_ms();
     let second_ms = 1000; // 1 second
     let minute_ms = 60 * 1000; // 1 minute
+    let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
 
     // Test with high utilization for very short time periods
     let utilization = 950_000_000; // 95% utilization
     let interest_rate = config.interest_rate(utilization);
 
     // Test for 1 second
-    let rate_1_second = config.time_adjusted_rate(utilization, second_ms);
-    let expected_1_second = math::div(math::mul(second_ms, interest_rate), year_ms);
-    assert_eq!(rate_1_second, expected_1_second);
+    let interest_1_second = config.calculate_interest_with_borrow(
+        utilization,
+        second_ms,
+        total_borrow,
+    );
+    let expected_1_second = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(second_ms, year_ms),
+    );
+    assert_eq!(interest_1_second, expected_1_second);
 
     // Test for 1 minute
-    let rate_1_minute = config.time_adjusted_rate(utilization, minute_ms);
-    let expected_1_minute = math::div(math::mul(minute_ms, interest_rate), year_ms);
-    assert_eq!(rate_1_minute, expected_1_minute);
+    let interest_1_minute = config.calculate_interest_with_borrow(
+        utilization,
+        minute_ms,
+        total_borrow,
+    );
+    let expected_1_minute = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(minute_ms, year_ms),
+    );
+    assert_eq!(interest_1_minute, expected_1_minute);
 
     // Verify that 60 seconds equals 1 minute
-    let rate_60_seconds = config.time_adjusted_rate(utilization, 60 * second_ms);
-    assert_eq!(rate_60_seconds, rate_1_minute);
+    let interest_60_seconds = config.calculate_interest_with_borrow(
+        utilization,
+        60 * second_ms,
+        total_borrow,
+    );
+    assert_eq!(interest_60_seconds, interest_1_minute);
+
+    destroy(config);
+}
+
+#[test]
+/// Test calculate_interest_with_borrow with exact mathematical equivalence
+fun test_calculate_interest_with_borrow_exact() {
+    let config = create_test_protocol_config();
+    let utilization = 500_000_000; // 50% utilization
+    let time_elapsed = 3600000; // 1 hour in ms
+    let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
+    let interest_rate = config.interest_rate(utilization);
+
+    let interest_result = config.calculate_interest_with_borrow(
+        utilization,
+        time_elapsed,
+        total_borrow,
+    );
+
+    // Expected calculation: (total_borrow * interest_rate) * (time_elapsed / year_ms)
+    let expected = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(time_elapsed, margin_constants::year_ms()),
+    );
+
+    assert_eq!(interest_result, expected);
+
+    destroy(config);
+}
+
+#[test]
+/// Test calculate_interest_with_borrow with various time periods
+fun test_calculate_interest_with_borrow_time_periods() {
+    let config = create_test_protocol_config();
+    let utilization = 200_000_000; // 20% utilization
+    let total_borrow = 500_000_000_000; // 500K tokens
+    let interest_rate = config.interest_rate(utilization);
+
+    // Test different time periods
+    let hour_ms = 3600000; // 1 hour
+    let day_ms = 86400000; // 1 day
+    let week_ms = 604800000; // 1 week
+
+    // Test 1 hour
+    let interest_hour = config.calculate_interest_with_borrow(utilization, hour_ms, total_borrow);
+    let expected_hour = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(hour_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_hour, expected_hour);
+
+    // Test 1 day
+    let interest_day = config.calculate_interest_with_borrow(utilization, day_ms, total_borrow);
+    let expected_day = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(day_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_day, expected_day);
+
+    // Test 1 week
+    let interest_week = config.calculate_interest_with_borrow(utilization, week_ms, total_borrow);
+    let expected_week = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(week_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_week, expected_week);
+
+    // Verify proportional scaling: 24 hours should equal 1 day
+    let interest_24_hours = config.calculate_interest_with_borrow(
+        utilization,
+        24 * hour_ms,
+        total_borrow,
+    );
+    assert_eq!(interest_24_hours, interest_day);
 
     destroy(config);
 }
@@ -228,7 +321,7 @@ fun test_protocol_config_getters() {
     // Test margin pool config getters
     assert_eq!(config.supply_cap(), test_constants::supply_cap());
     assert_eq!(config.max_utilization_rate(), test_constants::max_utilization_rate());
-    assert_eq!(config.protocol_spread(), test_constants::protocol_spread());
+    assert_eq!(config.referral_spread(), test_constants::referral_spread());
     assert_eq!(config.min_borrow(), test_constants::min_borrow());
 
     // Test interest config getters
@@ -259,7 +352,7 @@ fun test_set_interest_config_invalid_optimal() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that setting invalid protocol spread fails
 fun test_set_margin_pool_config_invalid_spread() {
     let mut config = create_test_protocol_config();
@@ -284,7 +377,7 @@ fun test_set_margin_pool_config_invalid_utilization() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         1_100_000_000, // 110%
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -301,7 +394,7 @@ fun test_set_margin_pool_config_utilization_mismatch() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 80% optimal
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -318,7 +411,7 @@ fun test_set_margin_pool_config_invalid_min_borrow() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         100, // Below MIN_MIN_BORROW (1000)
     );
 
@@ -344,7 +437,7 @@ fun test_sequential_config_updates_violating_constraints() {
     let invalid_margin_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 75% optimal
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -352,7 +445,7 @@ fun test_sequential_config_updates_violating_constraints() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that protocol spread maximum
 fun test_set_margin_pool_config_spread() {
     let mut config = create_test_protocol_config();
