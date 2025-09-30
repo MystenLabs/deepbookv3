@@ -110,12 +110,9 @@ public(package) fun calculate_interest_with_borrow(
 ): u64 {
     let interest_rate = self.interest_rate(utilization_rate);
 
-    math::div(
-        math::mul(
-            math::mul(total_borrow, time_elapsed),
-            interest_rate,
-        ),
-        margin_constants::year_ms(),
+    math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(time_elapsed, margin_constants::year_ms()),
     )
 }
 
