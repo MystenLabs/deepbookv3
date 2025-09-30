@@ -11,4 +11,4 @@ deepbook = { local = "../deepbook" }
 Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "main" }
 
 [addresses]
-margin_trading = "0x0"
+deepbook_margin = "0x0"

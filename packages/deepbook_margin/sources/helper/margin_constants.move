@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::margin_constants;
+module deepbook_margin::margin_constants;
 
 const MARGIN_VERSION: u64 = 1;
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000

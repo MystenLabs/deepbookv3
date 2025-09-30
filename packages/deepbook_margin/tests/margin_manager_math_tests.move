@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::margin_manager_math_tests;
+module deepbook_margin::margin_manager_math_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::{
+use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
@@ -16,8 +16,8 @@ use margin_trading::{
         build_demo_usdc_price_info_object,
         build_btc_price_info_object,
         build_sui_price_info_object,
-        setup_btc_usd_margin_trading,
-        setup_btc_sui_margin_trading,
+        setup_btc_usd_deepbook_margin,
+        setup_btc_sui_deepbook_margin,
         destroy_3,
         return_shared_3
     }
@@ -82,7 +82,7 @@ fun test_liquidation(error_code: u64) {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -191,7 +191,7 @@ fun test_liquidation_quote_debt(error_code: u64) {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -317,7 +317,7 @@ fun test_liquidation_quote_debt_partial() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -443,7 +443,7 @@ fun test_liquidation_base_debt_default() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -552,7 +552,7 @@ fun test_liquidation_base_debt() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -663,7 +663,7 @@ fun test_btc_sui_liquidation(error_code: u64) {
         btc_pool_id,
         sui_pool_id,
         _pool_id,
-    ) = setup_btc_sui_margin_trading();
+    ) = setup_btc_sui_deepbook_margin();
 
     // BTC at $50,000, SUI at $20
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);

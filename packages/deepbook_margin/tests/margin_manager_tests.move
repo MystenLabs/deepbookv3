@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::margin_manager_tests;
+module deepbook_margin::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use margin_trading::{
+use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
@@ -15,15 +15,15 @@ use margin_trading::{
         setup_margin_registry,
         create_margin_pool,
         create_pool_for_testing,
-        enable_margin_trading_on_pool,
+        enable_deepbook_margin_on_pool,
         default_protocol_config,
         cleanup_margin_test,
         mint_coin,
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object,
         build_btc_price_info_object,
-        setup_btc_usd_margin_trading,
-        setup_usdc_usdt_margin_trading,
+        setup_btc_usd_deepbook_margin,
+        setup_usdc_usdt_deepbook_margin,
         destroy_2,
         destroy_3,
         return_shared_2,
@@ -57,7 +57,7 @@ fun test_margin_manager_creation() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -75,7 +75,7 @@ fun test_margin_manager_creation() {
 }
 
 #[test]
-fun test_margin_trading_with_oracle() {
+fun test_deepbook_margin_with_oracle() {
     let (
         mut scenario,
         clock,
@@ -84,7 +84,7 @@ fun test_margin_trading_with_oracle() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -125,7 +125,7 @@ fun test_margin_trading_with_oracle() {
 }
 
 #[test]
-fun test_btc_usd_margin_trading() {
+fun test_btc_usd_deepbook_margin() {
     let (
         mut scenario,
         clock,
@@ -134,7 +134,7 @@ fun test_btc_usd_margin_trading() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(
         &mut scenario,
@@ -185,7 +185,7 @@ fun test_usd_deposit_btc_borrow() {
         btc_pool_id,
         _usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     // Set initial prices
     let btc_price = build_btc_price_info_object(
@@ -267,7 +267,7 @@ fun test_margin_manager_creation_ok() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -320,7 +320,7 @@ fun test_deposit_with_base_quote_deep_assets() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -369,7 +369,7 @@ fun test_deposit_with_invalid_asset_fails() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -406,7 +406,7 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -469,7 +469,7 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -525,7 +525,7 @@ fun test_borrow_fails_from_both_pools() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -580,7 +580,7 @@ fun test_borrow_fails_with_zero_amount() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -623,7 +623,7 @@ fun test_borrow_fails_when_risk_ratio_below_150() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -671,7 +671,7 @@ fun test_repay_fails_wrong_pool() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -726,7 +726,7 @@ fun test_repay_full_with_none() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     // Create margin manager and borrow
     scenario.next_tx(test_constants::user1());
@@ -788,7 +788,7 @@ fun test_repay_exact_amount_no_rounding_errors() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
-    ) = setup_usdc_usdt_margin_trading();
+    ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -890,7 +890,7 @@ fun test_liquidation_reward_calculations() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -968,7 +968,7 @@ fun test_risk_ratio_with_zero_assets() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1012,7 +1012,7 @@ fun test_risk_ratio_with_multiple_assets() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1108,7 +1108,7 @@ fun test_risk_ratio_with_oracle_price_changes() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -1201,7 +1201,7 @@ fun test_max_leverage_enforcement() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1283,7 +1283,7 @@ fun test_min_position_size_requirement() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1366,7 +1366,7 @@ fun test_repayment_rounding() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1494,7 +1494,7 @@ fun test_asset_rebalancing_between_pools() {
     let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
-    enable_margin_trading_on_pool<USDC, USDT>(
+    enable_deepbook_margin_on_pool<USDC, USDT>(
         pool_id,
         &mut registry,
         &admin_cap,
@@ -1595,7 +1595,7 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -1648,7 +1648,7 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
-    ) = setup_btc_usd_margin_trading();
+    ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);

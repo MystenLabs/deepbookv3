@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::protocol_config;
+module deepbook_margin::protocol_config;
 
 use deepbook::{constants, math};
-use margin_trading::margin_constants;
+use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::vec_map::{Self, VecMap};
 

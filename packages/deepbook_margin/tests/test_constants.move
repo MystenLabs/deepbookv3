@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module margin_trading::test_constants;
+module deepbook_margin::test_constants;
 
 // === Test Addresses ===
 const USER1: address = @0xA;

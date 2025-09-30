@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::pool_proxy;
+module deepbook_margin::pool_proxy;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
-use margin_trading::{
+use deepbook_margin::{
     margin_manager::MarginManager,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry

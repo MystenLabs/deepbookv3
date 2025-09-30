@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module margin_trading::margin_manager;
+module deepbook_margin::margin_manager;
 
 use deepbook::{
     balance_manager::{
@@ -17,7 +17,7 @@ use deepbook::{
     math,
     pool::Pool
 };
-use margin_trading::{
+use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
