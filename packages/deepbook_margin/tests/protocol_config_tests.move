@@ -190,74 +190,123 @@ fun test_interest_rate_different_slopes() {
 }
 
 #[test]
-/// Test time adjusted rate precision with small time intervals
-fun test_time_adjusted_rate_precision() {
+/// Test calculate_interest_with_borrow precision with small time intervals
+fun test_calculate_interest_with_borrow_precision() {
     let config = create_test_protocol_config();
     let year_ms = margin_constants::year_ms();
     let second_ms = 1000; // 1 second
     let minute_ms = 60 * 1000; // 1 minute
+    let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
 
     // Test with high utilization for very short time periods
     let utilization = 950_000_000; // 95% utilization
     let interest_rate = config.interest_rate(utilization);
 
     // Test for 1 second
-    let rate_1_second = config.time_adjusted_rate(utilization, second_ms);
-    let expected_1_second = math::div(math::mul(second_ms, interest_rate), year_ms);
-    assert_eq!(rate_1_second, expected_1_second);
+    let interest_1_second = config.calculate_interest_with_borrow(
+        utilization,
+        second_ms,
+        total_borrow,
+    );
+    let expected_1_second = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(second_ms, year_ms),
+    );
+    assert_eq!(interest_1_second, expected_1_second);
 
     // Test for 1 minute
-    let rate_1_minute = config.time_adjusted_rate(utilization, minute_ms);
-    let expected_1_minute = math::div(math::mul(minute_ms, interest_rate), year_ms);
-    assert_eq!(rate_1_minute, expected_1_minute);
+    let interest_1_minute = config.calculate_interest_with_borrow(
+        utilization,
+        minute_ms,
+        total_borrow,
+    );
+    let expected_1_minute = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(minute_ms, year_ms),
+    );
+    assert_eq!(interest_1_minute, expected_1_minute);
 
     // Verify that 60 seconds equals 1 minute
-    let rate_60_seconds = config.time_adjusted_rate(utilization, 60 * second_ms);
-    assert_eq!(rate_60_seconds, rate_1_minute);
+    let interest_60_seconds = config.calculate_interest_with_borrow(
+        utilization,
+        60 * second_ms,
+        total_borrow,
+    );
+    assert_eq!(interest_60_seconds, interest_1_minute);
 
     destroy(config);
 }
 
 #[test]
-fun test_calculate_interest_with_borrow_precision() {
+/// Test calculate_interest_with_borrow with exact mathematical equivalence
+fun test_calculate_interest_with_borrow_exact() {
     let config = create_test_protocol_config();
     let utilization = 500_000_000; // 50% utilization
     let time_elapsed = 3600000; // 1 hour in ms
     let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
+    let interest_rate = config.interest_rate(utilization);
 
-    let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
-    let interest_old = math::mul(total_borrow, time_adjusted_rate);
-
-    let interest_new = config.calculate_interest_with_borrow(
+    let interest_result = config.calculate_interest_with_borrow(
         utilization,
         time_elapsed,
         total_borrow,
     );
 
-    // With larger time periods, the new method should preserve more precision
-    assert!(interest_new > interest_old);
+    // Expected calculation: (total_borrow * interest_rate) * (time_elapsed / year_ms)
+    let expected = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(time_elapsed, margin_constants::year_ms()),
+    );
+
+    assert_eq!(interest_result, expected);
 
     destroy(config);
 }
 
 #[test]
-fun test_precision_improvement_small_amounts() {
+/// Test calculate_interest_with_borrow with various time periods
+fun test_calculate_interest_with_borrow_time_periods() {
     let config = create_test_protocol_config();
-    let utilization = 100_000_000; // 10% utilization (low rate)
-    let time_elapsed = 100; // 100ms
-    let total_borrow = 100_000_000_000;
+    let utilization = 200_000_000; // 20% utilization
+    let total_borrow = 500_000_000_000; // 500K tokens
+    let interest_rate = config.interest_rate(utilization);
 
-    let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
-    let interest_old = math::mul(total_borrow, time_adjusted_rate);
+    // Test different time periods
+    let hour_ms = 3600000; // 1 hour
+    let day_ms = 86400000; // 1 day
+    let week_ms = 604800000; // 1 week
 
-    let interest_new = config.calculate_interest_with_borrow(
+    // Test 1 hour
+    let interest_hour = config.calculate_interest_with_borrow(utilization, hour_ms, total_borrow);
+    let expected_hour = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(hour_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_hour, expected_hour);
+
+    // Test 1 day
+    let interest_day = config.calculate_interest_with_borrow(utilization, day_ms, total_borrow);
+    let expected_day = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(day_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_day, expected_day);
+
+    // Test 1 week
+    let interest_week = config.calculate_interest_with_borrow(utilization, week_ms, total_borrow);
+    let expected_week = math::mul(
+        math::mul(total_borrow, interest_rate),
+        math::div(week_ms, margin_constants::year_ms()),
+    );
+    assert_eq!(interest_week, expected_week);
+
+    // Verify proportional scaling: 24 hours should equal 1 day
+    let interest_24_hours = config.calculate_interest_with_borrow(
         utilization,
-        time_elapsed,
+        24 * hour_ms,
         total_borrow,
     );
-
-    // With large amounts and short time periods, the new method should preserve more precision
-    assert!(interest_new > interest_old);
+    assert_eq!(interest_24_hours, interest_day);
 
     destroy(config);
 }

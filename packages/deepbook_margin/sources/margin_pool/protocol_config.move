@@ -89,18 +89,6 @@ public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: Ma
     self.margin_pool_config = config;
 }
 
-public(package) fun time_adjusted_rate(
-    self: &ProtocolConfig,
-    utilization_rate: u64,
-    time_elapsed: u64,
-): u64 {
-    let interest_rate = self.interest_rate(utilization_rate);
-    math::div(
-        math::mul(time_elapsed, interest_rate),
-        margin_constants::year_ms(),
-    )
-}
-
 /// Calculate interest directly with borrow amount to avoid precision loss
 public(package) fun calculate_interest_with_borrow(
     self: &ProtocolConfig,
