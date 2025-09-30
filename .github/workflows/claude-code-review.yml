@@ -1,14 +1,23 @@
 name: Claude Code Review
 
 on:
-  pull_request:
-    types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number to review"
+        required: true
+        type: string
+      review_focus:
+        description: "Specific areas to focus on (optional)"
+        required: false
+        type: choice
+        default: "all"
+        options:
+          - "all"
+          - "security"
+          - "performance"
+          - "code-quality"
+          - "tests"
 
 jobs:
   claude-review:
@@ -17,19 +26,25 @@ jobs:
     #   github.event.pull_request.user.login == 'external-contributor' ||
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-    
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
       issues: read
       id-token: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Checkout PR
+        run: |
+          gh pr checkout ${{ github.event.inputs.pr_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Claude Code Review
         id: claude-review
@@ -37,18 +52,45 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            Please review this pull request and provide feedback on:
+            Please review pull request #${{ github.event.inputs.pr_number }} with focus on: ${{ github.event.inputs.review_focus }}
+
+            {% if github.event.inputs.review_focus == 'all' %}
+            Provide comprehensive feedback on:
             - Code quality and best practices
             - Potential bugs or issues
             - Performance considerations
             - Security concerns
             - Test coverage
-            
+            {% elif github.event.inputs.review_focus == 'security' %}
+            Focus specifically on security aspects:
+            - Access control and authorization
+            - Input validation and sanitization
+            - Potential vulnerabilities
+            - Secure coding practices
+            {% elif github.event.inputs.review_focus == 'performance' %}
+            Focus specifically on performance:
+            - Algorithm efficiency
+            - Resource usage
+            - Potential bottlenecks
+            - Optimization opportunities
+            {% elif github.event.inputs.review_focus == 'code-quality' %}
+            Focus specifically on code quality:
+            - Code structure and organization
+            - Readability and maintainability
+            - Best practices adherence
+            - Design patterns usage
+            {% elif github.event.inputs.review_focus == 'tests' %}
+            Focus specifically on testing:
+            - Test coverage and completeness
+            - Test quality and effectiveness
+            - Edge case handling
+            - Test maintainability
+            {% endif %}
+
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
-          
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on PR #${{ github.event.inputs.pr_number }}.
+
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.anthropic.com/en/docs/claude-code/sdk#command-line for available options
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
-
