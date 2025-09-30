@@ -27,7 +27,7 @@ const PYTH_DECIMALS: u64 = 8;
 // === Margin Pool Constants ===
 const SUPPLY_CAP: u64 = 1_000_000_000_000_000; // 1B tokens with 9 decimals
 const MAX_UTILIZATION_RATE: u64 = 800_000_000; // 80%
-const PROTOCOL_SPREAD: u64 = 100_000_000; // 10%
+const REFERRAL_SPREAD: u64 = 100_000_000; // 10%
 const MIN_BORROW: u64 = 1000;
 
 // === Interest Rate Constants ===
@@ -59,11 +59,11 @@ public fun max_utilization_rate(): u64 {
 }
 
 public fun referral_spread(): u64 {
-    PROTOCOL_SPREAD
+    REFERRAL_SPREAD
 }
 
 public fun referral_spread_inverse(): u64 {
-    1_000_000_000 - PROTOCOL_SPREAD
+    1_000_000_000 - REFERRAL_SPREAD
 }
 
 public fun min_borrow(): u64 {
