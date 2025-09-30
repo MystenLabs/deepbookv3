@@ -225,11 +225,9 @@ fun test_calculate_interest_with_borrow_precision() {
     let time_elapsed = 3600000; // 1 hour in ms
     let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
 
-    // Old method (with precision loss)
     let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
     let interest_old = math::mul(total_borrow, time_adjusted_rate);
 
-    // New method (better precision)
     let interest_new = config.calculate_interest_with_borrow(
         utilization,
         time_elapsed,
@@ -249,11 +247,9 @@ fun test_precision_improvement_small_amounts() {
     let time_elapsed = 100; // 100ms
     let total_borrow = 100_000_000_000;
 
-    // Old method (with precision loss)
     let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
     let interest_old = math::mul(total_borrow, time_adjusted_rate);
 
-    // New method (better precision)
     let interest_new = config.calculate_interest_with_borrow(
         utilization,
         time_elapsed,
