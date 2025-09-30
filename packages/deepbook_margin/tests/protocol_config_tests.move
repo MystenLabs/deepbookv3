@@ -5,11 +5,9 @@
 module deepbook_margin::protocol_config_tests;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_constants,
-    protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig},
-    test_constants
-};
+use deepbook_margin::margin_constants;
+use deepbook_margin::protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig};
+use deepbook_margin::test_constants;
 use std::unit_test::assert_eq;
 use sui::test_utils::destroy;
 

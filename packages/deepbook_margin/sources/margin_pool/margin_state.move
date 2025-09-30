@@ -8,10 +8,12 @@
 /// amounts after interest and protocol fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::vec_map::{Self, VecMap};
 
 public struct State has drop, store {
     total_supply: u64,
@@ -134,8 +136,11 @@ public(package) fun supply_shares_to_amount(
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
 
-    let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    let interest = math::mul(self.total_borrow, time_adjusted_rate);
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
     let protocol_fees = math::mul(interest, config.protocol_spread());
     let supply = self.total_supply + interest - protocol_fees;
     let ratio = if (self.supply_shares == 0) {
@@ -157,8 +162,11 @@ public(package) fun borrow_shares_to_amount(
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
 
-    let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    let interest = math::mul(self.total_borrow, time_adjusted_rate);
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
     let borrow = self.total_borrow + interest;
     let ratio = if (self.borrow_shares == 0) {
         constants::float_scaling()
@@ -200,8 +208,11 @@ fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
 
-    let time_adjusted_rate = config.time_adjusted_rate(self.utilization_rate(), elapsed);
-    let interest = math::mul(self.total_borrow, time_adjusted_rate);
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
     let protocol_fees = math::mul(interest, config.protocol_spread());
     self.total_supply = self.total_supply + interest - protocol_fees;
     self.total_borrow = self.total_borrow + interest;
