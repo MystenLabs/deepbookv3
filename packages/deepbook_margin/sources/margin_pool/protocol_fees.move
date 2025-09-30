@@ -1,18 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbook_margin::protocol_fees;
+module deepbook_margin::referral_fees;
 
 use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
-use sui::{clock::Clock, table::{Self, Table}, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::table::{Self, Table};
+use sui::vec_map::{Self, VecMap};
 
 // === Errors ===
 const EInvalidFeesOnZeroShares: u64 = 1;
 
 // === Structs ===
-public struct ProtocolFees has store {
+public struct ReferralFees has store {
     referrals: Table<address, ReferralTracker>,
     total_shares: u64,
     fees_per_share: u64,
@@ -34,9 +36,9 @@ public struct Referral has key {
 }
 
 // Initialize the protocol fees with the default referral.
-public(package) fun default_protocol_fees(ctx: &mut TxContext, clock: &Clock): ProtocolFees {
+public(package) fun default_referral_fees(ctx: &mut TxContext, clock: &Clock): ReferralFees {
     let default_id = margin_constants::default_referral();
-    let mut manager = ProtocolFees {
+    let mut manager = ReferralFees {
         referrals: table::new(ctx),
         total_shares: 0,
         fees_per_share: 0,
@@ -57,7 +59,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext, clock: &Clock): P
 }
 
 /// Mint a referral object.
-public(package) fun mint_referral(self: &mut ProtocolFees, clock: &Clock, ctx: &mut TxContext): ID {
+public(package) fun mint_referral(self: &mut ReferralFees, clock: &Clock, ctx: &mut TxContext): ID {
     let id = object::new(ctx);
     let id_inner = id.to_inner();
     self
@@ -84,7 +86,7 @@ public(package) fun mint_referral(self: &mut ProtocolFees, clock: &Clock, ctx: &
 
 /// Increase the fees per share.
 public(package) fun increase_fees_per_share(
-    self: &mut ProtocolFees,
+    self: &mut ReferralFees,
     total_shares: u64,
     fees_accrued: u64,
 ) {
@@ -98,7 +100,7 @@ public(package) fun increase_fees_per_share(
 }
 
 public(package) fun increase_shares(
-    self: &mut ProtocolFees,
+    self: &mut ReferralFees,
     referral: Option<address>,
     shares: u64,
     clock: &Clock,
@@ -110,7 +112,7 @@ public(package) fun increase_shares(
 }
 
 public(package) fun decrease_shares(
-    self: &mut ProtocolFees,
+    self: &mut ReferralFees,
     referral: Option<address>,
     shares: u64,
     clock: &Clock,
@@ -122,7 +124,7 @@ public(package) fun decrease_shares(
 }
 
 public(package) fun calculate_and_claim(
-    self: &mut ProtocolFees,
+    self: &mut ReferralFees,
     referral: &mut Referral,
     clock: &Clock,
 ): u64 {
