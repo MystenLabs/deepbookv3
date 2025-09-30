@@ -5,9 +5,11 @@
 module deepbook_margin::protocol_config_tests;
 
 use deepbook::math;
-use deepbook_margin::margin_constants;
-use deepbook_margin::protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig};
-use deepbook_margin::test_constants;
+use deepbook_margin::{
+    margin_constants,
+    protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig},
+    test_constants
+};
 use std::unit_test::assert_eq;
 use sui::test_utils::destroy;
 
@@ -212,6 +214,54 @@ fun test_time_adjusted_rate_precision() {
     // Verify that 60 seconds equals 1 minute
     let rate_60_seconds = config.time_adjusted_rate(utilization, 60 * second_ms);
     assert_eq!(rate_60_seconds, rate_1_minute);
+
+    destroy(config);
+}
+
+#[test]
+fun test_calculate_interest_with_borrow_precision() {
+    let config = create_test_protocol_config();
+    let utilization = 500_000_000; // 50% utilization
+    let time_elapsed = 3600000; // 1 hour in ms
+    let total_borrow = 1_000_000_000_000; // 1M tokens with 6 decimals
+
+    // Old method (with precision loss)
+    let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
+    let interest_old = math::mul(total_borrow, time_adjusted_rate);
+
+    // New method (better precision)
+    let interest_new = config.calculate_interest_with_borrow(
+        utilization,
+        time_elapsed,
+        total_borrow,
+    );
+
+    // With larger time periods, the new method should preserve more precision
+    assert!(interest_new > interest_old);
+
+    destroy(config);
+}
+
+#[test]
+fun test_precision_improvement_small_amounts() {
+    let config = create_test_protocol_config();
+    let utilization = 100_000_000; // 10% utilization (low rate)
+    let time_elapsed = 100; // 100ms
+    let total_borrow = 100_000_000_000;
+
+    // Old method (with precision loss)
+    let time_adjusted_rate = config.time_adjusted_rate(utilization, time_elapsed);
+    let interest_old = math::mul(total_borrow, time_adjusted_rate);
+
+    // New method (better precision)
+    let interest_new = config.calculate_interest_with_borrow(
+        utilization,
+        time_elapsed,
+        total_borrow,
+    );
+
+    // With large amounts and short time periods, the new method should preserve more precision
+    assert!(interest_new > interest_old);
 
     destroy(config);
 }

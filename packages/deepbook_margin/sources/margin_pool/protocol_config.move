@@ -3,8 +3,7 @@
 
 module deepbook_margin::protocol_config;
 
-use deepbook::constants;
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::vec_map::{Self, VecMap};
@@ -110,8 +109,7 @@ public(package) fun calculate_interest_with_borrow(
     total_borrow: u64,
 ): u64 {
     let interest_rate = self.interest_rate(utilization_rate);
-    // Calculate (total_borrow * time_elapsed * interest_rate) / year_ms
-    // This avoids the intermediate division that causes precision loss
+
     math::div(
         math::mul(
             math::mul(total_borrow, time_elapsed),
