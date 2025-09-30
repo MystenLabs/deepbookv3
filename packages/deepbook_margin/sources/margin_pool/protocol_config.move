@@ -9,7 +9,6 @@ use std::string::String;
 use sui::vec_map::{Self, VecMap};
 
 const EInvalidRiskParam: u64 = 1;
-const EInvalidProtocolSpread: u64 = 2;
 
 public struct ProtocolConfig has copy, drop, store {
     margin_pool_config: MarginPoolConfig,
@@ -20,7 +19,7 @@ public struct ProtocolConfig has copy, drop, store {
 public struct MarginPoolConfig has copy, drop, store {
     supply_cap: u64,
     max_utilization_rate: u64,
-    protocol_spread: u64,
+    referral_spread: u64,
     min_borrow: u64,
 }
 
@@ -45,13 +44,13 @@ public fun new_protocol_config(
 public fun new_margin_pool_config(
     supply_cap: u64,
     max_utilization_rate: u64,
-    protocol_spread: u64,
+    referral_spread: u64,
     min_borrow: u64,
 ): MarginPoolConfig {
     MarginPoolConfig {
         supply_cap,
         max_utilization_rate,
-        protocol_spread,
+        referral_spread,
         min_borrow,
     }
 }
@@ -79,13 +78,14 @@ public(package) fun set_interest_config(self: &mut ProtocolConfig, config: Inter
 }
 
 public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: MarginPoolConfig) {
-    assert!(config.protocol_spread <= constants::float_scaling(), EInvalidProtocolSpread);
+    assert!(config.referral_spread <= constants::float_scaling(), EInvalidRiskParam);
     assert!(config.max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
         config.max_utilization_rate >= self.interest_config.optimal_utilization,
         EInvalidRiskParam,
     );
     assert!(config.min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
+    assert!(config.referral_spread <= margin_constants::max_referral_spread(), EInvalidRiskParam);
     self.margin_pool_config = config;
 }
 
@@ -130,8 +130,8 @@ public(package) fun max_utilization_rate(self: &ProtocolConfig): u64 {
     self.margin_pool_config.max_utilization_rate
 }
 
-public(package) fun protocol_spread(self: &ProtocolConfig): u64 {
-    self.margin_pool_config.protocol_spread
+public(package) fun referral_spread(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.referral_spread
 }
 
 public(package) fun min_borrow(self: &ProtocolConfig): u64 {

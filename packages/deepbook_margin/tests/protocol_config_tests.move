@@ -18,7 +18,7 @@ fun create_test_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(), // 80%
-        test_constants::protocol_spread(), // 10%
+        test_constants::referral_spread(), // 10%
         test_constants::min_borrow(),
     );
     let interest_config = protocol_config::new_interest_config(
@@ -44,13 +44,13 @@ fun create_custom_interest_config(
 fun create_custom_margin_pool_config(
     supply_cap: u64,
     max_utilization_rate: u64,
-    protocol_spread: u64,
+    referral_spread: u64,
     min_borrow: u64,
 ): MarginPoolConfig {
     protocol_config::new_margin_pool_config(
         supply_cap,
         max_utilization_rate,
-        protocol_spread,
+        referral_spread,
         min_borrow,
     )
 }
@@ -137,7 +137,7 @@ fun test_interest_rate_zero_base_rate() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -166,7 +166,7 @@ fun test_interest_rate_different_slopes() {
     let margin_pool_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = create_custom_interest_config(
@@ -321,7 +321,7 @@ fun test_protocol_config_getters() {
     // Test margin pool config getters
     assert_eq!(config.supply_cap(), test_constants::supply_cap());
     assert_eq!(config.max_utilization_rate(), test_constants::max_utilization_rate());
-    assert_eq!(config.protocol_spread(), test_constants::protocol_spread());
+    assert_eq!(config.referral_spread(), test_constants::referral_spread());
     assert_eq!(config.min_borrow(), test_constants::min_borrow());
 
     // Test interest config getters
@@ -352,7 +352,7 @@ fun test_set_interest_config_invalid_optimal() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that setting invalid protocol spread fails
 fun test_set_margin_pool_config_invalid_spread() {
     let mut config = create_test_protocol_config();
@@ -377,7 +377,7 @@ fun test_set_margin_pool_config_invalid_utilization() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         1_100_000_000, // 110%
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -394,7 +394,7 @@ fun test_set_margin_pool_config_utilization_mismatch() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 80% optimal
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -411,7 +411,7 @@ fun test_set_margin_pool_config_invalid_min_borrow() {
     let invalid_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         100, // Below MIN_MIN_BORROW (1000)
     );
 
@@ -437,7 +437,7 @@ fun test_sequential_config_updates_violating_constraints() {
     let invalid_margin_config = create_custom_margin_pool_config(
         test_constants::supply_cap(),
         700_000_000, // 70% < 75% optimal
-        test_constants::protocol_spread(),
+        test_constants::referral_spread(),
         test_constants::min_borrow(),
     );
 
@@ -445,7 +445,7 @@ fun test_sequential_config_updates_violating_constraints() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that protocol spread maximum
 fun test_set_margin_pool_config_spread() {
     let mut config = create_test_protocol_config();

@@ -112,7 +112,7 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     let borrow_multiplier = constants::float_scaling() + interest_rate; // 200%
     // 1 + 1*0.5 = 1.5
     let supply_multiplier =
-        constants::float_scaling() + math::mul(test_constants::protocol_spread_inverse(), math::mul(interest_rate, utilization_rate));
+        constants::float_scaling() + math::mul(test_constants::referral_spread_inverse(), math::mul(interest_rate, utilization_rate));
 
     let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
     scenario.next_tx(test_constants::admin());
