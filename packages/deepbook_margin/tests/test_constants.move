@@ -58,11 +58,11 @@ public fun max_utilization_rate(): u64 {
     MAX_UTILIZATION_RATE
 }
 
-public fun protocol_spread(): u64 {
+public fun referral_spread(): u64 {
     PROTOCOL_SPREAD
 }
 
-public fun protocol_spread_inverse(): u64 {
+public fun referral_spread_inverse(): u64 {
     1_000_000_000 - PROTOCOL_SPREAD
 }
 

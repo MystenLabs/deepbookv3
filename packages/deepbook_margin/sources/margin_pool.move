@@ -335,8 +335,8 @@ public fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.max_utilization_rate()
 }
 
-public fun protocol_spread<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.protocol_spread()
+public fun referral_spread<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.referral_spread()
 }
 
 public fun min_borrow<Asset>(self: &MarginPool<Asset>): u64 {

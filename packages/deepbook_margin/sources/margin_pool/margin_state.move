@@ -139,7 +139,7 @@ public(package) fun supply_shares_to_amount(
         elapsed,
         self.total_borrow,
     );
-    let protocol_fees = math::mul(interest, config.protocol_spread());
+    let protocol_fees = math::mul(interest, config.referral_spread());
     let supply = self.total_supply + interest - protocol_fees;
     let ratio = if (self.supply_shares == 0) {
         constants::float_scaling()
@@ -211,7 +211,7 @@ fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
         elapsed,
         self.total_borrow,
     );
-    let protocol_fees = math::mul(interest, config.protocol_spread());
+    let protocol_fees = math::mul(interest, config.referral_spread());
     self.total_supply = self.total_supply + interest - protocol_fees;
     self.total_borrow = self.total_borrow + interest;
     self.last_update_timestamp = now;
