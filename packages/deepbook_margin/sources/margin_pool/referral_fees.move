@@ -33,7 +33,7 @@ public struct Referral has key {
     last_fees_per_share: u64,
 }
 
-// Initialize the protocol fees with the default referral.
+// Initialize the referral fees with the default referral.
 public(package) fun default_referral_fees(ctx: &mut TxContext, clock: &Clock): ReferralFees {
     let default_id = margin_constants::default_referral();
     let mut manager = ReferralFees {
