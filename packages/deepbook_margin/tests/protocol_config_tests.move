@@ -352,7 +352,7 @@ fun test_set_interest_config_invalid_optimal() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that setting invalid protocol spread fails
 fun test_set_margin_pool_config_invalid_spread() {
     let mut config = create_test_protocol_config();
@@ -445,7 +445,7 @@ fun test_sequential_config_updates_violating_constraints() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = protocol_config::EInvalidProtocolSpread)]
+#[test, expected_failure(abort_code = protocol_config::EInvalidRiskParam)]
 /// Test that protocol spread maximum
 fun test_set_margin_pool_config_spread() {
     let mut config = create_test_protocol_config();

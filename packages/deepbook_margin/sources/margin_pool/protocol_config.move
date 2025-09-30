@@ -9,7 +9,6 @@ use std::string::String;
 use sui::vec_map::{Self, VecMap};
 
 const EInvalidRiskParam: u64 = 1;
-const EInvalidProtocolSpread: u64 = 2;
 
 public struct ProtocolConfig has copy, drop, store {
     margin_pool_config: MarginPoolConfig,
@@ -79,7 +78,7 @@ public(package) fun set_interest_config(self: &mut ProtocolConfig, config: Inter
 }
 
 public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: MarginPoolConfig) {
-    assert!(config.referral_spread <= constants::float_scaling(), EInvalidProtocolSpread);
+    assert!(config.referral_spread <= constants::float_scaling(), EInvalidRiskParam);
     assert!(config.max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
         config.max_utilization_rate >= self.interest_config.optimal_utilization,
