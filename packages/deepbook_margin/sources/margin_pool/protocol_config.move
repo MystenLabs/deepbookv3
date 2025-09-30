@@ -86,6 +86,7 @@ public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: Ma
         EInvalidRiskParam,
     );
     assert!(config.min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
+    assert!(config.referral_spread <= margin_constants::max_referral_spread(), EInvalidRiskParam);
     self.margin_pool_config = config;
 }
 
