@@ -355,7 +355,7 @@ fun test_referral_fees_not_owner_e() {
         referral_fees.calculate_and_claim(&mut referral, test.ctx());
     };
 
-    abort (0)
+    abort
 }
 
 #[test, expected_failure(abort_code = referral_fees::EInvalidFeesAccrued)]
@@ -366,5 +366,5 @@ fun test_referral_fees_invalid_fees_accrued_e() {
     let mut referral_fees = referral_fees::default_referral_fees(test.ctx());
     referral_fees.increase_fees_accrued(1);
 
-    abort (0)
+    abort
 }
