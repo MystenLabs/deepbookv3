@@ -229,7 +229,7 @@ public fun supply<Asset>(
     let (supply_shares, referral_fees) = self
         .state
         .increase_supply(&self.config, supply_amount, clock);
-    self.referral_fees.increase_fees_per_share(referral_fees);
+    self.referral_fees.increase_fees_accrued(referral_fees);
     let (total_user_supply, previous_referral) = self
         .positions
         .increase_user_supply(referral, supply_shares, ctx);
@@ -270,7 +270,7 @@ public fun withdraw<Asset>(
     let (_, referral_fees) = self
         .state
         .decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.referral_fees.increase_fees_per_share(referral_fees);
+    self.referral_fees.increase_fees_accrued(referral_fees);
 
     let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
     self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
@@ -359,7 +359,7 @@ public(package) fun borrow<Asset>(
     let (total_borrow, total_borrow_shares, referral_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
-    self.referral_fees.increase_fees_per_share(referral_fees);
+    self.referral_fees.increase_fees_accrued(referral_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
@@ -375,7 +375,7 @@ public(package) fun repay<Asset>(
     clock: &Clock,
 ) {
     let (_, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    self.referral_fees.increase_fees_per_share(referral_fees);
+    self.referral_fees.increase_fees_accrued(referral_fees);
 
     self.vault.join(coin.into_balance());
 }
@@ -390,7 +390,7 @@ public(package) fun repay_liquidation<Asset>(
     clock: &Clock,
 ): (u64, u64, u64) {
     let (amount, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
-    self.referral_fees.increase_fees_per_share(referral_fees);
+    self.referral_fees.increase_fees_accrued(referral_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
