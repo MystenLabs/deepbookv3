@@ -6,10 +6,11 @@ module deepbook_margin::referral_fees;
 use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
-use sui::{clock::Clock, table::{Self, Table}, vec_map::{Self, VecMap}};
+use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
 
 // === Errors ===
-const EInvalidFeesOnZeroShares: u64 = 1;
+const ENotOwner: u64 = 1;
+const EInvalidFeesAccrued: u64 = 2;
 
 // === Structs ===
 public struct ReferralFees has store {
@@ -20,21 +21,29 @@ public struct ReferralFees has store {
 }
 
 public struct ReferralTracker has store {
-    shares: u64,
-    share_ms: u64,
-    last_update_timestamp: u64,
+    current_shares: u64,
+    min_shares: u64,
 }
 
-public struct Referral has key {
+public struct SupplyReferral has key {
     id: UID,
     owner: address,
-    last_claim_timestamp: u64,
-    last_claim_share_ms: u64,
     last_fees_per_share: u64,
 }
 
+public struct ReferralFeesIncreasedEvent has copy, drop {
+    total_shares: u64,
+    fees_accrued: u64,
+}
+
+public struct ReferralFeesClaimedEvent has copy, drop {
+    referral_id: ID,
+    owner: address,
+    fees: u64,
+}
+
 // Initialize the referral fees with the default referral.
-public(package) fun default_referral_fees(ctx: &mut TxContext, clock: &Clock): ReferralFees {
+public(package) fun default_referral_fees(ctx: &mut TxContext): ReferralFees {
     let default_id = margin_constants::default_referral();
     let mut manager = ReferralFees {
         referrals: table::new(ctx),
@@ -47,9 +56,8 @@ public(package) fun default_referral_fees(ctx: &mut TxContext, clock: &Clock): R
         .add(
             default_id,
             ReferralTracker {
-                shares: 0,
-                share_ms: 0,
-                last_update_timestamp: clock.timestamp_ms(),
+                current_shares: 0,
+                min_shares: 0,
             },
         );
 
@@ -57,7 +65,7 @@ public(package) fun default_referral_fees(ctx: &mut TxContext, clock: &Clock): R
 }
 
 /// Mint a referral object.
-public(package) fun mint_referral(self: &mut ReferralFees, clock: &Clock, ctx: &mut TxContext): ID {
+public(package) fun mint_supply_referral(self: &mut ReferralFees, ctx: &mut TxContext): ID {
     let id = object::new(ctx);
     let id_inner = id.to_inner();
     self
@@ -65,16 +73,13 @@ public(package) fun mint_referral(self: &mut ReferralFees, clock: &Clock, ctx: &
         .add(
             id.to_address(),
             ReferralTracker {
-                shares: 0,
-                share_ms: 0,
-                last_update_timestamp: clock.timestamp_ms(),
+                current_shares: 0,
+                min_shares: 0,
             },
         );
-    let referral = Referral {
+    let referral = SupplyReferral {
         id,
         owner: ctx.sender(),
-        last_claim_timestamp: clock.timestamp_ms(),
-        last_claim_share_ms: 0,
         last_fees_per_share: self.fees_per_share,
     };
     transfer::share_object(referral);
@@ -82,72 +87,80 @@ public(package) fun mint_referral(self: &mut ReferralFees, clock: &Clock, ctx: &
     id_inner
 }
 
-/// Increase the fees per share.
-public(package) fun increase_fees_per_share(
-    self: &mut ReferralFees,
-    total_shares: u64,
-    fees_accrued: u64,
-) {
-    assert!(!(self.total_shares == 0 && fees_accrued > 0), EInvalidFeesOnZeroShares);
+/// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
+public(package) fun increase_fees_accrued(self: &mut ReferralFees, fees_accrued: u64) {
+    assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
     if (self.total_shares > 0) {
         let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
         self.fees_per_share = self.fees_per_share + fees_per_share_increase;
     };
 
-    self.total_shares = total_shares;
+    event::emit(ReferralFeesIncreasedEvent {
+        total_shares: self.total_shares,
+        fees_accrued,
+    });
 }
 
+/// Increase the shares for a referral.
 public(package) fun increase_shares(
     self: &mut ReferralFees,
     referral: Option<address>,
     shares: u64,
-    clock: &Clock,
 ) {
     let referral_address = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_address);
-    referral_tracker.update_share_ms(clock);
-    referral_tracker.shares = referral_tracker.shares + shares;
+    referral_tracker.current_shares = referral_tracker.current_shares + shares;
+    self.total_shares = self.total_shares + shares;
 }
 
+/// Decrease the shares for a referral.
 public(package) fun decrease_shares(
     self: &mut ReferralFees,
     referral: Option<address>,
     shares: u64,
-    clock: &Clock,
 ) {
     let referral_address = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_address);
-    referral_tracker.update_share_ms(clock);
-    referral_tracker.shares = referral_tracker.shares - shares;
+    referral_tracker.current_shares = referral_tracker.current_shares - shares;
+    referral_tracker.min_shares = referral_tracker.min_shares.min(referral_tracker.current_shares);
+    self.total_shares = self.total_shares - shares;
 }
 
+/// Calculate the fees for a referral and claim them. Multiply the referred shares by the fees per share delta.
+/// Referred fees is set to the minimum of the current and referred shares.
 public(package) fun calculate_and_claim(
     self: &mut ReferralFees,
-    referral: &mut Referral,
-    clock: &Clock,
+    referral: &mut SupplyReferral,
+    ctx: &TxContext,
 ): u64 {
+    assert!(ctx.sender() == referral.owner, ENotOwner);
+
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_address());
-    referral_tracker.update_share_ms(clock);
-
-    let now = clock.timestamp_ms();
-    let elapsed = now - referral.last_claim_timestamp;
-    if (elapsed == 0) return 0;
-    let share_ms_delta = referral_tracker.share_ms - referral.last_claim_share_ms;
-    let shares = math::div(share_ms_delta, elapsed);
+    let referred_shares = referral_tracker.min_shares;
     let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
-    let fees = math::mul(shares, fees_per_share_delta);
+    let fees = math::mul(referred_shares, fees_per_share_delta);
 
-    referral.last_claim_timestamp = now;
-    referral.last_claim_share_ms = referral_tracker.share_ms;
     referral.last_fees_per_share = self.fees_per_share;
+    referral_tracker.min_shares = referral_tracker.current_shares;
+
+    event::emit(ReferralFeesClaimedEvent {
+        referral_id: referral.id.to_inner(),
+        owner: referral.owner,
+        fees,
+    });
 
     fees
 }
 
-fun update_share_ms(referral_tracker: &mut ReferralTracker, clock: &Clock) {
-    let now = clock.timestamp_ms();
-    let elapsed = now - referral_tracker.last_update_timestamp;
-    referral_tracker.share_ms =
-        referral_tracker.share_ms + math::mul(referral_tracker.shares, elapsed);
-    referral_tracker.last_update_timestamp = now;
+public(package) fun referral_tracker(self: &ReferralFees, referral: address): (u64, u64) {
+    let referral_tracker = self.referrals.borrow(referral);
+    (referral_tracker.current_shares, referral_tracker.min_shares)
+}
+
+public(package) fun total_shares(self: &ReferralFees): u64 {
+    self.total_shares
+}
+
+public(package) fun fees_per_share(self: &ReferralFees): u64 {
+    self.fees_per_share
 }
