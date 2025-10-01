@@ -8,6 +8,10 @@ use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
 
+// === Errors ===
+const ENotOwner: u64 = 1;
+const EInvalidFeesAccrued: u64 = 2;
+
 // === Structs ===
 public struct ReferralFees has store {
     referrals: Table<address, ReferralTracker>,
@@ -85,11 +89,11 @@ public(package) fun mint_referral(self: &mut ReferralFees, ctx: &mut TxContext):
 
 /// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
 public(package) fun increase_fees_accrued(self: &mut ReferralFees, fees_accrued: u64) {
-    if (fees_accrued == 0 || self.total_shares == 0) {
-        return
+    assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
+    if (self.total_shares > 0) {
+        let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
+        self.fees_per_share = self.fees_per_share + fees_per_share_increase;
     };
-    let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
-    self.fees_per_share = self.fees_per_share + fees_per_share_increase;
 
     event::emit(ReferralFeesIncreasedEvent {
         total_shares: self.total_shares,
@@ -124,7 +128,13 @@ public(package) fun decrease_shares(
 
 /// Calculate the fees for a referral and claim them. Multiply the referred shares by the fees per share delta.
 /// Referred fees is set to the minimum of the current and referred shares.
-public(package) fun calculate_and_claim(self: &mut ReferralFees, referral: &mut Referral): u64 {
+public(package) fun calculate_and_claim(
+    self: &mut ReferralFees,
+    referral: &mut Referral,
+    ctx: &TxContext,
+): u64 {
+    assert!(ctx.sender() == referral.owner, ENotOwner);
+
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_address());
     let referred_shares = referral_tracker.min_shares;
     let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;

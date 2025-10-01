@@ -73,14 +73,14 @@ fun test_referral_fees_ok() {
     {
         // first claim checks min_shares, initially set to 0. first claim has no fees.
         let mut referral = test.take_shared_by_id<Referral>(referral_id);
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 100 * constants::float_scaling());
         assert_eq!(min_shares, 100 * constants::float_scaling());
 
         // now min_shares is 100, but last_fees_per_share is also updated. If we try to claim again, it should have no fees.
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 100 * constants::float_scaling());
@@ -108,14 +108,14 @@ fun test_referral_fees_ok() {
         // they get 100 shares * (1_500_000_000 - 1_000_000_000) = 100 * 500_000_000 = 50_000_000_000
         assert_eq!(referral_fees.fees_per_share(), 1_500_000_000);
         let mut referral = test.take_shared_by_id<Referral>(referral_id);
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 50_000_000_000);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 200 * constants::float_scaling());
         assert_eq!(min_shares, 200 * constants::float_scaling());
 
         // if we try to claim again, it should be 0
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 200 * constants::float_scaling());
@@ -146,7 +146,7 @@ fun test_referral_fees_ok() {
     {
         // fees_per_share went from 1.5 -> 1.833 since last claim. 200 shares exposed. 200 * (1.833 - 1.5) = 200 * 0.333 = 66.6
         let mut referral = test.take_shared_by_id<Referral>(referral_id);
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 66_666_666_600);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 200 * constants::float_scaling());
@@ -178,7 +178,7 @@ fun test_referral_fees_ok() {
         assert_eq!(current_shares, 1000 * constants::float_scaling());
         assert_eq!(min_shares, 0);
         let mut referral = test.take_shared_by_id<Referral>(referral_id);
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -198,7 +198,7 @@ fun test_referral_fees_ok() {
     test.next_tx(test_constants::user1());
     {
         let mut referral = test.take_shared_by_id<Referral>(referral_id);
-        let fees = referral_fees.calculate_and_claim(&mut referral);
+        let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
         assert_eq!(fees, 1000 * constants::float_scaling());
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -243,7 +243,7 @@ fun test_referra_fees_many() {
         i = 0;
         while (i < 10) {
             let mut referral = test.take_shared_by_id<Referral>(referral_ids[i]);
-            let fees = referral_fees.calculate_and_claim(&mut referral);
+            let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
             assert_eq!(fees, 0);
             let (current_shares, min_shares) = referral_fees.referral_tracker(referral_ids[
                 i,
@@ -267,7 +267,7 @@ fun test_referra_fees_many() {
         i = 0;
         while (i < 10) {
             let mut referral = test.take_shared_by_id<Referral>(referral_ids[i]);
-            let fees = referral_fees.calculate_and_claim(&mut referral);
+            let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
             assert_eq!(fees, 500 * constants::float_scaling());
             let (current_shares, min_shares) = referral_fees.referral_tracker(referral_ids[
                 i,
@@ -308,7 +308,7 @@ fun test_referra_fees_many() {
         i = 0;
         while (i < 10) {
             let mut referral = test.take_shared_by_id<Referral>(referral_ids[i]);
-            let fees = referral_fees.calculate_and_claim(&mut referral);
+            let fees = referral_fees.calculate_and_claim(&mut referral, test.ctx());
             let (current_shares, min_shares) = referral_fees.referral_tracker(referral_ids[
                 i,
             ].to_address());
@@ -329,4 +329,37 @@ fun test_referra_fees_many() {
     destroy(admin_cap);
     destroy(referral_fees);
     test.end();
+}
+
+#[test, expected_failure(abort_code = referral_fees::ENotOwner)]
+fun test_referral_fees_not_owner_e() {
+    let (mut test, _admin_cap) = test_helpers::setup_test();
+
+    test.next_tx(test_constants::admin());
+    let mut referral_fees = referral_fees::default_referral_fees(test.ctx());
+
+    let referral_id;
+    test.next_tx(test_constants::user1());
+    {
+        referral_id = referral_fees.mint_referral(test.ctx());
+    };
+
+    test.next_tx(test_constants::user2());
+    {
+        let mut referral = test.take_shared_by_id<Referral>(referral_id);
+        referral_fees.calculate_and_claim(&mut referral, test.ctx());
+    };
+
+    abort (0)
+}
+
+#[test, expected_failure(abort_code = referral_fees::EInvalidFeesAccrued)]
+fun test_referral_fees_invalid_fees_accrued_e() {
+    let (mut test, _admin_cap) = test_helpers::setup_test();
+
+    test.next_tx(test_constants::admin());
+    let mut referral_fees = referral_fees::default_referral_fees(test.ctx());
+    referral_fees.increase_fees_accrued(1);
+
+    abort (0)
 }

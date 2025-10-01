@@ -295,7 +295,7 @@ public fun withdraw_referral_fees<Asset>(
     referral: &mut Referral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let referral_fees = self.referral_fees.calculate_and_claim(referral);
+    let referral_fees = self.referral_fees.calculate_and_claim(referral, ctx);
     let coin = self.vault.split(referral_fees).into_coin(ctx);
 
     coin
