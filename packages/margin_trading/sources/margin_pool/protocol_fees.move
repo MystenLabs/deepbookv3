@@ -8,9 +8,6 @@ use margin_trading::margin_constants;
 use std::string::String;
 use sui::{clock::Clock, table::{Self, Table}, vec_map::{Self, VecMap}};
 
-// === Errors ===
-const EInvalidFeesOnZeroShares: u64 = 1;
-
 // === Structs ===
 public struct ProtocolFees has store {
     referrals: Table<address, ReferralTracker>,
@@ -82,19 +79,14 @@ public(package) fun mint_referral(self: &mut ProtocolFees, clock: &Clock, ctx: &
     id_inner
 }
 
-/// Increase the fees per share.
-public(package) fun increase_fees_per_share(
+/// Increase the fees accrued.
+public(package) fun increase_fees_accrued(
     self: &mut ProtocolFees,
-    total_shares: u64,
     fees_accrued: u64,
 ) {
-    assert!(!(self.total_shares == 0 && fees_accrued > 0), EInvalidFeesOnZeroShares);
-    if (self.total_shares > 0) {
-        let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
-        self.fees_per_share = self.fees_per_share + fees_per_share_increase;
-    };
-
-    self.total_shares = total_shares;
+    if (fees_accrued == 0) return;
+    let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
+    self.fees_per_share = self.fees_per_share + fees_per_share_increase;
 }
 
 public(package) fun increase_shares(
@@ -103,6 +95,7 @@ public(package) fun increase_shares(
     shares: u64,
     clock: &Clock,
 ) {
+    self.total_shares = self.total_shares + shares;
     let referral_address = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_address);
     referral_tracker.update_share_ms(clock);
@@ -115,6 +108,7 @@ public(package) fun decrease_shares(
     shares: u64,
     clock: &Clock,
 ) {
+    self.total_shares = self.total_shares - shares;
     let referral_address = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_address);
     referral_tracker.update_share_ms(clock);
@@ -142,6 +136,28 @@ public(package) fun calculate_and_claim(
     referral.last_fees_per_share = self.fees_per_share;
 
     fees
+}
+
+public(package) fun referral_tracker(self: &ProtocolFees, referral: address): (u64, u64, u64) {
+    let referral_tracker = self.referrals.borrow(referral);
+
+    (referral_tracker.shares, referral_tracker.share_ms, referral_tracker.last_update_timestamp)
+}
+
+public(package) fun referral_owner(referral: &Referral): address {
+    referral.owner
+}
+
+public(package) fun referral_stats(referral: &Referral): (u64, u64, u64) {
+    (referral.last_claim_timestamp, referral.last_claim_share_ms, referral.last_fees_per_share)
+}
+
+public(package) fun fees_per_share(self: &ProtocolFees): u64 {
+    self.fees_per_share
+}
+
+public(package) fun total_shares(self: &ProtocolFees): u64 {
+    self.total_shares
 }
 
 fun update_share_ms(referral_tracker: &mut ReferralTracker, clock: &Clock) {

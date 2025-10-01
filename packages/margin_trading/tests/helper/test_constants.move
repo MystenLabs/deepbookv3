@@ -7,6 +7,7 @@ module margin_trading::test_constants;
 // === Test Addresses ===
 const USER1: address = @0xA;
 const USER2: address = @0xB;
+const USER3: address = @0xC;
 const ADMIN: address = @0x0;
 const LIQUIDATOR: address = @0xC;
 
@@ -92,6 +93,10 @@ public fun user1(): address {
 
 public fun user2(): address {
     USER2
+}
+
+public fun user3(): address {
+    USER3
 }
 
 public fun admin(): address {
