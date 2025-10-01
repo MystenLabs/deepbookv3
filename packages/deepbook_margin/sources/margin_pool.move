@@ -290,8 +290,8 @@ public fun withdraw<Asset>(
 }
 
 /// Mint a referral
-public fun mint_referral(self: &mut ReferralFees, clock: &Clock, ctx: &mut TxContext) {
-    self.mint_referral(clock, ctx);
+public fun mint_referral<Asset>(self: &mut MarginPool<Asset>, clock: &Clock, ctx: &mut TxContext) {
+    self.referral_fees.mint_referral(clock, ctx);
 }
 
 /// Withdraw the referral fees.
