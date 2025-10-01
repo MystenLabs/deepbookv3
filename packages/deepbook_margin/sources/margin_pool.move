@@ -9,7 +9,7 @@ use deepbook_margin::{
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_fees::{Self, ReferralFees, Referral}
+    referral_fees::{Self, ReferralFees, SupplyReferral}
 };
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
@@ -289,10 +289,15 @@ public fun withdraw<Asset>(
     coin
 }
 
+/// Mint a supply referral.
+public fun mint_supply_referral<Asset>(self: &mut MarginPool<Asset>, ctx: &mut TxContext): ID {
+    self.referral_fees.mint_supply_referral(ctx)
+}
+
 /// Withdraw the referral fees.
 public fun withdraw_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
-    referral: &mut Referral,
+    referral: &mut SupplyReferral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     let referral_fees = self.referral_fees.calculate_and_claim(referral, ctx);

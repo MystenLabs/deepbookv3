@@ -25,7 +25,7 @@ public struct ReferralTracker has store {
     min_shares: u64,
 }
 
-public struct Referral has key {
+public struct SupplyReferral has key {
     id: UID,
     owner: address,
     last_fees_per_share: u64,
@@ -65,7 +65,7 @@ public(package) fun default_referral_fees(ctx: &mut TxContext): ReferralFees {
 }
 
 /// Mint a referral object.
-public(package) fun mint_referral(self: &mut ReferralFees, ctx: &mut TxContext): ID {
+public(package) fun mint_supply_referral(self: &mut ReferralFees, ctx: &mut TxContext): ID {
     let id = object::new(ctx);
     let id_inner = id.to_inner();
     self
@@ -77,7 +77,7 @@ public(package) fun mint_referral(self: &mut ReferralFees, ctx: &mut TxContext):
                 min_shares: 0,
             },
         );
-    let referral = Referral {
+    let referral = SupplyReferral {
         id,
         owner: ctx.sender(),
         last_fees_per_share: self.fees_per_share,
@@ -130,7 +130,7 @@ public(package) fun decrease_shares(
 /// Referred fees is set to the minimum of the current and referred shares.
 public(package) fun calculate_and_claim(
     self: &mut ReferralFees,
-    referral: &mut Referral,
+    referral: &mut SupplyReferral,
     ctx: &TxContext,
 ): u64 {
     assert!(ctx.sender() == referral.owner, ENotOwner);
