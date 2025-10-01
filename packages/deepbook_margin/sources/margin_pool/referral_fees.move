@@ -83,7 +83,7 @@ public(package) fun mint_referral(self: &mut ReferralFees, ctx: &mut TxContext):
     id_inner
 }
 
-/// Increase the fees per share.
+/// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
 public(package) fun increase_fees_per_share(
     self: &mut ReferralFees,
     fees_accrued: u64,
@@ -93,10 +93,11 @@ public(package) fun increase_fees_per_share(
 
     event::emit(ReferralFeesIncreasedEvent {
         total_shares: self.total_shares,
-        fees_accrued: fees_accrued,
+        fees_accrued,
     });
 }
 
+/// Increase the shares for a referral.
 public(package) fun increase_shares(
     self: &mut ReferralFees,
     referral: Option<address>,
@@ -105,8 +106,10 @@ public(package) fun increase_shares(
     let referral_address = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_address);
     referral_tracker.current_shares = referral_tracker.current_shares + shares;
+    self.total_shares = self.total_shares + shares;
 }
 
+/// Decrease the shares for a referral.
 public(package) fun decrease_shares(
     self: &mut ReferralFees,
     referral: Option<address>,
@@ -116,8 +119,11 @@ public(package) fun decrease_shares(
     let referral_tracker = self.referrals.borrow_mut(referral_address);
     referral_tracker.current_shares = referral_tracker.current_shares - shares;
     referral_tracker.min_shares = referral_tracker.min_shares.min(referral_tracker.current_shares);
+    self.total_shares = self.total_shares - shares;
 }
 
+/// Calculate the fees for a referral and claim them. Multiply the referred shares by the fees per share delta.
+/// Referred fees is set to the minimum of the current and referred shares.
 public(package) fun calculate_and_claim(
     self: &mut ReferralFees,
     referral: &mut Referral,
