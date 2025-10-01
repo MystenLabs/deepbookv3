@@ -12,7 +12,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   issues: read
   id-token: write
 
