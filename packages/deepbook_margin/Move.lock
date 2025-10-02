@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "5D539A5CAD40B55D93DEA7574B407B39C863F472600CD84B569D7D1B336DF7C2"
+manifest_digest = "ACB76BC512ED568D6719E06673E3F81DC1CC8928717EABB8363B209382021C92"
 deps_digest = "CAFAD8A7CF51067FB4358215BECB86BD100DD64E57C2AC8A7AE7D74B688F5965"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -64,7 +64,7 @@ dependencies = [
 
 [[move.package]]
 id = "deepbook"
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", rev = "main", subdir = "packages/deepbook" }
+source = { local = "../deepbook" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -76,7 +76,7 @@ dependencies = [
 
 [[move.package]]
 id = "token"
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", rev = "main", subdir = "packages/token" }
+source = { local = "../token" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },

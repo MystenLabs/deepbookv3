@@ -4,8 +4,8 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
-deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "main" }
+token = { local = "../token" }
+deepbook = { local = "../deepbook" }
 
 # Pyth dependency
 Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "main" }
