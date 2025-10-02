@@ -456,7 +456,7 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_limit_order_not_reduce_only() {
     let (
         mut scenario,
@@ -650,7 +650,7 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_market_order_not_reduce_only() {
     let (
         mut scenario,
