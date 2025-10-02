@@ -456,7 +456,7 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_limit_order_not_reduce_only() {
     let (
         mut scenario,
@@ -518,6 +518,170 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
     );
 
     return_shared_3!(mm, pool, quote_pool);
+    destroy(usdc_price);
+    destroy(usdt_price);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+
+    // Deposit some USDT to use as collateral
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    // Borrow some USDC
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdc_multiplier(), // Small borrow amount
+        &clock,
+        scenario.ctx(),
+    );
+
+    let coin = mm.withdraw<USDC, USDT, USDC>(
+        &registry,
+        &base_pool,
+        &quote_pool, // Pass quote_pool since we have USDT debt
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdc_multiplier(), // Withdraw some USDC so we have have net debt
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(coin);
+
+    // User has USDC debt, tries to buy more USDC than debt
+    // This should fail because user is trying to buy more USDC than debt
+    pool_proxy::place_reduce_only_limit_order<USDC, USDT, USDC>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &base_pool, // Pass quote_pool since we have USDT debt
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(), // price
+        101 * test_constants::usdc_multiplier(), // quantity
+        true, // is_bid = true (buying USDC)
+        false,
+        2000000, // expire_timestamp
+        &clock,
+        scenario.ctx(),
+    );
+
+    return_shared_2!(mm, pool);
+    return_shared_2!(base_pool, quote_pool);
+    destroy(usdc_price);
+    destroy(usdt_price);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
+fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+
+    // Deposit some USDC to use as collateral
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        mint_coin<USDC>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    // Borrow some USDT
+    mm.borrow_quote<USDC, USDT>(
+        &registry,
+        &mut quote_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdt_multiplier(), // Small borrow amount
+        &clock,
+        scenario.ctx(),
+    );
+
+    let coin = mm.withdraw<USDC, USDT, USDT>(
+        &registry,
+        &base_pool,
+        &quote_pool, // Pass quote_pool since we have USDT debt
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        100 * test_constants::usdt_multiplier(), // Withdraw some USDT so we have net debt
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(coin);
+
+    // User has USDC debt, tries to buy more USDC than debt
+    // This should fail because user is trying to buy more USDC than debt
+    pool_proxy::place_reduce_only_limit_order<USDC, USDT, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        &quote_pool, // Pass quote_pool since we have USDT debt
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(), // price
+        101 * test_constants::usdc_multiplier(), // quantity
+        false, // is_bid = false (buying USDT)
+        false,
+        2000000, // expire_timestamp
+        &clock,
+        scenario.ctx(),
+    );
+
+    return_shared_2!(mm, pool);
+    return_shared_2!(base_pool, quote_pool);
     destroy(usdc_price);
     destroy(usdt_price);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
@@ -650,7 +814,7 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
     abort
 }
 
-#[test, expected_failure(abort_code = margin_manager::ENotReduceOnlyOrder)]
+#[test, expected_failure(abort_code = pool_proxy::ENotReduceOnlyOrder)]
 fun test_place_reduce_only_market_order_not_reduce_only() {
     let (
         mut scenario,

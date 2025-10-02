@@ -40,7 +40,7 @@ const EWithdrawRiskRatioExceeded: u64 = 8;
 const ECannotLiquidate: u64 = 9;
 const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
-const ENotReduceOnlyOrder: u64 = 12;
+const EInvalidDebtAsset: u64 = 12;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -573,6 +573,43 @@ public fun calculate_assets<BaseAsset, QuoteAsset>(
     (base, quote)
 }
 
+public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+    clock: &Clock,
+): (u64, u64) {
+    let margin_pool_id = margin_pool.id();
+    assert!(self.margin_pool_id.contains(&margin_pool_id), EIncorrectMarginPool);
+
+    let debt_is_base = self.has_base_debt();
+    let debt_shares = if (debt_is_base) {
+        self.borrowed_base_shares
+    } else {
+        self.borrowed_quote_shares
+    };
+
+    let base_debt = if (debt_is_base) {
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>(),
+            EInvalidDebtAsset,
+        );
+        margin_pool.borrow_shares_to_amount(debt_shares, clock)
+    } else {
+        0
+    };
+    let quote_debt = if (debt_is_base) {
+        0
+    } else {
+        assert!(
+            type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<QuoteAsset>(),
+            EInvalidDebtAsset,
+        );
+        margin_pool.borrow_shares_to_amount(debt_shares, clock)
+    };
+
+    (base_debt, quote_debt)
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
@@ -605,23 +642,11 @@ public fun borrowed_quote_shares<BaseAsset, QuoteAsset>(
     self.borrowed_quote_shares
 }
 
-// === Public-Package Functions ===
-public(package) fun assert_place_reduce_only<BaseAsset, QuoteAsset, DebtAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    _margin_pool: &MarginPool<DebtAsset>,
-    is_bid: bool,
-) {
-    if (self.borrowed_base_shares == 0 && self.borrowed_quote_shares == 0) {
-        return
-    };
-
-    if (type_name::with_defining_ids<DebtAsset>() == type_name::with_defining_ids<BaseAsset>()) {
-        assert!(is_bid, ENotReduceOnlyOrder);
-    } else {
-        assert!(!is_bid, ENotReduceOnlyOrder);
-    };
+public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): bool {
+    self.borrowed_base_shares > 0
 }
 
+// === Public-Package Functions ===
 /// Unwraps balance manager for trading in deepbook.
 public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,

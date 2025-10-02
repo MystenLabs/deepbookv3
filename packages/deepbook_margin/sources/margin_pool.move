@@ -24,11 +24,11 @@ use sui::{
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
 const ESupplyCapExceeded: u64 = 2;
-const EMaxPoolBorrowPercentageExceeded: u64 = 4;
-const EDeepbookPoolAlreadyAllowed: u64 = 5;
-const EDeepbookPoolNotAllowed: u64 = 6;
-const EInvalidMarginPoolCap: u64 = 7;
-const EBorrowAmountTooLow: u64 = 8;
+const EMaxPoolBorrowPercentageExceeded: u64 = 3;
+const EDeepbookPoolAlreadyAllowed: u64 = 4;
+const EDeepbookPoolNotAllowed: u64 = 5;
+const EInvalidMarginPoolCap: u64 = 6;
+const EBorrowAmountTooLow: u64 = 7;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
