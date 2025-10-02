@@ -4,14 +4,9 @@
 #[test_only]
 module deepbook::account_tests;
 
-use deepbook::account;
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::fill;
+use deepbook::{account, balances, constants, deep_price, fill};
 use std::unit_test::assert_eq;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;

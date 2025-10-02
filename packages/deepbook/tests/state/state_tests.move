@@ -4,16 +4,16 @@
 #[test_only]
 module deepbook::state_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::ewma_tests::test_init_ewma_state;
-use deepbook::order_info_tests::{create_order_info_base, create_order_info};
-use deepbook::state;
-use deepbook::utils;
+use deepbook::{
+    balances,
+    constants,
+    ewma_tests::test_init_ewma_state,
+    order_info_tests::{create_order_info_base, create_order_info},
+    state,
+    utils
+};
 use std::unit_test::assert_eq;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
-use sui::test_utils::destroy;
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::destroy};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;

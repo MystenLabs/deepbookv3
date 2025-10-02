@@ -4,14 +4,9 @@
 #[test_only]
 module deepbook::order_tests;
 
-use deepbook::balances;
-use deepbook::constants;
-use deepbook::deep_price;
-use deepbook::order::{Self, Order};
-use deepbook::utils;
+use deepbook::{balances, constants, deep_price, order::{Self, Order}, utils};
 use std::unit_test::assert_eq;
-use sui::object::id_from_address;
-use sui::test_scenario::{next_tx, begin, end};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
