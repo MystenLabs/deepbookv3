@@ -4,8 +4,14 @@
 #[test_only]
 module deepbook::account_tests;
 
-use deepbook::{account, balances, constants, deep_price, fill};
-use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
+use deepbook::account;
+use deepbook::balances;
+use deepbook::constants;
+use deepbook::deep_price;
+use deepbook::fill;
+use std::unit_test::assert_eq;
+use sui::object::id_from_address;
+use sui::test_scenario::{next_tx, begin, end};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -17,14 +23,14 @@ fun add_balances_ok() {
     test.next_tx(ALICE);
     let mut account = account::empty(test.ctx());
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
 
     account.add_settled_balances(balances::new(1, 2, 3));
     account.add_owed_balances(balances::new(4, 5, 6));
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(1, 2, 3));
-    assert_eq(owed, balances::new(4, 5, 6));
+    assert_eq!(settled, balances::new(1, 2, 3));
+    assert_eq!(owed, balances::new(4, 5, 6));
 
     test.end();
 }
@@ -54,8 +60,8 @@ fun process_maker_fill_ok() {
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(100, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(100, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 100, 0);
     assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
@@ -79,8 +85,8 @@ fun process_maker_fill_ok() {
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 500, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 500, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
     assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
@@ -105,8 +111,8 @@ fun process_maker_fill_ok() {
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(100, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(100, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
     assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
@@ -132,8 +138,8 @@ fun process_maker_fill_ok() {
     );
     account.process_maker_fill(&fill);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 500, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 500, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 300, 0);
     assert!(account.open_orders().length() == 1, 0);
     assert!(account.open_orders().contains(&(1 as u128)), 0);
@@ -162,15 +168,15 @@ fun add_remove_stake_ok() {
     assert!(account.active_stake() == 0, 0);
     assert!(account.inactive_stake() == 200, 0);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 200));
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 200));
 
     account.remove_stake();
     assert!(account.active_stake() == 0, 0);
     assert!(account.inactive_stake() == 0, 0);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 200));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 200));
+    assert_eq!(owed, balances::new(0, 0, 0));
 
     let (before, after) = account.add_stake(0);
     assert!(before == 0, 0);
@@ -178,8 +184,8 @@ fun add_remove_stake_ok() {
     assert!(account.active_stake() == 0, 0);
     assert!(account.inactive_stake() == 0, 0);
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
 
     test.end();
 }
@@ -273,14 +279,14 @@ fun claim_rebates_ok() {
     let mut account = account::empty(test.ctx());
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 0, 0));
 
     account.add_rebates(balances::new(50, 150, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(50, 150, 100));
-    assert_eq(owed, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(50, 150, 100));
+    assert_eq!(owed, balances::new(0, 0, 0));
 
     // user owes 100 DEEP for staking
     account.add_stake(100);
@@ -288,8 +294,8 @@ fun claim_rebates_ok() {
     account.add_rebates(balances::new(150, 50, 100));
     account.claim_rebates();
     let (settled, owed) = account.settle();
-    assert_eq(settled, balances::new(150, 50, 100));
-    assert_eq(owed, balances::new(0, 0, 100));
+    assert_eq!(settled, balances::new(150, 50, 100));
+    assert_eq!(owed, balances::new(0, 0, 100));
 
     test.end();
 }
