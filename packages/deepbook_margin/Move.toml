@@ -1,5 +1,5 @@
 [package]
-name = "margin_trading"
+name = "deepbook_margin"
 edition = "2024.beta"
 version = "0.0.1"
 
