@@ -115,8 +115,6 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    // The order is a bid, and quantity is less than the net base debt.
-    // The order is a ask, and quote quantity is less than the net quote debt.
     assert!(
         (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
             (!is_bid && quote_debt > quote_asset && math::mul(quantity, price) <= quote_debt - quote_asset),
