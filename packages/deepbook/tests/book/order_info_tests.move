@@ -5,7 +5,8 @@
 module deepbook::order_info_tests;
 
 use deepbook::{balances, constants, deep_price, order_info::{Self, OrderInfo}, utils};
-use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::assert_eq};
+use std::unit_test::assert_eq;
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -33,11 +34,8 @@ fun calculate_partial_fill_balances_ok() {
         constants::maker_fee(),
     );
 
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(
-        owed,
-        balances::new(0, 1 * constants::usdc_unit(), 500_000),
-    ); // 5 bps of 1 SUI paid in DEEP
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 1 * constants::usdc_unit(), 500_000)); // 5 bps of 1 SUI paid in DEEP
 
     end(test);
 }
@@ -64,11 +62,8 @@ fun calculate_partial_fill_balances_precision_ok() {
         constants::maker_fee(),
     );
 
-    assert_eq(settled, balances::new(0, 0, 0));
-    assert_eq(
-        owed,
-        balances::new(0, 12_340_000, 5_000_000),
-    ); // 5 bps of 10 SUI paid in DEEP
+    assert_eq!(settled, balances::new(0, 0, 0));
+    assert_eq!(owed, balances::new(0, 12_340_000, 5_000_000)); // 5 bps of 10 SUI paid in DEEP
 
     end(test);
 }
@@ -93,10 +88,10 @@ fun calculate_partial_fill_balances_precision2_ok() {
         constants::maker_fee(),
     );
 
-    assert_eq(settled, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 0));
     // USDC owed = 1.234 * 10.86 = 13.40124 = 13401240
     // DEEP owed = 10.86 * 0.0005 = 0.00543 = 5430000 (9 decimals in DEEP)
-    assert_eq(owed, balances::new(0, 13401240, 5430000));
+    assert_eq!(owed, balances::new(0, 13401240, 5430000));
 
     end(test);
 }
@@ -121,10 +116,10 @@ fun calculate_partial_fill_balances_ask_no_fill_ok() {
         constants::maker_fee(),
     );
 
-    assert_eq(settled, balances::new(0, 0, 0));
+    assert_eq!(settled, balances::new(0, 0, 0));
     // Since its an ask, transfer quantity amount worth of base token.
     // DEEP owed = 655.36 * 0.0005 = 0.32768 = 327680000 (9 decimals in DEEP)
-    assert_eq(owed, balances::new(655_360_000_000, 0, 327_680_000));
+    assert_eq!(owed, balances::new(655_360_000_000, 0, 327_680_000));
 
     end(test);
 }
@@ -245,8 +240,8 @@ fun match_maker_multiple_ask_ok() {
         constants::maker_fee(),
     );
 
-    assert_eq(settled, balances::new(0, 2_002_002, 0));
-    assert_eq(owed, balances::new(10_000_000_000, 0, 6_000_500));
+    assert_eq!(settled, balances::new(0, 2_002_002, 0));
+    assert_eq!(owed, balances::new(10_000_000_000, 0, 6_000_500));
 
     end(test);
 }
@@ -323,7 +318,7 @@ fun calculate_partial_fill_balances_bid_partial_fill_ok() {
     );
 
     // 100 SUI filled, the taker is owed 100 SUI.
-    assert_eq(settled, balances::new(100_000_000_000, 0, 0));
+    assert_eq!(settled, balances::new(100_000_000_000, 0, 0));
     // Taker paid 181305 USDC for 100 SUI, so they owe 181305 USDC.
     // The remaining 31.11 SUI is placed as a maker order at $1900
     // Additional owed to create maker order 31.11 * 1900 = 59109 USDC.
@@ -332,7 +327,7 @@ fun calculate_partial_fill_balances_bid_partial_fill_ok() {
     // Taker fee = 0.001 * 100 = 0.1 DEEP
     // Maker fee = 0.0005 * 31.11 = 0.015555
     // Total fees owed = 0.1 + 0.015555 = 0.115555 = 115555000
-    assert_eq(owed, balances::new(0, 240_414_000_000, 115_555_000));
+    assert_eq!(owed, balances::new(0, 240_414_000_000, 115_555_000));
 
     end(test);
 }
@@ -374,14 +369,14 @@ fun calculate_partial_fill_balances_ask_partial_fill_ok() {
     );
 
     // Sell of 0.001 SUI filled at $70,000, taker is owed 70 USDC
-    assert_eq(settled, balances::new(0, 70_000_000, 0));
+    assert_eq!(settled, balances::new(0, 70_000_000, 0));
     // Taker paid 70 USDC for 0.001 SUI, so they owe 70 USDC.
     // The remaining 0.004 SUI is placed as a maker order at $68,191.55
 
     // Taker fee = 0.001 * 0.001 = 0.000001 DEEP
     // Maker fee = 0.0005 * 0.004 = 0.000002 DEEP
     // Total fees owed = 0.000003 DEEP = 3000
-    assert_eq(owed, balances::new(5_000_000, 0, 3_000));
+    assert_eq!(owed, balances::new(5_000_000, 0, 3_000));
 
     end(test);
 }

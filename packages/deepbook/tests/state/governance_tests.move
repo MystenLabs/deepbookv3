@@ -5,11 +5,12 @@
 module deepbook::governance_tests;
 
 use deepbook::{constants, governance};
+use std::unit_test::assert_eq;
 use sui::{
     address,
     object::id_from_address,
     test_scenario::{next_tx, begin, end},
-    test_utils::{destroy, assert_eq}
+    test_utils::destroy
 };
 
 const OWNER: address = @0xF;
@@ -239,7 +240,7 @@ fun update_ok() {
     assert!(gov.voting_power() == 0, 0);
     assert!(gov.quorum() == 0, 0);
     assert!(gov.proposals().length() == 0, 0);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
     gov.adjust_voting_power(0, 1000);
     assert!(gov.voting_power() == 1000, 0);
 
@@ -265,8 +266,8 @@ fun update_ok() {
 
     // update doesn't apply proposal yet since epoch hasn't changed
     gov.update(test.ctx());
-    assert_eq(trade_params, gov.trade_params());
-    assert_eq(next_trade_params, gov.next_trade_params());
+    assert_eq!(trade_params, gov.trade_params());
+    assert_eq!(next_trade_params, gov.next_trade_params());
     assert!(gov.proposals().length() == 1, 0);
     assert!(gov.voting_power() == 1000, 0);
     assert!(gov.quorum() == 500, 0);
@@ -278,7 +279,7 @@ fun update_ok() {
     assert!(trade_params.taker_fee() == 500000, 0);
     assert!(trade_params.maker_fee() == 200000, 0);
     assert!(trade_params.stake_required() == 10000, 0);
-    assert_eq(trade_params, gov.next_trade_params());
+    assert_eq!(trade_params, gov.next_trade_params());
     assert!(gov.proposals().length() == 0, 0);
     assert!(gov.voting_power() == 1000, 0);
     assert!(gov.quorum() == 500, 0);
@@ -311,7 +312,7 @@ fun adjust_vote_ok() {
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 200);
     assert!(gov.proposals().get(&id_from_address(alice)).votes() == 200, 0);
     assert!(gov.next_trade_params().taker_fee() == 1000000, 0);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
 
     // bob proposes proposal 1, votes with 300 votes, over quorum
     test.next_tx(bob);
@@ -461,12 +462,12 @@ fun remove_proposal_vote_e() {
         option::some(id_from_address(alice)),
         100000,
     );
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
     // Bob proposes and votes with 200000 stake, not enough to push proposal Bob
     // over quorum
     gov.add_proposal(600000, 300000, 20000, 200000, id_from_address(bob));
     gov.adjust_vote(option::none(), option::some(id_from_address(bob)), 200000);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
 
     // Charlie votes with 150000 stake, enough to push proposal ALICE over
     // quorum
