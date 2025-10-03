@@ -20,6 +20,7 @@ pub struct OrderUpdateHandler {
     order_modified_type: StructTag,
     order_canceled_type: StructTag,
     order_expired_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl OrderUpdateHandler {
@@ -29,6 +30,7 @@ impl OrderUpdateHandler {
             order_modified_type: env.order_modified_event_type(),
             order_canceled_type: env.order_canceled_event_type(),
             order_expired_type: env.order_expired_event_type(),
+            env,
         }
     }
 }
@@ -40,7 +42,7 @@ impl Processor for OrderUpdateHandler {
         let mut results = vec![];
 
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx) {
+            if !is_deepbook_tx(tx, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {

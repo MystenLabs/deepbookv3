@@ -15,12 +15,14 @@ use tracing::debug;
 
 pub struct FlashLoanHandler {
     event_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl FlashLoanHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self {
             event_type: env.flash_loan_borrowed_event_type(),
+            env,
         }
     }
 }
@@ -32,7 +34,7 @@ impl Processor for FlashLoanHandler {
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx) {
+            if !is_deepbook_tx(tx, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {

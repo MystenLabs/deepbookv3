@@ -65,6 +65,15 @@ async fn deep_burned_test() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+#[tokio::test]
+async fn balances_indirect_interaction_test() -> Result<(), anyhow::Error> {
+    // Test that balance events from transactions that interact with DeepBook
+    // indirectly (through other protocols) are still captured
+    let handler = BalancesHandler::new(DeepbookEnv::Mainnet);
+    data_test("balances_indirect", handler, ["balances"]).await?;
+    Ok(())
+}
+
 async fn data_test<H, I>(
     test_name: &str,
     handler: H,
