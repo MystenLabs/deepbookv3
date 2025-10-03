@@ -1,6 +1,6 @@
 use crate::schema::{
-    balances, balances_summary, flashloans, order_fills, order_updates, pool_prices, pools,
-    proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
+    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices, pools, proposals,
+    rebates, stakes, sui_error_transactions, trade_params_update, votes,
 };
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};
@@ -93,10 +93,12 @@ pub struct OrderFillSummary {
 }
 
 #[derive(QueryableByName, Debug, Serialize, FieldCount)]
-#[diesel(table_name = balances_summary)]
 pub struct BalancesSummary {
+    #[diesel(sql_type = Text)]
     pub asset: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub amount: i64,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
     pub deposit: bool,
 }
 
@@ -142,6 +144,19 @@ pub struct Balances {
     pub asset: String,
     pub amount: i64,
     pub deposit: bool,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deep_burned, primary_key(event_digest))]
+pub struct DeepBurned {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub burned_amount: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -237,9 +252,9 @@ pub struct Pools {
     pub quote_asset_decimals: i16,
     pub quote_asset_symbol: String,
     pub quote_asset_name: String,
-    pub min_size: i32,
-    pub lot_size: i32,
-    pub tick_size: i32,
+    pub min_size: i64,
+    pub lot_size: i64,
+    pub tick_size: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]

@@ -1,0 +1,42 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc0",
+    "digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc",
+    "sender": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9",
+    "checkpoint": "100005828",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1736511782554",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "target_pool": "0x1109352b9112717bd2a7c3eb9a416fff1ba6951760f5bdd5424cf5e4e5b3e65c",
+    "reference_pool": "0xf948981b806057580f91622417534f491da5f61aeaf33d0ed8e69fd5691c95ce",
+    "conversion_rate": "6631959412"
+  },
+  {
+    "event_digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc1",
+    "digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc",
+    "sender": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9",
+    "checkpoint": "100005828",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1736511782554",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "target_pool": "0xe8e56f377ab5a261449b92ac42c8ddaacd5671e9fec2179d7933dd1a91200eec",
+    "reference_pool": "0xb663828d6217467c8a1838a03793da896cbe745b150ebd57d82f814ca579fc22",
+    "conversion_rate": "32226877"
+  },
+  {
+    "event_digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc2",
+    "digest": "GvWP4wQq2iehpvHVaDnrTC9SCFhAYxD6jXyY9VVcMfSc",
+    "sender": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9",
+    "checkpoint": "100005828",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1736511782554",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "target_pool": "0x126865a0197d6ab44bfd15fd052da6db92fd2eb831ff9663451bbfa1219e2af2",
+    "reference_pool": "0xb663828d6217467c8a1838a03793da896cbe745b150ebd57d82f814ca579fc22",
+    "conversion_rate": "32226877"
+  }
+]
