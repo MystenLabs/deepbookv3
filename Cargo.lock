@@ -540,7 +540,7 @@ dependencies = [
  "nom",
  "num-traits",
  "rusticata-macros",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "time",
 ]
 
@@ -1911,6 +1911,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "cynic"
+version = "3.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b215a2d2bebcbbd3bd005b59f5b1b7dc5eb07343d64db80ec23aff9e7e1a2e2"
+dependencies = [
+ "cynic-proc-macros",
+ "ref-cast",
+ "serde",
+ "static_assertions",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "cynic-codegen"
+version = "3.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eeb2693bc9916fa694d2023bb1adc4356a8896b9b96478f23d51a263140811c"
+dependencies = [
+ "cynic-parser",
+ "darling 0.20.11",
+ "once_cell",
+ "ouroboros 0.18.5",
+ "proc-macro2",
+ "quote",
+ "strsim 0.10.0",
+ "syn 2.0.104",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "cynic-parser"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3136ed6464e975162667c08092fcb54947ce08785fca301162fd614c4dfd974f"
+dependencies = [
+ "indexmap 2.10.0",
+ "lalrpop-util 0.22.2",
+ "logos 0.14.4",
+]
+
+[[package]]
+name = "cynic-proc-macros"
+version = "3.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c0b2eab13c954db96ae72db53b2d275c237f3197499212c4d55b5ae7418e5b2"
+dependencies = [
+ "cynic-codegen",
+ "darling 0.20.11",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "darling"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2016,7 +2069,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 2.0.104",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2054,9 +2107,9 @@ dependencies = [
  "sui-indexer-alt-framework",
  "sui-indexer-alt-metrics",
  "sui-pg-db",
- "sui-sdk-types 0.0.2",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
  "sui-storage",
- "sui-transaction-builder 0.1.0",
+ "sui-transaction-builder 0.0.7",
  "sui-types",
  "telemetry-subscribers",
  "tokio",
@@ -4279,7 +4332,7 @@ dependencies = [
  "ena",
  "is-terminal",
  "itertools 0.10.5",
- "lalrpop-util",
+ "lalrpop-util 0.19.12",
  "petgraph 0.6.5",
  "regex",
  "regex-syntax 0.6.29",
@@ -4296,6 +4349,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3c48237b9604c5a4702de6b824e02006c3214327564636aef27c1028a8fa0ed"
 dependencies = [
  "regex",
+]
+
+[[package]]
+name = "lalrpop-util"
+version = "0.22.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5baa5e9ff84f1aefd264e6869907646538a52147a755d494517a8007fb48733"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -4461,7 +4523,31 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf8b031682c67a8e3d5446840f9573eb7fe26efe7ec8d195c9ac4c0647c502f1"
 dependencies = [
- "logos-derive",
+ "logos-derive 0.12.1",
+]
+
+[[package]]
+name = "logos"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7251356ef8cb7aec833ddf598c6cb24d17b689d20b993f9d11a3d764e34e6458"
+dependencies = [
+ "logos-derive 0.14.4",
+]
+
+[[package]]
+name = "logos-codegen"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59f80069600c0d66734f5ff52cc42f2dabd6b29d205f333d61fd7832e9e9963f"
+dependencies = [
+ "beef",
+ "fnv",
+ "lazy_static",
+ "proc-macro2",
+ "quote",
+ "regex-syntax 0.8.5",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -4476,6 +4562,15 @@ dependencies = [
  "quote",
  "regex-syntax 0.6.29",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "logos-derive"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24fb722b06a9dc12adb0963ed585f19fc61dc5413e6a9be9422ef92c091e731d"
+dependencies = [
+ "logos-codegen",
 ]
 
 [[package]]
@@ -4764,7 +4859,7 @@ dependencies = [
 [[package]]
 name = "move-binding"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=2321fec265dd2c65560b412b712429d8c993c603#2321fec265dd2c65560b412b712429d8c993c603"
 dependencies = [
  "anyhow",
  "bcs",
@@ -4778,14 +4873,14 @@ dependencies = [
  "quote",
  "reqwest",
  "serde_json",
- "sui-sdk-types 0.0.2",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
  "syn 2.0.104",
 ]
 
 [[package]]
 name = "move-binding-derive"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=2321fec265dd2c65560b412b712429d8c993c603#2321fec265dd2c65560b412b712429d8c993c603"
 dependencies = [
  "bcs",
  "move-binding",
@@ -4793,9 +4888,10 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
- "sui-sdk-types 0.0.2",
- "sui-transaction-builder 0.1.0",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
+ "sui-transaction-builder 0.0.7",
  "syn 2.0.104",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -5024,7 +5120,7 @@ dependencies = [
  "move-ir-to-bytecode-syntax",
  "move-ir-types",
  "move-symbol-pool",
- "ouroboros",
+ "ouroboros 0.17.2",
 ]
 
 [[package]]
@@ -5098,12 +5194,14 @@ dependencies = [
 [[package]]
 name = "move-types"
 version = "0.1.0"
-source = "git+https://github.com/MystenLabs/move-binding.git?rev=4570303#4570303e169d41149799592263e824179014ea24"
+source = "git+https://github.com/MystenLabs/move-binding.git?rev=2321fec265dd2c65560b412b712429d8c993c603#2321fec265dd2c65560b412b712429d8c993c603"
 dependencies = [
  "move-core-types 0.0.4 (git+https://github.com/MystenLabs/sui.git?rev=42ba6c0)",
  "serde",
- "sui-sdk-types 0.0.2",
- "sui-transaction-builder 0.1.0",
+ "sui-graphql-client",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
+ "sui-transaction-builder 0.0.7",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -5776,7 +5874,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2ba07320d39dfea882faa70554b4bd342a5f273ed59ba7c1c6b4c840492c954"
 dependencies = [
  "aliasable",
- "ouroboros_macro",
+ "ouroboros_macro 0.17.2",
+ "static_assertions",
+]
+
+[[package]]
+name = "ouroboros"
+version = "0.18.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0f050db9c44b97a94723127e6be766ac5c340c48f2c4bb3ffa11713744be59"
+dependencies = [
+ "aliasable",
+ "ouroboros_macro 0.18.5",
  "static_assertions",
 ]
 
@@ -5789,6 +5898,19 @@ dependencies = [
  "heck 0.4.1",
  "proc-macro-error",
  "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "ouroboros_macro"
+version = "0.18.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c7028bdd3d43083f6d8d4d5187680d0d3560d54df4cc9d752005268b41e64d0"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
  "quote",
  "syn 2.0.104",
 ]
@@ -6354,6 +6476,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+ "version_check",
+ "yansi",
+]
+
+[[package]]
 name = "prometheus"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6505,7 +6640,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "rustls",
  "socket2 0.5.10",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "web-time",
@@ -6526,7 +6661,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tinyvec",
  "tracing",
  "web-time",
@@ -7903,7 +8038,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "smallvec",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -7986,7 +8121,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tracing",
  "whoami",
 ]
@@ -8024,7 +8159,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tracing",
  "whoami",
 ]
@@ -8049,7 +8184,7 @@ dependencies = [
  "serde",
  "serde_urlencoded",
  "sqlx-core",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "tracing",
  "url",
 ]
@@ -8152,8 +8287,8 @@ dependencies = [
  "derive_more 1.0.0",
  "dupe",
  "lalrpop",
- "lalrpop-util",
- "logos",
+ "lalrpop-util 0.19.12",
+ "logos 0.12.1",
  "lsp-types 0.94.1",
  "memchr",
  "num-bigint 0.4.6",
@@ -8314,7 +8449,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "signature 2.2.0",
- "sui-sdk-types 0.0.7",
+ "sui-sdk-types 0.0.7 (git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=8eee97380cac1a1899d3cca427bde7ac906abdb9)",
 ]
 
 [[package]]
@@ -8340,6 +8475,38 @@ source = "git+https://github.com/MystenLabs/sui.git?rev=7f1b81169e966fc1af6e3cbb
 dependencies = [
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "sui-graphql-client"
+version = "0.0.7"
+source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1#048124e484f14b9bf2a402227c9bc255c7621bc1"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "base64ct",
+ "bcs",
+ "chrono",
+ "cynic",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sui-graphql-client-build",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "sui-graphql-client-build"
+version = "0.0.7"
+source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1#048124e484f14b9bf2a402227c9bc255c7621bc1"
+dependencies = [
+ "cynic-codegen",
 ]
 
 [[package]]
@@ -8672,7 +8839,7 @@ dependencies = [
  "prost-types",
  "serde",
  "serde_json",
- "sui-sdk-types 0.0.7",
+ "sui-sdk-types 0.0.7 (git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=8eee97380cac1a1899d3cca427bde7ac906abdb9)",
  "tap",
  "tokio",
  "tonic 0.13.1",
@@ -8711,7 +8878,7 @@ dependencies = [
  "sui-package-resolver",
  "sui-protocol-config",
  "sui-rpc",
- "sui-sdk-types 0.0.7",
+ "sui-sdk-types 0.0.7 (git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=8eee97380cac1a1899d3cca427bde7ac906abdb9)",
  "sui-types",
  "tap",
  "thiserror 1.0.69",
@@ -8761,21 +8928,23 @@ dependencies = [
 
 [[package]]
 name = "sui-sdk-types"
-version = "0.0.2"
-source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=86a9e06#86a9e06cde84671e96e776d926a85fc1f229314d"
+version = "0.0.7"
+source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1#048124e484f14b9bf2a402227c9bc255c7621bc1"
 dependencies = [
  "base64ct",
  "bcs",
  "blake2",
  "bnum",
  "bs58 0.5.1",
- "hex",
+ "bytes",
+ "bytestring",
+ "itertools 0.13.0",
  "roaring",
  "serde",
  "serde_derive",
  "serde_json",
  "serde_with",
- "winnow 0.6.26",
+ "winnow",
 ]
 
 [[package]]
@@ -8796,7 +8965,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_with",
- "winnow 0.7.12",
+ "winnow",
 ]
 
 [[package]]
@@ -8878,16 +9047,16 @@ dependencies = [
 
 [[package]]
 name = "sui-transaction-builder"
-version = "0.1.0"
-source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=86a9e06#86a9e06cde84671e96e776d926a85fc1f229314d"
+version = "0.0.7"
+source = "git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1#048124e484f14b9bf2a402227c9bc255c7621bc1"
 dependencies = [
  "base64ct",
  "bcs",
  "serde",
  "serde_json",
  "serde_with",
- "sui-sdk-types 0.0.2",
- "thiserror 2.0.12",
+ "sui-sdk-types 0.0.7 (git+https://github.com/mystenlabs/sui-rust-sdk?rev=048124e484f14b9bf2a402227c9bc255c7621bc1)",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -8957,7 +9126,7 @@ dependencies = [
  "sui-macros",
  "sui-protocol-config",
  "sui-rpc",
- "sui-sdk-types 0.0.7",
+ "sui-sdk-types 0.0.7 (git+https://github.com/MystenLabs/sui-rust-sdk.git?rev=8eee97380cac1a1899d3cca427bde7ac906abdb9)",
  "tap",
  "thiserror 1.0.69",
  "tonic 0.13.1",
@@ -9173,11 +9342,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.12"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+checksum = "f63587ca0f12b72a0600bcba1d40081f830876000bb46dd2337a3051618f4fc8"
 dependencies = [
- "thiserror-impl 2.0.12",
+ "thiserror-impl 2.0.17",
 ]
 
 [[package]]
@@ -9193,9 +9362,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.12"
+version = "2.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
+checksum = "3ff15c8ecd7de3849db632e14d18d2571fa09dfc5ed93479bc4485c7a517c913"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9491,7 +9660,7 @@ dependencies = [
  "toml_datetime 0.7.0",
  "toml_parser",
  "toml_writer",
- "winnow 0.7.12",
+ "winnow",
 ]
 
 [[package]]
@@ -9517,7 +9686,7 @@ checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
  "indexmap 2.10.0",
  "toml_datetime 0.6.11",
- "winnow 0.7.12",
+ "winnow",
 ]
 
 [[package]]
@@ -9526,7 +9695,7 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97200572db069e74c512a14117b296ba0a80a30123fbbb5aa1f4a348f639ca30"
 dependencies = [
- "winnow 0.7.12",
+ "winnow",
 ]
 
 [[package]]
@@ -9878,7 +10047,7 @@ dependencies = [
  "log",
  "rand 0.9.2",
  "sha1",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "utf-8",
 ]
 
@@ -10821,15 +10990,6 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "winnow"
-version = "0.6.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e90edd2ac1aa278a5c4599b1d89cf03074b610800f866d4026dc199d7929a28"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3edebf492c8125044983378ecb5766203ad3b4c2f7a922bd7dd207f6d443e95"
@@ -10900,7 +11060,7 @@ dependencies = [
  "oid-registry",
  "ring",
  "rusticata-macros",
- "thiserror 2.0.12",
+ "thiserror 2.0.17",
  "time",
 ]
 
@@ -10912,6 +11072,12 @@ checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
 ]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yasna"
