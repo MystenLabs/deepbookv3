@@ -3,7 +3,7 @@
 
 module deepbook_margin::referral_fees;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
@@ -17,6 +17,8 @@ public struct ReferralFees has store {
     referrals: Table<address, ReferralTracker>,
     total_shares: u64,
     fees_per_share: u64,
+    maintainer_fees: u64,
+    protocol_fees: u64,
     extra_fields: VecMap<String, u64>,
 }
 
@@ -31,9 +33,11 @@ public struct SupplyReferral has key {
     last_fees_per_share: u64,
 }
 
-public struct ReferralFeesIncreasedEvent has copy, drop {
+public struct ProtocolFeesIncreasedEvent has copy, drop {
     total_shares: u64,
-    fees_accrued: u64,
+    referral_fees: u64,
+    maintainer_fees: u64,
+    protocol_fees: u64,
 }
 
 public struct ReferralFeesClaimedEvent has copy, drop {
@@ -49,6 +53,8 @@ public(package) fun default_referral_fees(ctx: &mut TxContext): ReferralFees {
         referrals: table::new(ctx),
         total_shares: 0,
         fees_per_share: 0,
+        maintainer_fees: 0,
+        protocol_fees: 0,
         extra_fields: vec_map::empty(),
     };
     manager
@@ -88,16 +94,26 @@ public(package) fun mint_supply_referral(self: &mut ReferralFees, ctx: &mut TxCo
 }
 
 /// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
+/// Half of fees goes to referrals, quarter to maintainer, quarter to protocol.
 public(package) fun increase_fees_accrued(self: &mut ReferralFees, fees_accrued: u64) {
     assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
+    let protocol_fees = fees_accrued / 2;
+    let maintainer_fees = protocol_fees / 2;
+    let protocol_fees = protocol_fees - maintainer_fees;
+    let referral_fees = fees_accrued - protocol_fees - maintainer_fees;
+
     if (self.total_shares > 0) {
-        let fees_per_share_increase = math::div(fees_accrued, self.total_shares);
+        let fees_per_share_increase = math::div(referral_fees, self.total_shares);
         self.fees_per_share = self.fees_per_share + fees_per_share_increase;
+        self.maintainer_fees = self.maintainer_fees + maintainer_fees;
+        self.protocol_fees = self.protocol_fees + protocol_fees;
     };
 
-    event::emit(ReferralFeesIncreasedEvent {
+    event::emit(ProtocolFeesIncreasedEvent {
         total_shares: self.total_shares,
-        fees_accrued,
+        referral_fees,
+        maintainer_fees,
+        protocol_fees,
     });
 }
 
@@ -150,6 +166,30 @@ public(package) fun calculate_and_claim(
     });
 
     fees
+}
+
+/// Claim the maintainer fees.
+public(package) fun claim_maintainer_fees(self: &mut ReferralFees): u64 {
+    let fees = self.maintainer_fees;
+    self.maintainer_fees = 0;
+    fees
+}
+
+/// Claim the protocol fees.
+public(package) fun claim_protocol_fees(self: &mut ReferralFees): u64 {
+    let fees = self.protocol_fees;
+    self.protocol_fees = 0;
+    fees
+}
+
+/// Get the maintainer fees.
+public(package) fun maintainer_fees(self: &ReferralFees): u64 {
+    self.maintainer_fees
+}
+
+/// Get the protocol fees.
+public(package) fun protocol_fees(self: &ReferralFees): u64 {
+    self.protocol_fees
 }
 
 public(package) fun referral_tracker(self: &ReferralFees, referral: address): (u64, u64) {

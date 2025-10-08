@@ -5,7 +5,7 @@ module deepbook_margin::margin_pool;
 
 use deepbook::math;
 use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginPoolCap},
+    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
@@ -48,6 +48,19 @@ public struct MarginPoolCreated has copy, drop {
     maintainer_cap_id: ID,
     asset_type: TypeName,
     config: ProtocolConfig,
+    timestamp: u64,
+}
+
+public struct MaintainerFeesWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    maintainer_cap_id: ID,
+    maintainer_fees: u64,
+    timestamp: u64,
+}
+
+public struct ProtocolFeesWithdrawn has copy, drop {
+    margin_pool_id: ID,
+    protocol_fees: u64,
     timestamp: u64,
 }
 
@@ -290,18 +303,68 @@ public fun withdraw<Asset>(
 }
 
 /// Mint a supply referral.
-public fun mint_supply_referral<Asset>(self: &mut MarginPool<Asset>, ctx: &mut TxContext): ID {
+public fun mint_supply_referral<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    ctx: &mut TxContext,
+): ID {
+    registry.load_inner();
     self.referral_fees.mint_supply_referral(ctx)
 }
 
 /// Withdraw the referral fees.
 public fun withdraw_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
     referral: &mut SupplyReferral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
+    registry.load_inner();
     let referral_fees = self.referral_fees.calculate_and_claim(referral, ctx);
     let coin = self.vault.split(referral_fees).into_coin(ctx);
+
+    coin
+}
+
+/// Withdraw the maintainer fees.
+public fun withdraw_maintainer_fees<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    maintainer_cap: &MaintainerCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    registry.assert_maintainer_cap_valid(maintainer_cap);
+    let maintainer_fees = self.referral_fees.claim_maintainer_fees();
+    let coin = self.vault.split(maintainer_fees).into_coin(ctx);
+
+    event::emit(MaintainerFeesWithdrawn {
+        margin_pool_id: self.id(),
+        maintainer_cap_id: maintainer_cap.maintainer_cap_id(),
+        maintainer_fees,
+        timestamp: clock.timestamp_ms(),
+    });
+
+    coin
+}
+
+/// Withdraw the protocol fees.
+public fun withdraw_protocol_fees<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    registry.load_inner();
+    let protocol_fees = self.referral_fees.claim_protocol_fees();
+    let coin = self.vault.split(protocol_fees).into_coin(ctx);
+
+    event::emit(ProtocolFeesWithdrawn {
+        margin_pool_id: self.id(),
+        protocol_fees,
+        timestamp: clock.timestamp_ms(),
+    });
 
     coin
 }

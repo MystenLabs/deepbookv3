@@ -21,25 +21,25 @@ fun test_referral_fees_setup() {
     test.next_tx(test_constants::admin());
     let mut referral_fees = referral_fees::default_referral_fees(test.ctx());
     referral_fees.increase_shares(option::none(), 100 * constants::float_scaling());
-    referral_fees.increase_fees_accrued(1 * constants::float_scaling());
+    referral_fees.increase_fees_accrued(2 * constants::float_scaling());
     assert_eq!(referral_fees.total_shares(), 100 * constants::float_scaling());
     assert_eq!(referral_fees.fees_per_share(), 10_000_000);
 
     referral_fees.increase_shares(option::none(), 100 * constants::float_scaling());
-    referral_fees.increase_fees_accrued(2 * constants::float_scaling());
+    referral_fees.increase_fees_accrued(4 * constants::float_scaling());
     assert_eq!(referral_fees.total_shares(), 200 * constants::float_scaling());
     assert_eq!(referral_fees.fees_per_share(), 20_000_000);
 
     // so far we have 200 shares and 0.02 rewards per share
     // increase by 1000 and add 5 more rewards. 5 rewards distributed over 1200 total shares
     referral_fees.increase_shares(option::none(), 1000 * constants::float_scaling());
-    referral_fees.increase_fees_accrued(5 * constants::float_scaling());
+    referral_fees.increase_fees_accrued(10 * constants::float_scaling());
     assert_eq!(referral_fees.total_shares(), 1200 * constants::float_scaling());
     assert_eq!(referral_fees.fees_per_share(), 24_166_666);
 
     // decrease shares by 1100, add 10 rewards
     referral_fees.decrease_shares(option::none(), 1100 * constants::float_scaling());
-    referral_fees.increase_fees_accrued(10 * constants::float_scaling());
+    referral_fees.increase_fees_accrued(20 * constants::float_scaling());
     assert_eq!(referral_fees.total_shares(), 100 * constants::float_scaling());
     assert_eq!(referral_fees.fees_per_share(), 124_166_666);
 
@@ -67,7 +67,7 @@ fun test_referral_fees_ok() {
             option::some(referral_id.to_address()),
             100 * constants::float_scaling(),
         );
-        referral_fees.increase_fees_accrued(100 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(200 * constants::float_scaling());
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 100 * constants::float_scaling());
         assert_eq!(min_shares, 0);
@@ -101,7 +101,7 @@ fun test_referral_fees_ok() {
             option::some(referral_id.to_address()),
             100 * constants::float_scaling(),
         );
-        referral_fees.increase_fees_accrued(100 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(200 * constants::float_scaling());
         let (current_shares, min_shares) = referral_fees.referral_tracker(referral_id.to_address());
         assert_eq!(current_shares, 200 * constants::float_scaling());
         assert_eq!(min_shares, 100 * constants::float_scaling());
@@ -137,7 +137,7 @@ fun test_referral_fees_ok() {
             option::some(referral_id.to_address()),
             100 * constants::float_scaling(),
         );
-        referral_fees.increase_fees_accrued(100 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(200 * constants::float_scaling());
         referral_fees.decrease_shares(
             option::some(referral_id.to_address()),
             100 * constants::float_scaling(),
@@ -172,7 +172,7 @@ fun test_referral_fees_ok() {
             option::some(referral_id.to_address()),
             1000 * constants::float_scaling(),
         );
-        referral_fees.increase_fees_accrued(1000 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(2000 * constants::float_scaling());
         // 1000 rewards for 1000 shares. 1.833 -> 2.833
         assert_eq!(referral_fees.fees_per_share(), 2_833_333_333);
     };
@@ -196,7 +196,7 @@ fun test_referral_fees_ok() {
     // referrer now has 1000 shares exposed. 1000 * (3.833 - 2.833) = 1000 * 1 = 1000
     test.next_tx(test_constants::user1());
     {
-        referral_fees.increase_fees_accrued(1000 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(2000 * constants::float_scaling());
         assert_eq!(referral_fees.fees_per_share(), 3_833_333_333);
     };
 
@@ -263,7 +263,7 @@ fun test_referra_fees_many() {
     // add 5000 rewards. 10000 shares. 0 -> 0.5
     test.next_tx(test_constants::admin());
     {
-        referral_fees.increase_fees_accrued(5000 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(10000 * constants::float_scaling());
         assert_eq!(referral_fees.fees_per_share(), 500_000_000);
     };
 
@@ -302,7 +302,7 @@ fun test_referra_fees_many() {
     // add 5000 rewards. 5000 outstanding shares. 0.5 -> 1.5
     test.next_tx(test_constants::admin());
     {
-        referral_fees.increase_fees_accrued(5000 * constants::float_scaling());
+        referral_fees.increase_fees_accrued(10000 * constants::float_scaling());
         assert_eq!(referral_fees.fees_per_share(), 1_500_000_000);
     };
 
@@ -364,7 +364,7 @@ fun test_referral_fees_invalid_fees_accrued_e() {
 
     test.next_tx(test_constants::admin());
     let mut referral_fees = referral_fees::default_referral_fees(test.ctx());
-    referral_fees.increase_fees_accrued(1);
+    referral_fees.increase_fees_accrued(2);
 
     abort
 }
