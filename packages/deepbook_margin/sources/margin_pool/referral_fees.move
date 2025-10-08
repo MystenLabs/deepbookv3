@@ -3,7 +3,7 @@
 
 module deepbook_margin::referral_fees;
 
-use deepbook::{constants, math};
+use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
@@ -97,9 +97,8 @@ public(package) fun mint_supply_referral(self: &mut ReferralFees, ctx: &mut TxCo
 /// Half of fees goes to referrals, quarter to maintainer, quarter to protocol.
 public(package) fun increase_fees_accrued(self: &mut ReferralFees, fees_accrued: u64) {
     assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
-    let protocol_fees = fees_accrued / 2;
-    let maintainer_fees = protocol_fees / 2;
-    let protocol_fees = protocol_fees - maintainer_fees;
+    let protocol_fees = fees_accrued / 4;
+    let maintainer_fees = fees_accrued / 4;
     let referral_fees = fees_accrued - protocol_fees - maintainer_fees;
 
     if (self.total_shares > 0) {

@@ -334,6 +334,7 @@ public fun withdraw_maintainer_fees<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
+    registry.load_inner();
     registry.assert_maintainer_cap_valid(maintainer_cap);
     let maintainer_fees = self.referral_fees.claim_maintainer_fees();
     let coin = self.vault.split(maintainer_fees).into_coin(ctx);
