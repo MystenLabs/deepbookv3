@@ -9,6 +9,15 @@ pub(crate) mod models;
 pub const MAINNET_REMOTE_STORE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
+// Previous package IDs for mainnet
+const MAINNET_PREVIOUS_PACKAGES: &[&str] = &[
+    "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+];
+
+// Previous package IDs for testnet (add when available)
+const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[];
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
     Mainnet,
@@ -112,6 +121,53 @@ impl DeepbookEnv {
         };
         // Safe to unwrap on verified static URLs
         Url::parse(remote_store_url).unwrap()
+    }
+
+    pub fn package_ids(&self) -> Vec<sui_types::base_types::ObjectID> {
+        use move_core_types::account_address::AccountAddress;
+        use std::str::FromStr;
+        use sui_types::base_types::ObjectID;
+
+        let (previous_packages, current_package) = match self {
+            DeepbookEnv::Mainnet => (
+                MAINNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+            ),
+            DeepbookEnv::Testnet => (
+                TESTNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook_testnet::registry::PACKAGE_ID.inner()),
+            ),
+        };
+
+        let mut ids: Vec<ObjectID> = previous_packages
+            .iter()
+            .map(|pkg| ObjectID::from_str(pkg).unwrap())
+            .collect();
+        ids.push(ObjectID::from(current_package));
+        ids
+    }
+
+    pub fn package_addresses(&self) -> Vec<move_core_types::account_address::AccountAddress> {
+        use move_core_types::account_address::AccountAddress;
+        use std::str::FromStr;
+
+        let (previous_packages, current_package) = match self {
+            DeepbookEnv::Mainnet => (
+                MAINNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+            ),
+            DeepbookEnv::Testnet => (
+                TESTNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook_testnet::registry::PACKAGE_ID.inner()),
+            ),
+        };
+
+        let mut addresses: Vec<AccountAddress> = previous_packages
+            .iter()
+            .map(|pkg| AccountAddress::from_str(pkg).unwrap())
+            .collect();
+        addresses.push(current_package);
+        addresses
     }
 
     event_type_fn!(balance_event_type, balance_manager::BalanceEvent);

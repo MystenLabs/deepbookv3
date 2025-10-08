@@ -15,12 +15,14 @@ use tracing::debug;
 
 pub struct BalancesHandler {
     event_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl BalancesHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self {
             event_type: env.balance_event_type(),
+            env,
         }
     }
 }
@@ -33,7 +35,7 @@ impl Processor for BalancesHandler {
         let mut results = vec![];
 
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(&tx) {
+            if !is_deepbook_tx(&tx, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {

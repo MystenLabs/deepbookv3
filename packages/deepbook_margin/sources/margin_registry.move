@@ -489,11 +489,8 @@ public(package) fun register_margin_pool(
     maintainer_cap: &MaintainerCap,
     ctx: &mut TxContext,
 ) {
+    self.assert_maintainer_cap_valid(maintainer_cap);
     let inner = self.load_inner_mut();
-    assert!(
-        inner.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
-        EMaintainerCapNotValid,
-    );
     assert!(!inner.margin_pools.contains(key), EMarginPoolAlreadyExists);
     inner.margin_pools.add(key, margin_pool_id);
 
@@ -583,6 +580,17 @@ public(package) fun pool_cap_id(margin_pool_cap: &MarginPoolCap): ID {
 
 public(package) fun maintainer_cap_id(maintainer_cap: &MaintainerCap): ID {
     maintainer_cap.id.to_inner()
+}
+
+public(package) fun assert_maintainer_cap_valid(
+    self: &MarginRegistry,
+    maintainer_cap: &MaintainerCap,
+) {
+    let inner = self.load_inner();
+    assert!(
+        inner.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
+        EMaintainerCapNotValid,
+    );
 }
 
 /// Calculate risk parameters based on leverage factor

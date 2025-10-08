@@ -17,12 +17,14 @@ use tracing::debug;
 
 pub struct TradeParamsUpdateHandler {
     event_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl TradeParamsUpdateHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self {
             event_type: env.trade_params_update_event_type(),
+            env,
         }
     }
 }
@@ -34,7 +36,7 @@ impl Processor for TradeParamsUpdateHandler {
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx) {
+            if !is_deepbook_tx(tx, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {

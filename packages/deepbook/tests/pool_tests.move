@@ -25,6 +25,7 @@ use deepbook::{
     registry::{Self, Registry},
     utils
 };
+use std::unit_test::assert_eq;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin, mint_for_testing},
@@ -3455,7 +3456,7 @@ fun test_process_order_referral_ok() {
             &mut test,
         );
 
-        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+        assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
     test.next_tx(ALICE);
@@ -3463,10 +3464,10 @@ fun test_process_order_referral_ok() {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
-        test_utils::assert_eq(base, 0);
-        test_utils::assert_eq(quote, 0);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
         // 10bps fee, 0.1x multiplier
-        test_utils::assert_eq(deep, 15_000_000);
+        assert_eq!(deep, 15_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3495,7 +3496,7 @@ fun test_process_order_referral_ok() {
             &mut test,
         );
 
-        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+        assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
     test.next_tx(ALICE);
@@ -3503,11 +3504,11 @@ fun test_process_order_referral_ok() {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
-        test_utils::assert_eq(base, 0);
-        test_utils::assert_eq(quote, 0);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
         // 10bps fee, 2x multiplier = 300_000_000
         // + 10bps fee, 0.1x multiplier = 15_000_000
-        test_utils::assert_eq(deep, 315_000_000);
+        assert_eq!(deep, 315_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3529,7 +3530,7 @@ fun test_process_order_referral_ok() {
         // fees paid in USDC = 1.5 filled @ $2 = 3_000_000_000
         // 10bps of that = 3_000_000
         // penalty 1.25x = 3_750_000
-        test_utils::assert_eq(order_info.paid_fees(), 3_750_000);
+        assert_eq!(order_info.paid_fees(), 3_750_000);
     };
 
     test.next_tx(ALICE);
@@ -3537,10 +3538,10 @@ fun test_process_order_referral_ok() {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
-        test_utils::assert_eq(base, 0);
+        assert_eq!(base, 0);
         // fees paid in USDC = 3_750_000 with 2x multiple = 7_500_000
-        test_utils::assert_eq(quote, 7_500_000);
-        test_utils::assert_eq(deep, 315_000_000);
+        assert_eq!(quote, 7_500_000);
+        assert_eq!(deep, 315_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3562,7 +3563,7 @@ fun test_process_order_referral_ok() {
         // fees paid in SUI = 1.5 filled @ $1 = 1_500_000_000
         // 10bps of that = 1_500_000
         // penalty 1.25x = 1_875_000
-        test_utils::assert_eq(order_info.paid_fees(), 1_875_000);
+        assert_eq!(order_info.paid_fees(), 1_875_000);
     };
 
     test.next_tx(ALICE);
@@ -3571,9 +3572,9 @@ fun test_process_order_referral_ok() {
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
         // fees paid in SUI = 1_875_000 with 2x multiple = 3_750_000
-        test_utils::assert_eq(base, 3_750_000);
-        test_utils::assert_eq(quote, 7_500_000);
-        test_utils::assert_eq(deep, 315_000_000);
+        assert_eq!(base, 3_750_000);
+        assert_eq!(quote, 7_500_000);
+        assert_eq!(deep, 315_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3637,7 +3638,7 @@ fun test_enable_ewma_params_ok() {
             true,
             &mut test,
         );
-        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+        assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
     test.next_tx(ALICE);
@@ -3653,7 +3654,7 @@ fun test_enable_ewma_params_ok() {
             true,
             &mut test,
         );
-        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+        assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
     // pay with high gas price
@@ -3671,7 +3672,7 @@ fun test_enable_ewma_params_ok() {
             true,
             &mut test,
         );
-        test_utils::assert_eq(order_info.paid_fees(), 300_000_000);
+        assert_eq!(order_info.paid_fees(), 300_000_000);
     };
 
     test.next_tx(ALICE);
@@ -3698,7 +3699,7 @@ fun test_enable_ewma_params_ok() {
             true,
             &mut test,
         );
-        test_utils::assert_eq(order_info.paid_fees(), 150_000_000);
+        assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
     test_utils::destroy(clock);

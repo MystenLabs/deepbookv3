@@ -15,12 +15,14 @@ use tracing::debug;
 
 pub struct StakesHandler {
     event_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl StakesHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self {
             event_type: env.stake_event_type(),
+            env,
         }
     }
 }
@@ -32,7 +34,7 @@ impl Processor for StakesHandler {
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx) {
+            if !is_deepbook_tx(tx, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {
