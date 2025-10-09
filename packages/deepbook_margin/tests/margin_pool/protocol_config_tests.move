@@ -14,7 +14,7 @@ use std::unit_test::assert_eq;
 use sui::test_utils::destroy;
 
 /// Create a test protocol config with default values
-fun create_test_protocol_config(): ProtocolConfig {
+public fun create_test_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(), // 80%
