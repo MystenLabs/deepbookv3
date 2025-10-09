@@ -10,7 +10,7 @@ use std::unit_test::assert_eq;
 use sui::{clock, test_scenario::begin, test_utils::destroy};
 
 #[test]
-fun test_margin_state() {
+fun margin_state_operations_work() {
     let mut test = begin(test_constants::admin());
     let mut clock = clock::create_for_testing(test.ctx());
     let mut state = margin_state::default(&clock);
@@ -83,7 +83,7 @@ fun test_margin_state() {
 }
 
 #[test]
-fun test_margin_state_increase_supply_and_borrow() {
+fun margin_state_with_supply_and_borrow_accrues_interest() {
     let mut test = begin(test_constants::admin());
     let mut clock = clock::create_for_testing(test.ctx());
     let mut state = margin_state::default(&clock);
@@ -106,7 +106,7 @@ fun test_margin_state_increase_supply_and_borrow() {
     assert_eq!(state.borrow_shares(), 500 * constants::float_scaling());
     assert_eq!(state.last_update_timestamp(), clock.timestamp_ms());
 
-    // so far 1000 supplied, 1000 borrowed.
+    // so far 1000 supplied, 500 borrowed.
     // incremeent time by 30 days
     let elapsed = 30 * 24 * 60 * 60 * 1000;
     clock.increment_for_testing(elapsed);
