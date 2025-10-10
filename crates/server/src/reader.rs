@@ -8,7 +8,9 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl, SelectableHelper};
+use diesel::{
+    BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
+};
 use diesel_async::methods::LoadQuery;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use prometheus::Registry;
@@ -16,6 +18,22 @@ use std::sync::Arc;
 use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_pg_db::{Db, DbArgs};
 use url::Url;
+
+#[derive(QueryableByName, Debug)]
+struct OhclvRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    timestamp_ms: i64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    open: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    high: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    low: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    close: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    base_volume: f64,
+}
 
 #[derive(Clone)]
 pub struct Reader {
@@ -314,6 +332,59 @@ impl Reader {
             .load::<(String, i64, i64, i64, i64, i64, bool, String, String)>(&mut connection)
             .await
             .map_err(|_| DeepBookError::InternalError("Error fetching trade details".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_ohclv(
+        &self,
+        pool_id: String,
+        interval: String,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        limit: Option<i32>,
+    ) -> Result<Vec<(i64, f64, f64, f64, f64, f64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let limit_val = limit.unwrap_or(1000);
+        let _guard = self.metrics.db_latency.start_timer();
+        let query_str = format!(
+            "SELECT EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 as timestamp_ms, \
+             open::float8, high::float8, low::float8, close::float8, base_volume::float8 \
+             FROM get_ohclv('{}', '{}', {}::timestamp, {}::timestamp, {})",
+            interval,
+            pool_id,
+            start_time
+                .map(|ts| format!("to_timestamp({})", ts / 1000))
+                .unwrap_or_else(|| "NULL".to_string()),
+            end_time
+                .map(|ts| format!("to_timestamp({})", ts / 1000))
+                .unwrap_or_else(|| "NULL".to_string()),
+            limit_val
+        );
+
+        let res = diesel::sql_query(query_str)
+            .load::<OhclvRow>(&mut connection)
+            .await
+            .map_err(|e| DeepBookError::InternalError(format!("Error fetching OHCLV data: {}", e)))
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        (
+                            row.timestamp_ms,
+                            row.open,
+                            row.high,
+                            row.low,
+                            row.close,
+                            row.base_volume,
+                        )
+                    })
+                    .collect()
+            });
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
