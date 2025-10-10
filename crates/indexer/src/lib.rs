@@ -17,6 +17,8 @@ const MAINNET_PREVIOUS_PACKAGES: &[&str] = &[
 
 // Previous package IDs for testnet (add when available)
 const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[];
+const TESTNET_CURRENT_PACKAGE: &str =
+    "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73";
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
@@ -63,12 +65,8 @@ macro_rules! event_type_fn {
         $(#[$meta])*
         fn $fn_name(&self) -> StructTag {
             match self {
-                DeepbookEnv::Mainnet => {
+                _ => {
                     use models::deepbook::$($path)::+ as Event;
-                    convert_struct_tag(Event::struct_type())
-                },
-                DeepbookEnv::Testnet => {
-                    use models::deepbook_testnet::$($path)::+ as Event;
                     convert_struct_tag(Event::struct_type())
                 }
             }
@@ -87,14 +85,10 @@ macro_rules! phantom_event_type_fn {
         $(#[$meta])*
         fn $fn_name(&self) -> StructTag {
             match self {
-                DeepbookEnv::Mainnet => {
+                _ => {
                     use models::deepbook::$($path)::+ as Event;
                     convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
                 },
-                DeepbookEnv::Testnet => {
-                    use models::deepbook_testnet::$($path)::+ as Event;
-                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
-                }
             }
         }
     };
@@ -135,7 +129,7 @@ impl DeepbookEnv {
             ),
             DeepbookEnv::Testnet => (
                 TESTNET_PREVIOUS_PACKAGES,
-                AccountAddress::new(*models::deepbook_testnet::registry::PACKAGE_ID.inner()),
+                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
             ),
         };
 
@@ -158,7 +152,7 @@ impl DeepbookEnv {
             ),
             DeepbookEnv::Testnet => (
                 TESTNET_PREVIOUS_PACKAGES,
-                AccountAddress::new(*models::deepbook_testnet::registry::PACKAGE_ID.inner()),
+                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
             ),
         };
 
