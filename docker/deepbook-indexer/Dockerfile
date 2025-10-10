@@ -4,15 +4,21 @@ ARG PROFILE=release
 ARG GIT_REVISION
 ENV GIT_REVISION=$GIT_REVISION
 
-WORKDIR work
+WORKDIR /work
 
+# Install build dependencies and clean up apt cache in a single layer
+RUN apt-get update && \
+      apt-get install -y build-essential libssl-dev pkg-config curl cmake clang ca-certificates
+
+# Copy manifests first to leverage Docker layer caching for dependencies        
 COPY Cargo.lock Cargo.toml ./
+
+# Copy the rest of the source code
 COPY crates/ ./crates/
 COPY docker/deepbook-indexer/entry.sh ./
 
-RUN apt-get update && apt-get install -y build-essential libssl-dev pkg-config curl cmake clang ca-certificates
-ENV PATH="/root/.cargo/bin:${PATH}"
 
+ENV PATH="/root/.cargo/bin:${PATH}"
 RUN cargo build --profile $PROFILE --bin deepbook-indexer --config net.git-fetch-with-cli=true
 
 FROM debian:bookworm-slim AS runtime
@@ -21,7 +27,9 @@ RUN apt-get update
 RUN apt-get -y --no-install-recommends install wget \
         iputils-ping procps bind9-host bind9-dnsutils \
         curl iproute2 git ca-certificates libpq-dev \
-        postgresql
+        postgresql &&  \
+        rm -rf /var/lib/apt/lists/* && \
+        apt-get clean
 
 COPY --from=builder /work/target/release/deepbook-indexer /opt/mysten/bin/
 COPY --from=builder /work/entry.sh .
