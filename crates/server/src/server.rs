@@ -71,6 +71,7 @@ pub const DEEP_TREASURY_ID: &str =
 pub const DEEP_SUPPLY_MODULE: &str = "deep";
 pub const DEEP_SUPPLY_FUNCTION: &str = "total_supply";
 pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
+pub const OHCLV_PATH: &str = "/ohclv/:pool_name";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -153,6 +154,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(TRADE_COUNT_PATH, get(trade_count))
         .route(ORDER_UPDATES_PATH, get(order_updates))
         .route(ASSETS_PATH, get(assets))
+        .route(OHCLV_PATH, get(ohclv))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -1437,4 +1439,52 @@ impl ParameterUtil for HashMap<String, String> {
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(1)
     }
+}
+
+async fn ohclv(
+    Path(pool_name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HashMap<String, Value>>, DeepBookError> {
+    let pools = state.reader.get_pools().await?;
+    let pool = pools
+        .iter()
+        .find(|p| p.pool_name == pool_name)
+        .ok_or_else(|| DeepBookError::InternalError(format!("Pool '{}' not found", pool_name)))?;
+
+    let interval = params.get("interval").unwrap_or(&"1m".to_string()).clone();
+    let start_time = params.get("start_time").and_then(|v| v.parse::<i64>().ok());
+    let end_time = params.get("end_time").and_then(|v| v.parse::<i64>().ok());
+    let limit = params.get("limit").and_then(|v| v.parse::<i32>().ok());
+
+    let valid_intervals = vec!["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"];
+    if !valid_intervals.contains(&interval.as_str()) {
+        return Err(DeepBookError::InternalError(format!(
+            "Invalid interval: {}. Valid intervals are: {:?}",
+            interval, valid_intervals
+        )));
+    }
+
+    let candles = state
+        .reader
+        .get_ohclv(pool.pool_id.clone(), interval, start_time, end_time, limit)
+        .await?;
+    let candles_array: Vec<Value> = candles
+        .into_iter()
+        .map(|(timestamp, open, high, low, close, volume)| {
+            Value::Array(vec![
+                Value::from(timestamp),
+                Value::from(open),
+                Value::from(high),
+                Value::from(low),
+                Value::from(close),
+                Value::from(volume),
+            ])
+        })
+        .collect();
+
+    let mut response = HashMap::new();
+    response.insert("candles".to_string(), Value::Array(candles_array));
+
+    Ok(Json(response))
 }
