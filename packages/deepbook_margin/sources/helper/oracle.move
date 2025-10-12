@@ -14,6 +14,7 @@ use fun get_config_for_type as MarginRegistry.get_config_for_type;
 const EInvalidPythPrice: u64 = 1;
 const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
+const EInvalidPythPriceConf: u64 = 4;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -22,6 +23,7 @@ const BUFFER: u8 = 10;
 public struct PythConfig has drop, store {
     currencies: VecMap<TypeName, CoinTypeData>,
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
+    min_conf: u64,    // minimum confidence interval for pyth prices
 }
 
 /// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
@@ -54,7 +56,7 @@ public fun new_coin_type_data<T>(
 
 /// Creates a new PythConfig struct.
 /// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
+public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64, min_conf: u64): PythConfig {
     let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
 
     setups.do!(|coin_type| {
@@ -64,6 +66,7 @@ public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): Pyt
     PythConfig {
         currencies,
         max_age_secs,
+        min_conf,
     }
 }
 
@@ -191,6 +194,11 @@ fun price_config<T>(
     assert!(
         price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
         EPriceFeedIdMismatch,
+    );
+    // verify that the confidence interval is acceptable.
+    assert!(
+        price.get_conf() <= config.min_conf,
+        EInvalidPythPriceConf,
     );
 
     let target_decimals = if (is_usd_price_config) {
