@@ -130,6 +130,17 @@ public struct OrderExpired has copy, drop, store {
     timestamp: u64,
 }
 
+/// Emitted when an order is fully filled.
+public struct OrderFullyFilled has copy, drop, store {
+    pool_id: ID,
+    order_id: u128,
+    client_order_id: u64,
+    balance_manager_id: ID,
+    original_quantity: u64,
+    is_bid: bool,
+    timestamp: u64,
+}
+
 // === Public-View Functions ===
 public fun pool_id(self: &OrderInfo): ID {
     self.pool_id
@@ -504,6 +515,17 @@ public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
     let num_fills = self.fills.length();
     while (i < num_fills) {
         let fill = &self.fills[i];
+        if (fill.completed()) {
+            emit_order_fully_filled(
+                self.pool_id,
+                fill.maker_order_id(),
+                fill.maker_client_order_id(),
+                fill.balance_manager_id(),
+                fill.original_maker_quantity(),
+                !fill.taker_is_bid(),
+                timestamp,
+            );
+        };
         if (!fill.expired()) {
             event::emit(self.order_filled_from_fill(fill, timestamp));
         } else {
@@ -535,6 +557,40 @@ public(package) fun emit_order_placed(self: &OrderInfo) {
 
 public(package) fun emit_order_info(self: &OrderInfo) {
     event::emit(*self);
+}
+
+public(package) fun emit_order_fully_filled_if_filled(self: &OrderInfo, timestamp: u64) {
+    if (self.status == constants::filled()) {
+        emit_order_fully_filled(
+            self.pool_id,
+            self.order_id,
+            self.client_order_id,
+            self.balance_manager_id,
+            self.original_quantity,
+            self.is_bid,
+            timestamp,
+        );
+    }
+}
+
+public(package) fun emit_order_fully_filled(
+    pool_id: ID,
+    order_id: u128,
+    client_order_id: u64,
+    balance_manager_id: ID,
+    original_quantity: u64,
+    is_bid: bool,
+    timestamp: u64,
+) {
+    event::emit(OrderFullyFilled {
+        pool_id,
+        order_id,
+        client_order_id,
+        balance_manager_id,
+        original_quantity,
+        is_bid,
+        timestamp,
+    })
 }
 
 public(package) fun set_fill_limit_reached(self: &mut OrderInfo) {
