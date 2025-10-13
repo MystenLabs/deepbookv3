@@ -20,6 +20,12 @@ const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[];
 const TESTNET_CURRENT_PACKAGE: &str =
     "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73";
 
+// Margin package IDs
+const MAINNET_MARGIN_PACKAGE: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000"; // Not deployed yet
+const TESTNET_MARGIN_PACKAGE: &str =
+    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54";
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
     Mainnet,
@@ -145,14 +151,16 @@ impl DeepbookEnv {
         use move_core_types::account_address::AccountAddress;
         use std::str::FromStr;
 
-        let (previous_packages, current_package) = match self {
+        let (previous_packages, current_package, margin_package) = match self {
             DeepbookEnv::Mainnet => (
                 MAINNET_PREVIOUS_PACKAGES,
                 AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+                AccountAddress::from_str(MAINNET_MARGIN_PACKAGE).unwrap(),
             ),
             DeepbookEnv::Testnet => (
                 TESTNET_PREVIOUS_PACKAGES,
                 AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
+                AccountAddress::from_str(TESTNET_MARGIN_PACKAGE).unwrap(),
             ),
         };
 
@@ -161,6 +169,7 @@ impl DeepbookEnv {
             .map(|pkg| AccountAddress::from_str(pkg).unwrap())
             .collect();
         addresses.push(current_package);
+        addresses.push(margin_package);
         addresses
     }
 
@@ -181,4 +190,71 @@ impl DeepbookEnv {
     event_type_fn!(proposal_event_type, state::ProposalEvent);
     event_type_fn!(price_added_event_type, deep_price::PriceAdded);
     phantom_event_type_fn_2!(deep_burned_event_type, pool::DeepBurned);
+
+    // Margin Pool Operations Events
+    event_type_fn!(asset_supplied_event_type, margin_pool::AssetSupplied);
+    event_type_fn!(asset_withdrawn_event_type, margin_pool::AssetWithdrawn);
+
+    // Margin Manager Operations Events
+    event_type_fn!(
+        margin_manager_event_type,
+        margin_manager::MarginManagerEvent
+    );
+    event_type_fn!(loan_borrowed_event_type, margin_manager::LoanBorrowedEvent);
+    event_type_fn!(loan_repaid_event_type, margin_manager::LoanRepaidEvent);
+    event_type_fn!(liquidation_event_type, margin_manager::LiquidationEvent);
+
+    // Margin Pool Admin Events
+    event_type_fn!(
+        margin_pool_created_event_type,
+        margin_pool::MarginPoolCreated
+    );
+    event_type_fn!(
+        deepbook_pool_updated_event_type,
+        margin_pool::DeepbookPoolUpdated
+    );
+    event_type_fn!(
+        interest_params_updated_event_type,
+        margin_pool::InterestParamsUpdated
+    );
+    event_type_fn!(
+        margin_pool_config_updated_event_type,
+        margin_pool::MarginPoolConfigUpdated
+    );
+
+    // Margin Fee Events
+    event_type_fn!(
+        maintainer_fees_withdrawn_event_type,
+        margin_pool::MaintainerFeesWithdrawn
+    );
+    event_type_fn!(
+        protocol_fees_withdrawn_event_type,
+        margin_pool::ProtocolFeesWithdrawn
+    );
+    event_type_fn!(
+        referral_fees_claimed_event_type,
+        referral_fees::ReferralFeesClaimedEvent
+    );
+    event_type_fn!(
+        protocol_fees_increased_event_type,
+        referral_fees::ProtocolFeesIncreasedEvent
+    );
+
+    // Margin Registry Events
+    event_type_fn!(
+        maintainer_cap_updated_event_type,
+        margin_registry::MaintainerCapUpdated
+    );
+    event_type_fn!(
+        deepbook_pool_registered_event_type,
+        margin_registry::DeepbookPoolRegistered
+    );
+    event_type_fn!(
+        deepbook_pool_updated_event_type,
+        margin_registry::DeepbookPoolUpdated
+    );
+    event_type_fn!(
+        deepbook_pool_config_updated_event_type,
+        margin_registry::DeepbookPoolConfigUpdated
+    );
 }

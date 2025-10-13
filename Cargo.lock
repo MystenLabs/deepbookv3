@@ -2125,6 +2125,7 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "sui-field-count",

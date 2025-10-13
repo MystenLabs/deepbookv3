@@ -3,6 +3,11 @@ use clap::Parser;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
+use deepbook_indexer::handlers::margin_fees_handler::MarginFeesHandler;
+use deepbook_indexer::handlers::margin_manager_operations_handler::MarginManagerOperationsHandler;
+use deepbook_indexer::handlers::margin_pool_admin_handler::MarginPoolAdminHandler;
+use deepbook_indexer::handlers::margin_pool_operations_handler::MarginPoolOperationsHandler;
+use deepbook_indexer::handlers::margin_registry_handler::MarginRegistryHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
@@ -23,6 +28,14 @@ use sui_pg_db::{Db, DbArgs};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum Package {
+    /// Index DeepBook core events (order fills, updates, pools, etc.)
+    Deepbook,
+    /// Index DeepBook margin events (lending, borrowing, liquidations, etc.)
+    DeepbookMargin,
+}
+
 #[derive(Parser)]
 #[clap(rename_all = "kebab-case", author, version)]
 struct Args {
@@ -41,6 +54,9 @@ struct Args {
     /// Deepbook environment, defaulted to SUI mainnet.
     #[clap(env, long)]
     env: DeepbookEnv,
+    /// Packages to index events for (can specify multiple)
+    #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
+    packages: Vec<Package>,
 }
 
 #[tokio::main]
@@ -55,6 +71,7 @@ async fn main() -> Result<(), anyhow::Error> {
         metrics_address,
         database_url,
         env,
+        packages,
     } = Args::parse();
 
     let cancel = CancellationToken::new();
@@ -98,39 +115,68 @@ async fn main() -> Result<(), anyhow::Error> {
     )
     .await?;
 
-    indexer
-        .concurrent_pipeline(BalancesHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(DeepBurnedHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(OrderFillHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(OrderUpdateHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(PoolPriceHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(ProposalsHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(RebatesHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(StakesHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(TradeParamsUpdateHandler::new(env), Default::default())
-        .await?;
-    indexer
-        .concurrent_pipeline(VotesHandler::new(env), Default::default())
-        .await?;
+    // Register handlers based on selected packages
+    for package in &packages {
+        match package {
+            Package::Deepbook => {
+                // DeepBook core event handlers
+                indexer
+                    .concurrent_pipeline(BalancesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(DeepBurnedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(OrderFillHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(OrderUpdateHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(PoolPriceHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ProposalsHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(RebatesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(StakesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(TradeParamsUpdateHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(VotesHandler::new(env), Default::default())
+                    .await?;
+            }
+            Package::DeepbookMargin => {
+                // DeepBook margin event handlers
+                indexer
+                    .concurrent_pipeline(MarginPoolOperationsHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MarginManagerOperationsHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(MarginPoolAdminHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(MarginFeesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(MarginRegistryHandler::new(env), Default::default())
+                    .await?;
+            }
+        }
+    }
 
     let h_indexer = indexer.run().await?;
     let h_metrics = metrics.run().await?;
