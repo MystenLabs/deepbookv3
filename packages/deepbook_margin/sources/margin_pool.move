@@ -232,7 +232,8 @@ public fun update_margin_pool_config<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Mint a new SupplierCap
+/// Mint a new SupplierCap, which is used to supply and withdraw from margin pools.
+/// One SupplierCap can be used to supply and withdraw from multiple margin pools.
 public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
     let id = object::new(ctx);
 
