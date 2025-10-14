@@ -4,16 +4,19 @@
 #[test_only]
 module deepbook_margin::margin_pool_math_tests;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap};
-use deepbook_margin::test_constants::{Self, USDC};
-use deepbook_margin::test_helpers::{Self, mint_coin, advance_time, interest_rate};
-use sui::clock::Clock;
-use sui::test_scenario::{Self as test, Scenario, return_shared};
-use sui::test_utils::destroy;
+use deepbook::{constants, math};
+use deepbook_margin::{
+    margin_constants,
+    margin_pool::MarginPool,
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap},
+    test_constants::{Self, USDC},
+    test_helpers::{Self, mint_coin, advance_time, interest_rate}
+};
+use sui::{
+    clock::Clock,
+    test_scenario::{Self as test, Scenario, return_shared},
+    test_utils::destroy
+};
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();
@@ -146,8 +149,8 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     // User 1 withdraws his entire balance, receiving 150 USDC
     scenario.next_tx(test_constants::user1());
     let withdrawn_coin = pool.withdraw(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::none(),
         &clock,
         scenario.ctx(),
@@ -183,8 +186,8 @@ fun test_zero_utilization() {
     // Withdraw should give back same amount
     scenario.next_tx(test_constants::user1());
     let withdrawn_coin = pool.withdraw(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::none(),
         &clock,
         scenario.ctx(),

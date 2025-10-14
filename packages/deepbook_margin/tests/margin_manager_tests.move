@@ -5,35 +5,36 @@
 module deepbook_margin::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool::{Self, MarginPool};
-use deepbook_margin::margin_registry::MarginRegistry;
-use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
-use deepbook_margin::test_helpers::{
-    Self,
-    setup_margin_registry,
-    create_margin_pool,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    default_protocol_config,
-    cleanup_margin_test,
-    mint_coin,
-    build_demo_usdc_price_info_object,
-    build_demo_usdt_price_info_object,
-    build_btc_price_info_object,
-    setup_btc_usd_deepbook_margin,
-    setup_usdc_usdt_deepbook_margin,
-    destroy_2,
-    destroy_3,
-    return_shared_2,
-    return_shared_3,
-    advance_time,
-    get_margin_pool_caps,
-    return_to_sender_2
+use deepbook_margin::{
+    margin_constants,
+    margin_manager::{Self, MarginManager},
+    margin_pool::{Self, MarginPool},
+    margin_registry::MarginRegistry,
+    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
+    test_helpers::{
+        Self,
+        setup_margin_registry,
+        create_margin_pool,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        default_protocol_config,
+        cleanup_margin_test,
+        mint_coin,
+        build_demo_usdc_price_info_object,
+        build_demo_usdt_price_info_object,
+        build_btc_price_info_object,
+        setup_btc_usd_deepbook_margin,
+        setup_usdc_usdt_deepbook_margin,
+        destroy_2,
+        destroy_3,
+        return_shared_2,
+        return_shared_3,
+        advance_time,
+        get_margin_pool_caps,
+        return_to_sender_2
+    }
 };
-use sui::test_scenario::{Self as test, return_shared};
-use sui::test_utils::destroy;
+use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
 use token::deep::DEEP;
 
 #[test]
@@ -1219,8 +1220,8 @@ fun test_max_leverage_enforcement() {
     let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     usdt_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<USDT>(10_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,

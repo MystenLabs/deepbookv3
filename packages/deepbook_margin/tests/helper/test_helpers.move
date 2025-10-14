@@ -4,32 +4,28 @@
 #[test_only]
 module deepbook_margin::test_helpers;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::{Self, Pool};
-use deepbook::registry::{Self, Registry};
-use deepbook_margin::margin_pool::{Self, MarginPool};
-use deepbook_margin::margin_registry::{
-    Self,
-    MarginRegistry,
-    MarginAdminCap,
-    MaintainerCap,
-    PoolConfig,
-    MarginPoolCap
+use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
+use deepbook_margin::{
+    margin_pool::{Self, MarginPool},
+    margin_registry::{
+        Self,
+        MarginRegistry,
+        MarginAdminCap,
+        MaintainerCap,
+        PoolConfig,
+        MarginPoolCap
+    },
+    oracle::{Self, PythConfig},
+    protocol_config::{Self, ProtocolConfig},
+    test_constants::{Self, USDC, USDT, BTC, SUI}
 };
-use deepbook_margin::oracle::{Self, PythConfig};
-use deepbook_margin::protocol_config::{Self, ProtocolConfig};
-use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, SUI};
-use pyth::i64;
-use pyth::price;
-use pyth::price_feed;
-use pyth::price_identifier;
-use pyth::price_info::{Self, PriceInfoObject};
-use std::option;
-use sui::clock::{Self, Clock};
-use sui::coin::{Self, Coin};
-use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
-use sui::test_utils::destroy;
+use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, Coin},
+    test_scenario::{Self as test, Scenario, begin, return_shared},
+    test_utils::destroy
+};
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
@@ -184,7 +180,7 @@ public fun supply_to_pool<Asset>(
 ): margin_pool::SupplierCap {
     let supplier_cap = margin_pool::mint_supplier_cap(ctx);
     let supply_coin = mint_coin<Asset>(amount, ctx);
-    pool.supply<Asset>(&supplier_cap, registry, supply_coin, option::none(), clock);
+    pool.supply<Asset>(registry, &supplier_cap, supply_coin, option::none(), clock);
     supplier_cap
 }
 
@@ -441,15 +437,15 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     usdc_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
     );
     usdt_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
@@ -517,15 +513,15 @@ public fun setup_btc_usd_deepbook_margin(): (
     let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     btc_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
     );
     usdc_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
@@ -593,15 +589,15 @@ public fun setup_btc_sui_deepbook_margin(): (
     let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     btc_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
     );
     sui_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<SUI>(1_000_000 * test_constants::sui_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
@@ -699,15 +695,15 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     base_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
     );
     quote_pool.supply(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,

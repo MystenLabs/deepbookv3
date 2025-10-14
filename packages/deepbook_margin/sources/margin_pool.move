@@ -242,8 +242,8 @@ public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
 /// Supply to the margin pool using a SupplierCap. Returns the new user supply amount.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
-    supplier_cap: &SupplierCap,
     registry: &MarginRegistry,
+    supplier_cap: &SupplierCap,
     coin: Coin<Asset>,
     referral: Option<address>,
     clock: &Clock,
@@ -281,8 +281,8 @@ public fun supply<Asset>(
 /// Withdraw from the margin pool. Returns the withdrawn coin.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
-    supplier_cap: &SupplierCap,
     registry: &MarginRegistry,
+    supplier_cap: &SupplierCap,
     amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,

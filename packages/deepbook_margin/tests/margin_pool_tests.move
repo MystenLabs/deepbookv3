@@ -4,23 +4,21 @@
 #[test_only]
 module deepbook_margin::margin_pool_tests;
 
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_pool::{Self, MarginPool};
-use deepbook_margin::margin_registry::{
-    Self,
-    MarginRegistry,
-    MarginAdminCap,
-    MaintainerCap,
-    MarginPoolCap
+use deepbook_margin::{
+    margin_constants,
+    margin_pool::{Self, MarginPool},
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
+    protocol_config,
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{Self, mint_coin, advance_time}
 };
-use deepbook_margin::protocol_config;
-use deepbook_margin::test_constants::{Self, USDC, USDT};
-use deepbook_margin::test_helpers::{Self, mint_coin, advance_time};
 use std::unit_test::assert_eq;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::test_scenario::{Self as test, Scenario, return_shared};
-use sui::test_utils::destroy;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    test_scenario::{Self as test, Scenario, return_shared},
+    test_utils::destroy
+};
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();
@@ -112,8 +110,8 @@ fun test_supply_and_withdraw_basic() {
     );
 
     let withdrawn = pool.withdraw<USDC>(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::some(50 * test_constants::usdc_multiplier()),
         &clock,
         scenario.ctx(),
@@ -176,8 +174,8 @@ fun test_multiple_users_supply_withdraw() {
 
     scenario.next_tx(test_constants::user1());
     let withdrawn1 = pool.withdraw<USDC>(
-        &supplier_cap1,
         &registry,
+        &supplier_cap1,
         option::some(25 * test_constants::usdc_multiplier()),
         &clock,
         scenario.ctx(),
@@ -186,8 +184,8 @@ fun test_multiple_users_supply_withdraw() {
 
     scenario.next_tx(test_constants::user2());
     let withdrawn2 = pool.withdraw<USDC>(
-        &supplier_cap2,
         &registry,
+        &supplier_cap2,
         option::some(15 * test_constants::usdc_multiplier()),
         &clock,
         scenario.ctx(),
@@ -219,8 +217,8 @@ fun test_withdraw_all() {
     );
 
     let withdrawn = pool.withdraw<USDC>(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::none(),
         &clock,
         scenario.ctx(),
@@ -262,8 +260,8 @@ fun test_interest_accrual_over_time() {
     clock.set_for_testing(margin_constants::year_ms());
 
     let withdrawn = pool.withdraw<USDC>(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::none(),
         &clock,
         scenario.ctx(),
@@ -303,8 +301,8 @@ fun test_not_enough_asset_in_pool() {
     // Should fail due to outstanding loan
     scenario.next_tx(test_constants::user1());
     let withdrawn = pool.withdraw<USDC>(
-        &supplier_cap,
         &registry,
+        &supplier_cap,
         option::none(),
         &clock,
         scenario.ctx(),
@@ -741,8 +739,8 @@ fun test_withdraw_exceeds_available_liquidity() {
     // User1 tries to withdraw their full 60 USDC, but only 25 is available
     scenario.next_tx(test_constants::user1());
     let withdrawn = pool.withdraw<USDC>(
-        &supplier_cap1,
         &registry,
+        &supplier_cap1,
         option::none(), // withdraw all
         &clock,
         scenario.ctx(),
@@ -861,8 +859,8 @@ fun test_supply_withdrawal_with_interest() {
     // User1 withdraws 20% of initial deposit
     scenario.next_tx(test_constants::user1());
     let withdrawn1 = pool.withdraw(
-        &supplier_cap1,
         &registry,
+        &supplier_cap1,
         option::some(200 * test_constants::usdc_multiplier()),
         &clock,
         scenario.ctx(),
@@ -874,8 +872,8 @@ fun test_supply_withdrawal_with_interest() {
     // User2 tries to withdraw all
     scenario.next_tx(test_constants::user2());
     let withdrawn2 = pool.withdraw(
-        &supplier_cap2,
         &registry,
+        &supplier_cap2,
         option::none(),
         &clock,
         scenario.ctx(),
@@ -1022,7 +1020,7 @@ fun test_full_liquidation_with_interest() {
 
     // User should be able to withdraw supply plus interest earned
     scenario.next_tx(test_constants::user1());
-    let withdrawn = pool.withdraw(&supplier_cap, &registry, option::none(), &clock, scenario.ctx());
+    let withdrawn = pool.withdraw(&registry, &supplier_cap, option::none(), &clock, scenario.ctx());
     let interest_earned = withdrawn.value() - supply_amount;
     assert!(withdrawn.value() > supply_amount);
     assert!(interest_earned > 0);
