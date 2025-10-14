@@ -42,6 +42,10 @@ public struct MarginPool<phantom Asset> has key, store {
     extra_fields: VecMap<String, u64>,
 }
 
+public struct SupplierCap has key, store {
+    id: UID,
+}
+
 // === Events ===
 public struct MarginPoolCreated has copy, drop {
     margin_pool_id: ID,
@@ -89,7 +93,7 @@ public struct MarginPoolConfigUpdated has copy, drop {
 public struct AssetSupplied has copy, drop {
     margin_pool_id: ID,
     asset_type: TypeName,
-    supplier: address,
+    supplier_cap_id: ID,
     supply_amount: u64,
     supply_shares: u64,
     timestamp: u64,
@@ -98,7 +102,7 @@ public struct AssetSupplied has copy, drop {
 public struct AssetWithdrawn has copy, drop {
     margin_pool_id: ID,
     asset_type: TypeName,
-    supplier: address,
+    supplier_cap_id: ID,
     withdraw_amount: u64,
     withdraw_shares: u64,
     timestamp: u64,
@@ -228,16 +232,24 @@ public fun update_margin_pool_config<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Supply to the margin pool. Returns the new user supply amount.
+/// Mint a new SupplierCap
+public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
+    let id = object::new(ctx);
+
+    SupplierCap { id }
+}
+
+/// Supply to the margin pool using a SupplierCap. Returns the new user supply amount.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
+    supplier_cap: &SupplierCap,
     registry: &MarginRegistry,
     coin: Coin<Asset>,
     referral: Option<address>,
     clock: &Clock,
-    ctx: &TxContext,
 ): u64 {
     registry.load_inner();
+    let supplier_cap_id = supplier_cap.id.to_inner();
     let supply_amount = coin.value();
     let (supply_shares, referral_fees) = self
         .state
@@ -245,7 +257,7 @@ public fun supply<Asset>(
     self.referral_fees.increase_fees_accrued(referral_fees);
     let (total_user_supply, previous_referral) = self
         .positions
-        .increase_user_supply(referral, supply_shares, ctx);
+        .increase_user_supply(supplier_cap_id, referral, supply_shares);
     self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
     self.referral_fees.increase_shares(referral, total_user_supply);
 
@@ -257,7 +269,7 @@ public fun supply<Asset>(
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
+        supplier_cap_id,
         supply_amount,
         supply_shares,
         timestamp: clock.timestamp_ms(),
@@ -269,13 +281,15 @@ public fun supply<Asset>(
 /// Withdraw from the margin pool. Returns the withdrawn coin.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
+    supplier_cap: &SupplierCap,
     registry: &MarginRegistry,
     amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let supplied_shares = self.positions.user_supply_shares(ctx);
+    let supplier_cap_id = supplier_cap.id.to_inner();
+    let supplied_shares = self.positions.user_supply_shares(supplier_cap_id);
     let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
@@ -285,7 +299,9 @@ public fun withdraw<Asset>(
         .decrease_supply_shares(&self.config, withdraw_shares, clock);
     self.referral_fees.increase_fees_accrued(referral_fees);
 
-    let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
+    let (_, previous_referral) = self
+        .positions
+        .decrease_user_supply(supplier_cap_id, withdraw_shares);
     self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);
@@ -293,7 +309,7 @@ public fun withdraw<Asset>(
     event::emit(AssetWithdrawn {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
+        supplier_cap_id,
         withdraw_amount,
         withdraw_shares,
         timestamp: clock.timestamp_ms(),
