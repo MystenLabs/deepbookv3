@@ -11,6 +11,7 @@ use deepbook_margin::margin_pool::{Self, MarginPool};
 use deepbook_margin::margin_registry::MarginRegistry;
 use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
 use deepbook_margin::test_helpers::{
+    Self,
     setup_margin_registry,
     create_margin_pool,
     create_pool_for_testing,
@@ -1215,13 +1216,14 @@ fun test_max_leverage_enforcement() {
     scenario.next_tx(test_constants::admin());
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     usdt_pool.supply(
+        &supplier_cap,
         &registry,
         mint_coin<USDT>(10_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
