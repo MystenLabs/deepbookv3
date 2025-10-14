@@ -5,35 +5,34 @@
 module deepbook_margin::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use deepbook_margin::{
-    margin_constants,
-    margin_manager::{Self, MarginManager},
-    margin_pool::{Self, MarginPool},
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
-    test_helpers::{
-        setup_margin_registry,
-        create_margin_pool,
-        create_pool_for_testing,
-        enable_deepbook_margin_on_pool,
-        default_protocol_config,
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_demo_usdt_price_info_object,
-        build_btc_price_info_object,
-        setup_btc_usd_deepbook_margin,
-        setup_usdc_usdt_deepbook_margin,
-        destroy_2,
-        destroy_3,
-        return_shared_2,
-        return_shared_3,
-        advance_time,
-        get_margin_pool_caps,
-        return_to_sender_2
-    }
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool::{Self, MarginPool};
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
+use deepbook_margin::test_helpers::{
+    setup_margin_registry,
+    create_margin_pool,
+    create_pool_for_testing,
+    enable_deepbook_margin_on_pool,
+    default_protocol_config,
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_demo_usdt_price_info_object,
+    build_btc_price_info_object,
+    setup_btc_usd_deepbook_margin,
+    setup_usdc_usdt_deepbook_margin,
+    destroy_2,
+    destroy_3,
+    return_shared_2,
+    return_shared_3,
+    advance_time,
+    get_margin_pool_caps,
+    return_to_sender_2
 };
-use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
+use sui::test_scenario::{Self as test, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 #[test]
@@ -1027,23 +1026,26 @@ fun test_risk_ratio_with_multiple_assets() {
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    usdc_pool.supply(
+    let usdc_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdc_pool,
         &registry,
-        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
     );
-    usdt_pool.supply(
+    let usdt_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdt_pool,
         &registry,
-        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
 
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+
+    destroy(usdc_supplier_cap);
+    destroy(usdt_supplier_cap);
 
     return_shared_2!(usdc_pool, usdt_pool);
     return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
@@ -1296,15 +1298,16 @@ fun test_min_position_size_requirement() {
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    usdt_pool.supply(
+    let usdt_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdt_pool,
         &registry,
-        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
+    destroy(usdt_supplier_cap);
     return_shared(usdt_pool);
     return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
@@ -1380,17 +1383,17 @@ fun test_repayment_rounding() {
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    usdc_pool.supply(
+    let usdc_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdc_pool,
         &registry,
-        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
     );
-    usdt_pool.supply(
+    let usdt_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdt_pool,
         &registry,
-        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
@@ -1398,6 +1401,8 @@ fun test_repayment_rounding() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
+    destroy(usdc_supplier_cap);
+    destroy(usdt_supplier_cap);
     return_shared_2!(usdc_pool, usdt_pool);
     return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
@@ -1508,17 +1513,17 @@ fun test_asset_rebalancing_between_pools() {
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    usdc_pool.supply(
+    let usdc_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdc_pool,
         &registry,
-        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
     );
-    usdt_pool.supply(
+    let usdt_supplier_cap = test_helpers::supply_to_pool(
+        &mut usdt_pool,
         &registry,
-        mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
-        option::none(),
+        1_000_000 * test_constants::usdt_multiplier(),
         &clock,
         scenario.ctx(),
     );
@@ -1526,6 +1531,8 @@ fun test_asset_rebalancing_between_pools() {
     usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
 
+    destroy(usdc_supplier_cap);
+    destroy(usdt_supplier_cap);
     return_shared_2!(usdc_pool, usdt_pool);
     return_to_sender_2!(&scenario, usdc_pool_cap, usdt_pool_cap);
 
