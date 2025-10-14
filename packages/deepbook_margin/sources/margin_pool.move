@@ -42,8 +42,8 @@ public struct MarginPool<phantom Asset> has key, store {
     extra_fields: VecMap<String, u64>,
 }
 
-// A capability that allows a user to supply and withdraw from margin pools.
-// The SupplierCap represents ownership of the shares supplied to the margin pool.
+/// A capability that allows a user to supply and withdraw from margin pools.
+/// The SupplierCap represents ownership of the shares supplied to the margin pool.
 public struct SupplierCap has key, store {
     id: UID,
 }
