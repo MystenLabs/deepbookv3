@@ -29,7 +29,7 @@ impl MarginRegistryHandler {
         Self {
             maintainer_cap_updated_event_type: env.maintainer_cap_updated_event_type(),
             deepbook_pool_registered_event_type: env.deepbook_pool_registered_event_type(),
-            deepbook_pool_updated_event_type: env.deepbook_pool_updated_event_type(),
+            deepbook_pool_updated_event_type: env.deepbook_margin_pool_updated_event_type(),
             deepbook_pool_config_updated_event_type: env.deepbook_pool_config_updated_event_type(),
             env,
         }
@@ -57,7 +57,6 @@ impl Processor for MarginRegistryHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-
                 if ev.type_ == self.maintainer_cap_updated_event_type {
                     let event: MaintainerCapUpdated = bcs::from_bytes(&ev.contents)?;
                     let data = MarginRegistryEvents {

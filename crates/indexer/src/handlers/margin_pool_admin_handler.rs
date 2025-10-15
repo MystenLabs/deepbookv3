@@ -57,7 +57,6 @@ impl Processor for MarginPoolAdminHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-
                 if ev.type_ == self.margin_pool_created_event_type {
                     let event: MarginPoolCreated = bcs::from_bytes(&ev.contents)?;
                     let config_json = serde_json::to_value(&event.config).ok();
@@ -121,7 +120,10 @@ impl Processor for MarginPoolAdminHandler {
                         config_json,
                         onchain_timestamp: event.timestamp as i64,
                     };
-                    debug!("Observed DeepBook Margin Interest Params Updated {:?}", data);
+                    debug!(
+                        "Observed DeepBook Margin Interest Params Updated {:?}",
+                        data
+                    );
                     results.push(data);
                 } else if ev.type_ == self.margin_pool_config_updated_event_type {
                     let event: MarginPoolConfigUpdated = bcs::from_bytes(&ev.contents)?;

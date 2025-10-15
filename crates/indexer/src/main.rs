@@ -3,7 +3,7 @@ use clap::Parser;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
-use deepbook_indexer::handlers::margin_fees_handler::MarginFeesHandler;
+//use deepbook_indexer::handlers::margin_fees_handler::MarginFeesHandler;
 use deepbook_indexer::handlers::margin_manager_operations_handler::MarginManagerOperationsHandler;
 use deepbook_indexer::handlers::margin_pool_admin_handler::MarginPoolAdminHandler;
 use deepbook_indexer::handlers::margin_pool_operations_handler::MarginPoolOperationsHandler;
@@ -168,9 +168,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(MarginPoolAdminHandler::new(env), Default::default())
                     .await?;
-                indexer
-                    .concurrent_pipeline(MarginFeesHandler::new(env), Default::default())
-                    .await?;
+                // indexer
+                //     .concurrent_pipeline(MarginFeesHandler::new(env), Default::default())
+                //     .await?;
                 indexer
                     .concurrent_pipeline(MarginRegistryHandler::new(env), Default::default())
                     .await?;

@@ -56,7 +56,6 @@ impl Processor for MarginManagerOperationsHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-
                 if ev.type_ == self.margin_manager_event_type {
                     let event: MarginManagerEvent = bcs::from_bytes(&ev.contents)?;
                     let data = MarginManagerOperations {
