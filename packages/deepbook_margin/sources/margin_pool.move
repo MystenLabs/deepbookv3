@@ -3,7 +3,7 @@
 
 module deepbook_margin::margin_pool;
 
-use deepbook::math;
+use deepbook::{balance_manager::{BalanceManager, WithdrawCap, DepositCap}, math};
 use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -239,8 +239,25 @@ public fun supply<Asset>(
 ): u64 {
     registry.load_inner();
     let user = ctx.sender();
-    
-    supply_inner(self, coin, referral, clock, user)
+
+    self.supply_inner(coin, referral, clock, user)
+}
+
+public fun supply_with_balance_manager<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    balance_manager: &mut BalanceManager,
+    withdraw_cap: &WithdrawCap,
+    amount: u64,
+    referral: Option<address>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    registry.load_inner();
+    let user = balance_manager.id().to_address();
+    let coin = balance_manager.withdraw_with_cap<Asset>(withdraw_cap, amount, ctx);
+
+    self.supply_inner(coin, referral, clock, user)
 }
 
 /// Withdraw from the margin pool. Returns the withdrawn coin.
@@ -254,7 +271,25 @@ public fun withdraw<Asset>(
     registry.load_inner();
     let user = ctx.sender();
 
-    withdraw_inner(self, amount, clock, user, ctx)
+    self.withdraw_inner(amount, clock, user, ctx)
+}
+
+public fun withdraw_with_balance_manager<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    balance_manager: &mut BalanceManager,
+    deposit_cap: &DepositCap,
+    amount: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    registry.load_inner();
+    let user = balance_manager.id().to_address();
+    let coin = self.withdraw_inner(option::some(amount), clock, user, ctx);
+    let amount = coin.value();
+    balance_manager.deposit_with_cap<Asset>(deposit_cap, coin, ctx);
+
+    amount
 }
 
 /// Mint a supply referral.
