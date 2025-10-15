@@ -3,7 +3,7 @@
 
 module deepbook_margin::margin_pool;
 
-use deepbook::math;
+use deepbook::{balance_manager::{BalanceManager, WithdrawCap, DepositCap}, math};
 use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -238,32 +238,26 @@ public fun supply<Asset>(
     ctx: &TxContext,
 ): u64 {
     registry.load_inner();
-    let supply_amount = coin.value();
-    let (supply_shares, referral_fees) = self
-        .state
-        .increase_supply(&self.config, supply_amount, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
-    let (total_user_supply, previous_referral) = self
-        .positions
-        .increase_user_supply(referral, supply_shares, ctx);
-    self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
-    self.referral_fees.increase_shares(referral, total_user_supply);
+    let user = ctx.sender();
 
-    let balance = coin.into_balance();
-    self.vault.join(balance);
+    self.supply_inner(coin, referral, clock, user)
+}
 
-    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+public fun supply_with_balance_manager<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    balance_manager: &mut BalanceManager,
+    withdraw_cap: &WithdrawCap,
+    amount: u64,
+    referral: Option<address>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    registry.load_inner();
+    let user = balance_manager.id().to_address();
+    let coin = balance_manager.withdraw_with_cap<Asset>(withdraw_cap, amount, ctx);
 
-    event::emit(AssetSupplied {
-        margin_pool_id: self.id(),
-        asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
-        supply_amount,
-        supply_shares,
-        timestamp: clock.timestamp_ms(),
-    });
-
-    total_user_supply
+    self.supply_inner(coin, referral, clock, user)
 }
 
 /// Withdraw from the margin pool. Returns the withdrawn coin.
@@ -275,31 +269,27 @@ public fun withdraw<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let supplied_shares = self.positions.user_supply_shares(ctx);
-    let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
-    let withdraw_amount = amount.destroy_with_default(supplied_amount);
-    let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
+    let user = ctx.sender();
 
-    let (_, referral_fees) = self
-        .state
-        .decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.withdraw_inner(amount, clock, user, ctx)
+}
 
-    let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
-    self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
-    assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
-    let coin = self.vault.split(withdraw_amount).into_coin(ctx);
+public fun withdraw_with_balance_manager<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    balance_manager: &mut BalanceManager,
+    deposit_cap: &DepositCap,
+    amount: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    registry.load_inner();
+    let user = balance_manager.id().to_address();
+    let coin = self.withdraw_inner(option::some(amount), clock, user, ctx);
+    let amount = coin.value();
+    balance_manager.deposit_with_cap<Asset>(deposit_cap, coin, ctx);
 
-    event::emit(AssetWithdrawn {
-        margin_pool_id: self.id(),
-        asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
-        withdraw_amount,
-        withdraw_shares,
-        timestamp: clock.timestamp_ms(),
-    });
-
-    coin
+    amount
 }
 
 /// Mint a supply referral.
@@ -483,4 +473,73 @@ public(package) fun borrow_shares_to_amount<Asset>(
 
 public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
+}
+
+fun supply_inner<Asset>(
+    self: &mut MarginPool<Asset>,
+    coin: Coin<Asset>,
+    referral: Option<address>,
+    clock: &Clock,
+    user: address,
+): u64 {
+    let supply_amount = coin.value();
+    let (supply_shares, referral_fees) = self
+        .state
+        .increase_supply(&self.config, supply_amount, clock);
+    self.referral_fees.increase_fees_accrued(referral_fees);
+    let (total_user_supply, previous_referral) = self
+        .positions
+        .increase_user_supply(referral, supply_shares, user);
+    self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
+    self.referral_fees.increase_shares(referral, total_user_supply);
+
+    let balance = coin.into_balance();
+    self.vault.join(balance);
+
+    assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+
+    event::emit(AssetSupplied {
+        margin_pool_id: self.id(),
+        asset_type: type_name::with_defining_ids<Asset>(),
+        supplier: user,
+        supply_amount,
+        supply_shares,
+        timestamp: clock.timestamp_ms(),
+    });
+
+    total_user_supply
+}
+
+fun withdraw_inner<Asset>(
+    self: &mut MarginPool<Asset>,
+    amount: Option<u64>,
+    clock: &Clock,
+    user: address,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    let supplied_shares = self.positions.user_supply_shares(user);
+    let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
+    let withdraw_amount = amount.destroy_with_default(supplied_amount);
+    let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
+
+    let (_, referral_fees) = self
+        .state
+        .decrease_supply_shares(&self.config, withdraw_shares, clock);
+    self.referral_fees.increase_fees_accrued(referral_fees);
+
+    let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, user);
+    self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
+    assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
+    let coin = self.vault.split(withdraw_amount).into_coin(ctx);
+
+    event::emit(AssetWithdrawn {
+        margin_pool_id: self.id(),
+        asset_type: type_name::with_defining_ids<Asset>(),
+        supplier: user,
+        withdraw_amount,
+        withdraw_shares,
+        timestamp: clock.timestamp_ms(),
+    });
+
+    coin
 }

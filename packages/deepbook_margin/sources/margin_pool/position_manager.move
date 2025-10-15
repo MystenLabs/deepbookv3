@@ -32,10 +32,9 @@ public(package) fun increase_user_supply(
     self: &mut PositionManager,
     referral: Option<address>,
     supply_shares: u64,
-    ctx: &TxContext,
+    user: address,
 ): (u64, Option<address>) {
-    let user = ctx.sender();
-    self.add_supply_entry(referral, ctx);
+    self.add_supply_entry(referral, user);
     let user_position = self.positions.borrow_mut(user);
     let current_referral = user_position.referral;
     user_position.shares = user_position.shares + supply_shares;
@@ -48,9 +47,8 @@ public(package) fun increase_user_supply(
 public(package) fun decrease_user_supply(
     self: &mut PositionManager,
     supply_shares: u64,
-    ctx: &TxContext,
+    user: address,
 ): (u64, Option<address>) {
-    let user = ctx.sender();
     let user_position = self.positions.borrow_mut(user);
     user_position.shares = user_position.shares - supply_shares;
 
@@ -60,9 +58,8 @@ public(package) fun decrease_user_supply(
 public(package) fun add_supply_entry(
     self: &mut PositionManager,
     referral: Option<address>,
-    ctx: &TxContext,
+    user: address,
 ) {
-    let user = ctx.sender();
     if (!self.positions.contains(user)) {
         self
             .positions
@@ -76,8 +73,7 @@ public(package) fun add_supply_entry(
     }
 }
 
-public(package) fun user_supply_shares(self: &PositionManager, ctx: &TxContext): u64 {
-    let user = ctx.sender();
+public(package) fun user_supply_shares(self: &PositionManager, user: address): u64 {
     if (self.positions.contains(user)) {
         self.positions.borrow(user).shares
     } else {
