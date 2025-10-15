@@ -169,6 +169,21 @@ public fun mint_coin<T>(amount: u64, ctx: &mut TxContext): Coin<T> {
     coin::mint_for_testing<T>(amount, ctx)
 }
 
+/// Helper function to supply to a margin pool with a SupplierCap
+/// Returns the SupplierCap which must be used for withdrawals and eventually destroyed
+public fun supply_to_pool<Asset>(
+    pool: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    amount: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): margin_pool::SupplierCap {
+    let supplier_cap = margin_pool::mint_supplier_cap(ctx);
+    let supply_coin = mint_coin<Asset>(amount, ctx);
+    pool.supply<Asset>(registry, &supplier_cap, supply_coin, option::none(), clock);
+    supplier_cap
+}
+
 /// Create a DeepBook pool for testing
 public fun create_pool_for_testing<BaseAsset, QuoteAsset>(scenario: &mut Scenario): ID {
     let registry_id = registry::test_registry(scenario.ctx());
@@ -419,20 +434,21 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     usdc_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
     usdt_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<USDT>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
 
     usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
@@ -443,6 +459,7 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     test::return_shared(registry);
     scenario.return_to_sender(usdt_pool_cap);
     scenario.return_to_sender(usdc_pool_cap);
+    destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, usdc_pool_id, usdt_pool_id, pool_id)
 }
@@ -493,20 +510,21 @@ public fun setup_btc_usd_deepbook_margin(): (
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     btc_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
     usdc_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
 
     btc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &btc_pool_cap, &clock);
@@ -517,6 +535,7 @@ public fun setup_btc_usd_deepbook_margin(): (
     test::return_shared(registry);
     scenario.return_to_sender(btc_pool_cap);
     scenario.return_to_sender(usdc_pool_cap);
+    destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id)
 }
@@ -567,20 +586,21 @@ public fun setup_btc_sui_deepbook_margin(): (
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     btc_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<BTC>(10 * test_constants::btc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
     sui_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<SUI>(1_000_000 * test_constants::sui_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
 
     btc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &btc_pool_cap, &clock);
@@ -591,6 +611,7 @@ public fun setup_btc_sui_deepbook_margin(): (
     test::return_shared(registry);
     scenario.return_to_sender(btc_pool_cap);
     scenario.return_to_sender(sui_pool_cap);
+    destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, pool_id)
 }
@@ -671,20 +692,21 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     let mut base_pool = scenario.take_shared_by_id<MarginPool<BaseAsset>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<QuoteAsset>>(quote_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
 
     base_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
     quote_pool.supply(
         &registry,
+        &supplier_cap,
         mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
         option::none(),
         &clock,
-        scenario.ctx(),
     );
 
     base_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &base_pool_cap, &clock);
@@ -693,6 +715,7 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     return_shared_2!(base_pool, quote_pool);
     return_shared(registry);
     return_to_sender_2!(&scenario, base_pool_cap, quote_pool_cap);
+    destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id)
 }
