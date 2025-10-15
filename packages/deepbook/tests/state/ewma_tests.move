@@ -54,35 +54,35 @@ fun test_update_ewma_state() {
     assert_eq!(ewma_state.last_updated_timestamp(), 0);
 
     // default alpha is 0.01, so the mean should be 0.99 * 1_000_000 + 0.01 * 2_000_000 = 1_010_000
-    // difference 2000 - 1010 = 990
-    // diff squared = 980100
+    // difference 2000 - 1000 = 1000 (using old mean)
+    // diff squared = 1000000
     let gas_price2 = 2_000;
     advance_scenario_with_gas_price(&mut test, gas_price2, 1000);
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
     ewma_state.update(&clock, test.ctx());
     assert_eq!(ewma_state.mean(), 1_010 * constants::float_scaling());
-    assert_eq!(ewma_state.variance(), 980100 * constants::float_scaling());
+    assert_eq!(ewma_state.variance(), 1000000 * constants::float_scaling());
 
     ewma_state.enable();
-    // mean = 1010, variance = 980100, std_dev = sqrt(980100) = 990
-    // z_score = (2000 - 1010) / 990 = 1
-    assert_eq!(ewma_state.z_score(test.ctx()), constants::float_scaling());
+    // mean = 1010, variance = 1000000, std_dev = sqrt(1000000) = 1000
+    // z_score = (2000 - 1010) / 1000 = 0.99
+    assert_eq!(ewma_state.z_score(test.ctx()), 990_000_000);
 
     let gas_price3 = 3_000;
     advance_scenario_with_gas_price(&mut test, gas_price3, 1000);
     clock.set_for_testing(1000 + 10);
     ewma_state.update(&clock, test.ctx());
     // mean = 0.99 * 1_010_000_000_000 + 0.01 * 3_000_000_000_000 = 1_029_900_000_000
-    // difference = 3_000_000_000_000 - 1_029_900_000_000 = 1_970_100_000_000 (1970.1)
-    // diff squared = (1970.1 * 1970.1) = 3_881_294_010 * 10^9
-    // variance = 0.99 * 980100 + 0.01 * 3881294.01 = 1,009,111.9401 * 10^9
+    // difference = 3_000_000_000_000 - 1_010_000_000_000 = 1_990_000_000_000 (1990, using old mean)
+    // diff squared = (1990 * 1990) = 3_960_100 * 10^9
+    // variance = 0.99 * 1000000 + 0.01 * 3960100 = 1,029,601 * 10^9
     assert_eq!(ewma_state.mean(), 1_029_900_000_000);
-    assert_eq!(ewma_state.variance(), 1_009_111_940_100_000);
+    assert_eq!(ewma_state.variance(), 1_029_601_000_000_000);
     // diff = 3000 - 1029.9 = 1970.1
-    // std_dev = sqrt(1_009_111.9401) = 1,004.545638634 * 10^9
-    // z_score = 1970.1 / 1,004.545638634 = 1.961185160 * 10^9
-    assert_eq!(ewma_state.z_score(test.ctx()), 1_961_185_160);
+    // std_dev = sqrt(1_029_601) ≈ 1,014.692836 * 10^9
+    // z_score = 1970.1 / 1,014.692836 ≈ 1.941573309 * 10^9
+    assert_eq!(ewma_state.z_score(test.ctx()), 1_941_573_309);
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee);
 
@@ -91,15 +91,15 @@ fun test_update_ewma_state() {
     clock.set_for_testing(1000 + 20);
     ewma_state.update(&clock, test.ctx());
     // mean = 0.99 * 1_029_900_000_000 + 0.01 * 4_000_000_000_000 = 1059.601 * 10^9
-    // difference = 4_000_000_000_000 - 1_059_601_000_000 = 2_940_399_000_000 (2940.399)
-    // diff squared = (2940.399 * 2940.399) = 8,645,946.279201 * 10^9
-    // variance = 0.99 * 1_009_111_940_100_000 + 0.01 * 8_645_946_279_201_000 = 1,085,480.28349101 * 10^9
+    // difference = 4_000_000_000_000 - 1_029_900_000_000 = 2_970_100_000_000 (2970.1, using old mean)
+    // diff squared = (2970.1 * 2970.1) = 8,821,494.01 * 10^9
+    // variance = 0.99 * 1_029_601_000_000_000 + 0.01 * 8_821_494_010_000_000 = 1,107,519.9301 * 10^9
     assert_eq!(ewma_state.mean(), 1_059_601_000_000);
-    assert_eq!(ewma_state.variance(), 1_085_480_283_491_010);
+    assert_eq!(ewma_state.variance(), 1_107_519_930_100_000);
     // diff = 4000 - 1059.601 = 2940.399
-    // std_dev = sqrt(1_085_480_283_491_010) = 1,041.863850745 * 10^9
-    // z_score = 2940.399 / 1,041.863850745 = 2.822248797 * 10^9
-    assert_eq!(ewma_state.z_score(test.ctx()), 2_822_248_797);
+    // std_dev = sqrt(1_107_519.9301) ≈ 1,052.387388 * 10^9
+    // z_score = 2940.399 / 1,052.387388 ≈ 2.794026309 * 10^9
+    assert_eq!(ewma_state.z_score(test.ctx()), 2_794_026_309);
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee);
 
