@@ -56,10 +56,10 @@ public(package) fun update(self: &mut EWMAState, clock: &Clock, ctx: &TxContext)
 
     let mean_new = math::mul(alpha, gas_price) + math::mul(one_minute_alpha, self.mean);
 
-    let diff = if (gas_price > mean_new) {
-        gas_price - mean_new
+    let diff = if (gas_price > self.mean) {
+        gas_price - self.mean
     } else {
-        mean_new - gas_price
+        self.mean - gas_price
     };
     let diff_squared = math::mul(diff, diff);
 
