@@ -1918,6 +1918,31 @@ fun test_master_deep_price(error_code: u64) {
     // Trading within pool 1 should have no fees
     // Alice should get 2 more sui, Bob should lose 2 sui
     // Alice should get 200 less deep, Bob should get 200 deep
+
+    // Alice places an order, then cancels
+    let order_info = pool_tests::place_limit_order<SUI, DEEP>(
+        ALICE,
+        pool1_id,
+        alice_balance_manager_id,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    pool_tests::cancel_order<SUI, DEEP>(
+        ALICE,
+        pool1_id,
+        alice_balance_manager_id,
+        order_info.order_id(),
+        &mut test,
+    );
+
     execute_cross_trading<SUI, DEEP>(
         pool1_id,
         alice_balance_manager_id,
