@@ -4,35 +4,37 @@
 #[test_only]
 module deepbook::pool_tests;
 
-use deepbook::{
-    balance_manager::{BalanceManager, TradeCap, DeepBookReferral, DepositCap, WithdrawCap},
-    balance_manager_tests::{
-        USDC,
-        USDT,
-        SPAM,
-        create_acct_and_share_with_funds,
-        create_acct_and_share_with_funds_typed,
-        create_caps,
-        asset_balance
-    },
-    big_vector::BigVector,
-    constants,
-    fill::Fill,
-    math,
-    order::Order,
-    order_info::OrderInfo,
-    pool::{Self, Pool},
-    registry::{Self, Registry},
-    utils
+use deepbook::balance_manager::{
+    BalanceManager,
+    TradeCap,
+    DeepBookReferral,
+    DepositCap,
+    WithdrawCap
 };
+use deepbook::balance_manager_tests::{
+    USDC,
+    USDT,
+    SPAM,
+    create_acct_and_share_with_funds,
+    create_acct_and_share_with_funds_typed,
+    create_caps,
+    asset_balance
+};
+use deepbook::big_vector::BigVector;
+use deepbook::constants;
+use deepbook::fill::Fill;
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use deepbook::utils;
 use std::unit_test::assert_eq;
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin, mint_for_testing},
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
-};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin, mint_for_testing};
+use sui::sui::SUI;
+use sui::test_scenario::{Scenario, begin, end, return_shared};
+use sui::test_utils;
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -3402,7 +3404,7 @@ fun test_update_referral_multiplier_e() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_100_000_000);
+        pool.update_referral_multiplier(&referral, 2_100_000_000, test.ctx());
     };
 
     abort (0)
@@ -3477,7 +3479,7 @@ fun test_process_order_referral_ok() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_000_000_000);
+        pool.update_referral_multiplier(&referral, 2_000_000_000, test.ctx());
         return_shared(pool);
         return_shared(referral);
     };
