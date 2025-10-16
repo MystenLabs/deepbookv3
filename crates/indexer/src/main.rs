@@ -55,7 +55,7 @@ struct Args {
     #[clap(env, long)]
     env: DeepbookEnv,
     /// Packages to index events for (can specify multiple)
-    #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
+    #[clap(long, value_enum, default_values = ["deepbook"])]
     packages: Vec<Package>,
 }
 
