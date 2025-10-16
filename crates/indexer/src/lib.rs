@@ -20,6 +20,12 @@ const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[];
 const TESTNET_CURRENT_PACKAGE: &str =
     "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73";
 
+// Margin package IDs
+const MAINNET_MARGIN_PACKAGE: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000"; // Not deployed yet
+const TESTNET_MARGIN_PACKAGE: &str =
+    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54";
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
     Mainnet,
@@ -60,13 +66,42 @@ pub enum DeepbookEnv {
 macro_rules! event_type_fn {
     (
         $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+
+        $fn_name:ident, $package:ident, $($path:ident)::+
     ) => {
         $(#[$meta])*
         fn $fn_name(&self) -> StructTag {
             match self {
-                _ => {
-                    use models::deepbook::$($path)::+ as Event;
+                DeepbookEnv::Mainnet => {
+                    use models::$package::$($path)::+ as Event;
+                    convert_struct_tag(Event::struct_type())
+                }
+                DeepbookEnv::Testnet => {
+                    paste::paste! {
+                        use models::[<$package _testnet>]::$($path)::+ as Event;
+                    }
+                    convert_struct_tag(Event::struct_type())
+                }
+            }
+        }
+    };
+}
+
+// Special macro for testnet-only events (like deepbook_margin)
+macro_rules! testnet_only_event_type_fn {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $package:ident, $($path:ident)::+
+    ) => {
+        $(#[$meta])*
+        fn $fn_name(&self) -> StructTag {
+            match self {
+                DeepbookEnv::Mainnet => {
+                    panic!("{} events are not available on mainnet yet", stringify!($package));
+                }
+                DeepbookEnv::Testnet => {
+                    paste::paste! {
+                        use models::[<$package>]::$($path)::+ as Event;
+                    }
                     convert_struct_tag(Event::struct_type())
                 }
             }
@@ -80,15 +115,21 @@ macro_rules! event_type_fn {
 macro_rules! phantom_event_type_fn {
     (
         $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+, $($phantom_type:ty),+
+        $fn_name:ident, $package:ident, $($path:ident)::+, $($phantom_type:ty),+
     ) => {
         $(#[$meta])*
         fn $fn_name(&self) -> StructTag {
             match self {
-                _ => {
-                    use models::deepbook::$($path)::+ as Event;
+                DeepbookEnv::Mainnet => {
+                    use models::$package::$($path)::+ as Event;
                     convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
-                },
+                }
+                DeepbookEnv::Testnet => {
+                    paste::paste! {
+                        use models::[<$package _testnet>]::$($path)::+ as Event;
+                    }
+                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
+                }
             }
         }
     };
@@ -98,11 +139,11 @@ macro_rules! phantom_event_type_fn {
 macro_rules! phantom_event_type_fn_2 {
     (
         $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+
+        $fn_name:ident, $package:ident, $($path:ident)::+
     ) => {
         phantom_event_type_fn!(
             $(#[$meta])*
-            $fn_name, $($path)::+, models::sui::sui::SUI, models::sui::sui::SUI
+            $fn_name, $package, $($path)::+, models::sui::sui::SUI, models::sui::sui::SUI
         );
     };
 }
@@ -145,14 +186,16 @@ impl DeepbookEnv {
         use move_core_types::account_address::AccountAddress;
         use std::str::FromStr;
 
-        let (previous_packages, current_package) = match self {
+        let (previous_packages, current_package, margin_package) = match self {
             DeepbookEnv::Mainnet => (
                 MAINNET_PREVIOUS_PACKAGES,
                 AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+                AccountAddress::from_str(MAINNET_MARGIN_PACKAGE).unwrap(),
             ),
             DeepbookEnv::Testnet => (
                 TESTNET_PREVIOUS_PACKAGES,
                 AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
+                AccountAddress::from_str(TESTNET_MARGIN_PACKAGE).unwrap(),
             ),
         };
 
@@ -161,24 +204,130 @@ impl DeepbookEnv {
             .map(|pkg| AccountAddress::from_str(pkg).unwrap())
             .collect();
         addresses.push(current_package);
+        addresses.push(margin_package);
         addresses
     }
 
-    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
-    event_type_fn!(flash_loan_borrowed_event_type, vault::FlashLoanBorrowed);
-    event_type_fn!(order_filled_event_type, order_info::OrderFilled);
-    event_type_fn!(order_placed_event_type, order_info::OrderPlaced);
-    event_type_fn!(order_modified_event_type, order::OrderModified);
-    event_type_fn!(order_canceled_event_type, order::OrderCanceled);
-    event_type_fn!(order_expired_event_type, order_info::OrderExpired);
-    event_type_fn!(vote_event_type, state::VoteEvent);
+    event_type_fn!(balance_event_type, deepbook, balance_manager::BalanceEvent);
+    event_type_fn!(
+        flash_loan_borrowed_event_type,
+        deepbook,
+        vault::FlashLoanBorrowed
+    );
+    event_type_fn!(order_filled_event_type, deepbook, order_info::OrderFilled);
+    event_type_fn!(order_placed_event_type, deepbook, order_info::OrderPlaced);
+    event_type_fn!(order_modified_event_type, deepbook, order::OrderModified);
+    event_type_fn!(order_canceled_event_type, deepbook, order::OrderCanceled);
+    event_type_fn!(order_expired_event_type, deepbook, order_info::OrderExpired);
+    event_type_fn!(vote_event_type, deepbook, state::VoteEvent);
     event_type_fn!(
         trade_params_update_event_type,
+        deepbook,
         governance::TradeParamsUpdateEvent
     );
-    event_type_fn!(stake_event_type, state::StakeEvent);
-    event_type_fn!(rebate_event_type, state::RebateEvent);
-    event_type_fn!(proposal_event_type, state::ProposalEvent);
-    event_type_fn!(price_added_event_type, deep_price::PriceAdded);
-    phantom_event_type_fn_2!(deep_burned_event_type, pool::DeepBurned);
+    event_type_fn!(stake_event_type, deepbook, state::StakeEvent);
+    event_type_fn!(rebate_event_type, deepbook, state::RebateEvent);
+    event_type_fn!(proposal_event_type, deepbook, state::ProposalEvent);
+    event_type_fn!(price_added_event_type, deepbook, deep_price::PriceAdded);
+    phantom_event_type_fn_2!(deep_burned_event_type, deepbook, pool::DeepBurned);
+
+    // Margin Pool Operations Events
+    testnet_only_event_type_fn!(
+        asset_supplied_event_type,
+        deepbook_margin,
+        margin_pool::AssetSupplied
+    );
+    testnet_only_event_type_fn!(
+        asset_withdrawn_event_type,
+        deepbook_margin,
+        margin_pool::AssetWithdrawn
+    );
+
+    // Margin Manager Operations Events
+    testnet_only_event_type_fn!(
+        margin_manager_event_type,
+        deepbook_margin,
+        margin_manager::MarginManagerEvent
+    );
+    testnet_only_event_type_fn!(
+        loan_borrowed_event_type,
+        deepbook_margin,
+        margin_manager::LoanBorrowedEvent
+    );
+    testnet_only_event_type_fn!(
+        loan_repaid_event_type,
+        deepbook_margin,
+        margin_manager::LoanRepaidEvent
+    );
+    testnet_only_event_type_fn!(
+        liquidation_event_type,
+        deepbook_margin,
+        margin_manager::LiquidationEvent
+    );
+
+    // Margin Pool Admin Events
+    testnet_only_event_type_fn!(
+        margin_pool_created_event_type,
+        deepbook_margin,
+        margin_pool::MarginPoolCreated
+    );
+    testnet_only_event_type_fn!(
+        deepbook_pool_updated_event_type,
+        deepbook_margin,
+        margin_pool::DeepbookPoolUpdated
+    );
+    testnet_only_event_type_fn!(
+        interest_params_updated_event_type,
+        deepbook_margin,
+        margin_pool::InterestParamsUpdated
+    );
+    testnet_only_event_type_fn!(
+        margin_pool_config_updated_event_type,
+        deepbook_margin,
+        margin_pool::MarginPoolConfigUpdated
+    );
+
+    // Margin Fee Events
+    // testnet_only_event_type_fn!(
+    //     maintainer_fees_withdrawn_event_type,
+    //     deepbook_margin,
+    //     margin_pool::MaintainerFeesWithdrawn
+    // );
+    // testnet_only_event_type_fn!(
+    //     protocol_fees_withdrawn_event_type,
+    //     deepbook_margin,
+    //     margin_pool::ProtocolFeesWithdrawn
+    // );
+    // testnet_only_event_type_fn!(
+    //     referral_fees_claimed_event_type,
+    //     deepbook_margin,
+    //     referral_fees::ReferralFeesClaimedEvent
+    // );
+    // testnet_only_event_type_fn!(
+    //     protocol_fees_increased_event_type,
+    //     deepbook_margin,
+    //     referral_fees::ProtocolFeesIncreasedEvent
+    // );
+
+    // Margin Registry Events
+    testnet_only_event_type_fn!(
+        maintainer_cap_updated_event_type,
+        deepbook_margin,
+        margin_registry::MaintainerCapUpdated
+    );
+    testnet_only_event_type_fn!(
+        deepbook_pool_registered_event_type,
+        deepbook_margin,
+        margin_registry::DeepbookPoolRegistered
+    );
+    testnet_only_event_type_fn!(
+        deepbook_margin_pool_updated_event_type,
+        deepbook_margin,
+        margin_registry::DeepbookPoolUpdated
+    );
+    testnet_only_event_type_fn!(
+        deepbook_pool_config_updated_event_type,
+        deepbook_margin,
+        margin_registry::DeepbookPoolConfigUpdated
+    );
 }
