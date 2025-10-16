@@ -23,7 +23,7 @@ const BUFFER: u8 = 10;
 public struct PythConfig has drop, store {
     currencies: VecMap<TypeName, CoinTypeData>,
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
-    min_conf: u64,    // minimum confidence interval for pyth prices
+    min_conf_bps: u64,    // minimum confidence interval for pyth prices in basis points
 }
 
 /// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
@@ -56,7 +56,7 @@ public fun new_coin_type_data<T>(
 
 /// Creates a new PythConfig struct.
 /// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64, min_conf: u64): PythConfig {
+public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64, min_conf_bps: u64): PythConfig {
     let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
 
     setups.do!(|coin_type| {
@@ -66,7 +66,7 @@ public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64, min_
     PythConfig {
         currencies,
         max_age_secs,
-        min_conf,
+        min_conf_bps,
     }
 }
 
@@ -197,7 +197,7 @@ fun price_config<T>(
     );
     // verify that the confidence interval is acceptable.
     assert!(
-        price.get_conf() <= config.min_conf,
+        price.get_conf() <= config.min_conf_bps * price.get_price().get_magnitude_if_positive() / 10_000,
         EInvalidPythPriceConf,
     );
 
