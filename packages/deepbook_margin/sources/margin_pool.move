@@ -4,22 +4,24 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_fees::{Self, ReferralFees, SupplyReferral}
+use deepbook_margin::margin_registry::{
+    MarginRegistry,
+    MaintainerCap,
+    MarginAdminCap,
+    MarginPoolCap
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
+use deepbook_margin::margin_state::{Self, State};
+use deepbook_margin::position_manager::{Self, PositionManager};
+use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
+use deepbook_margin::referral_fees::{Self, ReferralFees, SupplyReferral};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -243,12 +245,13 @@ public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
 }
 
 /// Supply to the margin pool using a SupplierCap. Returns the new supply amount.
+/// The `referral` parameter should be the ID of a SupplyReferral object if referral tracking is desired.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     supplier_cap: &SupplierCap,
     coin: Coin<Asset>,
-    referral: Option<address>,
+    referral: Option<ID>,
     clock: &Clock,
 ): u64 {
     registry.load_inner();
@@ -258,11 +261,29 @@ public fun supply<Asset>(
         .state
         .increase_supply(&self.config, supply_amount, clock);
     self.referral_fees.increase_fees_accrued(referral_fees);
+
     let (total_user_supply, previous_referral) = self
         .positions
         .increase_user_supply(supplier_cap_id, referral, supply_shares);
-    self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
-    self.referral_fees.increase_shares(referral, total_user_supply);
+
+    // Convert referral IDs to addresses for referral_fees tracking
+    let referral_address = if (referral.is_some()) {
+        option::some(referral.destroy_some().to_address())
+    } else {
+        referral.destroy_none();
+        option::none()
+    };
+    let previous_referral_address = if (previous_referral.is_some()) {
+        option::some(previous_referral.destroy_some().to_address())
+    } else {
+        previous_referral.destroy_none();
+        option::none()
+    };
+
+    self
+        .referral_fees
+        .decrease_shares(previous_referral_address, total_user_supply - supply_shares);
+    self.referral_fees.increase_shares(referral_address, total_user_supply);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -305,7 +326,16 @@ public fun withdraw<Asset>(
     let (_, previous_referral) = self
         .positions
         .decrease_user_supply(supplier_cap_id, withdraw_shares);
-    self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
+
+    // Convert referral ID to address for referral_fees tracking
+    let previous_referral_address = if (previous_referral.is_some()) {
+        option::some(previous_referral.destroy_some().to_address())
+    } else {
+        previous_referral.destroy_none();
+        option::none()
+    };
+
+    self.referral_fees.decrease_shares(previous_referral_address, withdraw_shares);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);
 
