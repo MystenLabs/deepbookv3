@@ -453,16 +453,16 @@ public fun user_supply_amount<Asset>(
 }
 
 // === Public-Package Functions ===
-/// Allows borrowing from the margin pool. Returns the borrowed coin.
+/// Allows borrowing from the margin pool. Returns the borrowed coin, and individual borrow shares for this loan.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
     amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Coin<Asset>, u64, u64) {
+): (Coin<Asset>, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (total_borrow, total_borrow_shares, referral_fees) = self
+    let (individual_borrow_shares, referral_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
     self.referral_fees.increase_fees_accrued(referral_fees);
@@ -471,7 +471,7 @@ public(package) fun borrow<Asset>(
         EMaxPoolBorrowPercentageExceeded,
     );
 
-    (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
+    (self.vault.split(amount).into_coin(ctx), individual_borrow_shares)
 }
 
 public(package) fun repay<Asset>(

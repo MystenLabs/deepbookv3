@@ -87,7 +87,7 @@ public fun test_borrow<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
-    let (coin, _, _) = pool.borrow(amount, clock, ctx);
+    let (coin, _) = pool.borrow(amount, clock, ctx);
 
     coin
 }
@@ -574,7 +574,7 @@ fun test_repay_liquidation_with_reward() {
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(
+    let (borrowed_coin, shares) = pool.borrow(
         50 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
@@ -614,7 +614,7 @@ fun test_repay_liquidation_with_default() {
 
     // User2 borrows
     scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(
+    let (borrowed_coin, shares) = pool.borrow(
         50 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
@@ -688,13 +688,13 @@ fun test_borrow_exceeds_vault_balance() {
     // User2 borrows 70 USDC
     scenario.next_tx(test_constants::user2());
     let first_borrow = 70 * test_constants::usdc_multiplier();
-    let (borrowed_coin1, _, _) = pool.borrow(first_borrow, &clock, scenario.ctx());
+    let (borrowed_coin1, _) = pool.borrow(first_borrow, &clock, scenario.ctx());
     destroy(borrowed_coin1);
 
     // User3 tries to borrow $1 more than what's left in the vault
     scenario.next_tx(test_constants::liquidator());
     let second_borrow = 31 * test_constants::usdc_multiplier();
-    let (borrowed_coin2, _, _) = pool.borrow(second_borrow, &clock, scenario.ctx());
+    let (borrowed_coin2, _) = pool.borrow(second_borrow, &clock, scenario.ctx());
 
     destroy(borrowed_coin2);
     destroy(supplier_cap);
@@ -732,7 +732,7 @@ fun test_withdraw_exceeds_available_liquidity() {
     // Someone borrows, reducing available liquidity
     scenario.next_tx(test_constants::liquidator());
     let borrow_amount = 75 * test_constants::usdc_multiplier();
-    let (borrowed_coin, _, _) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    let (borrowed_coin, _) = pool.borrow(borrow_amount, &clock, scenario.ctx());
     destroy(borrowed_coin);
 
     // Now only 25 USDC left in vault
@@ -770,7 +770,7 @@ fun test_liquidation_exact_amount() {
     );
 
     scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(
+    let (borrowed_coin, shares) = pool.borrow(
         500 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
@@ -847,7 +847,7 @@ fun test_supply_withdrawal_with_interest() {
     );
 
     scenario.next_tx(test_constants::liquidator());
-    let (borrowed_coin, _, _) = pool.borrow(
+    let (borrowed_coin, _) = pool.borrow(
         750 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
@@ -906,7 +906,7 @@ fun test_partial_liquidation_half_shares() {
 
     scenario.next_tx(test_constants::user2());
     let borrow_amount = 1000 * test_constants::usdc_multiplier();
-    let (borrowed_coin, _, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    let (borrowed_coin, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
     destroy(borrowed_coin);
 
     advance_time(&mut clock, margin_constants::year_ms());
@@ -948,7 +948,7 @@ fun test_partial_liquidation_with_default() {
 
     scenario.next_tx(test_constants::user2());
     let borrow_amount = 2000 * test_constants::usdc_multiplier();
-    let (borrowed_coin, _, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    let (borrowed_coin, total_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
     destroy(borrowed_coin);
 
     advance_time(&mut clock, margin_constants::year_ms() / 6);
@@ -996,7 +996,7 @@ fun test_full_liquidation_with_interest() {
 
     scenario.next_tx(test_constants::user2());
     let borrow_amount = 3000 * test_constants::usdc_multiplier();
-    let (borrowed_coin, _, borrow_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
+    let (borrowed_coin, borrow_shares) = pool.borrow(borrow_amount, &clock, scenario.ctx());
     destroy(borrowed_coin);
 
     let initial_debt = pool.borrow_shares_to_amount(borrow_shares, &clock);
@@ -1152,7 +1152,7 @@ fun test_user_supply_amount_with_interest_accrual() {
     scenario.next_tx(test_constants::user2());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let (borrowed_coin, _, _) = pool.borrow(
+    let (borrowed_coin, _) = pool.borrow(
         500 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),

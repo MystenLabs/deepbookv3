@@ -81,21 +81,21 @@ public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
     self.total_supply = self.total_supply - amount;
 }
 
-/// Increase the borrow given an amount. Return the total borrows, total borrow shares,
+/// Increase the borrow given an amount. Return the individual borrow shares
 /// and referral fees accrued since last update.
 public(package) fun increase_borrow(
     self: &mut State,
     config: &ProtocolConfig,
     amount: u64,
     clock: &Clock,
-): (u64, u64, u64) {
+): (u64, u64) {
     let referral_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let shares = math::div(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.total_borrow = self.total_borrow + amount;
 
-    (self.total_borrow, self.borrow_shares, referral_fees)
+    (shares, referral_fees)
 }
 
 /// Decrease the borrow given some shares. Return the corresponding amount
@@ -202,6 +202,7 @@ public(package) fun last_update_timestamp(self: &State): u64 {
 
 // === Private Functions ===
 /// Update the supply and borrow with the interest and referral fees.
+/// Returns the referral fees accrued since last update.
 fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;

@@ -130,7 +130,7 @@ fun test_borrow_supply(duration: u64, borrow: u64, supply: u64) {
     );
 
     scenario.next_tx(test_constants::user2());
-    let (borrowed_coin, _, shares) = pool.borrow(
+    let (borrowed_coin, shares) = pool.borrow(
         borrow,
         &clock,
         scenario.ctx(),
