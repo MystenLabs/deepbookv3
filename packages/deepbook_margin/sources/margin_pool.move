@@ -434,6 +434,20 @@ public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.interest_rate(self.state.utilization_rate())
 }
 
+public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: ID): u64 {
+    self.positions.user_supply_shares(supplier_cap_id)
+}
+
+public fun user_supply_amount<Asset>(
+    self: &MarginPool<Asset>,
+    supplier_cap_id: ID,
+    clock: &Clock,
+): u64 {
+    self
+        .state
+        .supply_shares_to_amount(self.user_supply_shares(supplier_cap_id), &self.config, clock)
+}
+
 // === Public-Package Functions ===
 /// Allows borrowing from the margin pool. Returns the borrowed coin.
 public(package) fun borrow<Asset>(

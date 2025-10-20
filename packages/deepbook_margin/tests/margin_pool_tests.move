@@ -1030,3 +1030,215 @@ fun test_full_liquidation_with_interest() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_user_supply_shares_tracks_individual_users() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // User1 supplies 20 USDC
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap_1 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_1_id = object::id(&supplier_cap_1);
+    let supply_coin_1 = mint_coin<USDC>(20 * test_constants::usdc_multiplier(), scenario.ctx());
+
+    let user1_shares = pool.supply(
+        &registry,
+        &supplier_cap_1,
+        supply_coin_1,
+        option::none(),
+        &clock,
+    );
+
+    // Verify user1 shares via the new function
+    assert!(pool.user_supply_shares(supplier_cap_1_id) == user1_shares, 0);
+    assert!(
+        pool.user_supply_shares(supplier_cap_1_id) == 20 * test_constants::usdc_multiplier(),
+        1,
+    );
+
+    // Pool should have 20 total supply shares
+    assert!(pool.supply_shares() == 20 * test_constants::usdc_multiplier(), 2);
+
+    test::return_shared(pool);
+    return_shared(registry);
+    destroy(supplier_cap_1);
+
+    // User2 supplies 10 USDC
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap_2 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_2_id = object::id(&supplier_cap_2);
+    let supply_coin_2 = mint_coin<USDC>(10 * test_constants::usdc_multiplier(), scenario.ctx());
+
+    let user2_shares = pool.supply(
+        &registry,
+        &supplier_cap_2,
+        supply_coin_2,
+        option::none(),
+        &clock,
+    );
+
+    // Verify user2 has exactly 10 shares (not 30)
+    assert!(pool.user_supply_shares(supplier_cap_2_id) == user2_shares, 3);
+    assert!(
+        pool.user_supply_shares(supplier_cap_2_id) == 10 * test_constants::usdc_multiplier(),
+        4,
+    );
+
+    // Pool should now have 30 total supply shares (20 + 10)
+    assert!(pool.supply_shares() == 30 * test_constants::usdc_multiplier(), 5);
+
+    test::return_shared(pool);
+    destroy(supplier_cap_2);
+
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_user_supply_amount_reflects_shares_value() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // User supplies 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_id = object::id(&supplier_cap);
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+
+    let shares = pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
+
+    // At ratio 1, shares should equal amount
+    assert!(shares == supply_amount, 0);
+
+    // Verify user_supply_shares returns correct shares
+    assert!(pool.user_supply_shares(supplier_cap_id) == shares, 1);
+
+    // Verify user_supply_amount returns correct amount
+    let amount = pool.user_supply_amount(supplier_cap_id, &clock);
+    assert!(amount == supply_amount, 2);
+
+    // Shares and amount should be equal at ratio 1
+    assert!(pool.user_supply_shares(supplier_cap_id) == amount, 3);
+
+    test::return_shared(pool);
+    destroy(supplier_cap);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_user_supply_amount_with_interest_accrual() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // User supplies 1000 USDC
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_id = object::id(&supplier_cap);
+    let supply_amount = 1000 * test_constants::usdc_multiplier();
+    let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
+
+    pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
+
+    let initial_shares = pool.user_supply_shares(supplier_cap_id);
+    let initial_amount = pool.user_supply_amount(supplier_cap_id, &clock);
+
+    assert!(initial_shares == supply_amount, 0);
+    assert!(initial_amount == supply_amount, 1);
+
+    test::return_shared(pool);
+    return_shared(registry);
+
+    // Someone borrows to generate interest
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let (borrowed_coin, _, _) = pool.borrow(
+        500 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    test::return_shared(pool);
+    return_shared(registry);
+    destroy(borrowed_coin);
+
+    // Advance time to accrue interest
+    clock.increment_for_testing(30 * 24 * 60 * 60 * 1000); // 30 days
+
+    // Check that amount increased but shares stayed the same
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    let final_shares = pool.user_supply_shares(supplier_cap_id);
+    let final_amount = pool.user_supply_amount(supplier_cap_id, &clock);
+
+    // Shares should remain unchanged
+    assert!(final_shares == initial_shares, 2);
+
+    // Amount should have increased due to interest
+    assert!(final_amount > initial_amount, 3);
+
+    test::return_shared(pool);
+    destroy(supplier_cap);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_multiple_users_supply_amounts_independent() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // User1 supplies 50 USDC
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap_1 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_1_id = object::id(&supplier_cap_1);
+    let user1_supply_amount = 50 * test_constants::usdc_multiplier();
+    let supply_coin_1 = mint_coin<USDC>(user1_supply_amount, scenario.ctx());
+
+    pool.supply(&registry, &supplier_cap_1, supply_coin_1, option::none(), &clock);
+
+    let user1_shares = pool.user_supply_shares(supplier_cap_1_id);
+    let user1_amount = pool.user_supply_amount(supplier_cap_1_id, &clock);
+
+    assert!(user1_shares == user1_supply_amount, 0);
+    assert!(user1_amount == user1_supply_amount, 1);
+
+    test::return_shared(pool);
+    return_shared(registry);
+    destroy(supplier_cap_1);
+
+    // User2 supplies 30 USDC
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap_2 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_2_id = object::id(&supplier_cap_2);
+    let user2_supply_amount = 30 * test_constants::usdc_multiplier();
+    let supply_coin_2 = mint_coin<USDC>(user2_supply_amount, scenario.ctx());
+
+    pool.supply(&registry, &supplier_cap_2, supply_coin_2, option::none(), &clock);
+
+    let user2_shares = pool.user_supply_shares(supplier_cap_2_id);
+    let user2_amount = pool.user_supply_amount(supplier_cap_2_id, &clock);
+
+    // User2's shares should be 30, not 80 (pool total)
+    assert!(user2_shares == user2_supply_amount, 2);
+    assert!(user2_amount == user2_supply_amount, 3);
+
+    // Pool total should be 50 + 30 = 80
+    assert!(pool.total_supply() == user1_supply_amount + user2_supply_amount, 4);
+    assert!(pool.supply_shares() == user1_shares + user2_shares, 5);
+
+    test::return_shared(pool);
+    destroy(supplier_cap_2);
+
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
