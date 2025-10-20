@@ -1052,14 +1052,11 @@ fun test_user_supply_shares_tracks_individual_users() {
     );
 
     // Verify user1 shares via the new function
-    assert!(pool.user_supply_shares(supplier_cap_1_id) == user1_shares, 0);
-    assert!(
-        pool.user_supply_shares(supplier_cap_1_id) == 20 * test_constants::usdc_multiplier(),
-        1,
-    );
+    assert!(pool.user_supply_shares(supplier_cap_1_id) == user1_shares);
+    assert!(pool.user_supply_shares(supplier_cap_1_id) == 20 * test_constants::usdc_multiplier());
 
     // Pool should have 20 total supply shares
-    assert!(pool.supply_shares() == 20 * test_constants::usdc_multiplier(), 2);
+    assert!(pool.supply_shares() == 20 * test_constants::usdc_multiplier());
 
     test::return_shared(pool);
     return_shared(registry);
@@ -1082,14 +1079,11 @@ fun test_user_supply_shares_tracks_individual_users() {
     );
 
     // Verify user2 has exactly 10 shares (not 30)
-    assert!(pool.user_supply_shares(supplier_cap_2_id) == user2_shares, 3);
-    assert!(
-        pool.user_supply_shares(supplier_cap_2_id) == 10 * test_constants::usdc_multiplier(),
-        4,
-    );
+    assert!(pool.user_supply_shares(supplier_cap_2_id) == user2_shares);
+    assert!(pool.user_supply_shares(supplier_cap_2_id) == 10 * test_constants::usdc_multiplier());
 
     // Pool should now have 30 total supply shares (20 + 10)
-    assert!(pool.supply_shares() == 30 * test_constants::usdc_multiplier(), 5);
+    assert!(pool.supply_shares() == 30 * test_constants::usdc_multiplier());
 
     test::return_shared(pool);
     destroy(supplier_cap_2);
@@ -1113,17 +1107,17 @@ fun test_user_supply_amount_reflects_shares_value() {
     let shares = pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
 
     // At ratio 1, shares should equal amount
-    assert!(shares == supply_amount, 0);
+    assert!(shares == supply_amount);
 
     // Verify user_supply_shares returns correct shares
-    assert!(pool.user_supply_shares(supplier_cap_id) == shares, 1);
+    assert!(pool.user_supply_shares(supplier_cap_id) == shares);
 
     // Verify user_supply_amount returns correct amount
     let amount = pool.user_supply_amount(supplier_cap_id, &clock);
-    assert!(amount == supply_amount, 2);
+    assert!(amount == supply_amount);
 
     // Shares and amount should be equal at ratio 1
-    assert!(pool.user_supply_shares(supplier_cap_id) == amount, 3);
+    assert!(pool.user_supply_shares(supplier_cap_id) == amount);
 
     test::return_shared(pool);
     destroy(supplier_cap);
@@ -1148,8 +1142,8 @@ fun test_user_supply_amount_with_interest_accrual() {
     let initial_shares = pool.user_supply_shares(supplier_cap_id);
     let initial_amount = pool.user_supply_amount(supplier_cap_id, &clock);
 
-    assert!(initial_shares == supply_amount, 0);
-    assert!(initial_amount == supply_amount, 1);
+    assert!(initial_shares == supply_amount);
+    assert!(initial_amount == supply_amount);
 
     test::return_shared(pool);
     return_shared(registry);
@@ -1180,10 +1174,10 @@ fun test_user_supply_amount_with_interest_accrual() {
     let final_amount = pool.user_supply_amount(supplier_cap_id, &clock);
 
     // Shares should remain unchanged
-    assert!(final_shares == initial_shares, 2);
+    assert!(final_shares == initial_shares);
 
     // Amount should have increased due to interest
-    assert!(final_amount > initial_amount, 3);
+    assert!(final_amount > initial_amount);
 
     test::return_shared(pool);
     destroy(supplier_cap);
@@ -1208,8 +1202,8 @@ fun test_multiple_users_supply_amounts_independent() {
     let user1_shares = pool.user_supply_shares(supplier_cap_1_id);
     let user1_amount = pool.user_supply_amount(supplier_cap_1_id, &clock);
 
-    assert!(user1_shares == user1_supply_amount, 0);
-    assert!(user1_amount == user1_supply_amount, 1);
+    assert!(user1_shares == user1_supply_amount);
+    assert!(user1_amount == user1_supply_amount);
 
     test::return_shared(pool);
     return_shared(registry);
@@ -1230,12 +1224,12 @@ fun test_multiple_users_supply_amounts_independent() {
     let user2_amount = pool.user_supply_amount(supplier_cap_2_id, &clock);
 
     // User2's shares should be 30, not 80 (pool total)
-    assert!(user2_shares == user2_supply_amount, 2);
-    assert!(user2_amount == user2_supply_amount, 3);
+    assert!(user2_shares == user2_supply_amount);
+    assert!(user2_amount == user2_supply_amount);
 
     // Pool total should be 50 + 30 = 80
-    assert!(pool.total_supply() == user1_supply_amount + user2_supply_amount, 4);
-    assert!(pool.supply_shares() == user1_shares + user2_shares, 5);
+    assert!(pool.total_supply() == user1_supply_amount + user2_supply_amount);
+    assert!(pool.supply_shares() == user1_shares + user2_shares);
 
     test::return_shared(pool);
     destroy(supplier_cap_2);
