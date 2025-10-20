@@ -331,7 +331,6 @@ fun test_user_shares_isolated_from_other_users_base() {
     // The key verifications are:
     // 1. mm2 has exactly 10 shares (not 30 which would be the bug)
     // 2. The pool has 30 total shares (20 from mm1 + 10 from mm2)
-    // These assertions above prove the fix is working correctly
 
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -456,7 +455,6 @@ fun test_user_shares_isolated_from_other_users_quote() {
     // The key verifications are:
     // 1. mm2 has exactly 10 shares (not 30 which would be the bug)
     // 2. The pool has 30 total shares (20 from mm1 + 10 from mm2)
-    // These assertions above prove the fix is working correctly
 
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
