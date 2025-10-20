@@ -77,7 +77,6 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
-    user_borrowed_shares: u64,
     timestamp: u64,
 }
 
@@ -258,8 +257,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         base_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, user_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_base_shares = user_shares;
+    let (coin, borrowed_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_base_shares = self.borrowed_base_shares + borrowed_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -276,7 +275,6 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: base_margin_pool.id(),
         loan_amount,
-        user_borrowed_shares: user_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -300,8 +298,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, user_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_quote_shares = user_shares;
+    let (coin, borrowed_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_quote_shares = self.borrowed_quote_shares + borrowed_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -318,7 +316,6 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: quote_margin_pool.id(),
         loan_amount,
-        user_borrowed_shares: user_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
