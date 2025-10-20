@@ -243,12 +243,13 @@ public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
 }
 
 /// Supply to the margin pool using a SupplierCap. Returns the new supply amount.
+/// The `referral` parameter should be the ID of a SupplyReferral object if referral tracking is desired.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     supplier_cap: &SupplierCap,
     coin: Coin<Asset>,
-    referral: Option<address>,
+    referral: Option<ID>,
     clock: &Clock,
 ): u64 {
     registry.load_inner();
@@ -258,9 +259,11 @@ public fun supply<Asset>(
         .state
         .increase_supply(&self.config, supply_amount, clock);
     self.referral_fees.increase_fees_accrued(referral_fees);
+
     let (total_user_supply, previous_referral) = self
         .positions
         .increase_user_supply(supplier_cap_id, referral, supply_shares);
+
     self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
     self.referral_fees.increase_shares(referral, total_user_supply);
 
@@ -305,6 +308,7 @@ public fun withdraw<Asset>(
     let (_, previous_referral) = self
         .positions
         .decrease_user_supply(supplier_cap_id, withdraw_shares);
+
     self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);

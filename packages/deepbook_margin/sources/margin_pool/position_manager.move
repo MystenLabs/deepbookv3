@@ -15,7 +15,7 @@ public struct PositionManager has store {
 
 public struct Position has store {
     shares: u64,
-    referral: Option<address>,
+    referral: Option<ID>,
 }
 
 // === Public-Package Functions ===
@@ -31,9 +31,9 @@ public(package) fun create_position_manager(ctx: &mut TxContext): PositionManage
 public(package) fun increase_user_supply(
     self: &mut PositionManager,
     supplier_cap_id: ID,
-    referral: Option<address>,
+    referral: Option<ID>,
     supply_shares: u64,
-): (u64, Option<address>) {
+): (u64, Option<ID>) {
     self.add_supply_entry(supplier_cap_id, referral);
     let user_position = self.positions.borrow_mut(supplier_cap_id);
     let current_referral = user_position.referral;
@@ -48,7 +48,7 @@ public(package) fun decrease_user_supply(
     self: &mut PositionManager,
     supplier_cap_id: ID,
     supply_shares: u64,
-): (u64, Option<address>) {
+): (u64, Option<ID>) {
     let user_position = self.positions.borrow_mut(supplier_cap_id);
     user_position.shares = user_position.shares - supply_shares;
 
@@ -58,7 +58,7 @@ public(package) fun decrease_user_supply(
 public(package) fun add_supply_entry(
     self: &mut PositionManager,
     supplier_cap_id: ID,
-    referral: Option<address>,
+    referral: Option<ID>,
 ) {
     if (!self.positions.contains(supplier_cap_id)) {
         self

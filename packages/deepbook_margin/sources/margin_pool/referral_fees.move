@@ -14,7 +14,7 @@ const EInvalidFeesAccrued: u64 = 2;
 
 // === Structs ===
 public struct ReferralFees has store {
-    referrals: Table<address, ReferralTracker>,
+    referrals: Table<ID, ReferralTracker>,
     total_shares: u64,
     fees_per_share: u64,
     maintainer_fees: u64,
@@ -77,7 +77,7 @@ public(package) fun mint_supply_referral(self: &mut ReferralFees, ctx: &mut TxCo
     self
         .referrals
         .add(
-            id.to_address(),
+            id_inner,
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
@@ -117,25 +117,17 @@ public(package) fun increase_fees_accrued(self: &mut ReferralFees, fees_accrued:
 }
 
 /// Increase the shares for a referral.
-public(package) fun increase_shares(
-    self: &mut ReferralFees,
-    referral: Option<address>,
-    shares: u64,
-) {
-    let referral_address = referral.destroy_with_default(margin_constants::default_referral());
-    let referral_tracker = self.referrals.borrow_mut(referral_address);
+public(package) fun increase_shares(self: &mut ReferralFees, referral: Option<ID>, shares: u64) {
+    let referral_id = referral.destroy_with_default(margin_constants::default_referral());
+    let referral_tracker = self.referrals.borrow_mut(referral_id);
     referral_tracker.current_shares = referral_tracker.current_shares + shares;
     self.total_shares = self.total_shares + shares;
 }
 
 /// Decrease the shares for a referral.
-public(package) fun decrease_shares(
-    self: &mut ReferralFees,
-    referral: Option<address>,
-    shares: u64,
-) {
-    let referral_address = referral.destroy_with_default(margin_constants::default_referral());
-    let referral_tracker = self.referrals.borrow_mut(referral_address);
+public(package) fun decrease_shares(self: &mut ReferralFees, referral: Option<ID>, shares: u64) {
+    let referral_id = referral.destroy_with_default(margin_constants::default_referral());
+    let referral_tracker = self.referrals.borrow_mut(referral_id);
     referral_tracker.current_shares = referral_tracker.current_shares - shares;
     referral_tracker.min_shares = referral_tracker.min_shares.min(referral_tracker.current_shares);
     self.total_shares = self.total_shares - shares;
@@ -150,7 +142,7 @@ public(package) fun calculate_and_claim(
 ): u64 {
     assert!(ctx.sender() == referral.owner, ENotOwner);
 
-    let referral_tracker = self.referrals.borrow_mut(referral.id.to_address());
+    let referral_tracker = self.referrals.borrow_mut(referral.id.to_inner());
     let referred_shares = referral_tracker.min_shares;
     let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
     let fees = math::mul(referred_shares, fees_per_share_delta);
@@ -191,7 +183,7 @@ public(package) fun protocol_fees(self: &ReferralFees): u64 {
     self.protocol_fees
 }
 
-public(package) fun referral_tracker(self: &ReferralFees, referral: address): (u64, u64) {
+public(package) fun referral_tracker(self: &ReferralFees, referral: ID): (u64, u64) {
     let referral_tracker = self.referrals.borrow(referral);
     (referral_tracker.current_shares, referral_tracker.min_shares)
 }
