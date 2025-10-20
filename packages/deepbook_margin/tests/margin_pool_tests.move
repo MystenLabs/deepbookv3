@@ -1152,7 +1152,7 @@ fun test_user_supply_amount_with_interest_accrual() {
     scenario.next_tx(test_constants::user2());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let (borrowed_coin, _, _) = pool.borrow(
+    let (borrowed_coin, _) = pool.borrow(
         500 * test_constants::usdc_multiplier(),
         &clock,
         scenario.ctx(),
