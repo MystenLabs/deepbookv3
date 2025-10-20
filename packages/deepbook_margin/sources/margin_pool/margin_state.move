@@ -202,6 +202,7 @@ public(package) fun last_update_timestamp(self: &State): u64 {
 
 // === Private Functions ===
 /// Update the supply and borrow with the interest and referral fees.
+/// Returns the referral fees accrued since last update.
 fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
