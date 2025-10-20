@@ -77,6 +77,7 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
+    loan_shares: u64,
     timestamp: u64,
 }
 
@@ -275,6 +276,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: base_margin_pool.id(),
         loan_amount,
+        loan_shares: borrowed_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -316,6 +318,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: quote_margin_pool.id(),
         loan_amount,
+        loan_shares: borrowed_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
