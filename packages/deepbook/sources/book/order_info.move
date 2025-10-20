@@ -516,8 +516,7 @@ public(package) fun emit_orders_filled(self: &OrderInfo, timestamp: u64) {
     while (i < num_fills) {
         let fill = &self.fills[i];
         if (fill.completed()) {
-            emit_order_fully_filled(
-                self.pool_id,
+            self.emit_order_fully_filled(
                 fill.maker_order_id(),
                 fill.maker_client_order_id(),
                 fill.balance_manager_id(),
@@ -561,8 +560,7 @@ public(package) fun emit_order_info(self: &OrderInfo) {
 
 public(package) fun emit_order_fully_filled_if_filled(self: &OrderInfo, timestamp: u64) {
     if (self.status == constants::filled()) {
-        emit_order_fully_filled(
-            self.pool_id,
+        self.emit_order_fully_filled(
             self.order_id,
             self.client_order_id,
             self.balance_manager_id,
@@ -574,7 +572,7 @@ public(package) fun emit_order_fully_filled_if_filled(self: &OrderInfo, timestam
 }
 
 public(package) fun emit_order_fully_filled(
-    pool_id: ID,
+    self: &OrderInfo,
     order_id: u128,
     client_order_id: u64,
     balance_manager_id: ID,
@@ -583,7 +581,7 @@ public(package) fun emit_order_fully_filled(
     timestamp: u64,
 ) {
     event::emit(OrderFullyFilled {
-        pool_id,
+        pool_id: self.pool_id,
         order_id,
         client_order_id,
         balance_manager_id,
