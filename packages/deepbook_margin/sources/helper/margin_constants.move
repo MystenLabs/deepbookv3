@@ -51,8 +51,8 @@ public fun max_margin_managers(): u64 {
     MAX_MARGIN_MANAGERS
 }
 
-public fun default_referral(): address {
-    DEFAULT_REFERRAL
+public fun default_referral(): ID {
+    DEFAULT_REFERRAL.to_id()
 }
 
 public fun max_referral_spread(): u64 {

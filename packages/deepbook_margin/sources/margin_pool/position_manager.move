@@ -6,8 +6,7 @@
 module deepbook_margin::position_manager;
 
 use std::string::String;
-use sui::table::{Self, Table};
-use sui::vec_map::{Self, VecMap};
+use sui::{table::{Self, Table}, vec_map::{Self, VecMap}};
 
 public struct PositionManager has store {
     positions: Table<ID, Position>,
