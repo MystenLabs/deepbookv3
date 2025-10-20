@@ -81,7 +81,7 @@ public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
     self.total_supply = self.total_supply - amount;
 }
 
-/// Increase the borrow given an amount. Return the total borrows, individual borrow shares,
+/// Increase the borrow given an amount. Return the individual borrow shares
 /// and referral fees accrued since last update.
 public(package) fun increase_borrow(
     self: &mut State,
