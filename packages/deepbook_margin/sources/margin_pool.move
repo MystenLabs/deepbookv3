@@ -4,22 +4,24 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_fees::{Self, ReferralFees, SupplyReferral}
+use deepbook_margin::margin_registry::{
+    MarginRegistry,
+    MaintainerCap,
+    MarginAdminCap,
+    MarginPoolCap
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
+use deepbook_margin::margin_state::{Self, State};
+use deepbook_margin::position_manager::{Self, PositionManager};
+use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
+use deepbook_margin::referral_fees::{Self, ReferralFees, SupplyReferral};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -453,16 +455,16 @@ public fun user_supply_amount<Asset>(
 }
 
 // === Public-Package Functions ===
-/// Allows borrowing from the margin pool. Returns the borrowed coin.
+/// Allows borrowing from the margin pool. Returns the borrowed coin, and individual borrow shares for this loan.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
     amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Coin<Asset>, u64, u64) {
+): (Coin<Asset>, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (total_borrow, total_borrow_shares, referral_fees) = self
+    let (individual_borrow_shares, referral_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
     self.referral_fees.increase_fees_accrued(referral_fees);
@@ -471,7 +473,7 @@ public(package) fun borrow<Asset>(
         EMaxPoolBorrowPercentageExceeded,
     );
 
-    (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
+    (self.vault.split(amount).into_coin(ctx), individual_borrow_shares)
 }
 
 public(package) fun repay<Asset>(

@@ -8,10 +8,12 @@
 /// amounts after interest and referral fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::vec_map::{Self, VecMap};
 
 public struct State has drop, store {
     total_supply: u64,
@@ -81,21 +83,21 @@ public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
     self.total_supply = self.total_supply - amount;
 }
 
-/// Increase the borrow given an amount. Return the total borrows, total borrow shares,
+/// Increase the borrow given an amount. Return the total borrows, individual borrow shares,
 /// and referral fees accrued since last update.
 public(package) fun increase_borrow(
     self: &mut State,
     config: &ProtocolConfig,
     amount: u64,
     clock: &Clock,
-): (u64, u64, u64) {
+): (u64, u64) {
     let referral_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let shares = math::div(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.total_borrow = self.total_borrow + amount;
 
-    (self.total_borrow, self.borrow_shares, referral_fees)
+    (shares, referral_fees)
 }
 
 /// Decrease the borrow given some shares. Return the corresponding amount

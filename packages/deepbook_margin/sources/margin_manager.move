@@ -3,29 +3,29 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::calculate_target_currency
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::calculate_target_currency;
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name;
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -77,8 +77,7 @@ public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
     margin_pool_id: ID,
     loan_amount: u64,
-    total_borrow: u64,
-    total_shares: u64,
+    user_borrowed_shares: u64,
     timestamp: u64,
 }
 
@@ -259,8 +258,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         base_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, total_borrow, total_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_base_shares = total_shares;
+    let (coin, user_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_base_shares = user_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -277,8 +276,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: base_margin_pool.id(),
         loan_amount,
-        total_borrow,
-        total_shares,
+        user_borrowed_shares: user_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -302,8 +300,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
         EDeepbookPoolNotAllowedForLoan,
     );
-    let (coin, total_borrow, total_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
-    self.borrowed_quote_shares = total_shares;
+    let (coin, user_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
+    self.borrowed_quote_shares = user_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
     self.deposit(registry, coin, ctx);
     let risk_ratio = self.risk_ratio_int(
@@ -320,8 +318,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
         margin_manager_id: self.id(),
         margin_pool_id: quote_margin_pool.id(),
         loan_amount,
-        total_borrow,
-        total_shares,
+        user_borrowed_shares: user_shares,
         timestamp: clock.timestamp_ms(),
     });
 }
