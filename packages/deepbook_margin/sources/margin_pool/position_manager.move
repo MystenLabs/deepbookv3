@@ -28,6 +28,7 @@ public(package) fun create_position_manager(ctx: &mut TxContext): PositionManage
 }
 
 /// Increase the supply shares of the user and return outstanding supply shares.
+/// Returns the new total supply shares and the previous referral.
 public(package) fun increase_user_supply(
     self: &mut PositionManager,
     supplier_cap_id: ID,
@@ -36,11 +37,11 @@ public(package) fun increase_user_supply(
 ): (u64, Option<ID>) {
     self.add_supply_entry(supplier_cap_id, referral);
     let user_position = self.positions.borrow_mut(supplier_cap_id);
-    let current_referral = user_position.referral;
+    let previous_referral = user_position.referral;
     user_position.shares = user_position.shares + supply_shares;
     user_position.referral = referral;
 
-    (user_position.shares, current_referral)
+    (user_position.shares, previous_referral)
 }
 
 /// Decrease the supply shares of the user and return outstanding supply shares.
