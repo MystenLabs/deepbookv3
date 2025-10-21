@@ -4,22 +4,24 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    protocol_fees::{Self, ProtocolFees, SupplyReferral}
+use deepbook_margin::margin_registry::{
+    MarginRegistry,
+    MaintainerCap,
+    MarginAdminCap,
+    MarginPoolCap
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
+use deepbook_margin::margin_state::{Self, State};
+use deepbook_margin::position_manager::{Self, PositionManager};
+use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
+use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -59,7 +61,7 @@ public struct MarginPoolCreated has copy, drop {
 
 public struct MaintainerFeesWithdrawn has copy, drop {
     margin_pool_id: ID,
-    maintainer_cap_id: ID,
+    margin_pool_cap_id: ID,
     maintainer_fees: u64,
     timestamp: u64,
 }
@@ -350,21 +352,22 @@ public fun withdraw_referral_fees<Asset>(
 }
 
 /// Withdraw the maintainer fees.
+/// The `margin_pool_cap` parameter is used to ensure the correct margin pool is being withdrawn from.
 public fun withdraw_maintainer_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    maintainer_cap: &MaintainerCap,
+    margin_pool_cap: &MarginPoolCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    registry.assert_maintainer_cap_valid(maintainer_cap);
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     let maintainer_fees = self.protocol_fees.claim_maintainer_fees();
     let coin = self.vault.split(maintainer_fees).into_coin(ctx);
 
     event::emit(MaintainerFeesWithdrawn {
         margin_pool_id: self.id(),
-        maintainer_cap_id: maintainer_cap.maintainer_cap_id(),
+        margin_pool_cap_id: margin_pool_cap.pool_cap_id(),
         maintainer_fees,
         timestamp: clock.timestamp_ms(),
     });
