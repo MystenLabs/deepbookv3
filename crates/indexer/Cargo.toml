@@ -35,7 +35,6 @@ tokio-util.workspace = true
 deepbook-schema = { path = "../schema" }
 paste = "1.0"
 
-
 [dev-dependencies]
 sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
 insta = { version = "1.43.1", features = ["json"] }
@@ -47,3 +46,4 @@ chrono = "0.4.39"
 [[bin]]
 name = "deepbook-indexer"
 path = "src/main.rs"
+
