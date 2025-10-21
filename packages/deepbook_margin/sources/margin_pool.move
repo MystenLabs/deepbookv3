@@ -13,7 +13,7 @@ use deepbook_margin::margin_registry::{
 use deepbook_margin::margin_state::{Self, State};
 use deepbook_margin::position_manager::{Self, PositionManager};
 use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
-use deepbook_margin::referral_fees::{Self, ReferralFees, SupplyReferral};
+use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
 use std::string::String;
 use std::type_name::{Self, TypeName};
 use sui::balance::{Self, Balance};
@@ -38,7 +38,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    referral_fees: ReferralFees,
+    referral_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
     extra_fields: VecMap<String, u64>,
@@ -129,7 +129,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        referral_fees: referral_fees::default_referral_fees(ctx),
+        referral_fees: protocol_fees::default_referral_fees(ctx),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
         extra_fields: vec_map::empty(),

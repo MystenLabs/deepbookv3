@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbook_margin::referral_fees;
+module deepbook_margin::protocol_fees;
 
 use deepbook::math;
 use deepbook_margin::margin_constants;
