@@ -4,28 +4,31 @@
 #[test_only]
 module deepbook_margin::test_helpers;
 
-use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
-use deepbook_margin::{
-    margin_pool::{Self, MarginPool},
-    margin_registry::{
-        Self,
-        MarginRegistry,
-        MarginAdminCap,
-        MaintainerCap,
-        PoolConfig,
-        MarginPoolCap
-    },
-    oracle::{Self, PythConfig},
-    protocol_config::{Self, ProtocolConfig},
-    test_constants::{Self, USDC, USDT, BTC, SUI}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use deepbook_margin::margin_pool::{Self, MarginPool};
+use deepbook_margin::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    PoolConfig,
+    MarginPoolCap
 };
-use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
-};
+use deepbook_margin::oracle::{Self, PythConfig};
+use deepbook_margin::protocol_config::{Self, ProtocolConfig};
+use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, SUI};
+use pyth::i64;
+use pyth::price;
+use pyth::price_feed;
+use pyth::price_identifier;
+use pyth::price_info::{Self, PriceInfoObject};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin};
+use sui::test_scenario::{Self as test, Scenario, begin, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 // === Cleanup helper functions ===
@@ -387,6 +390,7 @@ public fun create_test_pyth_config(): PythConfig {
     oracle::new_pyth_config(
         coin_data_vec,
         60, // max age 60 seconds
+        100, // max confidence interval, 1%
     )
 }
 

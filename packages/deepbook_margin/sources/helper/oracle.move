@@ -5,15 +5,19 @@
 module deepbook_margin::oracle;
 
 use deepbook_margin::margin_registry::MarginRegistry;
-use pyth::{price_info::PriceInfoObject, pyth};
+use pyth::price_info::PriceInfoObject;
+use pyth::pyth;
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::coin::CoinMetadata;
+use sui::vec_map::{Self, VecMap};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
 const EInvalidPythPrice: u64 = 1;
 const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
+const EInvalidPythPriceConf: u64 = 4;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -22,6 +26,7 @@ const BUFFER: u8 = 10;
 public struct PythConfig has drop, store {
     currencies: VecMap<TypeName, CoinTypeData>,
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
+    max_conf_bps: u64, // max confidence interval tolerance
 }
 
 /// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
@@ -54,7 +59,11 @@ public fun new_coin_type_data<T>(
 
 /// Creates a new PythConfig struct.
 /// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
+public fun new_pyth_config(
+    setups: vector<CoinTypeData>,
+    max_age_secs: u64,
+    max_conf_bps: u64,
+): PythConfig {
     let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
 
     setups.do!(|coin_type| {
@@ -64,6 +73,7 @@ public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): Pyt
     PythConfig {
         currencies,
         max_age_secs,
+        max_conf_bps,
     }
 }
 
@@ -193,6 +203,11 @@ fun price_config<T>(
         EPriceFeedIdMismatch,
     );
 
+    let pyth_price = price.get_price().get_magnitude_if_positive();
+    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
+
+    assert!(price.get_conf() <= config.max_conf_bps * pyth_price / 10_000, EInvalidPythPriceConf);
+
     let target_decimals = if (is_usd_price_config) {
         9
     } else {
@@ -203,8 +218,6 @@ fun price_config<T>(
     } else {
         9
     }; // Our starting decimals
-    let pyth_price = price.get_price().get_magnitude_if_positive();
-    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
 
     ConversionConfig {
         target_decimals,
