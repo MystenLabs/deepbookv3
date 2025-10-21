@@ -475,6 +475,10 @@ public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: 
     self.positions.user_supply_shares(supplier_cap_id)
 }
 
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
+}
+
 public fun user_supply_amount<Asset>(
     self: &MarginPool<Asset>,
     supplier_cap_id: ID,
@@ -549,8 +553,4 @@ public(package) fun borrow_shares_to_amount<Asset>(
     clock: &Clock,
 ): u64 {
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
-}
-
-public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
-    self.id.to_inner()
 }
