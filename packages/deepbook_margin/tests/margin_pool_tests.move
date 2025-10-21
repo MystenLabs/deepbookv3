@@ -4,21 +4,23 @@
 #[test_only]
 module deepbook_margin::margin_pool_tests;
 
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::{Self, MarginPool},
-    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
-    protocol_config,
-    test_constants::{Self, USDC, USDT},
-    test_helpers::{Self, mint_coin, advance_time}
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::{Self, MarginPool};
+use deepbook_margin::margin_registry::{
+    Self,
+    MarginRegistry,
+    MarginAdminCap,
+    MaintainerCap,
+    MarginPoolCap
 };
+use deepbook_margin::protocol_config;
+use deepbook_margin::test_constants::{Self, USDC, USDT};
+use deepbook_margin::test_helpers::{Self, mint_coin, advance_time};
 use std::unit_test::assert_eq;
-use sui::{
-    clock::Clock,
-    coin::Coin,
-    test_scenario::{Self as test, Scenario, return_shared},
-    test_utils::destroy
-};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::test_scenario::{Self as test, Scenario, return_shared};
+use sui::test_utils::destroy;
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();
@@ -516,7 +518,7 @@ fun test_update_margin_pool_config() {
     let new_margin_pool_config = protocol_config::new_margin_pool_config(
         2_000_000_000_000_000, // supply_cap: 2M tokens
         900_000_000, // max_utilization_rate: 90%
-        5_000_000, // referral_spread: 0.5%
+        5_000_000, // protocol_spread: 0.5%
         100_000_000, // min_borrow: 0.1 token
     );
 
