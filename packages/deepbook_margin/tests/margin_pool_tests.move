@@ -1040,7 +1040,7 @@ fun test_user_supply_shares_tracks_individual_users() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap_1 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_1 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_1_id = object::id(&supplier_cap_1);
     let supply_coin_1 = mint_coin<USDC>(20 * test_constants::usdc_multiplier(), scenario.ctx());
 
@@ -1067,7 +1067,7 @@ fun test_user_supply_shares_tracks_individual_users() {
     scenario.next_tx(test_constants::user2());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap_2 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_2 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_2_id = object::id(&supplier_cap_2);
     let supply_coin_2 = mint_coin<USDC>(10 * test_constants::usdc_multiplier(), scenario.ctx());
 
@@ -1100,7 +1100,7 @@ fun test_user_supply_amount_reflects_shares_value() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_id = object::id(&supplier_cap);
     let supply_amount = 100 * test_constants::usdc_multiplier();
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
@@ -1133,7 +1133,7 @@ fun test_user_supply_amount_with_interest_accrual() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_id = object::id(&supplier_cap);
     let supply_amount = 1000 * test_constants::usdc_multiplier();
     let supply_coin = mint_coin<USDC>(supply_amount, scenario.ctx());
@@ -1193,7 +1193,7 @@ fun test_multiple_users_supply_amounts_independent() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap_1 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_1 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_1_id = object::id(&supplier_cap_1);
     let user1_supply_amount = 50 * test_constants::usdc_multiplier();
     let supply_coin_1 = mint_coin<USDC>(user1_supply_amount, scenario.ctx());
@@ -1214,7 +1214,7 @@ fun test_multiple_users_supply_amounts_independent() {
     scenario.next_tx(test_constants::user2());
     let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap_2 = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap_2 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supplier_cap_2_id = object::id(&supplier_cap_2);
     let user2_supply_amount = 30 * test_constants::usdc_multiplier();
     let supply_coin_2 = mint_coin<USDC>(user2_supply_amount, scenario.ctx());
@@ -1282,11 +1282,11 @@ fun test_withdraw_referral_fees_not_owner() {
 
     // User1 creates a supply referral
     scenario.next_tx(test_constants::user1());
-    let referral_id = pool.mint_supply_referral(&registry, scenario.ctx());
+    let referral_id = pool.mint_supply_referral(&registry, &clock, scenario.ctx());
 
     // Supply some funds with the referral to generate fees
     scenario.next_tx(test_constants::user2());
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
     let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
     pool.supply(&registry, &supplier_cap, supply_coin, option::some(referral_id), &clock);
 

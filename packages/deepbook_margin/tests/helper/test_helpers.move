@@ -178,7 +178,7 @@ public fun supply_to_pool<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): margin_pool::SupplierCap {
-    let supplier_cap = margin_pool::mint_supplier_cap(ctx);
+    let supplier_cap = margin_pool::mint_supplier_cap(registry, clock, ctx);
     let supply_coin = mint_coin<Asset>(amount, ctx);
     pool.supply<Asset>(registry, &supplier_cap, supply_coin, option::none(), clock);
     supplier_cap
@@ -434,7 +434,7 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
 
     usdc_pool.supply(
         &registry,
@@ -510,7 +510,7 @@ public fun setup_btc_usd_deepbook_margin(): (
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
 
     btc_pool.supply(
         &registry,
@@ -586,7 +586,7 @@ public fun setup_btc_sui_deepbook_margin(): (
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
 
     btc_pool.supply(
         &registry,
@@ -692,7 +692,7 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     let mut base_pool = scenario.take_shared_by_id<MarginPool<BaseAsset>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<QuoteAsset>>(quote_pool_id);
     let registry = scenario.take_shared<MarginRegistry>();
-    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
 
     base_pool.supply(
         &registry,
