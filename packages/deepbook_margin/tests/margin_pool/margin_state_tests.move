@@ -4,10 +4,16 @@
 #[test_only]
 module deepbook_margin::margin_state_tests;
 
-use deepbook::{constants, math};
-use deepbook_margin::{margin_constants, margin_state, protocol_config_tests, test_constants};
+use deepbook::constants;
+use deepbook::math;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_state;
+use deepbook_margin::protocol_config_tests;
+use deepbook_margin::test_constants;
 use std::unit_test::assert_eq;
-use sui::{clock, test_scenario::begin, test_utils::destroy};
+use sui::clock;
+use sui::test_scenario::begin;
+use sui::test_utils::destroy;
 
 #[test]
 fun margin_state_operations_work() {
@@ -119,7 +125,7 @@ fun margin_state_with_supply_and_borrow_accrues_interest() {
         math::mul(interest_rate, 500 * constants::float_scaling()),
         math::div(elapsed, margin_constants::year_ms()),
     );
-    let referral_fees = math::mul(interest, config.referral_spread());
+    let referral_fees = math::mul(interest, config.protocol_spread());
     assert_eq!(interest, 4_109_589_000);
     assert_eq!(referral_fees, 410_958_900);
 
