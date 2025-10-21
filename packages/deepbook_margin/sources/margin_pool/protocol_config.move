@@ -3,8 +3,7 @@
 
 module deepbook_margin::protocol_config;
 
-use deepbook::constants;
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::margin_constants;
 use std::string::String;
 use sui::vec_map::{Self, VecMap};
