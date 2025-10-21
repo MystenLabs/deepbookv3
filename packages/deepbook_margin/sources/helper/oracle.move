@@ -5,12 +5,9 @@
 module deepbook_margin::oracle;
 
 use deepbook_margin::margin_registry::MarginRegistry;
-use pyth::price_info::PriceInfoObject;
-use pyth::pyth;
+use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
-use sui::clock::Clock;
-use sui::coin::CoinMetadata;
-use sui::vec_map::{Self, VecMap};
+use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
