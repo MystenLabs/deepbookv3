@@ -3,15 +3,17 @@
 
 /// Margin state manages the total supply and borrow of the margin pool.
 /// Whenever supply and borrow increases or decreases,
-/// the interest and referral fees are updated.
+/// the interest and protocol fees are updated.
 /// Shares represent the constant amount and are used to calculate
-/// amounts after interest and referral fees are applied.
+/// amounts after interest and protocol fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::vec_map::{Self, VecMap};
 
 public struct State has drop, store {
     total_supply: u64,
@@ -36,7 +38,7 @@ public(package) fun default(clock: &Clock): State {
 }
 
 /// Increase the supply given an amount. Return the corresponding shares
-/// and referral fees accrued since last update.
+/// and protocol fees accrued since last update.
 public(package) fun increase_supply(
     self: &mut State,
     config: &ProtocolConfig,
@@ -53,7 +55,7 @@ public(package) fun increase_supply(
 }
 
 /// Decrease the supply given some shares. Return the corresponding amount
-/// and referral fees accrued since last update.
+/// and protocol fees accrued since last update.
 public(package) fun decrease_supply_shares(
     self: &mut State,
     config: &ProtocolConfig,
@@ -82,7 +84,7 @@ public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
 }
 
 /// Increase the borrow given an amount. Return the individual borrow shares
-/// and referral fees accrued since last update.
+/// and protocol fees accrued since last update.
 public(package) fun increase_borrow(
     self: &mut State,
     config: &ProtocolConfig,
@@ -99,7 +101,7 @@ public(package) fun increase_borrow(
 }
 
 /// Decrease the borrow given some shares. Return the corresponding amount
-/// and referral fees accrued since last update.
+/// and protocol fees accrued since last update.
 public(package) fun decrease_borrow_shares(
     self: &mut State,
     config: &ProtocolConfig,
@@ -139,7 +141,7 @@ public(package) fun supply_shares_to_amount(
         elapsed,
         self.total_borrow,
     );
-    let referral_fees = math::mul(interest, config.referral_spread());
+    let referral_fees = math::mul(interest, config.protocol_spread());
     let supply = self.total_supply + interest - referral_fees;
     let ratio = if (self.supply_shares == 0) {
         constants::float_scaling()
@@ -201,8 +203,8 @@ public(package) fun last_update_timestamp(self: &State): u64 {
 }
 
 // === Private Functions ===
-/// Update the supply and borrow with the interest and referral fees.
-/// Returns the referral fees accrued since last update.
+/// Update the supply and borrow with the interest and protocol fees.
+/// Returns the protocol fees accrued since last update.
 fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let elapsed = now - self.last_update_timestamp;
@@ -212,7 +214,7 @@ fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
         elapsed,
         self.total_borrow,
     );
-    let referral_fees = math::mul(interest, config.referral_spread());
+    let referral_fees = math::mul(interest, config.protocol_spread());
     self.total_supply = self.total_supply + interest - referral_fees;
     self.total_borrow = self.total_borrow + interest;
     self.last_update_timestamp = now;
