@@ -9,6 +9,7 @@ use deepbook_margin::{
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
     protocol_config,
+    protocol_fees,
     test_constants::{Self, USDC, USDT},
     test_helpers::{Self, mint_coin, advance_time}
 };
@@ -1234,5 +1235,72 @@ fun test_multiple_users_supply_amounts_independent() {
     test::return_shared(pool);
     destroy(supplier_cap_2);
 
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EInvalidMarginPoolCap)]
+fun test_withdraw_maintainer_fees_with_wrong_cap() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    // Create a second pool and get its cap (the wrong cap)
+    let wrong_cap = setup_usdt_pool_with_cap(&mut scenario, &maintainer_cap, &clock);
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Supply some funds to generate fees
+    scenario.next_tx(test_constants::user1());
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        100 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Try to withdraw maintainer fees with the wrong cap (should fail)
+    scenario.next_tx(test_constants::admin());
+    let coin = pool.withdraw_maintainer_fees(&registry, &wrong_cap, &clock, scenario.ctx());
+
+    destroy(supplier_cap);
+    destroy(coin);
+    scenario.return_to_sender(wrong_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = protocol_fees::ENotOwner)]
+fun test_withdraw_referral_fees_not_owner() {
+    use deepbook_margin::protocol_fees::SupplyReferral;
+
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 creates a supply referral
+    scenario.next_tx(test_constants::user1());
+    let referral_id = pool.mint_supply_referral(&registry, scenario.ctx());
+
+    // Supply some funds with the referral to generate fees
+    scenario.next_tx(test_constants::user2());
+    let supplier_cap = margin_pool::mint_supplier_cap(scenario.ctx());
+    let supply_coin = mint_coin<USDC>(100 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, &supplier_cap, supply_coin, option::some(referral_id), &clock);
+
+    // Advance time and add some borrow to generate interest/fees
+    advance_time(&mut clock, 30 * 24 * 60 * 60 * 1000); // 30 days
+
+    // User2 (not the owner) tries to withdraw referral fees (should fail)
+    scenario.next_tx(test_constants::user2());
+    let mut referral = scenario.take_shared_by_id<SupplyReferral>(referral_id);
+    let coin = pool.withdraw_referral_fees(&registry, &mut referral, scenario.ctx());
+
+    return_shared(referral);
+    destroy(supplier_cap);
+    destroy(coin);
+    test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
