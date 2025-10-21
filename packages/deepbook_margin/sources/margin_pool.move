@@ -36,7 +36,7 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    referral_fees: ProtocolFees,
+    protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
     extra_fields: VecMap<String, u64>,
@@ -127,7 +127,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        referral_fees: protocol_fees::default_protocol_fees(ctx),
+        protocol_fees: protocol_fees::default_protocol_fees(ctx),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
         extra_fields: vec_map::empty(),
@@ -258,14 +258,14 @@ public fun supply<Asset>(
     let (supply_shares, protocol_fees) = self
         .state
         .increase_supply(&self.config, supply_amount, clock);
-    self.referral_fees.increase_fees_accrued(protocol_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
 
     let (total_user_supply_shares, previous_referral) = self
         .positions
         .increase_user_supply(supplier_cap_id, referral, supply_shares);
 
-    self.referral_fees.decrease_shares(previous_referral, total_user_supply_shares - supply_shares);
-    self.referral_fees.increase_shares(referral, total_user_supply_shares);
+    self.protocol_fees.decrease_shares(previous_referral, total_user_supply_shares - supply_shares);
+    self.protocol_fees.increase_shares(referral, total_user_supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -303,13 +303,13 @@ public fun withdraw<Asset>(
     let (_, protocol_fees) = self
         .state
         .decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.referral_fees.increase_fees_accrued(protocol_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
 
     let (_, previous_referral) = self
         .positions
         .decrease_user_supply(supplier_cap_id, withdraw_shares);
 
-    self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
+    self.protocol_fees.decrease_shares(previous_referral, withdraw_shares);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);
 
@@ -332,7 +332,7 @@ public fun mint_supply_referral<Asset>(
     ctx: &mut TxContext,
 ): ID {
     registry.load_inner();
-    self.referral_fees.mint_supply_referral(ctx)
+    self.protocol_fees.mint_supply_referral(ctx)
 }
 
 /// Withdraw the referral fees.
@@ -343,7 +343,7 @@ public fun withdraw_referral_fees<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let referral_fees = self.referral_fees.calculate_and_claim(referral, ctx);
+    let referral_fees = self.protocol_fees.calculate_and_claim(referral, ctx);
     let coin = self.vault.split(referral_fees).into_coin(ctx);
 
     coin
@@ -359,7 +359,7 @@ public fun withdraw_maintainer_fees<Asset>(
 ): Coin<Asset> {
     registry.load_inner();
     registry.assert_maintainer_cap_valid(maintainer_cap);
-    let maintainer_fees = self.referral_fees.claim_maintainer_fees();
+    let maintainer_fees = self.protocol_fees.claim_maintainer_fees();
     let coin = self.vault.split(maintainer_fees).into_coin(ctx);
 
     event::emit(MaintainerFeesWithdrawn {
@@ -381,7 +381,7 @@ public fun withdraw_protocol_fees<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let protocol_fees = self.referral_fees.claim_protocol_fees();
+    let protocol_fees = self.protocol_fees.claim_protocol_fees();
     let coin = self.vault.split(protocol_fees).into_coin(ctx);
 
     event::emit(ProtocolFeesWithdrawn {
@@ -465,7 +465,7 @@ public(package) fun borrow<Asset>(
     let (individual_borrow_shares, protocol_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
-    self.referral_fees.increase_fees_accrued(protocol_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
@@ -481,7 +481,7 @@ public(package) fun repay<Asset>(
     clock: &Clock,
 ) {
     let (_, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    self.referral_fees.increase_fees_accrued(protocol_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
 
     self.vault.join(coin.into_balance());
 }
@@ -496,7 +496,7 @@ public(package) fun repay_liquidation<Asset>(
     clock: &Clock,
 ): (u64, u64, u64) {
     let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
-    self.referral_fees.increase_fees_accrued(protocol_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
