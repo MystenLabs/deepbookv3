@@ -110,6 +110,18 @@ public struct AssetWithdrawn has copy, drop {
     timestamp: u64,
 }
 
+public struct SupplierCapMinted has copy, drop {
+    supplier_cap_id: ID,
+    timestamp: u64,
+}
+
+public struct SupplyReferralMinted has copy, drop {
+    margin_pool_id: ID,
+    supply_referral_id: ID,
+    owner: address,
+    timestamp: u64,
+}
+
 // === Public Functions * ADMIN *===
 /// Creates and registers a new margin pool. If a same asset pool already exists, abort.
 /// Sends a `MarginPoolCap` to the pool creator. Returns the created margin pool id.
@@ -236,8 +248,18 @@ public fun update_margin_pool_config<Asset>(
 // === Public Functions * LENDING * ===
 /// Mint a new SupplierCap, which is used to supply and withdraw from margin pools.
 /// One SupplierCap can be used to supply and withdraw from multiple margin pools.
-public fun mint_supplier_cap(ctx: &mut TxContext): SupplierCap {
+public fun mint_supplier_cap(
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): SupplierCap {
+    registry.load_inner();
     let id = object::new(ctx);
+
+    event::emit(SupplierCapMinted {
+        supplier_cap_id: id.to_inner(),
+        timestamp: clock.timestamp_ms(),
+    });
 
     SupplierCap { id }
 }
@@ -329,10 +351,20 @@ public fun withdraw<Asset>(
 public fun mint_supply_referral<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     registry.load_inner();
-    self.protocol_fees.mint_supply_referral(ctx)
+    let supply_referral_id = self.protocol_fees.mint_supply_referral(ctx);
+
+    event::emit(SupplyReferralMinted {
+        margin_pool_id: self.id(),
+        supply_referral_id,
+        owner: ctx.sender(),
+        timestamp: clock.timestamp_ms(),
+    });
+
+    supply_referral_id
 }
 
 /// Withdraw the referral fees.
