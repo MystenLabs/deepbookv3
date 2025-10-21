@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "B457C66E907F0B7BA3BCCEB9BA9D4AB59CE7C3936F3184736F3BDBFC6C9CA546"
+manifest_digest = "B2B01A400DEC92D45A5F96543DF039E36D7A26AF518698628B2E43DB4DDFAC93"
 deps_digest = "CAFAD8A7CF51067FB4358215BECB86BD100DD64E57C2AC8A7AE7D74B688F5965"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -30,7 +30,7 @@ source = { git = "https://github.com/MystenLabs/sui.git", rev = "9a4d4016ba66c64
 
 [[move.package]]
 id = "Pyth"
-source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "main", subdir = "target_chains/sui/contracts" }
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "sui-contract-testnet", subdir = "target_chains/sui/contracts" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -56,7 +56,7 @@ dependencies = [
 
 [[move.package]]
 id = "Wormhole"
-source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "82d82bffd5a8566e4b5d94be4e4678ad55ab1f4f", subdir = "sui/wormhole" }
+source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "sui/testnet", subdir = "sui/wormhole" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
