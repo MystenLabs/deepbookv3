@@ -393,4 +393,652 @@ impl Reader {
         }
         res
     }
+
+    // === Deepbook Margin Events ===
+    pub async fn get_margin_manager_created(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_manager_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, String, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::margin_manager_created::table
+            .filter(schema::margin_manager_created::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::margin_manager_created::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::margin_manager_created::event_digest,
+                schema::margin_manager_created::digest,
+                schema::margin_manager_created::sender,
+                schema::margin_manager_created::checkpoint,
+                schema::margin_manager_created::checkpoint_timestamp_ms,
+                schema::margin_manager_created::package,
+                schema::margin_manager_created::margin_manager_id,
+                schema::margin_manager_created::balance_manager_id,
+                schema::margin_manager_created::owner,
+                schema::margin_manager_created::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(manager_id) = margin_manager_id_filter {
+            query = query.filter(schema::margin_manager_created::margin_manager_id.eq(manager_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, String, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching margin manager created events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_loan_borrowed(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_manager_id_filter: Option<String>,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, i64, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::loan_borrowed::table
+            .filter(schema::loan_borrowed::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::loan_borrowed::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::loan_borrowed::event_digest,
+                schema::loan_borrowed::digest,
+                schema::loan_borrowed::sender,
+                schema::loan_borrowed::checkpoint,
+                schema::loan_borrowed::checkpoint_timestamp_ms,
+                schema::loan_borrowed::package,
+                schema::loan_borrowed::margin_manager_id,
+                schema::loan_borrowed::margin_pool_id,
+                schema::loan_borrowed::loan_amount,
+                schema::loan_borrowed::total_borrow,
+                schema::loan_borrowed::total_shares,
+                schema::loan_borrowed::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(manager_id) = margin_manager_id_filter {
+            query = query.filter(schema::loan_borrowed::margin_manager_id.eq(manager_id));
+        }
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::loan_borrowed::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, i64, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching loan borrowed events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_loan_repaid(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_manager_id_filter: Option<String>,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::loan_repaid::table
+            .filter(schema::loan_repaid::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::loan_repaid::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::loan_repaid::event_digest,
+                schema::loan_repaid::digest,
+                schema::loan_repaid::sender,
+                schema::loan_repaid::checkpoint,
+                schema::loan_repaid::checkpoint_timestamp_ms,
+                schema::loan_repaid::package,
+                schema::loan_repaid::margin_manager_id,
+                schema::loan_repaid::margin_pool_id,
+                schema::loan_repaid::repay_amount,
+                schema::loan_repaid::repay_shares,
+                schema::loan_repaid::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(manager_id) = margin_manager_id_filter {
+            query = query.filter(schema::loan_repaid::margin_manager_id.eq(manager_id));
+        }
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::loan_repaid::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching loan repaid events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_liquidation(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_manager_id_filter: Option<String>,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, i64, i64, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::liquidation::table
+            .filter(schema::liquidation::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::liquidation::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::liquidation::event_digest,
+                schema::liquidation::digest,
+                schema::liquidation::sender,
+                schema::liquidation::checkpoint,
+                schema::liquidation::checkpoint_timestamp_ms,
+                schema::liquidation::package,
+                schema::liquidation::margin_manager_id,
+                schema::liquidation::margin_pool_id,
+                schema::liquidation::liquidation_amount,
+                schema::liquidation::pool_reward,
+                schema::liquidation::pool_default,
+                schema::liquidation::risk_ratio,
+                schema::liquidation::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(manager_id) = margin_manager_id_filter {
+            query = query.filter(schema::liquidation::margin_manager_id.eq(manager_id));
+        }
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::liquidation::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, i64, i64, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching liquidation events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_asset_supplied(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+        supplier_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, String, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::asset_supplied::table
+            .filter(schema::asset_supplied::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::asset_supplied::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::asset_supplied::event_digest,
+                schema::asset_supplied::digest,
+                schema::asset_supplied::sender,
+                schema::asset_supplied::checkpoint,
+                schema::asset_supplied::checkpoint_timestamp_ms,
+                schema::asset_supplied::package,
+                schema::asset_supplied::margin_pool_id,
+                schema::asset_supplied::asset_type,
+                schema::asset_supplied::supplier,
+                schema::asset_supplied::amount,
+                schema::asset_supplied::shares,
+                schema::asset_supplied::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::asset_supplied::margin_pool_id.eq(pool_id));
+        }
+        if let Some(supplier) = supplier_filter {
+            query = query.filter(schema::asset_supplied::supplier.eq(supplier));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching asset supplied events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_asset_withdrawn(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+        supplier_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, String, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::asset_withdrawn::table
+            .filter(schema::asset_withdrawn::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::asset_withdrawn::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::asset_withdrawn::event_digest,
+                schema::asset_withdrawn::digest,
+                schema::asset_withdrawn::sender,
+                schema::asset_withdrawn::checkpoint,
+                schema::asset_withdrawn::checkpoint_timestamp_ms,
+                schema::asset_withdrawn::package,
+                schema::asset_withdrawn::margin_pool_id,
+                schema::asset_withdrawn::asset_type,
+                schema::asset_withdrawn::supplier,
+                schema::asset_withdrawn::amount,
+                schema::asset_withdrawn::shares,
+                schema::asset_withdrawn::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id));
+        }
+        if let Some(supplier) = supplier_filter {
+            query = query.filter(schema::asset_withdrawn::supplier.eq(supplier));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching asset withdrawn events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_margin_pool_created(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, String, serde_json::Value, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::margin_pool_created::table
+            .filter(schema::margin_pool_created::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::margin_pool_created::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::margin_pool_created::event_digest,
+                schema::margin_pool_created::digest,
+                schema::margin_pool_created::sender,
+                schema::margin_pool_created::checkpoint,
+                schema::margin_pool_created::checkpoint_timestamp_ms,
+                schema::margin_pool_created::package,
+                schema::margin_pool_created::margin_pool_id,
+                schema::margin_pool_created::maintainer_cap_id,
+                schema::margin_pool_created::asset_type,
+                schema::margin_pool_created::config_json,
+                schema::margin_pool_created::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::margin_pool_created::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, String, serde_json::Value, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching margin pool created events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_deepbook_pool_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+        deepbook_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, String, bool, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::deepbook_pool_updated::table
+            .filter(schema::deepbook_pool_updated::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::deepbook_pool_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::deepbook_pool_updated::event_digest,
+                schema::deepbook_pool_updated::digest,
+                schema::deepbook_pool_updated::sender,
+                schema::deepbook_pool_updated::checkpoint,
+                schema::deepbook_pool_updated::checkpoint_timestamp_ms,
+                schema::deepbook_pool_updated::package,
+                schema::deepbook_pool_updated::margin_pool_id,
+                schema::deepbook_pool_updated::deepbook_pool_id,
+                schema::deepbook_pool_updated::pool_cap_id,
+                schema::deepbook_pool_updated::enabled,
+                schema::deepbook_pool_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::deepbook_pool_updated::margin_pool_id.eq(pool_id));
+        }
+        if let Some(deepbook_pool_id) = deepbook_pool_id_filter {
+            query = query.filter(schema::deepbook_pool_updated::deepbook_pool_id.eq(deepbook_pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, String, bool, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching deepbook pool updated events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_interest_params_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, serde_json::Value, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::interest_params_updated::table
+            .filter(schema::interest_params_updated::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::interest_params_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::interest_params_updated::event_digest,
+                schema::interest_params_updated::digest,
+                schema::interest_params_updated::sender,
+                schema::interest_params_updated::checkpoint,
+                schema::interest_params_updated::checkpoint_timestamp_ms,
+                schema::interest_params_updated::package,
+                schema::interest_params_updated::margin_pool_id,
+                schema::interest_params_updated::pool_cap_id,
+                schema::interest_params_updated::config_json,
+                schema::interest_params_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::interest_params_updated::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, serde_json::Value, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching interest params updated events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_margin_pool_config_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, String, serde_json::Value, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::margin_pool_config_updated::table
+            .filter(schema::margin_pool_config_updated::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::margin_pool_config_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::margin_pool_config_updated::event_digest,
+                schema::margin_pool_config_updated::digest,
+                schema::margin_pool_config_updated::sender,
+                schema::margin_pool_config_updated::checkpoint,
+                schema::margin_pool_config_updated::checkpoint_timestamp_ms,
+                schema::margin_pool_config_updated::package,
+                schema::margin_pool_config_updated::margin_pool_id,
+                schema::margin_pool_config_updated::pool_cap_id,
+                schema::margin_pool_config_updated::config_json,
+                schema::margin_pool_config_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::margin_pool_config_updated::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, String, serde_json::Value, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching margin pool config updated events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_maintainer_cap_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        maintainer_cap_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, bool, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::maintainer_cap_updated::table
+            .filter(schema::maintainer_cap_updated::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::maintainer_cap_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::maintainer_cap_updated::event_digest,
+                schema::maintainer_cap_updated::digest,
+                schema::maintainer_cap_updated::sender,
+                schema::maintainer_cap_updated::checkpoint,
+                schema::maintainer_cap_updated::checkpoint_timestamp_ms,
+                schema::maintainer_cap_updated::package,
+                schema::maintainer_cap_updated::maintainer_cap_id,
+                schema::maintainer_cap_updated::allowed,
+                schema::maintainer_cap_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(cap_id) = maintainer_cap_id_filter {
+            query = query.filter(schema::maintainer_cap_updated::maintainer_cap_id.eq(cap_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, bool, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching maintainer cap updated events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_deepbook_pool_registered(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::deepbook_pool_registered::table
+            .filter(schema::deepbook_pool_registered::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::deepbook_pool_registered::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::deepbook_pool_registered::event_digest,
+                schema::deepbook_pool_registered::digest,
+                schema::deepbook_pool_registered::sender,
+                schema::deepbook_pool_registered::checkpoint,
+                schema::deepbook_pool_registered::checkpoint_timestamp_ms,
+                schema::deepbook_pool_registered::package,
+                schema::deepbook_pool_registered::pool_id,
+                schema::deepbook_pool_registered::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = pool_id_filter {
+            query = query.filter(schema::deepbook_pool_registered::pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching deepbook pool registered events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_deepbook_pool_updated_registry(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, bool, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::deepbook_pool_updated_registry::table
+            .filter(schema::deepbook_pool_updated_registry::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::deepbook_pool_updated_registry::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::deepbook_pool_updated_registry::event_digest,
+                schema::deepbook_pool_updated_registry::digest,
+                schema::deepbook_pool_updated_registry::sender,
+                schema::deepbook_pool_updated_registry::checkpoint,
+                schema::deepbook_pool_updated_registry::checkpoint_timestamp_ms,
+                schema::deepbook_pool_updated_registry::package,
+                schema::deepbook_pool_updated_registry::pool_id,
+                schema::deepbook_pool_updated_registry::enabled,
+                schema::deepbook_pool_updated_registry::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = pool_id_filter {
+            query = query.filter(schema::deepbook_pool_updated_registry::pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, bool, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching deepbook pool updated registry events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_deepbook_pool_config_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, serde_json::Value, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::deepbook_pool_config_updated::table
+            .filter(schema::deepbook_pool_config_updated::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::deepbook_pool_config_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::deepbook_pool_config_updated::event_digest,
+                schema::deepbook_pool_config_updated::digest,
+                schema::deepbook_pool_config_updated::sender,
+                schema::deepbook_pool_config_updated::checkpoint,
+                schema::deepbook_pool_config_updated::checkpoint_timestamp_ms,
+                schema::deepbook_pool_config_updated::package,
+                schema::deepbook_pool_config_updated::pool_id,
+                schema::deepbook_pool_config_updated::config_json,
+                schema::deepbook_pool_config_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = pool_id_filter {
+            query = query.filter(schema::deepbook_pool_config_updated::pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, serde_json::Value, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching deepbook pool config updated events".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
 }
