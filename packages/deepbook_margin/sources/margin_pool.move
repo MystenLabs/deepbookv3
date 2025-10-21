@@ -4,22 +4,24 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_fees::{Self, ReferralFees, SupplyReferral}
+use deepbook_margin::margin_registry::{
+    MarginRegistry,
+    MaintainerCap,
+    MarginAdminCap,
+    MarginPoolCap
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
+use deepbook_margin::margin_state::{Self, State};
+use deepbook_margin::position_manager::{Self, PositionManager};
+use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
+use deepbook_margin::referral_fees::{Self, ReferralFees, SupplyReferral};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -255,10 +257,10 @@ public fun supply<Asset>(
     registry.load_inner();
     let supplier_cap_id = supplier_cap.id.to_inner();
     let supply_amount = coin.value();
-    let (supply_shares, referral_fees) = self
+    let (supply_shares, protocol_fees) = self
         .state
         .increase_supply(&self.config, supply_amount, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.referral_fees.increase_fees_accrued(protocol_fees);
 
     let (total_user_supply_shares, previous_referral) = self
         .positions
@@ -300,10 +302,10 @@ public fun withdraw<Asset>(
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
 
-    let (_, referral_fees) = self
+    let (_, protocol_fees) = self
         .state
         .decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.referral_fees.increase_fees_accrued(protocol_fees);
 
     let (_, previous_referral) = self
         .positions
@@ -462,10 +464,10 @@ public(package) fun borrow<Asset>(
 ): (Coin<Asset>, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (individual_borrow_shares, referral_fees) = self
+    let (individual_borrow_shares, protocol_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.referral_fees.increase_fees_accrued(protocol_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
@@ -480,8 +482,8 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let (_, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    let (_, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    self.referral_fees.increase_fees_accrued(protocol_fees);
 
     self.vault.join(coin.into_balance());
 }
@@ -495,8 +497,8 @@ public(package) fun repay_liquidation<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ): (u64, u64, u64) {
-    let (amount, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    self.referral_fees.increase_fees_accrued(protocol_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
