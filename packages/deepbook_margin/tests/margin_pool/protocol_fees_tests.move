@@ -18,7 +18,7 @@ fun test_referral_fees_setup() {
 
     // 100 shares increased, 1 reward earned
     test.next_tx(test_constants::admin());
-    let mut referral_fees = protocol_fees::default_referral_fees(test.ctx());
+    let mut referral_fees = protocol_fees::default_protocol_fees(test.ctx());
     referral_fees.increase_shares(option::none(), 100 * constants::float_scaling());
     referral_fees.increase_fees_accrued(2 * constants::float_scaling());
     assert_eq!(referral_fees.total_shares(), 100 * constants::float_scaling());
@@ -52,7 +52,7 @@ fun test_referral_fees_ok() {
     let (mut test, admin_cap) = test_helpers::setup_test();
 
     test.next_tx(test_constants::admin());
-    let mut referral_fees = protocol_fees::default_referral_fees(test.ctx());
+    let mut referral_fees = protocol_fees::default_protocol_fees(test.ctx());
 
     let referral_id;
     test.next_tx(test_constants::user1());
@@ -221,7 +221,7 @@ fun test_referra_fees_many() {
     let (mut test, admin_cap) = test_helpers::setup_test();
 
     test.next_tx(test_constants::admin());
-    let mut referral_fees = protocol_fees::default_referral_fees(test.ctx());
+    let mut referral_fees = protocol_fees::default_protocol_fees(test.ctx());
 
     // create 10 referrals, each with 1000 shares referred.
     // total shares is 10 * 1000 = 10000
@@ -334,7 +334,7 @@ fun test_referral_fees_not_owner_e() {
     let (mut test, _admin_cap) = test_helpers::setup_test();
 
     test.next_tx(test_constants::admin());
-    let mut referral_fees = protocol_fees::default_referral_fees(test.ctx());
+    let mut referral_fees = protocol_fees::default_protocol_fees(test.ctx());
 
     let referral_id;
     test.next_tx(test_constants::user1());
@@ -356,7 +356,7 @@ fun test_referral_fees_invalid_fees_accrued_e() {
     let (mut test, _admin_cap) = test_helpers::setup_test();
 
     test.next_tx(test_constants::admin());
-    let mut referral_fees = protocol_fees::default_referral_fees(test.ctx());
+    let mut referral_fees = protocol_fees::default_protocol_fees(test.ctx());
     referral_fees.increase_fees_accrued(2);
 
     abort (0)

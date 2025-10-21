@@ -49,7 +49,7 @@ public struct ReferralFeesClaimedEvent has copy, drop {
 }
 
 // Initialize the referral fees with the default referral.
-public(package) fun default_referral_fees(ctx: &mut TxContext): ProtocolFees {
+public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
     let default_id = margin_constants::default_referral();
     let mut manager = ProtocolFees {
         referrals: table::new(ctx),

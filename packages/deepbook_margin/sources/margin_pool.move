@@ -129,7 +129,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        referral_fees: protocol_fees::default_referral_fees(ctx),
+        referral_fees: protocol_fees::default_protocol_fees(ctx),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
         extra_fields: vec_map::empty(),
