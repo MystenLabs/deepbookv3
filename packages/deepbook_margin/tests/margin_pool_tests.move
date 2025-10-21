@@ -516,7 +516,7 @@ fun test_update_margin_pool_config() {
     let new_margin_pool_config = protocol_config::new_margin_pool_config(
         2_000_000_000_000_000, // supply_cap: 2M tokens
         900_000_000, // max_utilization_rate: 90%
-        5_000_000, // referral_spread: 0.5%
+        5_000_000, // protocol_spread: 0.5%
         100_000_000, // min_borrow: 0.1 token
     );
 

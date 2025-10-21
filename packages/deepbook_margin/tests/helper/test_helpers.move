@@ -152,7 +152,7 @@ public fun default_protocol_config(): ProtocolConfig {
     let margin_pool_config = protocol_config::new_margin_pool_config(
         test_constants::supply_cap(),
         test_constants::max_utilization_rate(),
-        test_constants::referral_spread(),
+        test_constants::protocol_spread(),
         test_constants::min_borrow(),
     );
     let interest_config = protocol_config::new_interest_config(

@@ -45,13 +45,13 @@ fun margin_state_operations_work() {
     assert_eq!(state.borrow_shares(), 0);
 
     clock.increment_for_testing(1000);
-    let (withdraw_amount, referral_fees) = state.decrease_supply_shares(
+    let (withdraw_amount, protocol_fees) = state.decrease_supply_shares(
         &config,
         1000 * constants::float_scaling(),
         &clock,
     );
     assert_eq!(withdraw_amount, 1500 * constants::float_scaling());
-    assert_eq!(referral_fees, 0);
+    assert_eq!(protocol_fees, 0);
     assert_eq!(state.total_supply(), 1500 * constants::float_scaling());
     assert_eq!(state.supply_shares(), 1000 * constants::float_scaling());
     assert_eq!(state.total_borrow(), 0);
@@ -65,13 +65,13 @@ fun margin_state_operations_work() {
     assert_eq!(state.borrow_shares(), 0);
 
     clock.increment_for_testing(1000);
-    let (withdraw_amount, referral_fees) = state.decrease_supply_shares(
+    let (withdraw_amount, protocol_fees) = state.decrease_supply_shares(
         &config,
         1000 * constants::float_scaling(),
         &clock,
     );
     assert_eq!(withdraw_amount, 500 * constants::float_scaling());
-    assert_eq!(referral_fees, 0);
+    assert_eq!(protocol_fees, 0);
     assert_eq!(state.total_supply(), 0);
     assert_eq!(state.supply_shares(), 0);
     assert_eq!(state.total_borrow(), 0);
@@ -119,12 +119,12 @@ fun margin_state_with_supply_and_borrow_accrues_interest() {
         math::mul(interest_rate, 500 * constants::float_scaling()),
         math::div(elapsed, margin_constants::year_ms()),
     );
-    let referral_fees = math::mul(interest, config.referral_spread());
+    let protocol_fees = math::mul(interest, config.protocol_spread());
     assert_eq!(interest, 4_109_589_000);
-    assert_eq!(referral_fees, 410_958_900);
+    assert_eq!(protocol_fees, 410_958_900);
 
     let supply_ratio = math::div(
-        1000 * constants::float_scaling() + interest - referral_fees,
+        1000 * constants::float_scaling() + interest - protocol_fees,
         1000 * constants::float_scaling(),
     );
     let borrow_ratio = math::div(
@@ -138,20 +138,20 @@ fun margin_state_with_supply_and_borrow_accrues_interest() {
     assert_eq!(supply_amount, calc_supply_amount);
     assert_eq!(borrow_amount, calc_borrow_amount);
 
-    let (withdraw_borrow_amount, withdraw_referral_fees) = state.decrease_borrow_shares(
+    let (withdraw_borrow_amount, withdraw_protocol_fees) = state.decrease_borrow_shares(
         &config,
         500 * constants::float_scaling(),
         &clock,
     );
     assert_eq!(withdraw_borrow_amount, calc_borrow_amount);
-    assert_eq!(withdraw_referral_fees, referral_fees);
-    let (withdraw_supply_amount, withdraw_referral_fees) = state.decrease_supply_shares(
+    assert_eq!(withdraw_protocol_fees, protocol_fees);
+    let (withdraw_supply_amount, withdraw_protocol_fees) = state.decrease_supply_shares(
         &config,
         1000 * constants::float_scaling(),
         &clock,
     );
     assert_eq!(withdraw_supply_amount, calc_supply_amount);
-    assert_eq!(withdraw_referral_fees, 0);
+    assert_eq!(withdraw_protocol_fees, 0);
 
     // rounding leaves 100 in supply
     assert_eq!(state.total_supply(), 100);
