@@ -4,13 +4,14 @@
 #[test_only]
 module deepbook_margin::referral_fees_tests;
 
-use deepbook_margin::constants;
-use deepbook_margin::protocol_fees::{Self, SupplyReferral};
-use deepbook_margin::test_constants;
-use deepbook_margin::test_helpers;
+use deepbook_margin::{
+    constants,
+    protocol_fees::{Self, SupplyReferral},
+    test_constants,
+    test_helpers
+};
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
-use sui::test_utils::destroy;
+use sui::{test_scenario::return_shared, test_utils::destroy};
 
 #[test]
 fun test_referral_fees_setup() {

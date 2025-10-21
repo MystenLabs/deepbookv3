@@ -6,9 +6,7 @@ module deepbook_margin::protocol_fees;
 use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
-use sui::event;
-use sui::table::{Self, Table};
-use sui::vec_map::{Self, VecMap};
+use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const ENotOwner: u64 = 1;
