@@ -8,7 +8,7 @@ token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packag
 deepbook = { local = "../deepbook" }
 
 # Pyth dependency
-Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "main" }
+Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
 
 [addresses]
 deepbook_margin = "0x0"
