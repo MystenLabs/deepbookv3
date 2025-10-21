@@ -427,6 +427,10 @@ public fun withdraw_protocol_fees<Asset>(
 }
 
 // === Public-View Functions ===
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
+}
+
 public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
     self.allowed_deepbook_pools.contains(&deepbook_pool_id)
 }
@@ -473,10 +477,6 @@ public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: ID): u64 {
     self.positions.user_supply_shares(supplier_cap_id)
-}
-
-public fun id<Asset>(self: &MarginPool<Asset>): ID {
-    self.id.to_inner()
 }
 
 public fun user_supply_amount<Asset>(
