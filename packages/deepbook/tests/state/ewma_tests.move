@@ -19,25 +19,25 @@ fun test_init_ewma_init_values() {
     let alice = @0xA;
     test.next_tx(alice);
     let mut ewma_state = test_init_ewma_state(test.ctx());
-    assert!(ewma_state.enabled() == false, 0);
-    assert!(ewma_state.mean() == test.ctx().gas_price(), 1);
-    assert!(ewma_state.variance() == 0, 2);
-    assert!(ewma_state.last_updated_timestamp() == 0, 3);
-    assert!(ewma_state.enabled() == false, 4);
+    assert!(ewma_state.enabled() == false);
+    assert!(ewma_state.mean() == test.ctx().gas_price());
+    assert!(ewma_state.variance() == 0);
+    assert!(ewma_state.last_updated_timestamp() == 0);
+    assert!(ewma_state.enabled() == false);
 
     test.next_tx(alice);
     ewma_state.set_alpha(1_000_000_000);
     ewma_state.set_z_score_threshold(100_000_000);
     ewma_state.set_additional_taker_fee(100_000_000);
     ewma_state.enable();
-    assert!(ewma_state.enabled() == true, 5);
-    assert!(ewma_state.alpha() == 1_000_000_000, 6);
-    assert!(ewma_state.z_score_threshold() == 100_000_000, 7);
-    assert!(ewma_state.additional_taker_fee() == 100_000_000, 8);
+    assert!(ewma_state.enabled() == true);
+    assert!(ewma_state.alpha() == 1_000_000_000);
+    assert!(ewma_state.z_score_threshold() == 100_000_000);
+    assert!(ewma_state.additional_taker_fee() == 100_000_000);
 
     test.next_tx(alice);
     ewma_state.disable();
-    assert!(ewma_state.enabled() == false, 9);
+    assert!(ewma_state.enabled() == false);
 
     end(test);
 }
@@ -105,8 +105,8 @@ fun test_update_ewma_state() {
 
     // lower z-score threshold
     ewma_state.set_z_score_threshold(2_000_000_000);
-    assert!(ewma_state.enabled(), 0);
-    assert!(test.ctx().gas_price() * constants::float_scaling() > ewma_state.mean(), 0);
+    assert!(ewma_state.enabled());
+    assert!(test.ctx().gas_price() * constants::float_scaling() > ewma_state.mean());
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee + ewma_state.additional_taker_fee());
 
@@ -136,4 +136,275 @@ fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timesta
     let ts = test.ctx().epoch_timestamp_ms() + timestamp_advance;
     let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
     test.next_with_context(ctx);
+}
+
+#[test]
+fun test_apply_taker_penalty_disabled_ewma() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    test.next_tx(alice);
+
+    let base_taker_fee = 1_000_000; // 0.1%
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_additional_taker_fee(500_000); // 0.05% additional
+    ewma_state.set_z_score_threshold(2_000_000_000); // 2 std devs
+
+    // EWMA is disabled, so no penalty should be applied regardless of gas price
+    assert!(!ewma_state.enabled());
+
+    // Test with high gas price
+    let high_gas_price = 10_000;
+    advance_scenario_with_gas_price(&mut test, high_gas_price, 1000);
+
+    let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_with_penalty, base_taker_fee); // No penalty applied
+
+    end(test);
+}
+
+#[test]
+fun test_apply_taker_penalty_gas_below_mean() {
+    let mut test = begin(@0xF);
+
+    // Start with moderate gas price
+    let initial_gas = 1_000;
+    advance_scenario_with_gas_price(&mut test, initial_gas, 1000);
+
+    let base_taker_fee = 1_000_000; // 0.1%
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_additional_taker_fee(500_000); // 0.05% additional
+    ewma_state.set_z_score_threshold(1_000_000_000); // 1 std dev
+    ewma_state.enable();
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Now use gas price below mean
+    let low_gas = 500;
+    advance_scenario_with_gas_price(&mut test, low_gas, 1000);
+    clock.set_for_testing(2000);
+
+    // No penalty when gas is below mean
+    let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_with_penalty, base_taker_fee);
+
+    test_utils::destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_apply_taker_penalty_gas_above_mean_below_threshold() {
+    let mut test = begin(@0xF);
+
+    // Initialize with gas price = 1000
+    let initial_gas = 1_000;
+    advance_scenario_with_gas_price(&mut test, initial_gas, 1000);
+
+    let base_taker_fee = 2_000_000; // 0.2%
+    let additional_fee = 1_000_000; // 0.1% additional
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_additional_taker_fee(additional_fee);
+    ewma_state.set_z_score_threshold(5_000_000_000); // 5 std devs (very high threshold)
+    ewma_state.enable();
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Use gas price moderately above mean
+    let moderate_gas = 1_500;
+    advance_scenario_with_gas_price(&mut test, moderate_gas, 1000);
+    clock.set_for_testing(2000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Gas is above mean but z-score is below threshold, no penalty
+    let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_with_penalty, base_taker_fee);
+
+    test_utils::destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_apply_taker_penalty_z_score_above_threshold() {
+    let mut test = begin(@0xF);
+
+    // Initialize with low gas price
+    let initial_gas = 100;
+    advance_scenario_with_gas_price(&mut test, initial_gas, 1000);
+
+    let base_taker_fee = 1_000_000; // 0.1%
+    let additional_fee = 500_000; // 0.05% additional
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_additional_taker_fee(additional_fee);
+    ewma_state.set_z_score_threshold(1_000_000_000); // 1 std dev
+    ewma_state.enable();
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Gradually increase gas price to build up variance
+    let gas_price_2 = 200;
+    advance_scenario_with_gas_price(&mut test, gas_price_2, 1000);
+    clock.set_for_testing(2000);
+    ewma_state.update(&clock, test.ctx());
+
+    let gas_price_3 = 400;
+    advance_scenario_with_gas_price(&mut test, gas_price_3, 1000);
+    clock.set_for_testing(3000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Now spike the gas price significantly
+    let spike_gas = 10_000;
+    advance_scenario_with_gas_price(&mut test, spike_gas, 1000);
+    clock.set_for_testing(4000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Z-score should be high enough to trigger penalty
+    let z_score = ewma_state.z_score(test.ctx());
+    assert!(z_score > ewma_state.z_score_threshold());
+
+    let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_with_penalty, base_taker_fee + additional_fee);
+
+    test_utils::destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_dynamic_additional_taker_fee_changes() {
+    let mut test = begin(@0xF);
+
+    let initial_gas = 100;
+    advance_scenario_with_gas_price(&mut test, initial_gas, 1000);
+
+    let base_taker_fee = 1_000_000; // 0.1%
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    ewma_state.set_additional_taker_fee(250_000); // 0.025% initially
+    ewma_state.set_z_score_threshold(500_000_000); // 0.5 std dev (low threshold for testing)
+    ewma_state.enable();
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Spike gas price
+    let spike_gas = 5_000;
+    advance_scenario_with_gas_price(&mut test, spike_gas, 1000);
+    clock.set_for_testing(2000);
+    ewma_state.update(&clock, test.ctx());
+
+    // Apply penalty with first additional fee
+    let fee_1 = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_1, base_taker_fee + 250_000);
+
+    // Change additional taker fee
+    ewma_state.set_additional_taker_fee(750_000); // 0.075%
+
+    // Same conditions, different penalty
+    let fee_2 = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_2, base_taker_fee + 750_000);
+
+    // Set to maximum allowed
+    ewma_state.set_additional_taker_fee(constants::max_additional_taker_fee());
+    let fee_3 = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
+    assert_eq!(fee_3, base_taker_fee + constants::max_additional_taker_fee());
+
+    test_utils::destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_ewma_state_timestamping() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    test.next_tx(alice);
+
+    let mut ewma_state = test_init_ewma_state(test.ctx());
+    assert_eq!(ewma_state.last_updated_timestamp(), 0);
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(5000);
+    ewma_state.update(&clock, test.ctx());
+    assert_eq!(ewma_state.last_updated_timestamp(), 5000);
+
+    // Update at same timestamp should be no-op
+    let mean_before = ewma_state.mean();
+    let variance_before = ewma_state.variance();
+    ewma_state.update(&clock, test.ctx());
+    assert_eq!(ewma_state.mean(), mean_before);
+    assert_eq!(ewma_state.variance(), variance_before);
+    assert_eq!(ewma_state.last_updated_timestamp(), 5000);
+
+    // Update with new timestamp
+    clock.set_for_testing(10000);
+    ewma_state.update(&clock, test.ctx());
+    assert_eq!(ewma_state.last_updated_timestamp(), 10000);
+
+    test_utils::destroy(clock);
+    end(test);
+}
+
+#[test]
+fun test_z_score_with_zero_variance() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    test.next_tx(alice);
+
+    let ewma_state = test_init_ewma_state(test.ctx());
+    // Initial variance is 0
+    assert_eq!(ewma_state.variance(), 0);
+
+    // Z-score should be 0 when variance is 0
+    let z = ewma_state.z_score(test.ctx());
+    assert_eq!(z, 0);
+
+    end(test);
+}
+
+#[test]
+fun test_alpha_parameter_effect() {
+    let mut test = begin(@0xF);
+
+    // Test with high alpha (more weight on current price)
+    let initial_gas = 1_000;
+    advance_scenario_with_gas_price(&mut test, initial_gas, 1000);
+
+    let mut ewma_high_alpha = test_init_ewma_state(test.ctx());
+    ewma_high_alpha.set_alpha(500_000_000); // 50% weight on current
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(1000);
+    ewma_high_alpha.update(&clock, test.ctx());
+
+    let new_gas = 2_000;
+    advance_scenario_with_gas_price(&mut test, new_gas, 1000);
+    clock.set_for_testing(2000);
+    ewma_high_alpha.update(&clock, test.ctx());
+
+    // With alpha = 0.5: new_mean = 0.5 * 2000 + 0.5 * 1000 = 1500 * float_scaling
+    assert_eq!(ewma_high_alpha.mean(), 1_500 * constants::float_scaling());
+
+    // Test with low alpha (more weight on historical)
+    let initial_gas_2 = 1_000;
+    advance_scenario_with_gas_price(&mut test, initial_gas_2, 1000);
+
+    let mut ewma_low_alpha = test_init_ewma_state(test.ctx());
+    ewma_low_alpha.set_alpha(10_000_000); // 1% weight on current (default)
+
+    clock.set_for_testing(3000);
+    ewma_low_alpha.update(&clock, test.ctx());
+
+    let new_gas_2 = 2_000;
+    advance_scenario_with_gas_price(&mut test, new_gas_2, 1000);
+    clock.set_for_testing(4000);
+    ewma_low_alpha.update(&clock, test.ctx());
+
+    // With alpha = 0.01: new_mean = 0.01 * 2000 + 0.99 * 1000 = 1010 * float_scaling
+    assert_eq!(ewma_low_alpha.mean(), 1_010 * constants::float_scaling());
+
+    test_utils::destroy(clock);
+    end(test);
 }
