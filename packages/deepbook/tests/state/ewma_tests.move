@@ -19,25 +19,25 @@ fun test_init_ewma_init_values() {
     let alice = @0xA;
     test.next_tx(alice);
     let mut ewma_state = test_init_ewma_state(test.ctx());
-    assert!(ewma_state.enabled() == false, 0);
-    assert!(ewma_state.mean() == test.ctx().gas_price(), 1);
-    assert!(ewma_state.variance() == 0, 2);
-    assert!(ewma_state.last_updated_timestamp() == 0, 3);
-    assert!(ewma_state.enabled() == false, 4);
+    assert!(ewma_state.enabled() == false);
+    assert!(ewma_state.mean() == test.ctx().gas_price());
+    assert!(ewma_state.variance() == 0);
+    assert!(ewma_state.last_updated_timestamp() == 0);
+    assert!(ewma_state.enabled() == false);
 
     test.next_tx(alice);
     ewma_state.set_alpha(1_000_000_000);
     ewma_state.set_z_score_threshold(100_000_000);
     ewma_state.set_additional_taker_fee(100_000_000);
     ewma_state.enable();
-    assert!(ewma_state.enabled() == true, 5);
-    assert!(ewma_state.alpha() == 1_000_000_000, 6);
-    assert!(ewma_state.z_score_threshold() == 100_000_000, 7);
-    assert!(ewma_state.additional_taker_fee() == 100_000_000, 8);
+    assert!(ewma_state.enabled() == true);
+    assert!(ewma_state.alpha() == 1_000_000_000);
+    assert!(ewma_state.z_score_threshold() == 100_000_000);
+    assert!(ewma_state.additional_taker_fee() == 100_000_000);
 
     test.next_tx(alice);
     ewma_state.disable();
-    assert!(ewma_state.enabled() == false, 9);
+    assert!(ewma_state.enabled() == false);
 
     end(test);
 }
@@ -105,8 +105,8 @@ fun test_update_ewma_state() {
 
     // lower z-score threshold
     ewma_state.set_z_score_threshold(2_000_000_000);
-    assert!(ewma_state.enabled(), 0);
-    assert!(test.ctx().gas_price() * constants::float_scaling() > ewma_state.mean(), 0);
+    assert!(ewma_state.enabled());
+    assert!(test.ctx().gas_price() * constants::float_scaling() > ewma_state.mean());
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee + ewma_state.additional_taker_fee());
 
@@ -150,7 +150,7 @@ fun test_apply_taker_penalty_disabled_ewma() {
     ewma_state.set_z_score_threshold(2_000_000_000); // 2 std devs
 
     // EWMA is disabled, so no penalty should be applied regardless of gas price
-    assert!(!ewma_state.enabled(), 0);
+    assert!(!ewma_state.enabled());
 
     // Test with high gas price
     let high_gas_price = 10_000;
@@ -264,7 +264,7 @@ fun test_apply_taker_penalty_z_score_above_threshold() {
 
     // Z-score should be high enough to trigger penalty
     let z_score = ewma_state.z_score(test.ctx());
-    assert!(z_score > ewma_state.z_score_threshold(), 0);
+    assert!(z_score > ewma_state.z_score_threshold());
 
     let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
     assert_eq!(fee_with_penalty, base_taker_fee + additional_fee);
