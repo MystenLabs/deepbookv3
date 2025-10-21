@@ -1,9 +1,9 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
-use crate::models::deepbook_margin::margin_pool::{AssetSupplied, AssetWithdrawn};
+use crate::models::deepbook_margin::margin_pool::AssetWithdrawn;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
-use deepbook_schema::models::MarginPoolOperations;
-use deepbook_schema::schema::margin_pool_operations;
+use deepbook_schema::models::AssetWithdrawn as AssetWithdrawnModel;
+use deepbook_schema::schema::asset_withdrawn;
 use diesel_async::RunQueryDsl;
 use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
@@ -13,25 +13,23 @@ use sui_pg_db::{Connection, Db};
 use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
-pub struct MarginPoolOperationsHandler {
-    asset_supplied_event_type: StructTag,
+pub struct AssetWithdrawnHandler {
     asset_withdrawn_event_type: StructTag,
     env: DeepbookEnv,
 }
 
-impl MarginPoolOperationsHandler {
+impl AssetWithdrawnHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self {
-            asset_supplied_event_type: env.asset_supplied_event_type(),
             asset_withdrawn_event_type: env.asset_withdrawn_event_type(),
             env,
         }
     }
 }
 
-impl Processor for MarginPoolOperationsHandler {
-    const NAME: &'static str = "margin_pool_operations";
-    type Value = MarginPoolOperations;
+impl Processor for AssetWithdrawnHandler {
+    const NAME: &'static str = "asset_withdrawn";
+    type Value = AssetWithdrawnModel;
 
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
@@ -50,28 +48,9 @@ impl Processor for MarginPoolOperationsHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.asset_supplied_event_type {
-                    let event: AssetSupplied = bcs::from_bytes(&ev.contents)?;
-                    let data = MarginPoolOperations {
-                        event_digest: format!("{digest}{index}"),
-                        digest: digest.to_string(),
-                        sender: tx.transaction.sender_address().to_string(),
-                        checkpoint,
-                        checkpoint_timestamp_ms,
-                        package: package.clone(),
-                        margin_pool_id: event.margin_pool_id.to_string(),
-                        asset_type: event.asset_type.to_string(),
-                        supplier: event.supplier.to_string(),
-                        amount: event.supply_amount as i64,
-                        shares: event.supply_shares as i64,
-                        operation_type: "supply".to_string(),
-                        onchain_timestamp: event.timestamp as i64,
-                    };
-                    debug!("Observed DeepBook Margin Asset Supplied {:?}", data);
-                    results.push(data);
-                } else if ev.type_ == self.asset_withdrawn_event_type {
+                if ev.type_ == self.asset_withdrawn_event_type {
                     let event: AssetWithdrawn = bcs::from_bytes(&ev.contents)?;
-                    let data = MarginPoolOperations {
+                    let data = AssetWithdrawnModel {
                         event_digest: format!("{digest}{index}"),
                         digest: digest.to_string(),
                         sender: tx.transaction.sender_address().to_string(),
@@ -83,7 +62,6 @@ impl Processor for MarginPoolOperationsHandler {
                         supplier: event.supplier.to_string(),
                         amount: event.withdraw_amount as i64,
                         shares: event.withdraw_shares as i64,
-                        operation_type: "withdraw".to_string(),
                         onchain_timestamp: event.timestamp as i64,
                     };
                     debug!("Observed DeepBook Margin Asset Withdrawn {:?}", data);
@@ -96,14 +74,14 @@ impl Processor for MarginPoolOperationsHandler {
 }
 
 #[async_trait]
-impl Handler for MarginPoolOperationsHandler {
+impl Handler for AssetWithdrawnHandler {
     type Store = Db;
 
     async fn commit<'a>(
         values: &[Self::Value],
         conn: &mut Connection<'a>,
     ) -> anyhow::Result<usize> {
-        Ok(diesel::insert_into(margin_pool_operations::table)
+        Ok(diesel::insert_into(asset_withdrawn::table)
             .values(values)
             .on_conflict_do_nothing()
             .execute(conn)

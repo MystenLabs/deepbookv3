@@ -1,0 +1,66 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh0",
+    "digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "248053448",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1759426606516",
+    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "margin_pool_id": "0xfca47443db2177b3e7d93fdb4b3a7d33c3102688419146c9bac2628d735a7545",
+    "maintainer_cap_id": "0x9cde7db3fac442ec0f7954bd3c39a5e0a3151deb22d5804ecdff19c77cbf6b51",
+    "asset_type": "f7152c05930480cd740d7311b5b8b45c6f488e3a53a11c3f74a6fac36a52e0d7::DBUSDC::DBUSDC",
+    "config_json": {
+      "extra_fields": {
+        "contents": []
+      },
+      "interest_config": {
+        "base_rate": 45000000,
+        "base_slope": 80000000,
+        "excess_slope": 4500000000,
+        "optimal_utilization": 900000000
+      },
+      "margin_pool_config": {
+        "min_borrow": 100000,
+        "supply_cap": 1000000000000,
+        "referral_spread": 100000000,
+        "max_utilization_rate": 950000000
+      }
+    },
+    "onchain_timestamp": "1759426606516"
+  },
+  {
+    "event_digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh1",
+    "digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "248053448",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1759426606516",
+    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "margin_pool_id": "0x52fae759e70a7fd35f2a4538589a949ad120dc67fa1bda7bf0b12dcc650b173a",
+    "maintainer_cap_id": "0x9cde7db3fac442ec0f7954bd3c39a5e0a3151deb22d5804ecdff19c77cbf6b51",
+    "asset_type": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+    "config_json": {
+      "extra_fields": {
+        "contents": []
+      },
+      "interest_config": {
+        "base_rate": 0,
+        "base_slope": 150000000,
+        "excess_slope": 3000000000,
+        "optimal_utilization": 700000000
+      },
+      "margin_pool_config": {
+        "min_borrow": 100000000,
+        "supply_cap": 1000000000000000,
+        "referral_spread": 100000000,
+        "max_utilization_rate": 900000000
+      }
+    },
+    "onchain_timestamp": "1759426606516"
+  }
+]

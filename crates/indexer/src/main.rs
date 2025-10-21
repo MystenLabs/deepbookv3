@@ -3,11 +3,6 @@ use clap::Parser;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
-//use deepbook_indexer::handlers::margin_fees_handler::MarginFeesHandler;
-use deepbook_indexer::handlers::margin_manager_operations_handler::MarginManagerOperationsHandler;
-use deepbook_indexer::handlers::margin_pool_admin_handler::MarginPoolAdminHandler;
-use deepbook_indexer::handlers::margin_pool_operations_handler::MarginPoolOperationsHandler;
-use deepbook_indexer::handlers::margin_registry_handler::MarginRegistryHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
@@ -16,6 +11,28 @@ use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
+
+// Margin Manager Events
+use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
+use deepbook_indexer::handlers::loan_borrowed_handler::LoanBorrowedHandler;
+use deepbook_indexer::handlers::loan_repaid_handler::LoanRepaidHandler;
+use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
+
+// Margin Pool Operations Events
+use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
+use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
+
+// Margin Pool Admin Events
+use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
+use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
+use deepbook_indexer::handlers::interest_params_updated_handler::InterestParamsUpdatedHandler;
+use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
+
+// Margin Registry Events
+use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
+use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
+use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -155,24 +172,54 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
             }
             Package::DeepbookMargin => {
-                // DeepBook margin event handlers
+                // Margin Manager Events
                 indexer
-                    .concurrent_pipeline(MarginPoolOperationsHandler::new(env), Default::default())
+                    .concurrent_pipeline(MarginManagerCreatedHandler::new(env), Default::default())
                     .await?;
                 indexer
-                    .concurrent_pipeline(
-                        MarginManagerOperationsHandler::new(env),
-                        Default::default(),
-                    )
+                    .concurrent_pipeline(LoanBorrowedHandler::new(env), Default::default())
                     .await?;
                 indexer
-                    .concurrent_pipeline(MarginPoolAdminHandler::new(env), Default::default())
+                    .concurrent_pipeline(LoanRepaidHandler::new(env), Default::default())
                     .await?;
-                // indexer
-                //     .concurrent_pipeline(MarginFeesHandler::new(env), Default::default())
-                //     .await?;
                 indexer
-                    .concurrent_pipeline(MarginRegistryHandler::new(env), Default::default())
+                    .concurrent_pipeline(LiquidationHandler::new(env), Default::default())
+                    .await?;
+
+                // Margin Pool Operations Events
+                indexer
+                    .concurrent_pipeline(AssetSuppliedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(AssetWithdrawnHandler::new(env), Default::default())
+                    .await?;
+
+                // Margin Pool Admin Events
+                indexer
+                    .concurrent_pipeline(MarginPoolCreatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(DeepbookPoolUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(InterestParamsUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(MarginPoolConfigUpdatedHandler::new(env), Default::default())
+                    .await?;
+
+                // Margin Registry Events
+                indexer
+                    .concurrent_pipeline(MaintainerCapUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(DeepbookPoolRegisteredHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(DeepbookPoolUpdatedRegistryHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(DeepbookPoolConfigUpdatedHandler::new(env), Default::default())
                     .await?;
             }
         }

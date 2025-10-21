@@ -254,30 +254,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    margin_fees (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        fee_type -> Text,
-        margin_pool_id -> Nullable<Text>,
-        maintainer_cap_id -> Nullable<Text>,
-        referral_id -> Nullable<Text>,
-        owner -> Nullable<Text>,
-        fees -> Nullable<Int8>,
-        maintainer_fees -> Nullable<Int8>,
-        protocol_fees -> Nullable<Int8>,
-        referral_fees -> Nullable<Int8>,
-        total_shares -> Nullable<Int8>,
-        onchain_timestamp -> Int8,
-    }
-}
-
-diesel::table! {
-    margin_manager_operations (event_digest) {
+    margin_manager_created (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -286,25 +263,14 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         margin_manager_id -> Text,
-        balance_manager_id -> Nullable<Text>,
-        owner -> Nullable<Text>,
-        margin_pool_id -> Nullable<Text>,
-        operation_type -> Text,
-        loan_amount -> Nullable<Int8>,
-        total_borrow -> Nullable<Int8>,
-        total_shares -> Nullable<Int8>,
-        repay_amount -> Nullable<Int8>,
-        repay_shares -> Nullable<Int8>,
-        liquidation_amount -> Nullable<Int8>,
-        pool_reward -> Nullable<Int8>,
-        pool_default -> Nullable<Int8>,
-        risk_ratio -> Nullable<Int8>,
+        balance_manager_id -> Text,
+        owner -> Text,
         onchain_timestamp -> Int8,
     }
 }
 
 diesel::table! {
-    margin_pool_admin (event_digest) {
+    loan_borrowed (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -312,20 +278,54 @@ diesel::table! {
         timestamp -> Timestamp,
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
+        margin_manager_id -> Text,
         margin_pool_id -> Text,
-        event_type -> Text,
-        maintainer_cap_id -> Nullable<Text>,
-        asset_type -> Nullable<Text>,
-        deepbook_pool_id -> Nullable<Text>,
-        pool_cap_id -> Nullable<Text>,
-        enabled -> Nullable<Bool>,
-        config_json -> Nullable<Jsonb>,
+        loan_amount -> Int8,
+        total_borrow -> Int8,
+        total_shares -> Int8,
         onchain_timestamp -> Int8,
     }
 }
 
 diesel::table! {
-    margin_pool_operations (event_digest) {
+    loan_repaid (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_manager_id -> Text,
+        margin_pool_id -> Text,
+        repay_amount -> Int8,
+        repay_shares -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    liquidation (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_manager_id -> Text,
+        margin_pool_id -> Text,
+        liquidation_amount -> Int8,
+        pool_reward -> Int8,
+        pool_default -> Int8,
+        risk_ratio -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+// Margin Pool Operations Events (2 tables)
+diesel::table! {
+    asset_supplied (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -338,13 +338,12 @@ diesel::table! {
         supplier -> Text,
         amount -> Int8,
         shares -> Int8,
-        operation_type -> Text,
         onchain_timestamp -> Int8,
     }
 }
 
 diesel::table! {
-    margin_registry_events (event_digest) {
+    asset_withdrawn (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -352,12 +351,136 @@ diesel::table! {
         timestamp -> Timestamp,
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
-        event_type -> Text,
-        maintainer_cap_id -> Nullable<Text>,
-        allowed -> Nullable<Bool>,
-        pool_id -> Nullable<Text>,
-        enabled -> Nullable<Bool>,
-        config_json -> Nullable<Jsonb>,
+        margin_pool_id -> Text,
+        asset_type -> Text,
+        supplier -> Text,
+        amount -> Int8,
+        shares -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    margin_pool_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        maintainer_cap_id -> Text,
+        asset_type -> Text,
+        config_json -> Jsonb,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    deepbook_pool_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        deepbook_pool_id -> Text,
+        pool_cap_id -> Text,
+        enabled -> Bool,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    interest_params_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        pool_cap_id -> Text,
+        config_json -> Jsonb,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    margin_pool_config_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        pool_cap_id -> Text,
+        config_json -> Jsonb,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    maintainer_cap_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        maintainer_cap_id -> Text,
+        allowed -> Bool,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    deepbook_pool_registered (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    deepbook_pool_updated_registry (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        enabled -> Bool,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    deepbook_pool_config_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        config_json -> Jsonb,
         onchain_timestamp -> Int8,
     }
 }
@@ -367,11 +490,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     balances,
     deep_burned,
     flashloans,
-    margin_fees,
-    margin_manager_operations,
-    margin_pool_admin,
-    margin_pool_operations,
-    margin_registry_events,
     order_fills,
     order_updates,
     pool_prices,
@@ -383,4 +501,19 @@ diesel::allow_tables_to_appear_in_same_query!(
     trade_params_update,
     votes,
     watermarks,
+    // Margin Manager Events
+    margin_manager_created,
+    loan_borrowed,
+    loan_repaid,
+    liquidation,
+    asset_supplied,
+    asset_withdrawn,
+    margin_pool_created,
+    deepbook_pool_updated,
+    interest_params_updated,
+    margin_pool_config_updated,
+    maintainer_cap_updated,
+    deepbook_pool_registered,
+    deepbook_pool_updated_registry,
+    deepbook_pool_config_updated,
 );

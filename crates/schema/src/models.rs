@@ -1,7 +1,14 @@
 use crate::schema::{
-    balances, deep_burned, flashloans, margin_fees, margin_manager_operations, margin_pool_admin,
-    margin_pool_operations, margin_registry_events, order_fills, order_updates, pool_prices, pools,
+    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices, pools,
     proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
+    // Margin Manager Events
+    margin_manager_created, loan_borrowed, loan_repaid, liquidation,
+    // Margin Pool Operations Events
+    asset_supplied, asset_withdrawn,
+    // Margin Pool Admin Events
+    margin_pool_created, deepbook_pool_updated, interest_params_updated, margin_pool_config_updated,
+    // Margin Registry Events
+    maintainer_cap_updated, deepbook_pool_registered, deepbook_pool_updated_registry, deepbook_pool_config_updated,
 };
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};
@@ -269,10 +276,77 @@ pub struct SuiErrorTransactions {
     pub cmd_idx: Option<i64>,
 }
 
-// === Margin Pool Operations ===
+// === Margin Manager Events ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
-#[diesel(table_name = margin_pool_operations, primary_key(event_digest))]
-pub struct MarginPoolOperations {
+#[diesel(table_name = margin_manager_created, primary_key(event_digest))]
+pub struct MarginManagerCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub balance_manager_id: String,
+    pub owner: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = loan_borrowed, primary_key(event_digest))]
+pub struct LoanBorrowed {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub loan_amount: i64,
+    pub total_borrow: i64,
+    pub total_shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = loan_repaid, primary_key(event_digest))]
+pub struct LoanRepaid {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub repay_amount: i64,
+    pub repay_shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = liquidation, primary_key(event_digest))]
+pub struct Liquidation {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub liquidation_amount: i64,
+    pub pool_reward: i64,
+    pub pool_default: i64,
+    pub risk_ratio: i64,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Pool Operations Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = asset_supplied, primary_key(event_digest))]
+pub struct AssetSupplied {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
@@ -284,41 +358,12 @@ pub struct MarginPoolOperations {
     pub supplier: String,
     pub amount: i64,
     pub shares: i64,
-    pub operation_type: String,
     pub onchain_timestamp: i64,
 }
 
-// === Margin Manager Operations ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
-#[diesel(table_name = margin_manager_operations, primary_key(event_digest))]
-pub struct MarginManagerOperations {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub margin_manager_id: String,
-    pub balance_manager_id: Option<String>,
-    pub owner: Option<String>,
-    pub margin_pool_id: Option<String>,
-    pub operation_type: String,
-    pub loan_amount: Option<i64>,
-    pub total_borrow: Option<i64>,
-    pub total_shares: Option<i64>,
-    pub repay_amount: Option<i64>,
-    pub repay_shares: Option<i64>,
-    pub liquidation_amount: Option<i64>,
-    pub pool_reward: Option<i64>,
-    pub pool_default: Option<i64>,
-    pub risk_ratio: Option<i64>,
-    pub onchain_timestamp: i64,
-}
-
-// === Margin Pool Admin ===
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
-#[diesel(table_name = margin_pool_admin, primary_key(event_digest))]
-pub struct MarginPoolAdmin {
+#[diesel(table_name = asset_withdrawn, primary_key(event_digest))]
+pub struct AssetWithdrawn {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
@@ -326,54 +371,128 @@ pub struct MarginPoolAdmin {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub margin_pool_id: String,
-    pub event_type: String,
-    pub maintainer_cap_id: Option<String>,
-    pub asset_type: Option<String>,
-    pub deepbook_pool_id: Option<String>,
-    pub pool_cap_id: Option<String>,
-    pub enabled: Option<bool>,
-    pub config_json: Option<serde_json::Value>,
+    pub asset_type: String,
+    pub supplier: String,
+    pub amount: i64,
+    pub shares: i64,
     pub onchain_timestamp: i64,
 }
 
-// === Margin Fees ===
+// === Margin Pool Admin Events ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
-#[diesel(table_name = margin_fees, primary_key(event_digest))]
-pub struct MarginFees {
+#[diesel(table_name = margin_pool_created, primary_key(event_digest))]
+pub struct MarginPoolCreated {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
     pub checkpoint: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub fee_type: String,
-    pub margin_pool_id: Option<String>,
-    pub maintainer_cap_id: Option<String>,
-    pub referral_id: Option<String>,
-    pub owner: Option<String>,
-    pub fees: Option<i64>,
-    pub maintainer_fees: Option<i64>,
-    pub protocol_fees: Option<i64>,
-    pub referral_fees: Option<i64>,
-    pub total_shares: Option<i64>,
+    pub margin_pool_id: String,
+    pub maintainer_cap_id: String,
+    pub asset_type: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deepbook_pool_updated, primary_key(event_digest))]
+pub struct DeepbookPoolUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub deepbook_pool_id: String,
+    pub pool_cap_id: String,
+    pub enabled: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = interest_params_updated, primary_key(event_digest))]
+pub struct InterestParamsUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub pool_cap_id: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = margin_pool_config_updated, primary_key(event_digest))]
+pub struct MarginPoolConfigUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub pool_cap_id: String,
+    pub config_json: serde_json::Value,
     pub onchain_timestamp: i64,
 }
 
 // === Margin Registry Events ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
-#[diesel(table_name = margin_registry_events, primary_key(event_digest))]
-pub struct MarginRegistryEvents {
+#[diesel(table_name = maintainer_cap_updated, primary_key(event_digest))]
+pub struct MaintainerCapUpdated {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
     pub checkpoint: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
-    pub event_type: String,
-    pub maintainer_cap_id: Option<String>,
-    pub allowed: Option<bool>,
-    pub pool_id: Option<String>,
-    pub enabled: Option<bool>,
-    pub config_json: Option<serde_json::Value>,
+    pub maintainer_cap_id: String,
+    pub allowed: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deepbook_pool_registered, primary_key(event_digest))]
+pub struct DeepbookPoolRegistered {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deepbook_pool_updated_registry, primary_key(event_digest))]
+pub struct DeepbookPoolUpdatedRegistry {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub enabled: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deepbook_pool_config_updated, primary_key(event_digest))]
+pub struct DeepbookPoolConfigUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub config_json: serde_json::Value,
     pub onchain_timestamp: i64,
 }

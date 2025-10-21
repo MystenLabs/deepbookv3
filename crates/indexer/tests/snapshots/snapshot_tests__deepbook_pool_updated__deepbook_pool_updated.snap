@@ -1,0 +1,34 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "4vjLQK6xySZWG2REyi14WqeFeFnvYqxFYetc6qfMqh2p0",
+    "digest": "4vjLQK6xySZWG2REyi14WqeFeFnvYqxFYetc6qfMqh2p",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "248054049",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1759426737392",
+    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "margin_pool_id": "0x52fae759e70a7fd35f2a4538589a949ad120dc67fa1bda7bf0b12dcc650b173a",
+    "deepbook_pool_id": "0x1c19362ca52b8ffd7a33cee805a67d40f31e6ba303753fd3a4cfdfacea7163a5",
+    "pool_cap_id": "0x7491a1812848999d40b13d8f68f5f670c9e1db5c3b84402e0f29cb946d8c698d",
+    "enabled": true,
+    "onchain_timestamp": "1759426737255"
+  },
+  {
+    "event_digest": "4vjLQK6xySZWG2REyi14WqeFeFnvYqxFYetc6qfMqh2p1",
+    "digest": "4vjLQK6xySZWG2REyi14WqeFeFnvYqxFYetc6qfMqh2p",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "248054049",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1759426737392",
+    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "margin_pool_id": "0xfca47443db2177b3e7d93fdb4b3a7d33c3102688419146c9bac2628d735a7545",
+    "deepbook_pool_id": "0x1c19362ca52b8ffd7a33cee805a67d40f31e6ba303753fd3a4cfdfacea7163a5",
+    "pool_cap_id": "0x2b66d62a7d1a66ce00936cf71b8b87da2d7c65153ceeb8bd12b59a10d47e2f88",
+    "enabled": true,
+    "onchain_timestamp": "1759426737255"
+  }
+]
