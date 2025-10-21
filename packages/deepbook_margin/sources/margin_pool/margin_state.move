@@ -8,10 +8,12 @@
 /// amounts after interest and protocol fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::vec_map::{Self, VecMap};
 
 public struct State has drop, store {
     total_supply: u64,
@@ -43,13 +45,13 @@ public(package) fun increase_supply(
     amount: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let referral_fees = self.update(config, clock);
+    let protocol_fees = self.update(config, clock);
     let ratio = self.supply_ratio();
     let shares = math::div(amount, ratio);
     self.supply_shares = self.supply_shares + shares;
     self.total_supply = self.total_supply + amount;
 
-    (shares, referral_fees)
+    (shares, protocol_fees)
 }
 
 /// Decrease the supply given some shares. Return the corresponding amount
@@ -60,13 +62,13 @@ public(package) fun decrease_supply_shares(
     shares: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let referral_fees = self.update(config, clock);
+    let protocol_fees = self.update(config, clock);
     let ratio = self.supply_ratio();
     let amount = math::mul(shares, ratio);
     self.supply_shares = self.supply_shares - shares;
     self.total_supply = self.total_supply - amount;
 
-    (amount, referral_fees)
+    (amount, protocol_fees)
 }
 
 /// Increase the supply given an absolute amount. Used when the supply needs to be
@@ -89,13 +91,13 @@ public(package) fun increase_borrow(
     amount: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let referral_fees = self.update(config, clock);
+    let protocol_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let shares = math::div(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.total_borrow = self.total_borrow + amount;
 
-    (shares, referral_fees)
+    (shares, protocol_fees)
 }
 
 /// Decrease the borrow given some shares. Return the corresponding amount
@@ -106,13 +108,13 @@ public(package) fun decrease_borrow_shares(
     shares: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let referral_fees = self.update(config, clock);
+    let protocol_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
     let amount = math::mul(shares, ratio);
     self.borrow_shares = self.borrow_shares - shares;
     self.total_borrow = self.total_borrow - amount;
 
-    (amount, referral_fees)
+    (amount, protocol_fees)
 }
 
 /// Return the utilization rate of the margin pool.
@@ -139,8 +141,8 @@ public(package) fun supply_shares_to_amount(
         elapsed,
         self.total_borrow,
     );
-    let referral_fees = math::mul(interest, config.protocol_spread());
-    let supply = self.total_supply + interest - referral_fees;
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+    let supply = self.total_supply + interest - protocol_fees;
     let ratio = if (self.supply_shares == 0) {
         constants::float_scaling()
     } else {
@@ -212,12 +214,12 @@ fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
         elapsed,
         self.total_borrow,
     );
-    let referral_fees = math::mul(interest, config.protocol_spread());
-    self.total_supply = self.total_supply + interest - referral_fees;
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+    self.total_supply = self.total_supply + interest - protocol_fees;
     self.total_borrow = self.total_borrow + interest;
     self.last_update_timestamp = now;
 
-    referral_fees
+    protocol_fees
 }
 
 /// Return the supply ratio of the margin pool.
