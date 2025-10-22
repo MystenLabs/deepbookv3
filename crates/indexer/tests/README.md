@@ -4,7 +4,7 @@ This directory contains the test suite for the DeepBook indexer, including snaps
 
 ## Overview
 
-The test suite uses snapshot testing with real checkpoint data from the Sui blockchain to verify that the indexer correctly processes and stores margin events. Tests are organized by event type and use actual checkpoint files downloaded from the Sui testnet.
+The test suite uses snapshot testing with real checkpoint data from Sui to verify that the indexer correctly processes and stores margin events. Tests are organized by event type and use actual checkpoint files downloaded from Sui testnet.
 
 ## Directory Structure
 
@@ -28,7 +28,7 @@ tests/
 
 ### 1. Using Sui GraphQL API
 
-The Sui testnet provides a GraphQL API at `https://graphql.testnet.sui.io/graphql` for querying events and finding checkpoint numbers.
+Sui testnet provides a GraphQL API at `https://graphql.testnet.sui.io/graphql` for querying events and finding checkpoint numbers.
 
 #### Query for Events
 
@@ -56,7 +56,7 @@ Once you have the checkpoint sequence number, download the checkpoint file:
 
 ```bash
 # Navigate to the appropriate event directory
-cd /home/ubuntu/projects/deepbookv3/crates/indexer/tests/checkpoints/[event_type]
+cd <project_root>/crates/indexer/tests/checkpoints/[event_type]
 
 # Download the checkpoint file
 curl -o [checkpoint_number].chk "https://checkpoints.testnet.sui.io/[checkpoint_number].chk"
@@ -66,10 +66,10 @@ curl -o [checkpoint_number].chk "https://checkpoints.testnet.sui.io/[checkpoint_
 
 ```bash
 # Create directory if it doesn't exist
-mkdir -p /home/ubuntu/projects/deepbookv3/crates/indexer/tests/checkpoints/deepbook_pool_registered
+mkdir -p <project_root>/crates/indexer/tests/checkpoints/deepbook_pool_registered
 
 # Download checkpoint 248053954
-cd /home/ubuntu/projects/deepbookv3/crates/indexer/tests/checkpoints/deepbook_pool_registered
+cd <project_root>/crates/indexer/tests/checkpoints/deepbook_pool_registered
 curl -o 248053954.chk "https://checkpoints.testnet.sui.io/248053954.chk"
 ```
 
@@ -163,7 +163,7 @@ PATH="/usr/lib/postgresql/16/bin:$PATH" cargo test [event_type]_test --package d
 ### 5. Review and Accept Snapshot
 
 ```bash
-cd /home/ubuntu/projects/deepbookv3
+cd <project_root>
 cargo insta review
 # Type 'y' to accept the snapshot
 ```
@@ -204,12 +204,12 @@ initdb --version
 
 #### Verify Checkpoint Files
 ```bash
-ls -la /home/ubuntu/projects/deepbookv3/crates/indexer/tests/checkpoints/*/
+ls -la <project_root>/crates/indexer/tests/checkpoints/*/
 ```
 
 #### Check Test Compilation
 ```bash
-cd /home/ubuntu/projects/deepbookv3
+cd <project_root>
 cargo check --package deepbook-indexer
 ```
 
