@@ -1,7 +1,7 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::pool::DeepBurned as DeepBurnedEvent;
 use crate::models::sui::sui::SUI;
-use crate::models::MoveStruct;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::DeepBurned;

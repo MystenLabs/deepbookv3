@@ -1,7 +1,7 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
-use crate::models::MoveStruct;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;

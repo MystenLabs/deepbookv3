@@ -1,6 +1,6 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_manager::LoanBorrowedEvent;
-use crate::models::MoveStruct;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::LoanBorrowed;
