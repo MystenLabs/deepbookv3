@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_pool::MarginPoolCreated;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::MarginPoolCreated as MarginPoolCreatedModel;
 use deepbook_schema::schema::margin_pool_created;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use serde_json;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
@@ -15,16 +15,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct MarginPoolCreatedHandler {
-    margin_pool_created_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl MarginPoolCreatedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            margin_pool_created_event_type: env.margin_pool_created_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -49,7 +45,7 @@ impl Processor for MarginPoolCreatedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.margin_pool_created_event_type {
+                if MarginPoolCreated::matches_event_type(&ev.type_, self.env) {
                     let event: MarginPoolCreated = bcs::from_bytes(&ev.contents)?;
                     let config_json = serde_json::to_value(&event.config)?;
                     let data = MarginPoolCreatedModel {
@@ -62,7 +58,7 @@ impl Processor for MarginPoolCreatedHandler {
                         margin_pool_id: event.margin_pool_id.to_string(),
                         maintainer_cap_id: event.maintainer_cap_id.to_string(),
                         asset_type: event.asset_type.to_string(),
-                        config_json,
+                        config_json: serde_json::to_value(&config_json)?,
                         onchain_timestamp: event.timestamp as i64,
                     };
                     debug!("Observed DeepBook Margin Pool Created {:?}", data);

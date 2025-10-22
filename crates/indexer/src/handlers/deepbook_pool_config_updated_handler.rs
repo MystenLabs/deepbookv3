@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_registry::DeepbookPoolConfigUpdated;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::DeepbookPoolConfigUpdated as DeepbookPoolConfigUpdatedModel;
 use deepbook_schema::schema::deepbook_pool_config_updated;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use serde_json;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
@@ -15,16 +15,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct DeepbookPoolConfigUpdatedHandler {
-    deepbook_pool_config_updated_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl DeepbookPoolConfigUpdatedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            deepbook_pool_config_updated_event_type: env.deepbook_pool_config_updated_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -49,7 +45,7 @@ impl Processor for DeepbookPoolConfigUpdatedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.deepbook_pool_config_updated_event_type {
+                if DeepbookPoolConfigUpdated::matches_event_type(&ev.type_, self.env) {
                     let event: DeepbookPoolConfigUpdated = bcs::from_bytes(&ev.contents)?;
                     let config_json = serde_json::to_value(&event.config)?;
                     let data = DeepbookPoolConfigUpdatedModel {

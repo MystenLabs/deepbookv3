@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_manager::LiquidationEvent;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::Liquidation;
 use deepbook_schema::schema::liquidation;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct LiquidationHandler {
-    liquidation_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl LiquidationHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            liquidation_event_type: env.liquidation_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,7 +44,7 @@ impl Processor for LiquidationHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.liquidation_event_type {
+                if LiquidationEvent::matches_event_type(&ev.type_, self.env) {
                     let event: LiquidationEvent = bcs::from_bytes(&ev.contents)?;
                     let data = Liquidation {
                         event_digest: format!("{digest}{index}"),

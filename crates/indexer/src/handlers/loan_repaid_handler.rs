@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_manager::LoanRepaidEvent;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::LoanRepaid;
 use deepbook_schema::schema::loan_repaid;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct LoanRepaidHandler {
-    loan_repaid_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl LoanRepaidHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            loan_repaid_event_type: env.loan_repaid_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,7 +44,7 @@ impl Processor for LoanRepaidHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.loan_repaid_event_type {
+                if LoanRepaidEvent::matches_event_type(&ev.type_, self.env) {
                     let event: LoanRepaidEvent = bcs::from_bytes(&ev.contents)?;
                     let data = LoanRepaid {
                         event_digest: format!("{digest}{index}"),

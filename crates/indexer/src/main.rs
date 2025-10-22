@@ -13,26 +13,26 @@ use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHa
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
 
 // Margin Manager Events
-use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
+use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
 use deepbook_indexer::handlers::loan_borrowed_handler::LoanBorrowedHandler;
 use deepbook_indexer::handlers::loan_repaid_handler::LoanRepaidHandler;
-use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
+use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
 
 // Margin Pool Operations Events
 use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
 use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
 
 // Margin Pool Admin Events
-use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
 use deepbook_indexer::handlers::interest_params_updated_handler::InterestParamsUpdatedHandler;
 use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
+use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
 
 // Margin Registry Events
-use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
-use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
+use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -205,7 +205,10 @@ async fn main() -> Result<(), anyhow::Error> {
                     .concurrent_pipeline(InterestParamsUpdatedHandler::new(env), Default::default())
                     .await?;
                 indexer
-                    .concurrent_pipeline(MarginPoolConfigUpdatedHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        MarginPoolConfigUpdatedHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
 
                 // Margin Registry Events
@@ -213,13 +216,22 @@ async fn main() -> Result<(), anyhow::Error> {
                     .concurrent_pipeline(MaintainerCapUpdatedHandler::new(env), Default::default())
                     .await?;
                 indexer
-                    .concurrent_pipeline(DeepbookPoolRegisteredHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        DeepbookPoolRegisteredHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
                 indexer
-                    .concurrent_pipeline(DeepbookPoolUpdatedRegistryHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        DeepbookPoolUpdatedRegistryHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
                 indexer
-                    .concurrent_pipeline(DeepbookPoolConfigUpdatedHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        DeepbookPoolConfigUpdatedHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
             }
         }

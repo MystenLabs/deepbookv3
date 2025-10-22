@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_pool::AssetWithdrawn;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::AssetWithdrawn as AssetWithdrawnModel;
 use deepbook_schema::schema::asset_withdrawn;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct AssetWithdrawnHandler {
-    asset_withdrawn_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl AssetWithdrawnHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            asset_withdrawn_event_type: env.asset_withdrawn_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,7 +44,7 @@ impl Processor for AssetWithdrawnHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.asset_withdrawn_event_type {
+                if AssetWithdrawn::matches_event_type(&ev.type_, self.env) {
                     let event: AssetWithdrawn = bcs::from_bytes(&ev.contents)?;
                     let data = AssetWithdrawnModel {
                         event_digest: format!("{digest}{index}"),

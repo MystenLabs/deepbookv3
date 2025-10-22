@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_registry::MaintainerCapUpdated;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::MaintainerCapUpdated as MaintainerCapUpdatedModel;
 use deepbook_schema::schema::maintainer_cap_updated;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct MaintainerCapUpdatedHandler {
-    maintainer_cap_updated_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl MaintainerCapUpdatedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            maintainer_cap_updated_event_type: env.maintainer_cap_updated_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,7 +44,7 @@ impl Processor for MaintainerCapUpdatedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.maintainer_cap_updated_event_type {
+                if MaintainerCapUpdated::matches_event_type(&ev.type_, self.env) {
                     let event: MaintainerCapUpdated = bcs::from_bytes(&ev.contents)?;
                     let data = MaintainerCapUpdatedModel {
                         event_digest: format!("{digest}{index}"),

@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook_margin::margin_pool::MarginPoolConfigUpdated;
+use crate::models::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::MarginPoolConfigUpdated as MarginPoolConfigUpdatedModel;
 use deepbook_schema::schema::margin_pool_config_updated;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use serde_json;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
@@ -15,16 +15,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct MarginPoolConfigUpdatedHandler {
-    margin_pool_config_updated_event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl MarginPoolConfigUpdatedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            margin_pool_config_updated_event_type: env.margin_pool_config_updated_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -49,7 +45,7 @@ impl Processor for MarginPoolConfigUpdatedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.margin_pool_config_updated_event_type {
+                if MarginPoolConfigUpdated::matches_event_type(&ev.type_, self.env) {
                     let event: MarginPoolConfigUpdated = bcs::from_bytes(&ev.contents)?;
                     let config_json = serde_json::to_value(&event.margin_pool_config)?;
                     let data = MarginPoolConfigUpdatedModel {

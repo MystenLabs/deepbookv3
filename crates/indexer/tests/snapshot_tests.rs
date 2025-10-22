@@ -1,24 +1,24 @@
 use chrono::NaiveDateTime;
+use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
+use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
+use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
+use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
+use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
+use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
+use deepbook_indexer::handlers::interest_params_updated_handler::InterestParamsUpdatedHandler;
+use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
+use deepbook_indexer::handlers::loan_borrowed_handler::LoanBorrowedHandler;
+use deepbook_indexer::handlers::loan_repaid_handler::LoanRepaidHandler;
+use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
+use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
+use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
-use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
-use deepbook_indexer::handlers::loan_borrowed_handler::LoanBorrowedHandler;
-use deepbook_indexer::handlers::loan_repaid_handler::LoanRepaidHandler;
-use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
-use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
-use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
-use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
-use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
-use deepbook_indexer::handlers::interest_params_updated_handler::InterestParamsUpdatedHandler;
-use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
-use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
-use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
-use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
-use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use fastcrypto::hash::{HashFunction, Sha256};
@@ -93,7 +93,12 @@ async fn balances_indirect_interaction_test() -> Result<(), anyhow::Error> {
 #[tokio::test]
 async fn margin_manager_created_test() -> Result<(), anyhow::Error> {
     let handler = MarginManagerCreatedHandler::new(DeepbookEnv::Testnet);
-    data_test("margin_manager_created", handler, ["margin_manager_created"]).await?;
+    data_test(
+        "margin_manager_created",
+        handler,
+        ["margin_manager_created"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -155,7 +160,12 @@ async fn deepbook_pool_updated_test() -> Result<(), anyhow::Error> {
 #[ignore] // TODO: Add checkpoint test data
 async fn interest_params_updated_test() -> Result<(), anyhow::Error> {
     let handler = InterestParamsUpdatedHandler::new(DeepbookEnv::Testnet);
-    data_test("interest_params_updated", handler, ["interest_params_updated"]).await?;
+    data_test(
+        "interest_params_updated",
+        handler,
+        ["interest_params_updated"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -163,7 +173,12 @@ async fn interest_params_updated_test() -> Result<(), anyhow::Error> {
 #[ignore] // TODO: Add checkpoint test data
 async fn margin_pool_config_updated_test() -> Result<(), anyhow::Error> {
     let handler = MarginPoolConfigUpdatedHandler::new(DeepbookEnv::Testnet);
-    data_test("margin_pool_config_updated", handler, ["margin_pool_config_updated"]).await?;
+    data_test(
+        "margin_pool_config_updated",
+        handler,
+        ["margin_pool_config_updated"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -171,21 +186,36 @@ async fn margin_pool_config_updated_test() -> Result<(), anyhow::Error> {
 #[tokio::test]
 async fn maintainer_cap_updated_test() -> Result<(), anyhow::Error> {
     let handler = MaintainerCapUpdatedHandler::new(DeepbookEnv::Testnet);
-    data_test("maintainer_cap_updated", handler, ["maintainer_cap_updated"]).await?;
+    data_test(
+        "maintainer_cap_updated",
+        handler,
+        ["maintainer_cap_updated"],
+    )
+    .await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn deepbook_pool_registered_test() -> Result<(), anyhow::Error> {
     let handler = DeepbookPoolRegisteredHandler::new(DeepbookEnv::Testnet);
-    data_test("deepbook_pool_registered", handler, ["deepbook_pool_registered"]).await?;
+    data_test(
+        "deepbook_pool_registered",
+        handler,
+        ["deepbook_pool_registered"],
+    )
+    .await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn deepbook_pool_updated_registry_test() -> Result<(), anyhow::Error> {
     let handler = DeepbookPoolUpdatedRegistryHandler::new(DeepbookEnv::Testnet);
-    data_test("deepbook_pool_updated_registry", handler, ["deepbook_pool_updated_registry"]).await?;
+    data_test(
+        "deepbook_pool_updated_registry",
+        handler,
+        ["deepbook_pool_updated_registry"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -193,7 +223,12 @@ async fn deepbook_pool_updated_registry_test() -> Result<(), anyhow::Error> {
 #[ignore] // TODO: Add checkpoint test data
 async fn deepbook_pool_config_updated_test() -> Result<(), anyhow::Error> {
     let handler = DeepbookPoolConfigUpdatedHandler::new(DeepbookEnv::Testnet);
-    data_test("deepbook_pool_config_updated", handler, ["deepbook_pool_config_updated"]).await?;
+    data_test(
+        "deepbook_pool_config_updated",
+        handler,
+        ["deepbook_pool_config_updated"],
+    )
+    .await?;
     Ok(())
 }
 
@@ -220,14 +255,14 @@ where
         let temp_db = TempDb::new()?;
         temp_db.database().url().to_string()
     };
-    
+
     let db = Arc::new(Db::for_write(url.parse()?, DbArgs::default()).await?);
-    
+
     // Only run migrations if using mock database (real DB already has migrations)
     if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) != "true" {
         db.run_migrations(Some(&MIGRATIONS)).await?;
     }
-    
+
     let mut conn = db.connect().await?;
 
     // Test setup based on provided test_name
@@ -243,7 +278,7 @@ where
     for table in tables_to_check {
         let rows = read_table(&table, &url).await?;
         println!("✅ Table {} has {} rows", table, rows.len());
-        
+
         // Only create snapshots if using mock database
         if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) != "true" {
             assert_json_snapshot!(format!("{test_name}__{table}"), rows);
