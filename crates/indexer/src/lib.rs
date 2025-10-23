@@ -44,12 +44,12 @@ impl DeepbookEnv {
         };
 
         let mut all_packages = packages.to_vec();
-        
+
         // Add margin package if it's not the zero address
         if margin_package != "0x0000000000000000000000000000000000000000000000000000000000000000" {
             all_packages.push(margin_package);
         }
-        
+
         all_packages
     }
 

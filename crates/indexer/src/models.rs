@@ -1,13 +1,9 @@
+use crate::traits::MoveStruct;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use sui_sdk_types::Address;
-use crate::traits::MoveStruct;
-
-// ObjectId is just an Address in sui-sdk-types
-pub type ObjectId = Address;
-
-
-
+use sui_types::base_types::ObjectID;
+use sui_types::collection_types::VecMap;
 
 // DeepBook module
 pub mod deepbook {
@@ -18,7 +14,7 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct BalanceEvent {
-            pub balance_manager_id: ObjectId,
+            pub balance_manager_id: ObjectID,
             pub asset: String,
             pub amount: u64,
             pub deposit: bool,
@@ -35,8 +31,8 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct OrderCanceled {
-            pub balance_manager_id: ObjectId,
-            pub pool_id: ObjectId,
+            pub balance_manager_id: ObjectID,
+            pub pool_id: ObjectID,
             pub order_id: u128,
             pub client_order_id: u64,
             pub trader: Address,
@@ -49,8 +45,8 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct OrderModified {
-            pub balance_manager_id: ObjectId,
-            pub pool_id: ObjectId,
+            pub balance_manager_id: ObjectID,
+            pub pool_id: ObjectID,
             pub order_id: u128,
             pub client_order_id: u64,
             pub trader: Address,
@@ -78,7 +74,7 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct OrderFilled {
-            pub pool_id: ObjectId,
+            pub pool_id: ObjectID,
             pub maker_order_id: u128,
             pub taker_order_id: u128,
             pub maker_client_order_id: u64,
@@ -91,15 +87,15 @@ pub mod deepbook {
             pub maker_fee_is_deep: bool,
             pub base_quantity: u64,
             pub quote_quantity: u64,
-            pub maker_balance_manager_id: ObjectId,
-            pub taker_balance_manager_id: ObjectId,
+            pub maker_balance_manager_id: ObjectID,
+            pub taker_balance_manager_id: ObjectID,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct OrderPlaced {
-            pub balance_manager_id: ObjectId,
-            pub pool_id: ObjectId,
+            pub balance_manager_id: ObjectID,
+            pub pool_id: ObjectID,
             pub order_id: u128,
             pub client_order_id: u64,
             pub trader: Address,
@@ -112,8 +108,8 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct OrderExpired {
-            pub balance_manager_id: ObjectId,
-            pub pool_id: ObjectId,
+            pub balance_manager_id: ObjectID,
+            pub pool_id: ObjectID,
             pub order_id: u128,
             pub client_order_id: u64,
             pub trader: Address,
@@ -145,7 +141,7 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct FlashLoanBorrowed {
-            pub pool_id: ObjectId,
+            pub pool_id: ObjectID,
             pub borrow_quantity: u64,
             pub type_name: String,
         }
@@ -164,8 +160,8 @@ pub mod deepbook {
             pub conversion_rate: u64,
             pub timestamp: u64,
             pub is_base_conversion: bool,
-            pub reference_pool: ObjectId,
-            pub target_pool: ObjectId,
+            pub reference_pool: ObjectID,
+            pub target_pool: ObjectID,
         }
 
         impl MoveStruct for PriceAdded {
@@ -179,18 +175,18 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct VoteEvent {
-            pub pool_id: ObjectId,
-            pub balance_manager_id: ObjectId,
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
             pub epoch: u64,
-            pub from_proposal_id: Option<ObjectId>,
-            pub to_proposal_id: ObjectId,
+            pub from_proposal_id: Option<ObjectID>,
+            pub to_proposal_id: ObjectID,
             pub stake: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct StakeEvent {
-            pub pool_id: ObjectId,
-            pub balance_manager_id: ObjectId,
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
             pub epoch: u64,
             pub amount: u64,
             pub stake: bool,
@@ -198,16 +194,16 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct RebateEvent {
-            pub pool_id: ObjectId,
-            pub balance_manager_id: ObjectId,
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
             pub epoch: u64,
             pub claim_amount: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct ProposalEvent {
-            pub pool_id: ObjectId,
-            pub balance_manager_id: ObjectId,
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
             pub epoch: u64,
             pub taker_fee: u64,
             pub maker_fee: u64,
@@ -257,7 +253,7 @@ pub mod deepbook {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepBurned<BaseAsset, QuoteAsset> {
-            pub pool_id: ObjectId,
+            pub pool_id: ObjectID,
             pub deep_burned: u64,
             #[serde(skip)]
             pub phantom_base: PhantomData<BaseAsset>,
@@ -281,16 +277,16 @@ pub mod deepbook_margin {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct MarginManagerEvent {
-            pub margin_manager_id: ObjectId,
-            pub balance_manager_id: ObjectId,
+            pub margin_manager_id: ObjectID,
+            pub balance_manager_id: ObjectID,
             pub owner: Address,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct LoanBorrowedEvent {
-            pub margin_manager_id: ObjectId,
-            pub margin_pool_id: ObjectId,
+            pub margin_manager_id: ObjectID,
+            pub margin_pool_id: ObjectID,
             pub loan_amount: u64,
             pub total_borrow: u64,
             pub total_shares: u64,
@@ -299,8 +295,8 @@ pub mod deepbook_margin {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct LoanRepaidEvent {
-            pub margin_manager_id: ObjectId,
-            pub margin_pool_id: ObjectId,
+            pub margin_manager_id: ObjectID,
+            pub margin_pool_id: ObjectID,
             pub repay_amount: u64,
             pub repay_shares: u64,
             pub timestamp: u64,
@@ -308,8 +304,8 @@ pub mod deepbook_margin {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct LiquidationEvent {
-            pub margin_manager_id: ObjectId,
-            pub margin_pool_id: ObjectId,
+            pub margin_manager_id: ObjectID,
+            pub margin_pool_id: ObjectID,
             pub liquidation_amount: u64,
             pub pool_reward: u64,
             pub pool_default: u64,
@@ -340,7 +336,6 @@ pub mod deepbook_margin {
 
     pub mod margin_pool {
         use super::*;
-        use std::collections::HashMap;
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct MarginPoolConfig {
@@ -362,13 +357,13 @@ pub mod deepbook_margin {
         pub struct ProtocolConfig {
             pub margin_pool_config: MarginPoolConfig,
             pub interest_config: InterestConfig,
-            pub extra_fields: HashMap<String, u64>,
+            pub extra_fields: VecMap<String, u64>,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct MarginPoolCreated {
-            pub margin_pool_id: ObjectId,
-            pub maintainer_cap_id: ObjectId,
+            pub margin_pool_id: ObjectID,
+            pub maintainer_cap_id: ObjectID,
             pub asset_type: String, // TypeName in Move
             pub config: ProtocolConfig,
             pub timestamp: u64,
@@ -376,32 +371,32 @@ pub mod deepbook_margin {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolUpdated {
-            pub margin_pool_id: ObjectId,
-            pub deepbook_pool_id: ObjectId,
-            pub pool_cap_id: ObjectId,
+            pub margin_pool_id: ObjectID,
+            pub deepbook_pool_id: ObjectID,
+            pub pool_cap_id: ObjectID,
             pub enabled: bool,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct InterestParamsUpdated {
-            pub margin_pool_id: ObjectId,
-            pub pool_cap_id: ObjectId,
-            pub interest_config: serde_json::Value,
+            pub margin_pool_id: ObjectID,
+            pub pool_cap_id: ObjectID,
+            pub interest_config: InterestConfig,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct MarginPoolConfigUpdated {
-            pub margin_pool_id: ObjectId,
-            pub pool_cap_id: ObjectId,
-            pub margin_pool_config: serde_json::Value,
+            pub margin_pool_id: ObjectID,
+            pub pool_cap_id: ObjectID,
+            pub margin_pool_config: MarginPoolConfig,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct AssetSupplied {
-            pub margin_pool_id: ObjectId,
+            pub margin_pool_id: ObjectID,
             pub asset_type: String, // TypeName in Move
             pub supplier: Address,
             pub supply_amount: u64,
@@ -411,7 +406,7 @@ pub mod deepbook_margin {
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct AssetWithdrawn {
-            pub margin_pool_id: ObjectId,
+            pub margin_pool_id: ObjectID,
             pub asset_type: String, // TypeName in Move
             pub supplier: Address,
             pub withdraw_amount: u64,
@@ -454,30 +449,59 @@ pub mod deepbook_margin {
         use super::*;
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct RiskRatios {
+            pub min_withdraw_risk_ratio: u64,
+            pub min_borrow_risk_ratio: u64,
+            pub liquidation_risk_ratio: u64,
+            pub target_liquidation_risk_ratio: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PoolConfig {
+            pub base_margin_pool_id: ObjectID,
+            pub quote_margin_pool_id: ObjectID,
+            pub risk_ratios: RiskRatios,
+            pub user_liquidation_reward: u64,
+            pub pool_liquidation_reward: u64,
+            pub enabled: bool,
+            pub extra_fields: VecMap<String, u64>,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct MaintainerCapUpdated {
-            pub maintainer_cap_id: ObjectId,
+            pub maintainer_cap_id: ObjectID,
             pub allowed: bool,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolRegistered {
-            pub pool_id: ObjectId,
+            pub pool_id: ObjectID,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolUpdated {
-            pub pool_id: ObjectId,
+            pub pool_id: ObjectID,
             pub enabled: bool,
             pub timestamp: u64,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolConfigUpdated {
-            pub pool_id: ObjectId,
-            pub config: serde_json::Value,
+            pub pool_id: ObjectID,
+            pub config: PoolConfig,
             pub timestamp: u64,
+        }
+
+        impl MoveStruct for RiskRatios {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "RiskRatios";
+        }
+
+        impl MoveStruct for PoolConfig {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "PoolConfig";
         }
 
         impl MoveStruct for MaintainerCapUpdated {
