@@ -51,7 +51,7 @@ pub trait MoveStruct: Serialize {
                     .map(|param| {
                         sui_sdk_types::TypeTag::Struct(Box::new(StructTag {
                             address: (*address.inner()).into(),
-                            module: Identifier::from_str("").unwrap(), // Placeholder
+                            module: Identifier::from_str(Self::MODULE).unwrap(),
                             name: Identifier::from_str(param).unwrap(),
                             type_params: Vec::new(),
                         }))
@@ -124,10 +124,14 @@ pub fn get_package_addresses_for_module(
             Ok(addresses)
         }
         // sui modules
-        "sui" => Ok(vec![Address::new([
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
-            0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 2u8,
-        ])]),
+        "sui" => {
+            const SUI_SYSTEM_ADDRESS: &str = "0000000000000000000000000000000000000000000000000000000000000002";
+            if let Ok(addr) = parse_address_from_hex(SUI_SYSTEM_ADDRESS) {
+                Ok(vec![addr])
+            } else {
+                Err("Failed to parse SUI system address".to_string())
+            }
+        }
         _ => {
             // Raise exception for unknown modules
             Err(format!("Unknown module: {}", module))

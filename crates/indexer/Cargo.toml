@@ -13,7 +13,6 @@ sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features =
 sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 clap = { workspace = true, features = ["env"] }
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
-bigdecimal = "=0.3.0"
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
 hex = "0.4"
 tracing.workspace = true
@@ -33,7 +32,6 @@ telemetry-subscribers.workspace = true
 tokio-util.workspace = true
 
 deepbook-schema = { path = "../schema" }
-paste = "1.0"
 
 [dev-dependencies]
 sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "7f1b81169e966fc1af6e3cbb1a3180fb577af075" }
