@@ -1327,7 +1327,7 @@ fun test_admin_withdraw_default_referral_fees() {
 
     // Check that default referral has shares
     let default_id = margin_constants::default_referral();
-    let (current_shares, _min_shares) = protocol_fees::referral_tracker(
+    let (current_shares, _unclaimed_fees) = protocol_fees::referral_tracker(
         pool.protocol_fees(),
         default_id,
     );
