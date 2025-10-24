@@ -456,6 +456,11 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         self.borrowed_quote_shares = self.borrowed_quote_shares - repay_shares;
     };
 
+    // Clear margin_pool_id if fully liquidated
+    if (self.borrowed_base_shares == 0 && self.borrowed_quote_shares == 0) {
+        self.margin_pool_id = option::none();
+    };
+
     // repay_amount * 1.05 is what the user should receive back, since the user provided both the repayment and pool reward
     // user should receive as much assets possible in the debt asset first, then the collateral asset
 
