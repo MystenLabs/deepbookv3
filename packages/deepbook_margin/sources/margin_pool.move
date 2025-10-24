@@ -4,24 +4,22 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::margin_registry::{
-    MarginRegistry,
-    MaintainerCap,
-    MarginAdminCap,
-    MarginPoolCap
+use deepbook_margin::{
+    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
+    margin_state::{Self, State},
+    position_manager::{Self, PositionManager},
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
+    protocol_fees::{Self, ProtocolFees, SupplyReferral}
 };
-use deepbook_margin::margin_state::{Self, State};
-use deepbook_margin::position_manager::{Self, PositionManager};
-use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
-use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
-use std::string::String;
-use std::type_name::{Self, TypeName};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::{Self, VecSet};
+use std::{string::String, type_name::{Self, TypeName}};
+use sui::{
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    event,
+    vec_map::{Self, VecMap},
+    vec_set::{Self, VecSet}
+};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -379,7 +377,7 @@ public fun mint_supply_referral<Asset>(
 public fun withdraw_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    referral: &mut SupplyReferral,
+    referral: &SupplyReferral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();

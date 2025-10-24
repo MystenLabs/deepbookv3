@@ -77,15 +77,15 @@ fun test_referral_fees_ok() {
     test.next_tx(test_constants::user1());
     {
         // first claim checks min_shares, initially set to 0. first claim has no fees.
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 100 * constants::float_scaling());
         assert_eq!(min_shares, 100 * constants::float_scaling());
 
         // now min_shares is 100, but last_fees_per_share is also updated. If we try to claim again, it should have no fees.
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 100 * constants::float_scaling());
@@ -112,15 +112,15 @@ fun test_referral_fees_ok() {
         // user1 claims fees. min_shares is 100, last_fees_per_share is 1_000_000_000, fees_per_share is now 1_500_000_000
         // they get 100 shares * (1_500_000_000 - 1_000_000_000) = 100 * 500_000_000 = 50_000_000_000
         assert_eq!(protocol_fees.fees_per_share(), 1_500_000_000);
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 50_000_000_000);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 200 * constants::float_scaling());
         assert_eq!(min_shares, 200 * constants::float_scaling());
 
         // if we try to claim again, it should be 0
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 200 * constants::float_scaling());
@@ -150,8 +150,8 @@ fun test_referral_fees_ok() {
     test.next_tx(test_constants::user1());
     {
         // fees_per_share went from 1.5 -> 1.833 since last claim. 200 shares exposed. 200 * (1.833 - 1.5) = 200 * 0.333 = 66.6
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 66_666_666_600);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 200 * constants::float_scaling());
@@ -182,8 +182,8 @@ fun test_referral_fees_ok() {
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
         assert_eq!(min_shares, 0);
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 0);
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -202,8 +202,8 @@ fun test_referral_fees_ok() {
 
     test.next_tx(test_constants::user1());
     {
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 1000 * constants::float_scaling());
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -247,8 +247,8 @@ fun test_referra_fees_many() {
     {
         i = 0;
         while (i < 10) {
-            let mut referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
-            let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+            let referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
+            let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
             assert_eq!(fees, 0);
             let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_ids[i]);
             assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -269,8 +269,8 @@ fun test_referra_fees_many() {
     {
         i = 0;
         while (i < 10) {
-            let mut referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
-            let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+            let referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
+            let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
             assert_eq!(fees, 500 * constants::float_scaling());
             let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_ids[i]);
             assert_eq!(current_shares, 1000 * constants::float_scaling());
@@ -308,8 +308,8 @@ fun test_referra_fees_many() {
     {
         i = 0;
         while (i < 10) {
-            let mut referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
-            let fees = protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+            let referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
+            let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
             let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_ids[i]);
             if (i % 2 == 0) {
                 assert_eq!(fees, 0);
@@ -345,8 +345,8 @@ fun test_referral_fees_not_owner_e() {
 
     test.next_tx(test_constants::user2());
     {
-        let mut referral = test.take_shared_by_id<SupplyReferral>(referral_id);
-        protocol_fees.calculate_and_claim(&mut referral, test.ctx());
+        let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
+        protocol_fees.calculate_and_claim(&referral, test.ctx());
     };
 
     abort

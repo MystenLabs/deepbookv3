@@ -6,9 +6,7 @@ module deepbook_margin::protocol_fees;
 use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
-use sui::event;
-use sui::table::{Self, Table};
-use sui::vec_map::{Self, VecMap};
+use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const ENotOwner: u64 = 1;
@@ -33,7 +31,6 @@ public struct ReferralTracker has store {
 public struct SupplyReferral has key {
     id: UID,
     owner: address,
-    last_fees_per_share: u64,
 }
 
 public struct ProtocolFeesIncreasedEvent has copy, drop {
@@ -85,13 +82,12 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
-                last_fees_per_share: self.fees_per_share, // Initialize with current
+                last_fees_per_share: self.fees_per_share,
             },
         );
     let referral = SupplyReferral {
         id,
         owner: ctx.sender(),
-        last_fees_per_share: self.fees_per_share,
     };
     transfer::share_object(referral);
 
@@ -142,7 +138,7 @@ public(package) fun decrease_shares(self: &mut ProtocolFees, referral: Option<ID
 /// Referred fees is set to the minimum of the current and referred shares.
 public(package) fun calculate_and_claim(
     self: &mut ProtocolFees,
-    referral: &mut SupplyReferral,
+    referral: &SupplyReferral,
     ctx: &TxContext,
 ): u64 {
     assert!(ctx.sender() == referral.owner, ENotOwner);
@@ -152,8 +148,7 @@ public(package) fun calculate_and_claim(
     let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
     let fees = math::mul(referred_shares, fees_per_share_delta);
 
-    // Update both the SupplyReferral object and the tracker
-    referral.last_fees_per_share = self.fees_per_share;
+    // Update tracker checkpoint and reset min_shares
     referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
 
