@@ -320,7 +320,10 @@ public fun withdraw<Asset>(
     let supplied_shares = self.positions.user_supply_shares(supplier_cap_id);
     let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
-    let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
+    let withdraw_shares = math::mul_round_up(
+        supplied_shares,
+        math::div(withdraw_amount, supplied_amount),
+    );
 
     let (_, protocol_fees) = self
         .state

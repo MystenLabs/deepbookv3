@@ -1360,3 +1360,66 @@ fun test_admin_withdraw_default_referral_fees() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_withdraw_round_up_shares() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    // Supply 10 tokens
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        10 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow to create interest accrual
+    scenario.next_tx(test_constants::user2());
+    let borrow_coin = test_borrow(
+        &mut pool,
+        5 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Advance time to accrue interest
+    advance_time(&mut clock, 365 * 24 * 60 * 60 * 1000); // 1 year
+
+    // Now shares are worth more than initial amount (ratio > 1)
+    scenario.next_tx(test_constants::user1());
+    let supplier_cap_id = object::id(&supplier_cap);
+    let shares_before = pool.user_supply_shares(supplier_cap_id);
+    let amount_before = pool.user_supply_amount(supplier_cap_id, &clock);
+
+    // Verify interest accrued: amount > initial supply
+    assert!(amount_before > 10 * test_constants::usdc_multiplier());
+
+    // Try to withdraw 1 token (very small compared to total)
+    let withdrawn = pool.withdraw<USDC>(
+        &registry,
+        &supplier_cap,
+        option::some(1),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify we got exactly 1 token
+    assert_eq!(withdrawn.value(), 1);
+
+    // Verify exactly 1 share was burned (rounded up from fractional share)
+    let shares_after = pool.user_supply_shares(supplier_cap_id);
+    assert_eq!(shares_after, shares_before - 1);
+
+    // Cleanup
+    destroy(borrow_coin);
+    destroy(withdrawn);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
