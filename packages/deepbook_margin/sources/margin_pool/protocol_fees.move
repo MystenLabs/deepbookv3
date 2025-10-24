@@ -25,7 +25,7 @@ public struct ProtocolFees has store {
 public struct ReferralTracker has store {
     current_shares: u64,
     min_shares: u64,
-    last_fees_per_share: u64, // Checkpoint for fee calculations
+    last_fees_per_share: u64,
 }
 
 public struct SupplyReferral has key {
