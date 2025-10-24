@@ -6,7 +6,9 @@ module deepbook_margin::protocol_fees;
 use deepbook::math;
 use deepbook_margin::margin_constants;
 use std::string::String;
-use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
+use sui::event;
+use sui::table::{Self, Table};
+use sui::vec_map::{Self, VecMap};
 
 // === Errors ===
 const ENotOwner: u64 = 1;
@@ -153,6 +155,27 @@ public(package) fun calculate_and_claim(
     event::emit(ReferralFeesClaimedEvent {
         referral_id: referral.id.to_inner(),
         owner: referral.owner,
+        fees,
+    });
+
+    fees
+}
+
+/// Claim the default referral fees (admin only).
+/// The default referral at 0x0 doesn't have a SupplyReferral object, so admin must claim these fees.
+public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
+    let default_id = margin_constants::default_referral();
+    let referral_tracker = self.referrals.borrow_mut(default_id);
+    let referred_shares = referral_tracker.min_shares;
+    let fees_per_share_delta = self.fees_per_share;
+    let fees = math::mul(referred_shares, fees_per_share_delta);
+
+    // Reset the min_shares for next claim period
+    referral_tracker.min_shares = referral_tracker.current_shares;
+
+    event::emit(ReferralFeesClaimedEvent {
+        referral_id: default_id,
+        owner: @0x0,
         fees,
     });
 
