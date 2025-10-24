@@ -1295,12 +1295,68 @@ fun test_withdraw_referral_fees_not_owner() {
 
     // User2 (not the owner) tries to withdraw referral fees (should fail)
     scenario.next_tx(test_constants::user2());
-    let mut referral = scenario.take_shared_by_id<SupplyReferral>(referral_id);
-    let coin = pool.withdraw_referral_fees(&registry, &mut referral, scenario.ctx());
+    let referral = scenario.take_shared_by_id<SupplyReferral>(referral_id);
+    let coin = pool.withdraw_referral_fees(&registry, &referral, scenario.ctx());
 
     return_shared(referral);
     destroy(supplier_cap);
     destroy(coin);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_admin_withdraw_default_referral_fees() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User1 supplies WITHOUT a referral (goes to default 0x0)
+    scenario.next_tx(test_constants::user1());
+    let supplier_cap1 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+    let supply_coin1 = mint_coin<USDC>(1000 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, &supplier_cap1, supply_coin1, option::none(), &clock);
+
+    // User2 also supplies WITHOUT a referral
+    scenario.next_tx(test_constants::user2());
+    let supplier_cap2 = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+    let supply_coin2 = mint_coin<USDC>(500 * test_constants::usdc_multiplier(), scenario.ctx());
+    pool.supply(&registry, &supplier_cap2, supply_coin2, option::none(), &clock);
+
+    // Check that default referral has shares
+    let default_id = margin_constants::default_referral();
+    let (current_shares, _min_shares) = protocol_fees::referral_tracker(
+        pool.protocol_fees(),
+        default_id,
+    );
+    assert!(current_shares > 0); // Users supplied without referral, so default has shares
+
+    // Admin can call the function to claim default referral fees (even if 0)
+    scenario.next_tx(test_constants::admin());
+    let default_referral_coin = pool.admin_withdraw_default_referral_fees(
+        &registry,
+        &admin_cap,
+        scenario.ctx(),
+    );
+
+    // Fees will be 0 initially since no borrows/interest yet,
+    // but the important thing is admin CAN claim them (not stuck)
+    let fees_claimed = default_referral_coin.value();
+    assert_eq!(fees_claimed, 0); // No fees accrued yet
+
+    // Verify default referral's min_shares reset after claim
+    let (current_shares_after, min_shares_after) = protocol_fees::referral_tracker(
+        pool.protocol_fees(),
+        default_id,
+    );
+    assert_eq!(current_shares_after, min_shares_after);
+
+    // Cleanup
+    destroy(supplier_cap1);
+    destroy(supplier_cap2);
+    destroy(default_referral_coin);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }

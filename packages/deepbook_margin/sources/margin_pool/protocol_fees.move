@@ -25,12 +25,12 @@ public struct ProtocolFees has store {
 public struct ReferralTracker has store {
     current_shares: u64,
     min_shares: u64,
+    last_fees_per_share: u64,
 }
 
 public struct SupplyReferral has key {
     id: UID,
     owner: address,
-    last_fees_per_share: u64,
 }
 
 public struct ProtocolFeesIncreasedEvent has copy, drop {
@@ -64,6 +64,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
+                last_fees_per_share: 0,
             },
         );
 
@@ -81,12 +82,12 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
+                last_fees_per_share: self.fees_per_share,
             },
         );
     let referral = SupplyReferral {
         id,
         owner: ctx.sender(),
-        last_fees_per_share: self.fees_per_share,
     };
     transfer::share_object(referral);
 
@@ -117,10 +118,17 @@ public(package) fun increase_fees_accrued(self: &mut ProtocolFees, fees_accrued:
 }
 
 /// Increase the shares for a referral.
+/// When shares are first added, initialize min_shares and reset last_fees_per_share
+/// to prevent earning fees for the period before shares existed
 public(package) fun increase_shares(self: &mut ProtocolFees, referral: Option<ID>, shares: u64) {
     let referral_id = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_id);
+    let old_current_shares = referral_tracker.current_shares;
     referral_tracker.current_shares = referral_tracker.current_shares + shares;
+    if (old_current_shares == 0 && referral_tracker.min_shares == 0) {
+        referral_tracker.min_shares = shares;
+        referral_tracker.last_fees_per_share = self.fees_per_share;
+    };
     self.total_shares = self.total_shares + shares;
 }
 
@@ -137,22 +145,47 @@ public(package) fun decrease_shares(self: &mut ProtocolFees, referral: Option<ID
 /// Referred fees is set to the minimum of the current and referred shares.
 public(package) fun calculate_and_claim(
     self: &mut ProtocolFees,
-    referral: &mut SupplyReferral,
+    referral: &SupplyReferral,
     ctx: &TxContext,
 ): u64 {
     assert!(ctx.sender() == referral.owner, ENotOwner);
 
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_inner());
     let referred_shares = referral_tracker.min_shares;
-    let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
     let fees = math::mul(referred_shares, fees_per_share_delta);
 
-    referral.last_fees_per_share = self.fees_per_share;
+    // Update tracker checkpoint and reset min_shares
+    referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: referral.id.to_inner(),
         owner: referral.owner,
+        fees,
+    });
+
+    fees
+}
+
+/// Claim the default referral fees (admin only).
+/// The default referral at 0x0 doesn't have a SupplyReferral object, so admin must claim these fees.
+public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
+    let default_id = margin_constants::default_referral();
+    let referral_tracker = self.referrals.borrow_mut(default_id);
+    let referred_shares = referral_tracker.min_shares;
+
+    // Calculate delta since last claim (same as regular referrals)
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
+    let fees = math::mul(referred_shares, fees_per_share_delta);
+
+    // Update checkpoint and reset min_shares
+    referral_tracker.last_fees_per_share = self.fees_per_share;
+    referral_tracker.min_shares = referral_tracker.current_shares;
+
+    event::emit(ReferralFeesClaimedEvent {
+        referral_id: default_id,
+        owner: default_id.to_address(),
         fees,
     });
 

@@ -371,11 +371,26 @@ public fun mint_supply_referral<Asset>(
 public fun withdraw_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    referral: &mut SupplyReferral,
+    referral: &SupplyReferral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
     let referral_fees = self.protocol_fees.calculate_and_claim(referral, ctx);
+    let coin = self.vault.split(referral_fees).into_coin(ctx);
+
+    coin
+}
+
+/// Withdraw the default referral fees (admin only).
+/// The default referral at 0x0 doesn't have a SupplyReferral object,
+public fun admin_withdraw_default_referral_fees<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    registry.load_inner();
+    let referral_fees = self.protocol_fees.claim_default_referral_fees();
     let coin = self.vault.split(referral_fees).into_coin(ctx);
 
     coin
@@ -457,6 +472,10 @@ public fun last_update_timestamp<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.supply_cap()
+}
+
+public fun protocol_fees<Asset>(self: &MarginPool<Asset>): &ProtocolFees {
+    &self.protocol_fees
 }
 
 public fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
