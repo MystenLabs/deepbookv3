@@ -76,7 +76,7 @@ fun test_referral_fees_ok() {
 
     test.next_tx(test_constants::user1());
     {
-        // First claim now correctly calculates fees since min_shares is initialized properly
+        // First claim calculates fees since min_shares is initialized properly
         let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
         let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
         assert_eq!(fees, 100 * constants::float_scaling());
@@ -161,7 +161,7 @@ fun test_referral_fees_ok() {
     };
 
     // decrease referred shares to 0, then increase by 1000. Add 1000 rewards.
-    // With the fix: when shares are re-added after going to 0, min_shares is initialized properly
+    // When shares are re-added after going to 0, min_shares is initialized properly
     // This ensures referrals don't lose fees even in this edge case
     test.next_tx(test_constants::user1());
     {
