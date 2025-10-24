@@ -1,5 +1,189 @@
+use crate::handlers::convert_struct_tag;
+use move_core_types::language_storage::StructTag;
+use move_types::MoveStruct;
+use url::Url;
+
 pub mod handlers;
 pub(crate) mod models;
 
 pub const MAINNET_REMOTE_STORE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
+
+const MAINNET_PREVIOUS_PACKAGES: &[&str] = &[
+    "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+];
+
+const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[
+    "0xc483dba510597205749f2e8410c23f19be31a710aef251f353bc1b97755efd4d",
+    "0x5da5bbf6fb097d108eaf2c2306f88beae4014c90a44b95c7e76a6bfccec5f5ee",
+    "0xa3886aaa8aa831572dd39549242ca004a438c3a55967af9f0387ad2b01595068",
+    "0x9592ac923593f37f4fed15ee15f760ebd4c39729f53ee3e8c214de7a17157769",
+    "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
+    "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
+];
+const TESTNET_CURRENT_PACKAGE: &str =
+    "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73";
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum DeepbookEnv {
+    Mainnet,
+    Testnet,
+}
+
+/// Generates a function that returns the `StructTag` for a given event type,
+/// switching between Mainnet and Testnet packages based on the `DeepbookEnv`.
+///
+/// # Arguments
+///
+/// * `fn_name` - The name of the function to generate.
+/// * `path` - The path to the event type, relative to `models::deepbook` or `models::deepbook_testnet`.
+///
+/// # Example
+///
+/// ```rust
+/// //impl DeepbookEnv {
+/// //    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
+/// //}
+///
+/// // Expands to:
+/// //
+/// // fn balance_event_type(&self) -> StructTag {
+/// //     match self {
+/// //         DeepbookEnv::Mainnet => {
+/// //             use models::deepbook::balance_manager::BalanceEvent as Event;
+/// //             convert_struct_tag(Event::struct_type())
+/// //         },
+/// //         DeepbookEnv::Testnet => {
+/// //             use models::deepbook_testnet::balance_manager::BalanceEvent as Event;
+/// //             convert_struct_tag(Event::struct_type())
+/// //         }
+/// //     }
+/// // }
+/// ```
+///
+macro_rules! event_type_fn {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $($path:ident)::+
+    ) => {
+        $(#[$meta])*
+        fn $fn_name(&self) -> StructTag {
+            match self {
+                _ => {
+                    use models::deepbook::$($path)::+ as Event;
+                    convert_struct_tag(Event::struct_type())
+                }
+            }
+        }
+    };
+}
+
+/// Generates a function that returns the `StructTag` for an event type with phantom type parameters.
+/// This macro handles events with phantom types like DeepBurned<phantom BaseAsset, phantom QuoteAsset>.
+/// Since phantom types don't affect BCS deserialization, any concrete type will work.
+macro_rules! phantom_event_type_fn {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $($path:ident)::+, $($phantom_type:ty),+
+    ) => {
+        $(#[$meta])*
+        fn $fn_name(&self) -> StructTag {
+            match self {
+                _ => {
+                    use models::deepbook::$($path)::+ as Event;
+                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
+                },
+            }
+        }
+    };
+}
+
+// Default to <SUI, SUI> for the type parameters since they don't affect BCS deserialization
+macro_rules! phantom_event_type_fn_2 {
+    (
+        $(#[$meta:meta])*
+        $fn_name:ident, $($path:ident)::+
+    ) => {
+        phantom_event_type_fn!(
+            $(#[$meta])*
+            $fn_name, $($path)::+, models::sui::sui::SUI, models::sui::sui::SUI
+        );
+    };
+}
+
+impl DeepbookEnv {
+    pub fn remote_store_url(&self) -> Url {
+        let remote_store_url = match self {
+            DeepbookEnv::Mainnet => MAINNET_REMOTE_STORE_URL,
+            DeepbookEnv::Testnet => TESTNET_REMOTE_STORE_URL,
+        };
+        // Safe to unwrap on verified static URLs
+        Url::parse(remote_store_url).unwrap()
+    }
+
+    pub fn package_ids(&self) -> Vec<sui_types::base_types::ObjectID> {
+        use move_core_types::account_address::AccountAddress;
+        use std::str::FromStr;
+        use sui_types::base_types::ObjectID;
+
+        let (previous_packages, current_package) = match self {
+            DeepbookEnv::Mainnet => (
+                MAINNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+            ),
+            DeepbookEnv::Testnet => (
+                TESTNET_PREVIOUS_PACKAGES,
+                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
+            ),
+        };
+
+        let mut ids: Vec<ObjectID> = previous_packages
+            .iter()
+            .map(|pkg| ObjectID::from_str(pkg).unwrap())
+            .collect();
+        ids.push(ObjectID::from(current_package));
+        ids
+    }
+
+    pub fn package_addresses(&self) -> Vec<move_core_types::account_address::AccountAddress> {
+        use move_core_types::account_address::AccountAddress;
+        use std::str::FromStr;
+
+        let (previous_packages, current_package) = match self {
+            DeepbookEnv::Mainnet => (
+                MAINNET_PREVIOUS_PACKAGES,
+                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
+            ),
+            DeepbookEnv::Testnet => (
+                TESTNET_PREVIOUS_PACKAGES,
+                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
+            ),
+        };
+
+        let mut addresses: Vec<AccountAddress> = previous_packages
+            .iter()
+            .map(|pkg| AccountAddress::from_str(pkg).unwrap())
+            .collect();
+        addresses.push(current_package);
+        addresses
+    }
+
+    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
+    event_type_fn!(flash_loan_borrowed_event_type, vault::FlashLoanBorrowed);
+    event_type_fn!(order_filled_event_type, order_info::OrderFilled);
+    event_type_fn!(order_placed_event_type, order_info::OrderPlaced);
+    event_type_fn!(order_modified_event_type, order::OrderModified);
+    event_type_fn!(order_canceled_event_type, order::OrderCanceled);
+    event_type_fn!(order_expired_event_type, order_info::OrderExpired);
+    event_type_fn!(vote_event_type, state::VoteEvent);
+    event_type_fn!(
+        trade_params_update_event_type,
+        governance::TradeParamsUpdateEvent
+    );
+    event_type_fn!(stake_event_type, state::StakeEvent);
+    event_type_fn!(rebate_event_type, state::RebateEvent);
+    event_type_fn!(proposal_event_type, state::ProposalEvent);
+    event_type_fn!(price_added_event_type, deep_price::PriceAdded);
+    phantom_event_type_fn_2!(deep_burned_event_type, pool::DeepBurned);
+}

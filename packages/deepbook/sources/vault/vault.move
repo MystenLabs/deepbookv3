@@ -114,7 +114,7 @@ public(package) fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(self.base_balance.value() >= borrow_quantity, ENotEnoughBaseForLoan);
-    let borrow_type_name = type_name::get<BaseAsset>();
+    let borrow_type_name = type_name::with_defining_ids<BaseAsset>();
     let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
@@ -140,7 +140,7 @@ public(package) fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
 ): (Coin<QuoteAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(self.quote_balance.value() >= borrow_quantity, ENotEnoughQuoteForLoan);
-    let borrow_type_name = type_name::get<QuoteAsset>();
+    let borrow_type_name = type_name::with_defining_ids<QuoteAsset>();
     let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
@@ -165,7 +165,10 @@ public(package) fun return_flashloan_base<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(type_name::get<BaseAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(
+        type_name::with_defining_ids<BaseAsset>() == flash_loan.type_name,
+        EIncorrectTypeReturned,
+    );
     assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.base_balance.join(coin.into_balance<BaseAsset>());
@@ -184,7 +187,10 @@ public(package) fun return_flashloan_quote<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(type_name::get<QuoteAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(
+        type_name::with_defining_ids<QuoteAsset>() == flash_loan.type_name,
+        EIncorrectTypeReturned,
+    );
     assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.quote_balance.join(coin.into_balance<QuoteAsset>());

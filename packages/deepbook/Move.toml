@@ -4,8 +4,7 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/mainnet" }
-token = { local = "../token"}
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main"}
 
 [addresses]
 deepbook = "0x0"
