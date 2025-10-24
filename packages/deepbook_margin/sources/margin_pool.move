@@ -70,12 +70,6 @@ public struct ProtocolFeesWithdrawn has copy, drop {
     timestamp: u64,
 }
 
-public struct DefaultReferralFeesWithdrawn has copy, drop {
-    margin_pool_id: ID,
-    fees: u64,
-    timestamp: u64,
-}
-
 public struct DeepbookPoolUpdated has copy, drop {
     margin_pool_id: ID,
     deepbook_pool_id: ID,
@@ -389,23 +383,15 @@ public fun withdraw_referral_fees<Asset>(
 
 /// Withdraw the default referral fees (admin only).
 /// The default referral at 0x0 doesn't have a SupplyReferral object,
-/// so admin must claim these fees on behalf of the protocol.
 public fun admin_withdraw_default_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
     _admin_cap: &MarginAdminCap,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
     let referral_fees = self.protocol_fees.claim_default_referral_fees();
     let coin = self.vault.split(referral_fees).into_coin(ctx);
-
-    event::emit(DefaultReferralFeesWithdrawn {
-        margin_pool_id: self.id(),
-        fees: referral_fees,
-        timestamp: clock.timestamp_ms(),
-    });
 
     coin
 }

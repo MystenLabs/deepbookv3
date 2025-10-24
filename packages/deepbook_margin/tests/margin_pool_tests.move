@@ -1338,7 +1338,6 @@ fun test_admin_withdraw_default_referral_fees() {
     let default_referral_coin = pool.admin_withdraw_default_referral_fees(
         &registry,
         &admin_cap,
-        &clock,
         scenario.ctx(),
     );
 
