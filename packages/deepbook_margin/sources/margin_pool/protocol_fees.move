@@ -27,6 +27,7 @@ public struct ProtocolFees has store {
 public struct ReferralTracker has store {
     current_shares: u64,
     min_shares: u64,
+    last_fees_per_share: u64, // Checkpoint for fee calculations
 }
 
 public struct SupplyReferral has key {
@@ -66,6 +67,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
+                last_fees_per_share: 0,
             },
         );
 
@@ -83,6 +85,7 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
             ReferralTracker {
                 current_shares: 0,
                 min_shares: 0,
+                last_fees_per_share: self.fees_per_share, // Initialize with current
             },
         );
     let referral = SupplyReferral {
@@ -146,10 +149,12 @@ public(package) fun calculate_and_claim(
 
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_inner());
     let referred_shares = referral_tracker.min_shares;
-    let fees_per_share_delta = self.fees_per_share - referral.last_fees_per_share;
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
     let fees = math::mul(referred_shares, fees_per_share_delta);
 
+    // Update both the SupplyReferral object and the tracker
     referral.last_fees_per_share = self.fees_per_share;
+    referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
 
     event::emit(ReferralFeesClaimedEvent {
@@ -167,10 +172,13 @@ public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
     let default_id = margin_constants::default_referral();
     let referral_tracker = self.referrals.borrow_mut(default_id);
     let referred_shares = referral_tracker.min_shares;
-    let fees_per_share_delta = self.fees_per_share;
+
+    // Calculate delta since last claim (same as regular referrals)
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
     let fees = math::mul(referred_shares, fees_per_share_delta);
 
-    // Reset the min_shares for next claim period
+    // Update checkpoint and reset min_shares
+    referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
 
     event::emit(ReferralFeesClaimedEvent {
