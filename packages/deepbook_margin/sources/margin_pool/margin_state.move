@@ -91,7 +91,7 @@ public(package) fun increase_borrow(
 ): (u64, u64) {
     let protocol_fees = self.update(config, clock);
     let ratio = self.borrow_ratio();
-    let shares = math::div(amount, ratio);
+    let shares = math::div_round_up(amount, ratio);
     self.borrow_shares = self.borrow_shares + shares;
     self.total_borrow = self.total_borrow + amount;
 
