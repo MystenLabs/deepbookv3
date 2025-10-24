@@ -162,8 +162,6 @@ fun test_referral_fees_ok() {
     };
 
     // decrease referred shares to 0, then increase by 1000. Add 1000 rewards.
-    // When shares are re-added after going to 0, min_shares is initialized properly
-    // This ensures referrals don't lose fees even in this edge case
     test.next_tx(test_constants::user1());
     {
         protocol_fees.decrease_shares(
