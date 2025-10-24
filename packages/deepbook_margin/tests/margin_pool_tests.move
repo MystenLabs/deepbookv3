@@ -1346,12 +1346,13 @@ fun test_admin_withdraw_default_referral_fees() {
     let fees_claimed = default_referral_coin.value();
     assert_eq!(fees_claimed, 0); // No fees accrued yet
 
-    // Verify default referral's min_shares reset after claim
-    let (current_shares_after, min_shares_after) = protocol_fees::referral_tracker(
+    // Verify default referral's unclaimed_fees reset after claim
+    let (current_shares_after, unclaimed_fees) = protocol_fees::referral_tracker(
         pool.protocol_fees(),
         default_id,
     );
-    assert_eq!(current_shares_after, min_shares_after);
+    assert_eq!(unclaimed_fees, 0);
+    assert_eq!(current_shares_after, current_shares);
 
     // Cleanup
     destroy(supplier_cap1);

@@ -24,8 +24,8 @@ public struct ProtocolFees has store {
 
 public struct ReferralTracker has store {
     current_shares: u64,
-    min_shares: u64,
     last_fees_per_share: u64,
+    unclaimed_fees: u64,
 }
 
 public struct SupplyReferral has key {
@@ -63,8 +63,8 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
             default_id,
             ReferralTracker {
                 current_shares: 0,
-                min_shares: 0,
                 last_fees_per_share: 0,
+                unclaimed_fees: 0,
             },
         );
 
@@ -81,8 +81,8 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
             id_inner,
             ReferralTracker {
                 current_shares: 0,
-                min_shares: 0,
                 last_fees_per_share: self.fees_per_share,
+                unclaimed_fees: 0,
             },
         );
     let referral = SupplyReferral {
@@ -123,12 +123,9 @@ public(package) fun increase_fees_accrued(self: &mut ProtocolFees, fees_accrued:
 public(package) fun increase_shares(self: &mut ProtocolFees, referral: Option<ID>, shares: u64) {
     let referral_id = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_id);
-    let old_current_shares = referral_tracker.current_shares;
+    update_unclaimed_fees(self.fees_per_share, referral_tracker);
+
     referral_tracker.current_shares = referral_tracker.current_shares + shares;
-    if (old_current_shares == 0 && referral_tracker.min_shares == 0) {
-        referral_tracker.min_shares = shares;
-        referral_tracker.last_fees_per_share = self.fees_per_share;
-    };
     self.total_shares = self.total_shares + shares;
 }
 
@@ -136,8 +133,9 @@ public(package) fun increase_shares(self: &mut ProtocolFees, referral: Option<ID
 public(package) fun decrease_shares(self: &mut ProtocolFees, referral: Option<ID>, shares: u64) {
     let referral_id = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_id);
+    update_unclaimed_fees(self.fees_per_share, referral_tracker);
+
     referral_tracker.current_shares = referral_tracker.current_shares - shares;
-    referral_tracker.min_shares = referral_tracker.min_shares.min(referral_tracker.current_shares);
     self.total_shares = self.total_shares - shares;
 }
 
@@ -151,13 +149,9 @@ public(package) fun calculate_and_claim(
     assert!(ctx.sender() == referral.owner, ENotOwner);
 
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_inner());
-    let referred_shares = referral_tracker.min_shares;
-    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
-    let fees = math::mul(referred_shares, fees_per_share_delta);
-
-    // Update tracker checkpoint and reset min_shares
-    referral_tracker.last_fees_per_share = self.fees_per_share;
-    referral_tracker.min_shares = referral_tracker.current_shares;
+    update_unclaimed_fees(self.fees_per_share, referral_tracker);
+    let fees = referral_tracker.unclaimed_fees;
+    referral_tracker.unclaimed_fees = 0;
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: referral.id.to_inner(),
@@ -173,15 +167,9 @@ public(package) fun calculate_and_claim(
 public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
     let default_id = margin_constants::default_referral();
     let referral_tracker = self.referrals.borrow_mut(default_id);
-    let referred_shares = referral_tracker.min_shares;
-
-    // Calculate delta since last claim (same as regular referrals)
-    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
-    let fees = math::mul(referred_shares, fees_per_share_delta);
-
-    // Update checkpoint and reset min_shares
-    referral_tracker.last_fees_per_share = self.fees_per_share;
-    referral_tracker.min_shares = referral_tracker.current_shares;
+    update_unclaimed_fees(self.fees_per_share, referral_tracker);
+    let fees = referral_tracker.unclaimed_fees;
+    referral_tracker.unclaimed_fees = 0;
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: default_id,
@@ -218,7 +206,9 @@ public(package) fun protocol_fees(self: &ProtocolFees): u64 {
 
 public(package) fun referral_tracker(self: &ProtocolFees, referral: ID): (u64, u64) {
     let referral_tracker = self.referrals.borrow(referral);
-    (referral_tracker.current_shares, referral_tracker.min_shares)
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
+    let unclaimed_fees = math::mul(referral_tracker.current_shares, fees_per_share_delta);
+    (referral_tracker.current_shares, referral_tracker.unclaimed_fees + unclaimed_fees)
 }
 
 public(package) fun total_shares(self: &ProtocolFees): u64 {
@@ -227,4 +217,11 @@ public(package) fun total_shares(self: &ProtocolFees): u64 {
 
 public(package) fun fees_per_share(self: &ProtocolFees): u64 {
     self.fees_per_share
+}
+
+fun update_unclaimed_fees(fees_per_share: u64, referral: &mut ReferralTracker) {
+    let fees_per_share_delta = fees_per_share - referral.last_fees_per_share;
+    let unclaimed_fees = math::mul(referral.current_shares, fees_per_share_delta);
+    referral.unclaimed_fees = referral.unclaimed_fees + unclaimed_fees;
+    referral.last_fees_per_share = fees_per_share;
 }
