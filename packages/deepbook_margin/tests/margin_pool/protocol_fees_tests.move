@@ -70,16 +70,16 @@ fun test_referral_fees_ok() {
         protocol_fees.increase_fees_accrued(200 * constants::float_scaling());
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 100 * constants::float_scaling());
-        assert_eq!(min_shares, 0);
+        assert_eq!(min_shares, 100 * constants::float_scaling());
         assert_eq!(protocol_fees.fees_per_share(), 1_000_000_000);
     };
 
     test.next_tx(test_constants::user1());
     {
-        // first claim checks min_shares, initially set to 0. first claim has no fees.
+        // First claim calculates fees since min_shares is initialized properly
         let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
         let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
-        assert_eq!(fees, 0);
+        assert_eq!(fees, 100 * constants::float_scaling());
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 100 * constants::float_scaling());
         assert_eq!(min_shares, 100 * constants::float_scaling());
@@ -161,7 +161,8 @@ fun test_referral_fees_ok() {
     };
 
     // decrease referred shares to 0, then increase by 1000. Add 1000 rewards.
-    // since referrer didn't claim, their min_shares is 0, they get 0 rewards.
+    // When shares are re-added after going to 0, min_shares is initialized properly
+    // This ensures referrals don't lose fees even in this edge case
     test.next_tx(test_constants::user1());
     {
         protocol_fees.decrease_shares(
@@ -181,10 +182,10 @@ fun test_referral_fees_ok() {
     {
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
-        assert_eq!(min_shares, 0);
+        assert_eq!(min_shares, 1000 * constants::float_scaling());
         let referral = test.take_shared_by_id<SupplyReferral>(referral_id);
         let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
-        assert_eq!(fees, 0);
+        assert_eq!(fees, 1000 * constants::float_scaling());
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
         assert_eq!(min_shares, 1000 * constants::float_scaling());
@@ -237,19 +238,19 @@ fun test_referra_fees_many() {
         );
         let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 1000 * constants::float_scaling());
-        assert_eq!(min_shares, 0);
+        assert_eq!(min_shares, 1000 * constants::float_scaling());
 
         i = i + 1;
     };
 
-    // claim and set min_shares to current_shares
+    // Claim and set min_shares to current_shares (no fees accrued yet)
     test.next_tx(test_constants::admin());
     {
         i = 0;
         while (i < 10) {
             let referral = test.take_shared_by_id<SupplyReferral>(referral_ids[i]);
             let fees = protocol_fees.calculate_and_claim(&referral, test.ctx());
-            assert_eq!(fees, 0);
+            assert_eq!(fees, 0); // 0 because no fees accrued yet
             let (current_shares, min_shares) = protocol_fees.referral_tracker(referral_ids[i]);
             assert_eq!(current_shares, 1000 * constants::float_scaling());
             assert_eq!(min_shares, 1000 * constants::float_scaling());

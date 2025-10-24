@@ -118,10 +118,17 @@ public(package) fun increase_fees_accrued(self: &mut ProtocolFees, fees_accrued:
 }
 
 /// Increase the shares for a referral.
+/// When shares are first added, initialize min_shares and reset last_fees_per_share
+/// to prevent earning fees for the period before shares existed
 public(package) fun increase_shares(self: &mut ProtocolFees, referral: Option<ID>, shares: u64) {
     let referral_id = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_id);
+    let old_current_shares = referral_tracker.current_shares;
     referral_tracker.current_shares = referral_tracker.current_shares + shares;
+    if (old_current_shares == 0 && referral_tracker.min_shares == 0) {
+        referral_tracker.min_shares = shares;
+        referral_tracker.last_fees_per_share = self.fees_per_share;
+    };
     self.total_shares = self.total_shares + shares;
 }
 
