@@ -26,6 +26,7 @@ public struct ReferralTracker has store {
     current_shares: u64,
     min_shares: u64,
     last_fees_per_share: u64,
+    unclaimed_fees: u64,
 }
 
 public struct SupplyReferral has key {
@@ -65,6 +66,7 @@ public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
                 current_shares: 0,
                 min_shares: 0,
                 last_fees_per_share: 0,
+                unclaimed_fees: 0,
             },
         );
 
@@ -83,6 +85,7 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
                 current_shares: 0,
                 min_shares: 0,
                 last_fees_per_share: self.fees_per_share,
+                unclaimed_fees: 0,
             },
         );
     let referral = SupplyReferral {
@@ -133,16 +136,25 @@ public(package) fun increase_shares(self: &mut ProtocolFees, referral: Option<ID
 }
 
 /// Decrease the shares for a referral.
+/// Auto-claims accumulated fees before decreasing to prevent fee loss.
 public(package) fun decrease_shares(self: &mut ProtocolFees, referral: Option<ID>, shares: u64) {
     let referral_id = referral.destroy_with_default(margin_constants::default_referral());
     let referral_tracker = self.referrals.borrow_mut(referral_id);
+
+    // Calculate and save accumulated fees before decreasing shares
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
+    let accumulated_fees = math::mul(referral_tracker.min_shares, fees_per_share_delta);
+    referral_tracker.unclaimed_fees = referral_tracker.unclaimed_fees + accumulated_fees;
+
+    // Update state
     referral_tracker.current_shares = referral_tracker.current_shares - shares;
-    referral_tracker.min_shares = referral_tracker.min_shares.min(referral_tracker.current_shares);
+    referral_tracker.min_shares = referral_tracker.current_shares;
+    referral_tracker.last_fees_per_share = self.fees_per_share;
     self.total_shares = self.total_shares - shares;
 }
 
 /// Calculate the fees for a referral and claim them. Multiply the referred shares by the fees per share delta.
-/// Referred fees is set to the minimum of the current and referred shares.
+/// Includes both unclaimed fees and current period fees.
 public(package) fun calculate_and_claim(
     self: &mut ProtocolFees,
     referral: &SupplyReferral,
@@ -153,19 +165,23 @@ public(package) fun calculate_and_claim(
     let referral_tracker = self.referrals.borrow_mut(referral.id.to_inner());
     let referred_shares = referral_tracker.min_shares;
     let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
-    let fees = math::mul(referred_shares, fees_per_share_delta);
+    let current_period_fees = math::mul(referred_shares, fees_per_share_delta);
 
-    // Update tracker checkpoint and reset min_shares
+    // Include unclaimed fees from previous share decreases
+    let total_fees = current_period_fees + referral_tracker.unclaimed_fees;
+
+    // Update tracker checkpoint and reset min_shares and unclaimed_fees
     referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
+    referral_tracker.unclaimed_fees = 0;
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: referral.id.to_inner(),
         owner: referral.owner,
-        fees,
+        fees: total_fees,
     });
 
-    fees
+    total_fees
 }
 
 /// Claim the default referral fees (admin only).
@@ -177,19 +193,23 @@ public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
 
     // Calculate delta since last claim (same as regular referrals)
     let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
-    let fees = math::mul(referred_shares, fees_per_share_delta);
+    let current_period_fees = math::mul(referred_shares, fees_per_share_delta);
 
-    // Update checkpoint and reset min_shares
+    // Include unclaimed fees from previous share decreases
+    let total_fees = current_period_fees + referral_tracker.unclaimed_fees;
+
+    // Update checkpoint and reset min_shares and unclaimed_fees
     referral_tracker.last_fees_per_share = self.fees_per_share;
     referral_tracker.min_shares = referral_tracker.current_shares;
+    referral_tracker.unclaimed_fees = 0;
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: default_id,
         owner: default_id.to_address(),
-        fees,
+        fees: total_fees,
     });
 
-    fees
+    total_fees
 }
 
 /// Claim the maintainer fees.
