@@ -178,7 +178,7 @@ public(package) fun claim_default_referral_fees(self: &mut ProtocolFees): u64 {
 
     event::emit(ReferralFeesClaimedEvent {
         referral_id: default_id,
-        owner: @0x0,
+        owner: default_id.to_address(),
         fees,
     });
 
