@@ -172,7 +172,6 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
             }
             Package::DeepbookMargin => {
-                // Margin Manager Events
                 indexer
                     .concurrent_pipeline(MarginManagerCreatedHandler::new(env), Default::default())
                     .await?;
@@ -185,16 +184,12 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(LiquidationHandler::new(env), Default::default())
                     .await?;
-
-                // Margin Pool Operations Events
                 indexer
                     .concurrent_pipeline(AssetSuppliedHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(AssetWithdrawnHandler::new(env), Default::default())
                     .await?;
-
-                // Margin Pool Admin Events
                 indexer
                     .concurrent_pipeline(MarginPoolCreatedHandler::new(env), Default::default())
                     .await?;
@@ -210,8 +205,6 @@ async fn main() -> Result<(), anyhow::Error> {
                         Default::default(),
                     )
                     .await?;
-
-                // Margin Registry Events
                 indexer
                     .concurrent_pipeline(MaintainerCapUpdatedHandler::new(env), Default::default())
                     .await?;

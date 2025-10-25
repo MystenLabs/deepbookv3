@@ -4,6 +4,8 @@ pub mod handlers;
 pub(crate) mod models;
 pub mod traits;
 
+pub const NOT_MAINNET_PACKAGE: &str = "<not on mainnet>";
+
 pub const MAINNET_REMOTE_STORE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
@@ -13,20 +15,61 @@ const MAINNET_PACKAGES: &[&str] = &[
     "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
 ];
 
-const TESTNET_PACKAGES: &[&str] =
-    &["0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73",
+const TESTNET_PACKAGES: &[&str] = &[
+    "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73",
     "0xc483dba510597205749f2e8410c23f19be31a710aef251f353bc1b97755efd4d",
     "0x5da5bbf6fb097d108eaf2c2306f88beae4014c90a44b95c7e76a6bfccec5f5ee",
     "0xa3886aaa8aa831572dd39549242ca004a438c3a55967af9f0387ad2b01595068",
     "0x9592ac923593f37f4fed15ee15f760ebd4c39729f53ee3e8c214de7a17157769",
     "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
-    "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",];
+    "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
+];
 
-const MAINNET_MARGIN_PACKAGE: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000000";
+// Mainnet margin package is not yet deployed - using placeholder
+// This will cause the indexer to fail fast if margin modules are requested on mainnet
+// When the margin package is deployed on mainnet, replace this with the actual address
+const MAINNET_MARGIN_PACKAGE: &str = NOT_MAINNET_PACKAGE;
 const TESTNET_MARGIN_PACKAGE: &str =
     "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54";
 
+/// Check if a margin package address is valid
+pub fn is_valid_margin_package(package: &str) -> bool {
+    package != NOT_MAINNET_PACKAGE
+}
+
+/// Check if margin trading is supported in the given environment
+pub fn is_margin_supported(env: DeepbookEnv) -> bool {
+    match env {
+        DeepbookEnv::Mainnet => is_valid_margin_package(MAINNET_MARGIN_PACKAGE),
+        DeepbookEnv::Testnet => is_valid_margin_package(TESTNET_MARGIN_PACKAGE),
+    }
+}
+
+/// Get the margin package address for the given environment with validation
+pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
+    let package = match env {
+        DeepbookEnv::Mainnet => MAINNET_MARGIN_PACKAGE,
+        DeepbookEnv::Testnet => TESTNET_MARGIN_PACKAGE,
+    };
+    
+    if is_valid_margin_package(package) {
+        Ok(package)
+    } else {
+        Err(format!(
+            "Margin trading is not supported on {:?}. \
+            The margin package has not been deployed on this network.",
+            env
+        ))
+    }
+}
+
+/// Get all core package addresses for the given environment
+pub fn get_core_package_addresses(env: DeepbookEnv) -> &'static [&'static str] {
+    match env {
+        DeepbookEnv::Mainnet => MAINNET_PACKAGES,
+        DeepbookEnv::Testnet => TESTNET_PACKAGES,
+    }
+}
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
@@ -52,8 +95,8 @@ impl DeepbookEnv {
 
         let mut all_packages = packages.to_vec();
 
-        // Add margin package if it's not the zero address
-        if margin_package != "0x0000000000000000000000000000000000000000000000000000000000000000" {
+        // Add margin package if it's not invalid
+        if margin_package != NOT_MAINNET_PACKAGE {
             all_packages.push(margin_package);
         }
 
