@@ -869,10 +869,12 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     multiplier: u64,
+    ctx: &TxContext,
 ) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
-    let _ = self.load_inner();
     let referral_id = object::id(referral);
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
@@ -1594,6 +1596,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
         pool_inner.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
         order_info.emit_order_info();
         order_info.emit_orders_filled(clock.timestamp_ms());
+        order_info.emit_order_fully_filled_if_filled(clock.timestamp_ms());
 
         order_info
     };

@@ -25,6 +25,24 @@ struct Args {
     database_url: Url,
     #[clap(env, long, default_value = "https://fullnode.mainnet.sui.io:443")]
     rpc_url: Url,
+    #[clap(
+        env,
+        long,
+        default_value = "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809"
+    )]
+    deepbook_package_id: String,
+    #[clap(
+        env,
+        long,
+        default_value = "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270"
+    )]
+    deep_token_package_id: String,
+    #[clap(
+        env,
+        long,
+        default_value = "0x032abf8948dda67a271bcc18e776dbbcfb0d58c8d288a700ff0d5521e57a1ffe"
+    )]
+    deep_treasury_id: String,
 }
 
 #[tokio::main]
@@ -39,6 +57,9 @@ async fn main() -> Result<(), anyhow::Error> {
         metrics_address,
         database_url,
         rpc_url,
+        deepbook_package_id,
+        deep_token_package_id,
+        deep_treasury_id,
     } = Args::parse();
     let cancel = CancellationToken::new();
 
@@ -49,6 +70,9 @@ async fn main() -> Result<(), anyhow::Error> {
         rpc_url,
         cancel.child_token(),
         metrics_address,
+        deepbook_package_id,
+        deep_token_package_id,
+        deep_treasury_id,
     )
     .await?;
 

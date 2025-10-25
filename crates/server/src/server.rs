@@ -44,7 +44,6 @@ use sui_types::{
 use tokio::join;
 use tokio_util::sync::CancellationToken;
 
-pub const SUI_MAINNET_URL: &str = "https://fullnode.mainnet.sui.io:443";
 pub const GET_POOLS_PATH: &str = "/get_pools";
 pub const GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID_WITH_INTERVAL: &str =
     "/historical_volume_by_balance_manager_id_with_interval/:pool_names/:balance_manager_id";
@@ -62,12 +61,6 @@ pub const SUMMARY_PATH: &str = "/summary";
 pub const LEVEL2_PATH: &str = "/orderbook/:pool_name";
 pub const LEVEL2_MODULE: &str = "pool";
 pub const LEVEL2_FUNCTION: &str = "get_level2_ticks_from_mid";
-pub const DEEPBOOK_PACKAGE_ID: &str =
-    "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809";
-pub const DEEP_TOKEN_PACKAGE_ID: &str =
-    "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270";
-pub const DEEP_TREASURY_ID: &str =
-    "0x032abf8948dda67a271bcc18e776dbbcfb0d58c8d288a700ff0d5521e57a1ffe";
 pub const DEEP_SUPPLY_MODULE: &str = "deep";
 pub const DEEP_SUPPLY_FUNCTION: &str = "total_supply";
 pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
@@ -93,6 +86,9 @@ pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updat
 pub struct AppState {
     reader: Reader,
     metrics: Arc<RpcMetrics>,
+    deepbook_package_id: String,
+    deep_token_package_id: String,
+    deep_treasury_id: String,
 }
 
 impl AppState {
@@ -100,10 +96,19 @@ impl AppState {
         database_url: Url,
         args: DbArgs,
         registry: &Registry,
+        deepbook_package_id: String,
+        deep_token_package_id: String,
+        deep_treasury_id: String,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(database_url, args, metrics.clone(), registry).await?;
-        Ok(Self { reader, metrics })
+        Ok(Self {
+            reader,
+            metrics,
+            deepbook_package_id,
+            deep_token_package_id,
+            deep_treasury_id,
+        })
     }
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
@@ -117,6 +122,9 @@ pub async fn run_server(
     rpc_url: Url,
     cancellation_token: CancellationToken,
     metrics_address: SocketAddr,
+    deepbook_package_id: String,
+    deep_token_package_id: String,
+    deep_treasury_id: String,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -127,7 +135,15 @@ pub async fn run_server(
         cancellation_token.clone(),
     );
 
-    let state = AppState::new(database_url, db_arg, metrics.registry()).await?;
+    let state = AppState::new(
+        database_url,
+        db_arg,
+        metrics.registry(),
+        deepbook_package_id,
+        deep_token_package_id,
+        deep_treasury_id,
+    )
+    .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
 
     println!("🚀 Server started successfully on port {}", server_port);
@@ -1189,7 +1205,7 @@ async fn orderbook(
     let base_coin_type = parse_type_input(&base_asset_id)?;
     let quote_coin_type = parse_type_input(&quote_asset_id)?;
 
-    let package = ObjectID::from_hex_literal(DEEPBOOK_PACKAGE_ID)
+    let package = ObjectID::from_hex_literal(&state.deepbook_package_id)
         .map_err(|e| DeepBookError::InternalError(format!("Invalid pool ID: {}", e)))?;
     let module = LEVEL2_MODULE.to_string();
     let function = LEVEL2_FUNCTION.to_string();
@@ -1314,12 +1330,12 @@ async fn orderbook(
 
 /// DEEP total supply
 async fn deep_supply(
-    State((_, rpc_url)): State<(Arc<AppState>, Url)>,
+    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
 ) -> Result<Json<u64>, DeepBookError> {
     let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
-    let deep_treasury_object_id = ObjectID::from_hex_literal(DEEP_TREASURY_ID)?;
+    let deep_treasury_object_id = ObjectID::from_hex_literal(&state.deep_treasury_id)?;
     let deep_treasury_object: SuiObjectResponse = sui_client
         .read_api()
         .get_object_with_options(
@@ -1344,7 +1360,7 @@ async fn deep_supply(
     let deep_treasury_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref));
     ptb.input(deep_treasury_input)?;
 
-    let package = ObjectID::from_hex_literal(DEEP_TOKEN_PACKAGE_ID).map_err(|e| {
+    let package = ObjectID::from_hex_literal(&state.deep_token_package_id).map_err(|e| {
         DeepBookError::InternalError(format!("Invalid deep token package ID: {}", e))
     })?;
     let module = DEEP_SUPPLY_MODULE.to_string();

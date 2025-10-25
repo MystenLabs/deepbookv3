@@ -9,7 +9,7 @@ use deepbook_margin::{
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
     protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    referral_fees::{Self, ReferralFees, SupplyReferral}
+    protocol_fees::{Self, ProtocolFees, SupplyReferral}
 };
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
@@ -36,10 +36,16 @@ public struct MarginPool<phantom Asset> has key, store {
     vault: Balance<Asset>,
     state: State,
     config: ProtocolConfig,
-    referral_fees: ReferralFees,
+    protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
     extra_fields: VecMap<String, u64>,
+}
+
+/// A capability that allows a user to supply and withdraw from margin pools.
+/// The SupplierCap represents ownership of the shares supplied to the margin pool.
+public struct SupplierCap has key, store {
+    id: UID,
 }
 
 // === Events ===
@@ -53,7 +59,7 @@ public struct MarginPoolCreated has copy, drop {
 
 public struct MaintainerFeesWithdrawn has copy, drop {
     margin_pool_id: ID,
-    maintainer_cap_id: ID,
+    margin_pool_cap_id: ID,
     maintainer_fees: u64,
     timestamp: u64,
 }
@@ -89,7 +95,7 @@ public struct MarginPoolConfigUpdated has copy, drop {
 public struct AssetSupplied has copy, drop {
     margin_pool_id: ID,
     asset_type: TypeName,
-    supplier: address,
+    supplier_cap_id: ID,
     supply_amount: u64,
     supply_shares: u64,
     timestamp: u64,
@@ -98,9 +104,21 @@ public struct AssetSupplied has copy, drop {
 public struct AssetWithdrawn has copy, drop {
     margin_pool_id: ID,
     asset_type: TypeName,
-    supplier: address,
+    supplier_cap_id: ID,
     withdraw_amount: u64,
     withdraw_shares: u64,
+    timestamp: u64,
+}
+
+public struct SupplierCapMinted has copy, drop {
+    supplier_cap_id: ID,
+    timestamp: u64,
+}
+
+public struct SupplyReferralMinted has copy, drop {
+    margin_pool_id: ID,
+    supply_referral_id: ID,
+    owner: address,
     timestamp: u64,
 }
 
@@ -121,7 +139,7 @@ public fun create_margin_pool<Asset>(
         vault: balance::zero<Asset>(),
         state: margin_state::default(clock),
         config,
-        referral_fees: referral_fees::default_referral_fees(ctx),
+        protocol_fees: protocol_fees::default_protocol_fees(ctx),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
         extra_fields: vec_map::empty(),
@@ -228,26 +246,48 @@ public fun update_margin_pool_config<Asset>(
 }
 
 // === Public Functions * LENDING * ===
-/// Supply to the margin pool. Returns the new user supply amount.
+/// Mint a new SupplierCap, which is used to supply and withdraw from margin pools.
+/// One SupplierCap can be used to supply and withdraw from multiple margin pools.
+public fun mint_supplier_cap(
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): SupplierCap {
+    registry.load_inner();
+    let id = object::new(ctx);
+
+    event::emit(SupplierCapMinted {
+        supplier_cap_id: id.to_inner(),
+        timestamp: clock.timestamp_ms(),
+    });
+
+    SupplierCap { id }
+}
+
+/// Supply to the margin pool using a SupplierCap. Returns the new supply shares.
+/// The `referral` parameter should be the ID of a SupplyReferral object if referral tracking is desired.
 public fun supply<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
+    supplier_cap: &SupplierCap,
     coin: Coin<Asset>,
-    referral: Option<address>,
+    referral: Option<ID>,
     clock: &Clock,
-    ctx: &TxContext,
 ): u64 {
     registry.load_inner();
+    let supplier_cap_id = supplier_cap.id.to_inner();
     let supply_amount = coin.value();
-    let (supply_shares, referral_fees) = self
+    let (supply_shares, protocol_fees) = self
         .state
         .increase_supply(&self.config, supply_amount, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
-    let (total_user_supply, previous_referral) = self
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
+
+    let (total_user_supply_shares, previous_referral) = self
         .positions
-        .increase_user_supply(referral, supply_shares, ctx);
-    self.referral_fees.decrease_shares(previous_referral, total_user_supply - supply_shares);
-    self.referral_fees.increase_shares(referral, total_user_supply);
+        .increase_user_supply(supplier_cap_id, referral, supply_shares);
+
+    self.protocol_fees.decrease_shares(previous_referral, total_user_supply_shares - supply_shares);
+    self.protocol_fees.increase_shares(referral, total_user_supply_shares);
 
     let balance = coin.into_balance();
     self.vault.join(balance);
@@ -257,43 +297,48 @@ public fun supply<Asset>(
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
+        supplier_cap_id,
         supply_amount,
         supply_shares,
         timestamp: clock.timestamp_ms(),
     });
 
-    total_user_supply
+    total_user_supply_shares
 }
 
-/// Withdraw from the margin pool. Returns the withdrawn coin.
+/// Withdraw from the margin pool using a SupplierCap. Returns the withdrawn coin.
 public fun withdraw<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
+    supplier_cap: &SupplierCap,
     amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let supplied_shares = self.positions.user_supply_shares(ctx);
+    let supplier_cap_id = supplier_cap.id.to_inner();
+    let supplied_shares = self.positions.user_supply_shares(supplier_cap_id);
     let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul(supplied_shares, math::div(withdraw_amount, supplied_amount));
 
-    let (_, referral_fees) = self
+    let (_, protocol_fees) = self
         .state
         .decrease_supply_shares(&self.config, withdraw_shares, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
 
-    let (_, previous_referral) = self.positions.decrease_user_supply(withdraw_shares, ctx);
-    self.referral_fees.decrease_shares(previous_referral, withdraw_shares);
+    let (_, previous_referral) = self
+        .positions
+        .decrease_user_supply(supplier_cap_id, withdraw_shares);
+
+    self.protocol_fees.decrease_shares(previous_referral, withdraw_shares);
     assert!(withdraw_amount <= self.vault.value(), ENotEnoughAssetInPool);
     let coin = self.vault.split(withdraw_amount).into_coin(ctx);
 
     event::emit(AssetWithdrawn {
         margin_pool_id: self.id(),
         asset_type: type_name::with_defining_ids<Asset>(),
-        supplier: ctx.sender(),
+        supplier_cap_id,
         withdraw_amount,
         withdraw_shares,
         timestamp: clock.timestamp_ms(),
@@ -306,42 +351,68 @@ public fun withdraw<Asset>(
 public fun mint_supply_referral<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     registry.load_inner();
-    self.referral_fees.mint_supply_referral(ctx)
+    let supply_referral_id = self.protocol_fees.mint_supply_referral(ctx);
+
+    event::emit(SupplyReferralMinted {
+        margin_pool_id: self.id(),
+        supply_referral_id,
+        owner: ctx.sender(),
+        timestamp: clock.timestamp_ms(),
+    });
+
+    supply_referral_id
 }
 
 /// Withdraw the referral fees.
 public fun withdraw_referral_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    referral: &mut SupplyReferral,
+    referral: &SupplyReferral,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let referral_fees = self.referral_fees.calculate_and_claim(referral, ctx);
+    let referral_fees = self.protocol_fees.calculate_and_claim(referral, ctx);
+    let coin = self.vault.split(referral_fees).into_coin(ctx);
+
+    coin
+}
+
+/// Withdraw the default referral fees (admin only).
+/// The default referral at 0x0 doesn't have a SupplyReferral object,
+public fun admin_withdraw_default_referral_fees<Asset>(
+    self: &mut MarginPool<Asset>,
+    registry: &MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    ctx: &mut TxContext,
+): Coin<Asset> {
+    registry.load_inner();
+    let referral_fees = self.protocol_fees.claim_default_referral_fees();
     let coin = self.vault.split(referral_fees).into_coin(ctx);
 
     coin
 }
 
 /// Withdraw the maintainer fees.
+/// The `margin_pool_cap` parameter is used to ensure the correct margin pool is being withdrawn from.
 public fun withdraw_maintainer_fees<Asset>(
     self: &mut MarginPool<Asset>,
     registry: &MarginRegistry,
-    maintainer_cap: &MaintainerCap,
+    margin_pool_cap: &MarginPoolCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    registry.assert_maintainer_cap_valid(maintainer_cap);
-    let maintainer_fees = self.referral_fees.claim_maintainer_fees();
+    assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let maintainer_fees = self.protocol_fees.claim_maintainer_fees();
     let coin = self.vault.split(maintainer_fees).into_coin(ctx);
 
     event::emit(MaintainerFeesWithdrawn {
         margin_pool_id: self.id(),
-        maintainer_cap_id: maintainer_cap.maintainer_cap_id(),
+        margin_pool_cap_id: margin_pool_cap.pool_cap_id(),
         maintainer_fees,
         timestamp: clock.timestamp_ms(),
     });
@@ -358,7 +429,7 @@ public fun withdraw_protocol_fees<Asset>(
     ctx: &mut TxContext,
 ): Coin<Asset> {
     registry.load_inner();
-    let protocol_fees = self.referral_fees.claim_protocol_fees();
+    let protocol_fees = self.protocol_fees.claim_protocol_fees();
     let coin = self.vault.split(protocol_fees).into_coin(ctx);
 
     event::emit(ProtocolFeesWithdrawn {
@@ -371,6 +442,10 @@ public fun withdraw_protocol_fees<Asset>(
 }
 
 // === Public-View Functions ===
+public fun id<Asset>(self: &MarginPool<Asset>): ID {
+    self.id.to_inner()
+}
+
 public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
     self.allowed_deepbook_pools.contains(&deepbook_pool_id)
 }
@@ -399,12 +474,16 @@ public fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.supply_cap()
 }
 
+public fun protocol_fees<Asset>(self: &MarginPool<Asset>): &ProtocolFees {
+    &self.protocol_fees
+}
+
 public fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.max_utilization_rate()
 }
 
-public fun referral_spread<Asset>(self: &MarginPool<Asset>): u64 {
-    self.config.referral_spread()
+public fun protocol_spread<Asset>(self: &MarginPool<Asset>): u64 {
+    self.config.protocol_spread()
 }
 
 public fun min_borrow<Asset>(self: &MarginPool<Asset>): u64 {
@@ -415,26 +494,40 @@ public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.interest_rate(self.state.utilization_rate())
 }
 
+public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: ID): u64 {
+    self.positions.user_supply_shares(supplier_cap_id)
+}
+
+public fun user_supply_amount<Asset>(
+    self: &MarginPool<Asset>,
+    supplier_cap_id: ID,
+    clock: &Clock,
+): u64 {
+    self
+        .state
+        .supply_shares_to_amount(self.user_supply_shares(supplier_cap_id), &self.config, clock)
+}
+
 // === Public-Package Functions ===
-/// Allows borrowing from the margin pool. Returns the borrowed coin.
+/// Allows borrowing from the margin pool. Returns the borrowed coin, and individual borrow shares for this loan.
 public(package) fun borrow<Asset>(
     self: &mut MarginPool<Asset>,
     amount: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Coin<Asset>, u64, u64) {
+): (Coin<Asset>, u64) {
     assert!(amount <= self.vault.value(), ENotEnoughAssetInPool);
     assert!(amount >= self.config.min_borrow(), EBorrowAmountTooLow);
-    let (total_borrow, total_borrow_shares, referral_fees) = self
+    let (individual_borrow_shares, protocol_fees) = self
         .state
         .increase_borrow(&self.config, amount, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
     assert!(
         self.state.utilization_rate() <= self.config.max_utilization_rate(),
         EMaxPoolBorrowPercentageExceeded,
     );
 
-    (self.vault.split(amount).into_coin(ctx), total_borrow, total_borrow_shares)
+    (self.vault.split(amount).into_coin(ctx), individual_borrow_shares)
 }
 
 public(package) fun repay<Asset>(
@@ -443,8 +536,8 @@ public(package) fun repay<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ) {
-    let (_, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    let (_, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock);
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
 
     self.vault.join(coin.into_balance());
 }
@@ -458,8 +551,8 @@ public(package) fun repay_liquidation<Asset>(
     coin: Coin<Asset>,
     clock: &Clock,
 ): (u64, u64, u64) {
-    let (amount, referral_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
-    self.referral_fees.increase_fees_accrued(referral_fees);
+    let (amount, protocol_fees) = self.state.decrease_borrow_shares(&self.config, shares, clock); // decreased 48.545 shares, 97.087 USDC
+    self.protocol_fees.increase_fees_accrued(protocol_fees);
     let coin_value = coin.value(); // 100 USDC
     let (reward, default) = if (coin_value > amount) {
         self.state.increase_supply_absolute(coin_value - amount);
@@ -479,8 +572,4 @@ public(package) fun borrow_shares_to_amount<Asset>(
     clock: &Clock,
 ): u64 {
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
-}
-
-public(package) fun id<Asset>(self: &MarginPool<Asset>): ID {
-    self.id.to_inner()
 }

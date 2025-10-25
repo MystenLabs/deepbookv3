@@ -13,7 +13,7 @@ const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
 const MIN_MIN_BORROW: u64 = 1000;
 const MAX_MARGIN_MANAGERS: u64 = 100;
 const DEFAULT_REFERRAL: address = @0x0;
-const MAX_REFERRAL_SPREAD: u64 = 200_000_000; // 20%
+const MAX_PROTOCOL_SPREAD: u64 = 200_000_000; // 20%
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -51,10 +51,10 @@ public fun max_margin_managers(): u64 {
     MAX_MARGIN_MANAGERS
 }
 
-public fun default_referral(): address {
-    DEFAULT_REFERRAL
+public fun default_referral(): ID {
+    DEFAULT_REFERRAL.to_id()
 }
 
-public fun max_referral_spread(): u64 {
-    MAX_REFERRAL_SPREAD
+public fun max_protocol_spread(): u64 {
+    MAX_PROTOCOL_SPREAD
 }
