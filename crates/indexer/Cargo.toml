@@ -9,17 +9,17 @@ edition = "2021"
 [dependencies]
 tokio.workspace = true
 sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-move-binding-derive = { git = "https://github.com/MystenLabs/move-binding.git", rev = "bd7ac5dcde861718cefd8291c1990ff270b3d207" }
-move-types = { git = "https://github.com/MystenLabs/move-binding.git", rev = "bd7ac5dcde861718cefd8291c1990ff270b3d207" }
 sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 clap = { workspace = true, features = ["env"] }
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
+hex = "0.4"
 tracing.workspace = true
 async-trait.workspace = true
 bcs.workspace = true
 serde.workspace = true
+serde_json = { workspace = true }
 anyhow.workspace = true
 url.workspace = true
 

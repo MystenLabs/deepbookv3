@@ -1,13 +1,23 @@
 use crate::DeepbookEnv;
-use move_core_types::language_storage::StructTag as MoveStructTag;
-use std::str::FromStr;
-use sui_sdk_types::StructTag;
 use sui_types::full_checkpoint_content::CheckpointTransaction;
 use sui_types::transaction::{Command, TransactionDataAPI};
-
+pub mod asset_supplied_handler;
+pub mod asset_withdrawn_handler;
 pub mod balances_handler;
 pub mod deep_burned_handler;
+pub mod deepbook_pool_config_updated_handler;
+pub mod deepbook_pool_registered_handler;
+pub mod deepbook_pool_updated_handler;
+pub mod deepbook_pool_updated_registry_handler;
 pub mod flash_loan_handler;
+pub mod interest_params_updated_handler;
+pub mod liquidation_handler;
+pub mod loan_borrowed_handler;
+pub mod loan_repaid_handler;
+pub mod maintainer_cap_updated_handler;
+pub mod margin_manager_created_handler;
+pub mod margin_pool_config_updated_handler;
+pub mod margin_pool_created_handler;
 pub mod order_fill_handler;
 pub mod order_update_handler;
 pub mod pool_price_handler;
@@ -16,11 +26,6 @@ pub mod rebates_handler;
 pub mod stakes_handler;
 pub mod trade_params_update_handler;
 pub mod vote_handler;
-
-// Convert rust sdk struct tag to move struct tag.
-pub(crate) fn convert_struct_tag(tag: StructTag) -> MoveStructTag {
-    MoveStructTag::from_str(&tag.to_string()).unwrap()
-}
 
 pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bool {
     let deepbook_addresses = env.package_addresses();

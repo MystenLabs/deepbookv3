@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::state::ProposalEvent;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::Proposals;
 use deepbook_schema::schema::proposals;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct ProposalsHandler {
-    event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl ProposalsHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            event_type: env.proposal_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -47,7 +43,7 @@ impl Processor for ProposalsHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ != self.event_type {
+                if !ProposalEvent::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
                 let event: ProposalEvent = bcs::from_bytes(&ev.contents)?;

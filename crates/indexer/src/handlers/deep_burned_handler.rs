@@ -1,12 +1,12 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::pool::DeepBurned as DeepBurnedEvent;
 use crate::models::sui::sui::SUI;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::DeepBurned;
 use deepbook_schema::schema::deep_burned;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -15,16 +15,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct DeepBurnedHandler {
-    event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl DeepBurnedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            event_type: env.deep_burned_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -50,10 +46,7 @@ impl Processor for DeepBurnedHandler {
 
             for (index, ev) in events.data.iter().enumerate() {
                 // Match base type (ignore type parameters)
-                if ev.type_.address != self.event_type.address
-                    || ev.type_.module != self.event_type.module
-                    || ev.type_.name != self.event_type.name
-                {
+                if !DeepBurnedEvent::<SUI, SUI>::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
 

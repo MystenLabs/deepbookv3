@@ -1,13 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::governance::TradeParamsUpdateEvent;
-use crate::models::deepbook::pool;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::TradeParamsUpdate;
 use deepbook_schema::schema::trade_params_update;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -16,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct TradeParamsUpdateHandler {
-    event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl TradeParamsUpdateHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            event_type: env.trade_params_update_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,17 +42,20 @@ impl Processor for TradeParamsUpdateHandler {
             let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
             let digest = tx.transaction.digest();
 
+            // Get package addresses for deepbook
+            let deepbook_addresses = self.env.package_addresses();
+
             let pool = tx
                 .input_objects
                 .iter()
                 .find(|o| matches!(o.data.struct_tag(), Some(struct_tag)
-                        if struct_tag.address == AccountAddress::new(*pool::PACKAGE_ID.inner()) && struct_tag.name.as_str() == "Pool"));
+                        if deepbook_addresses.iter().any(|addr| struct_tag.address == *addr) && struct_tag.name.as_str() == "Pool"));
             let pool_id = pool
                 .map(|o| o.id().to_hex_uncompressed())
                 .unwrap_or("0x0".to_string());
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ != self.event_type {
+                if !TradeParamsUpdateEvent::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
                 let event: TradeParamsUpdateEvent = bcs::from_bytes(&ev.contents)?;
