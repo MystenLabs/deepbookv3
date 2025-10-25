@@ -28,39 +28,135 @@ const TESTNET_PACKAGES: &[&str] = &[
 // Mainnet margin package is not yet deployed - using placeholder
 // This will cause the indexer to fail fast if margin modules are requested on mainnet
 // When the margin package is deployed on mainnet, replace this with the actual address
-const MAINNET_MARGIN_PACKAGE: &str = NOT_MAINNET_PACKAGE;
-const TESTNET_MARGIN_PACKAGE: &str =
-    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54";
+const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
+const TESTNET_MARGIN_PACKAGES: &[&str] = &[
+    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+];
+
+// Module definitions
+/// Core DeepBook modules that handle trading, orders, and pool management
+pub const CORE_MODULES: &[&str] = &[
+    "balance_manager",
+    "order",
+    "order_info",
+    "vault",
+    "deep_price",
+    "state",
+    "governance",
+    "pool",
+];
+
+/// Margin trading modules that handle lending and borrowing
+pub const MARGIN_MODULES: &[&str] = &["margin_manager", "margin_pool", "margin_registry"];
+
+/// SUI system modules
+pub const SUI_MODULES: &[&str] = &["sui"];
+
+/// Enum representing different module types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleType {
+    Core,
+    Margin,
+    Sui,
+    Unknown,
+}
+
+/// Check if a module is a core DeepBook module
+pub fn is_core_module(module: &str) -> bool {
+    CORE_MODULES.contains(&module)
+}
+
+/// Check if a module is a margin trading module
+pub fn is_margin_module(module: &str) -> bool {
+    MARGIN_MODULES.contains(&module)
+}
+
+/// Check if a module is a SUI system module
+pub fn is_sui_module(module: &str) -> bool {
+    SUI_MODULES.contains(&module)
+}
+
+/// Get the module type (core, margin, sui, or unknown)
+pub fn get_module_type(module: &str) -> ModuleType {
+    if is_core_module(module) {
+        ModuleType::Core
+    } else if is_margin_module(module) {
+        ModuleType::Margin
+    } else if is_sui_module(module) {
+        ModuleType::Sui
+    } else {
+        ModuleType::Unknown
+    }
+}
+
+/// Get all known module names
+pub fn get_all_known_modules() -> Vec<&'static str> {
+    let mut modules = Vec::new();
+    modules.extend_from_slice(CORE_MODULES);
+    modules.extend_from_slice(MARGIN_MODULES);
+    modules.extend_from_slice(SUI_MODULES);
+    modules
+}
+
+/// Get all core module names
+pub fn get_core_modules() -> &'static [&'static str] {
+    CORE_MODULES
+}
+
+/// Get all margin module names
+pub fn get_margin_modules() -> &'static [&'static str] {
+    MARGIN_MODULES
+}
+
+/// Get all SUI module names
+pub fn get_sui_modules() -> &'static [&'static str] {
+    SUI_MODULES
+}
+
+
 
 /// Check if a margin package address is valid
 pub fn is_valid_margin_package(package: &str) -> bool {
     package != NOT_MAINNET_PACKAGE
 }
 
+/// Check if any margin package addresses are valid for the given environment
+pub fn is_valid_margin_packages(packages: &[&str]) -> bool {
+    packages.iter().any(|&pkg| is_valid_margin_package(pkg))
+}
+
 /// Check if margin trading is supported in the given environment
 pub fn is_margin_supported(env: DeepbookEnv) -> bool {
     match env {
-        DeepbookEnv::Mainnet => is_valid_margin_package(MAINNET_MARGIN_PACKAGE),
-        DeepbookEnv::Testnet => is_valid_margin_package(TESTNET_MARGIN_PACKAGE),
+        DeepbookEnv::Mainnet => is_valid_margin_packages(MAINNET_MARGIN_PACKAGES),
+        DeepbookEnv::Testnet => is_valid_margin_packages(TESTNET_MARGIN_PACKAGES),
     }
 }
 
-/// Get the margin package address for the given environment with validation
-pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
-    let package = match env {
-        DeepbookEnv::Mainnet => MAINNET_MARGIN_PACKAGE,
-        DeepbookEnv::Testnet => TESTNET_MARGIN_PACKAGE,
-    };
-    
-    if is_valid_margin_package(package) {
-        Ok(package)
-    } else {
-        Err(format!(
-            "Margin trading is not supported on {:?}. \
-            The margin package has not been deployed on this network.",
-            env
-        ))
+/// Get the margin package addresses for the given environment
+pub fn get_margin_package_addresses(env: DeepbookEnv) -> &'static [&'static str] {
+    match env {
+        DeepbookEnv::Mainnet => MAINNET_MARGIN_PACKAGES,
+        DeepbookEnv::Testnet => TESTNET_MARGIN_PACKAGES,
     }
+}
+
+/// Get the first valid margin package address for the given environment with validation
+pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
+    let packages = get_margin_package_addresses(env);
+    
+    // Find the first valid package
+    for &package in packages {
+        if is_valid_margin_package(package) {
+            return Ok(package);
+        }
+    }
+    
+    Err(format!(
+        "Margin trading is not supported on {:?}. \
+        The margin package has not been deployed on this network.",
+        env
+    ))
 }
 
 /// Get all core package addresses for the given environment
@@ -88,16 +184,18 @@ impl DeepbookEnv {
 
     /// Get all package addresses (DeepBook + Margin) for this environment
     fn get_all_package_strings(&self) -> Vec<&str> {
-        let (packages, margin_package) = match self {
-            DeepbookEnv::Mainnet => (MAINNET_PACKAGES, MAINNET_MARGIN_PACKAGE),
-            DeepbookEnv::Testnet => (TESTNET_PACKAGES, TESTNET_MARGIN_PACKAGE),
+        let (packages, margin_packages) = match self {
+            DeepbookEnv::Mainnet => (MAINNET_PACKAGES, MAINNET_MARGIN_PACKAGES),
+            DeepbookEnv::Testnet => (TESTNET_PACKAGES, TESTNET_MARGIN_PACKAGES),
         };
 
         let mut all_packages = packages.to_vec();
 
-        // Add margin package if it's not invalid
-        if margin_package != NOT_MAINNET_PACKAGE {
-            all_packages.push(margin_package);
+        // Add margin packages if they're not invalid
+        for &margin_package in margin_packages {
+            if margin_package != NOT_MAINNET_PACKAGE {
+                all_packages.push(margin_package);
+            }
         }
 
         all_packages
