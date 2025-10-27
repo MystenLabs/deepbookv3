@@ -381,15 +381,14 @@ fun test_referral_fees_redistributed_when_no_shares() {
     let fees_accrued = 1000;
     protocol_fees.increase_fees_accrued(test_constants::test_margin_pool_id(), fees_accrued);
 
-    let expected_protocol = fees_accrued / 4;
-    let expected_maintainer = fees_accrued / 4;
-    let expected_referral = fees_accrued - expected_protocol - expected_maintainer;
+    let expected_protocol = 500;
+    let expected_maintainer = 500;
 
     let actual_protocol = protocol_fees.protocol_fees();
     let actual_maintainer = protocol_fees.maintainer_fees();
 
-    assert_eq!(actual_protocol, expected_protocol + (expected_referral - expected_referral / 2));
-    assert_eq!(actual_maintainer, expected_maintainer + expected_referral / 2);
+    assert_eq!(actual_protocol, expected_protocol);
+    assert_eq!(actual_maintainer, expected_maintainer);
     assert_eq!(protocol_fees.total_shares(), 0);
 
     destroy(protocol_fees);
