@@ -34,7 +34,7 @@ public struct SupplyReferral has key {
 }
 
 public struct ProtocolFeesIncreasedEvent has copy, drop {
-    total_shares: u64,
+    margin_pool_id: ID,
     referral_fees: u64,
     maintainer_fees: u64,
     protocol_fees: u64,
@@ -96,7 +96,11 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
 
 /// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
 /// Half of fees goes to referrals, quarter to maintainer, quarter to protocol.
-public(package) fun increase_fees_accrued(self: &mut ProtocolFees, fees_accrued: u64) {
+public(package) fun increase_fees_accrued(
+    self: &mut ProtocolFees,
+    margin_pool_id: ID,
+    fees_accrued: u64,
+) {
     assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
     let protocol_fees = fees_accrued / 4;
     let maintainer_fees = fees_accrued / 4;
@@ -110,7 +114,7 @@ public(package) fun increase_fees_accrued(self: &mut ProtocolFees, fees_accrued:
     };
 
     event::emit(ProtocolFeesIncreasedEvent {
-        total_shares: self.total_shares,
+        margin_pool_id,
         referral_fees,
         maintainer_fees,
         protocol_fees,

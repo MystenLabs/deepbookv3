@@ -9,6 +9,7 @@ const USER1: address = @0xA;
 const USER2: address = @0xB;
 const ADMIN: address = @0x0;
 const LIQUIDATOR: address = @0xC;
+const TEST_MARGIN_POOL_ID: address = @0x1234;
 
 // === Test Coin Types ===
 public struct USDC has drop {}
@@ -170,4 +171,8 @@ public fun pyth_multiplier(): u64 {
 
 public fun pyth_decimals(): u64 {
     PYTH_DECIMALS
+}
+
+public fun test_margin_pool_id(): ID {
+    TEST_MARGIN_POOL_ID.to_id()
 }
