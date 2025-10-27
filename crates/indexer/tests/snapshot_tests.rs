@@ -244,25 +244,26 @@ where
 {
     // Set up database URL based on environment
     // IMPORTANT: Keep temp_db in scope for the entire test, otherwise it gets cleaned up
-    let (temp_db_opt, url) = if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) == "true" {
-        // Use REAL PostgreSQL database - DATABASE_URL must be provided
-        let database_url = env::var("DATABASE_URL")
-            .expect("DATABASE_URL environment variable must be set when USE_REAL_DB=true");
-        (None, database_url)
-    } else {
-        // Use MOCK database (existing behavior)
-        let temp_db = TempDb::new()?;
-        let url = temp_db.database().url().to_string();
-        (Some(temp_db), url)
-    };
-    
+    let (temp_db_opt, url) =
+        if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) == "true" {
+            // Use REAL PostgreSQL database - DATABASE_URL must be provided
+            let database_url = env::var("DATABASE_URL")
+                .expect("DATABASE_URL environment variable must be set when USE_REAL_DB=true");
+            (None, database_url)
+        } else {
+            // Use MOCK database (existing behavior)
+            let temp_db = TempDb::new()?;
+            let url = temp_db.database().url().to_string();
+            (Some(temp_db), url)
+        };
+
     let db = Arc::new(Db::for_write(url.parse()?, DbArgs::default()).await?);
-    
+
     // Only run migrations if using mock database (real DB already has migrations)
     if temp_db_opt.is_some() {
         db.run_migrations(Some(&MIGRATIONS)).await?;
     }
-    
+
     let mut conn = db.connect().await?;
 
     // Test setup based on provided test_name
@@ -283,7 +284,7 @@ where
             assert_json_snapshot!(format!("{test_name}__{table}"), rows);
         }
     }
-    
+
     Ok(())
 }
 
