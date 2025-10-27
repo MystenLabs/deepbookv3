@@ -243,26 +243,26 @@ where
     for<'a> H::Store: Store<Connection<'a> = Connection<'a>>,
 {
     // Set up database URL based on environment
-    let url = if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) == "true" {
+    // IMPORTANT: Keep temp_db in scope for the entire test, otherwise it gets cleaned up
+    let (temp_db_opt, url) = if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) == "true" {
         // Use REAL PostgreSQL database - DATABASE_URL must be provided
         let database_url = env::var("DATABASE_URL")
             .expect("DATABASE_URL environment variable must be set when USE_REAL_DB=true");
-        println!("🔗 Using REAL database: {}", database_url);
-        database_url
+        (None, database_url)
     } else {
         // Use MOCK database (existing behavior)
-        println!("🔗 Using MOCK database");
         let temp_db = TempDb::new()?;
-        temp_db.database().url().to_string()
+        let url = temp_db.database().url().to_string();
+        (Some(temp_db), url)
     };
-
+    
     let db = Arc::new(Db::for_write(url.parse()?, DbArgs::default()).await?);
-
+    
     // Only run migrations if using mock database (real DB already has migrations)
-    if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) != "true" {
+    if temp_db_opt.is_some() {
         db.run_migrations(Some(&MIGRATIONS)).await?;
     }
-
+    
     let mut conn = db.connect().await?;
 
     // Test setup based on provided test_name
@@ -277,13 +277,13 @@ where
     // Check results by comparing database tables with snapshots
     for table in tables_to_check {
         let rows = read_table(&table, &url).await?;
-        println!("✅ Table {} has {} rows", table, rows.len());
 
         // Only create snapshots if using mock database
-        if env::var("USE_REAL_DB").unwrap_or_else(|_| "false".to_string()) != "true" {
+        if temp_db_opt.is_some() {
             assert_json_snapshot!(format!("{test_name}__{table}"), rows);
         }
     }
+    
     Ok(())
 }
 

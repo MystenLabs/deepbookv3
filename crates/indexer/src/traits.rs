@@ -33,11 +33,12 @@ pub trait MoveStruct: Serialize {
         let all_struct_types = Self::get_all_struct_types(env);
 
         // Check if the event type matches any of the generated struct types
+        // NOTE: We intentionally ignore type_params.len() because events may have phantom/generic type parameters
+        // that don't affect the actual event structure (e.g., DeepBurned<BaseAsset, QuoteAsset>)
         all_struct_types.iter().any(|struct_type| {
             event_type.address == AccountAddress::new(*struct_type.address.inner())
                 && event_type.module.as_str() == struct_type.module.as_str()
                 && event_type.name.as_str() == struct_type.name.as_str()
-                && event_type.type_params.len() == struct_type.type_params.len()
         })
     }
 
