@@ -378,5 +378,8 @@ fn get_checkpoints_in_folder(folder: &Path) -> Result<Vec<String>, anyhow::Error
         }
     }
 
+    // Sort files to ensure deterministic processing order across different systems
+    (&mut *files).sort();
+
     Ok(files)
 }
