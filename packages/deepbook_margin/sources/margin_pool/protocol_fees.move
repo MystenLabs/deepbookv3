@@ -10,7 +10,6 @@ use sui::{event, table::{Self, Table}, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const ENotOwner: u64 = 1;
-const EInvalidFeesAccrued: u64 = 2;
 
 // === Structs ===
 public struct ProtocolFees has store {
@@ -97,12 +96,13 @@ public(package) fun mint_supply_referral(self: &mut ProtocolFees, ctx: &mut TxCo
 
 /// Increase the fees per share. Given the current fees earned, divide it by current outstanding shares.
 /// Half of fees goes to referrals, quarter to maintainer, quarter to protocol.
+/// If there are no shares (no suppliers), referral fees are redistributed to maintainer and protocol.
 public(package) fun increase_fees_accrued(
     self: &mut ProtocolFees,
     margin_pool_id: ID,
     fees_accrued: u64,
 ) {
-    assert!(fees_accrued == 0 || self.total_shares > 0, EInvalidFeesAccrued);
+    if (fees_accrued == 0) return;
     let protocol_fees = fees_accrued / 4;
     let maintainer_fees = fees_accrued / 4;
     let referral_fees = fees_accrued - protocol_fees - maintainer_fees;
@@ -112,6 +112,10 @@ public(package) fun increase_fees_accrued(
         self.fees_per_share = self.fees_per_share + fees_per_share_increase;
         self.maintainer_fees = self.maintainer_fees + maintainer_fees;
         self.protocol_fees = self.protocol_fees + protocol_fees;
+    } else {
+        self.maintainer_fees = self.maintainer_fees + maintainer_fees + referral_fees / 2;
+        self.protocol_fees =
+            self.protocol_fees + protocol_fees + (referral_fees - referral_fees / 2);
     };
 
     event::emit(ProtocolFeesIncreasedEvent {
