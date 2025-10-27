@@ -1,14 +1,35 @@
 use crate::schema::{
-    balances, deep_burned, flashloans, order_fills, order_updates, pool_prices, pools,
-    proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
-    // Margin Manager Events
-    margin_manager_created, loan_borrowed, loan_repaid, liquidation,
     // Margin Pool Operations Events
-    asset_supplied, asset_withdrawn,
-    // Margin Pool Admin Events
-    margin_pool_created, deepbook_pool_updated, interest_params_updated, margin_pool_config_updated,
+    asset_supplied,
+    asset_withdrawn,
+    balances,
+    deep_burned,
+    deepbook_pool_config_updated,
+    deepbook_pool_registered,
+    deepbook_pool_updated,
+    deepbook_pool_updated_registry,
+    flashloans,
+    interest_params_updated,
+    liquidation,
+    loan_borrowed,
+    loan_repaid,
     // Margin Registry Events
-    maintainer_cap_updated, deepbook_pool_registered, deepbook_pool_updated_registry, deepbook_pool_config_updated,
+    maintainer_cap_updated,
+    // Margin Manager Events
+    margin_manager_created,
+    margin_pool_config_updated,
+    // Margin Pool Admin Events
+    margin_pool_created,
+    order_fills,
+    order_updates,
+    pool_prices,
+    pools,
+    proposals,
+    rebates,
+    stakes,
+    sui_error_transactions,
+    trade_params_update,
+    votes,
 };
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};

@@ -29,9 +29,8 @@ const TESTNET_PACKAGES: &[&str] = &[
 // This will cause the indexer to fail fast if margin modules are requested on mainnet
 // When the margin package is deployed on mainnet, replace this with the actual address
 const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
-const TESTNET_MARGIN_PACKAGES: &[&str] = &[
-    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
-];
+const TESTNET_MARGIN_PACKAGES: &[&str] =
+    &["0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54"];
 
 // Module definitions
 /// Core DeepBook modules that handle trading, orders, and pool management
@@ -113,8 +112,6 @@ pub fn get_sui_modules() -> &'static [&'static str] {
     SUI_MODULES
 }
 
-
-
 /// Check if a margin package address is valid
 pub fn is_valid_margin_package(package: &str) -> bool {
     package != NOT_MAINNET_PACKAGE
@@ -144,14 +141,14 @@ pub fn get_margin_package_addresses(env: DeepbookEnv) -> &'static [&'static str]
 /// Get the first valid margin package address for the given environment with validation
 pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
     let packages = get_margin_package_addresses(env);
-    
+
     // Find the first valid package
     for &package in packages {
         if is_valid_margin_package(package) {
             return Ok(package);
         }
     }
-    
+
     Err(format!(
         "Margin trading is not supported on {:?}. \
         The margin package has not been deployed on this network.",
