@@ -35,6 +35,7 @@ public struct SupplyReferral has key {
 
 public struct ProtocolFeesIncreasedEvent has copy, drop {
     margin_pool_id: ID,
+    total_shares: u64,
     referral_fees: u64,
     maintainer_fees: u64,
     protocol_fees: u64,
@@ -115,6 +116,7 @@ public(package) fun increase_fees_accrued(
 
     event::emit(ProtocolFeesIncreasedEvent {
         margin_pool_id,
+        total_shares: self.total_shares,
         referral_fees,
         maintainer_fees,
         protocol_fees,
