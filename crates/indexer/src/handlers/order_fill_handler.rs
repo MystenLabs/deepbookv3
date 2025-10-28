@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order_info::OrderFilled;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::OrderFill;
 use deepbook_schema::schema::order_fills;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct OrderFillHandler {
-    event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl OrderFillHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            event_type: env.order_filled_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -48,7 +44,7 @@ impl Processor for OrderFillHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ != self.event_type {
+                if !OrderFilled::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
                 let event: OrderFilled = bcs::from_bytes(&ev.contents)?;

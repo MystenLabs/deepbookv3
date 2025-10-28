@@ -11,5 +11,6 @@ sui-field-count = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel_migrations.workspace = true
 serde = { workspace = true }
+serde_json = { workspace = true }
 strum = "0.27.1"
 strum_macros = "0.27.1"

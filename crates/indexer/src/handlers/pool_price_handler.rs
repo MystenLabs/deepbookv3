@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::deep_price::PriceAdded;
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
 use deepbook_schema::models::PoolPrice;
 use deepbook_schema::schema::pool_prices;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -14,16 +14,12 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 pub struct PoolPriceHandler {
-    event_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl PoolPriceHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            event_type: env.price_added_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -47,7 +43,7 @@ impl Processor for PoolPriceHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ != self.event_type {
+                if !PriceAdded::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
                 let event: PriceAdded = bcs::from_bytes(&ev.contents)?;

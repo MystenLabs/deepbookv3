@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
+use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -16,22 +16,12 @@ use tracing::debug;
 type TransactionMetadata = (String, u64, u64, String, String);
 
 pub struct OrderUpdateHandler {
-    order_placed_type: StructTag,
-    order_modified_type: StructTag,
-    order_canceled_type: StructTag,
-    order_expired_type: StructTag,
     env: DeepbookEnv,
 }
 
 impl OrderUpdateHandler {
     pub fn new(env: DeepbookEnv) -> Self {
-        Self {
-            order_placed_type: env.order_placed_event_type(),
-            order_modified_type: env.order_modified_event_type(),
-            order_canceled_type: env.order_canceled_event_type(),
-            order_expired_type: env.order_expired_event_type(),
-            env,
-        }
+        Self { env }
     }
 }
 
@@ -59,19 +49,19 @@ impl Processor for OrderUpdateHandler {
             );
 
             for (index, ev) in events.data.iter().enumerate() {
-                if ev.type_ == self.order_placed_type {
+                if OrderPlaced::matches_event_type(&ev.type_, self.env) {
                     let event = bcs::from_bytes(&ev.contents)?;
                     results.push(process_order_placed(event, metadata.clone(), index));
                     debug!("Observed Deepbook Order Placed {:?}", tx);
-                } else if ev.type_ == self.order_modified_type {
+                } else if OrderModified::matches_event_type(&ev.type_, self.env) {
                     let event = bcs::from_bytes(&ev.contents)?;
                     results.push(process_order_modified(event, metadata.clone(), index));
                     debug!("Observed Deepbook Order Modified {:?}", tx);
-                } else if ev.type_ == self.order_canceled_type {
+                } else if OrderCanceled::matches_event_type(&ev.type_, self.env) {
                     let event = bcs::from_bytes(&ev.contents)?;
                     results.push(process_order_canceled(event, metadata.clone(), index));
                     debug!("Observed Deepbook Order Canceled {:?}", tx);
-                } else if ev.type_ == self.order_expired_type {
+                } else if OrderExpired::matches_event_type(&ev.type_, self.env) {
                     let event = bcs::from_bytes(&ev.contents)?;
                     results.push(process_order_expired(event, metadata.clone(), index));
                     debug!("Observed Deepbook Order Expired {:?}", tx);

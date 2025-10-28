@@ -1,20 +1,22 @@
-use crate::handlers::convert_struct_tag;
-use move_core_types::language_storage::StructTag;
-use move_types::MoveStruct;
 use url::Url;
 
 pub mod handlers;
 pub(crate) mod models;
+pub mod traits;
+
+pub const NOT_MAINNET_PACKAGE: &str = "<not on mainnet>";
 
 pub const MAINNET_REMOTE_STORE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
-const MAINNET_PREVIOUS_PACKAGES: &[&str] = &[
+// Package addresses for different environments
+const MAINNET_PACKAGES: &[&str] = &[
     "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
     "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
 ];
 
-const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[
+const TESTNET_PACKAGES: &[&str] = &[
+    "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73",
     "0xc483dba510597205749f2e8410c23f19be31a710aef251f353bc1b97755efd4d",
     "0x5da5bbf6fb097d108eaf2c2306f88beae4014c90a44b95c7e76a6bfccec5f5ee",
     "0xa3886aaa8aa831572dd39549242ca004a438c3a55967af9f0387ad2b01595068",
@@ -22,8 +24,145 @@ const TESTNET_PREVIOUS_PACKAGES: &[&str] = &[
     "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
     "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
 ];
-const TESTNET_CURRENT_PACKAGE: &str =
-    "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73";
+
+// Mainnet margin package is not yet deployed - using placeholder
+// This will cause the indexer to fail fast if margin modules are requested on mainnet
+// When the margin package is deployed on mainnet, replace this with the actual address
+const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
+const TESTNET_MARGIN_PACKAGES: &[&str] =
+    &["0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54"];
+
+// Module definitions
+/// Core DeepBook modules that handle trading, orders, and pool management
+pub const CORE_MODULES: &[&str] = &[
+    "balance_manager",
+    "order",
+    "order_info",
+    "vault",
+    "deep_price",
+    "state",
+    "governance",
+    "pool",
+];
+
+/// Margin trading modules that handle lending and borrowing
+pub const MARGIN_MODULES: &[&str] = &["margin_manager", "margin_pool", "margin_registry"];
+
+/// SUI system modules
+pub const SUI_MODULES: &[&str] = &["sui"];
+
+/// Enum representing different module types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleType {
+    Core,
+    Margin,
+    Sui,
+    Unknown,
+}
+
+/// Check if a module is a core DeepBook module
+pub fn is_core_module(module: &str) -> bool {
+    CORE_MODULES.contains(&module)
+}
+
+/// Check if a module is a margin trading module
+pub fn is_margin_module(module: &str) -> bool {
+    MARGIN_MODULES.contains(&module)
+}
+
+/// Check if a module is a SUI system module
+pub fn is_sui_module(module: &str) -> bool {
+    SUI_MODULES.contains(&module)
+}
+
+/// Get the module type (core, margin, sui, or unknown)
+pub fn get_module_type(module: &str) -> ModuleType {
+    if is_core_module(module) {
+        ModuleType::Core
+    } else if is_margin_module(module) {
+        ModuleType::Margin
+    } else if is_sui_module(module) {
+        ModuleType::Sui
+    } else {
+        ModuleType::Unknown
+    }
+}
+
+/// Get all known module names
+pub fn get_all_known_modules() -> Vec<&'static str> {
+    let mut modules = Vec::new();
+    modules.extend_from_slice(CORE_MODULES);
+    modules.extend_from_slice(MARGIN_MODULES);
+    modules.extend_from_slice(SUI_MODULES);
+    modules
+}
+
+/// Get all core module names
+pub fn get_core_modules() -> &'static [&'static str] {
+    CORE_MODULES
+}
+
+/// Get all margin module names
+pub fn get_margin_modules() -> &'static [&'static str] {
+    MARGIN_MODULES
+}
+
+/// Get all SUI module names
+pub fn get_sui_modules() -> &'static [&'static str] {
+    SUI_MODULES
+}
+
+/// Check if a margin package address is valid
+pub fn is_valid_margin_package(package: &str) -> bool {
+    package != NOT_MAINNET_PACKAGE
+}
+
+/// Check if any margin package addresses are valid for the given environment
+pub fn is_valid_margin_packages(packages: &[&str]) -> bool {
+    packages.iter().any(|&pkg| is_valid_margin_package(pkg))
+}
+
+/// Check if margin trading is supported in the given environment
+pub fn is_margin_supported(env: DeepbookEnv) -> bool {
+    match env {
+        DeepbookEnv::Mainnet => is_valid_margin_packages(MAINNET_MARGIN_PACKAGES),
+        DeepbookEnv::Testnet => is_valid_margin_packages(TESTNET_MARGIN_PACKAGES),
+    }
+}
+
+/// Get the margin package addresses for the given environment
+pub fn get_margin_package_addresses(env: DeepbookEnv) -> &'static [&'static str] {
+    match env {
+        DeepbookEnv::Mainnet => MAINNET_MARGIN_PACKAGES,
+        DeepbookEnv::Testnet => TESTNET_MARGIN_PACKAGES,
+    }
+}
+
+/// Get the first valid margin package address for the given environment with validation
+pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
+    let packages = get_margin_package_addresses(env);
+
+    // Find the first valid package
+    for &package in packages {
+        if is_valid_margin_package(package) {
+            return Ok(package);
+        }
+    }
+
+    Err(format!(
+        "Margin trading is not supported on {:?}. \
+        The margin package has not been deployed on this network.",
+        env
+    ))
+}
+
+/// Get all core package addresses for the given environment
+pub fn get_core_package_addresses(env: DeepbookEnv) -> &'static [&'static str] {
+    match env {
+        DeepbookEnv::Mainnet => MAINNET_PACKAGES,
+        DeepbookEnv::Testnet => TESTNET_PACKAGES,
+    }
+}
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DeepbookEnv {
@@ -31,159 +170,51 @@ pub enum DeepbookEnv {
     Testnet,
 }
 
-/// Generates a function that returns the `StructTag` for a given event type,
-/// switching between Mainnet and Testnet packages based on the `DeepbookEnv`.
-///
-/// # Arguments
-///
-/// * `fn_name` - The name of the function to generate.
-/// * `path` - The path to the event type, relative to `models::deepbook` or `models::deepbook_testnet`.
-///
-/// # Example
-///
-/// ```rust
-/// //impl DeepbookEnv {
-/// //    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
-/// //}
-///
-/// // Expands to:
-/// //
-/// // fn balance_event_type(&self) -> StructTag {
-/// //     match self {
-/// //         DeepbookEnv::Mainnet => {
-/// //             use models::deepbook::balance_manager::BalanceEvent as Event;
-/// //             convert_struct_tag(Event::struct_type())
-/// //         },
-/// //         DeepbookEnv::Testnet => {
-/// //             use models::deepbook_testnet::balance_manager::BalanceEvent as Event;
-/// //             convert_struct_tag(Event::struct_type())
-/// //         }
-/// //     }
-/// // }
-/// ```
-///
-macro_rules! event_type_fn {
-    (
-        $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+
-    ) => {
-        $(#[$meta])*
-        fn $fn_name(&self) -> StructTag {
-            match self {
-                _ => {
-                    use models::deepbook::$($path)::+ as Event;
-                    convert_struct_tag(Event::struct_type())
-                }
-            }
-        }
-    };
-}
-
-/// Generates a function that returns the `StructTag` for an event type with phantom type parameters.
-/// This macro handles events with phantom types like DeepBurned<phantom BaseAsset, phantom QuoteAsset>.
-/// Since phantom types don't affect BCS deserialization, any concrete type will work.
-macro_rules! phantom_event_type_fn {
-    (
-        $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+, $($phantom_type:ty),+
-    ) => {
-        $(#[$meta])*
-        fn $fn_name(&self) -> StructTag {
-            match self {
-                _ => {
-                    use models::deepbook::$($path)::+ as Event;
-                    convert_struct_tag(<Event<$($phantom_type),+>>::struct_type())
-                },
-            }
-        }
-    };
-}
-
-// Default to <SUI, SUI> for the type parameters since they don't affect BCS deserialization
-macro_rules! phantom_event_type_fn_2 {
-    (
-        $(#[$meta:meta])*
-        $fn_name:ident, $($path:ident)::+
-    ) => {
-        phantom_event_type_fn!(
-            $(#[$meta])*
-            $fn_name, $($path)::+, models::sui::sui::SUI, models::sui::sui::SUI
-        );
-    };
-}
-
 impl DeepbookEnv {
     pub fn remote_store_url(&self) -> Url {
-        let remote_store_url = match self {
+        let url = match self {
             DeepbookEnv::Mainnet => MAINNET_REMOTE_STORE_URL,
             DeepbookEnv::Testnet => TESTNET_REMOTE_STORE_URL,
         };
-        // Safe to unwrap on verified static URLs
-        Url::parse(remote_store_url).unwrap()
+        Url::parse(url).unwrap()
+    }
+
+    /// Get all package addresses (DeepBook + Margin) for this environment
+    fn get_all_package_strings(&self) -> Vec<&str> {
+        let (packages, margin_packages) = match self {
+            DeepbookEnv::Mainnet => (MAINNET_PACKAGES, MAINNET_MARGIN_PACKAGES),
+            DeepbookEnv::Testnet => (TESTNET_PACKAGES, TESTNET_MARGIN_PACKAGES),
+        };
+
+        let mut all_packages = packages.to_vec();
+
+        // Add margin packages if they're not invalid
+        for &margin_package in margin_packages {
+            if margin_package != NOT_MAINNET_PACKAGE {
+                all_packages.push(margin_package);
+            }
+        }
+
+        all_packages
     }
 
     pub fn package_ids(&self) -> Vec<sui_types::base_types::ObjectID> {
-        use move_core_types::account_address::AccountAddress;
         use std::str::FromStr;
         use sui_types::base_types::ObjectID;
 
-        let (previous_packages, current_package) = match self {
-            DeepbookEnv::Mainnet => (
-                MAINNET_PREVIOUS_PACKAGES,
-                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
-            ),
-            DeepbookEnv::Testnet => (
-                TESTNET_PREVIOUS_PACKAGES,
-                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
-            ),
-        };
-
-        let mut ids: Vec<ObjectID> = previous_packages
+        self.get_all_package_strings()
             .iter()
             .map(|pkg| ObjectID::from_str(pkg).unwrap())
-            .collect();
-        ids.push(ObjectID::from(current_package));
-        ids
+            .collect()
     }
 
     pub fn package_addresses(&self) -> Vec<move_core_types::account_address::AccountAddress> {
         use move_core_types::account_address::AccountAddress;
         use std::str::FromStr;
 
-        let (previous_packages, current_package) = match self {
-            DeepbookEnv::Mainnet => (
-                MAINNET_PREVIOUS_PACKAGES,
-                AccountAddress::new(*models::deepbook::registry::PACKAGE_ID.inner()),
-            ),
-            DeepbookEnv::Testnet => (
-                TESTNET_PREVIOUS_PACKAGES,
-                AccountAddress::from_str(TESTNET_CURRENT_PACKAGE).unwrap(),
-            ),
-        };
-
-        let mut addresses: Vec<AccountAddress> = previous_packages
+        self.get_all_package_strings()
             .iter()
             .map(|pkg| AccountAddress::from_str(pkg).unwrap())
-            .collect();
-        addresses.push(current_package);
-        addresses
+            .collect()
     }
-
-    event_type_fn!(balance_event_type, balance_manager::BalanceEvent);
-    event_type_fn!(flash_loan_borrowed_event_type, vault::FlashLoanBorrowed);
-    event_type_fn!(order_filled_event_type, order_info::OrderFilled);
-    event_type_fn!(order_placed_event_type, order_info::OrderPlaced);
-    event_type_fn!(order_modified_event_type, order::OrderModified);
-    event_type_fn!(order_canceled_event_type, order::OrderCanceled);
-    event_type_fn!(order_expired_event_type, order_info::OrderExpired);
-    event_type_fn!(vote_event_type, state::VoteEvent);
-    event_type_fn!(
-        trade_params_update_event_type,
-        governance::TradeParamsUpdateEvent
-    );
-    event_type_fn!(stake_event_type, state::StakeEvent);
-    event_type_fn!(rebate_event_type, state::RebateEvent);
-    event_type_fn!(proposal_event_type, state::ProposalEvent);
-    event_type_fn!(price_added_event_type, deep_price::PriceAdded);
-    phantom_event_type_fn_2!(deep_burned_event_type, pool::DeepBurned);
 }
