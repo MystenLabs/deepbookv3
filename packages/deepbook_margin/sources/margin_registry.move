@@ -4,18 +4,19 @@
 /// Registry holds all margin pools.
 module deepbook_margin::margin_registry;
 
-use deepbook::{constants, math, pool::Pool};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
 use deepbook_margin::margin_constants;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    clock::Clock,
-    dynamic_field as df,
-    event,
-    table::{Self, Table},
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet},
-    versioned::{Self, Versioned}
-};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::dynamic_field as df;
+use sui::event;
+use sui::table::{Self, Table};
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
+use sui::versioned::{Self, Versioned};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
@@ -33,9 +34,9 @@ const EMarginPoolDoesNotExists: u64 = 8;
 const EMaintainerCapNotValid: u64 = 9;
 const EPackageVersionDisabled: u64 = 10;
 const EVersionAlreadyEnabled: u64 = 11;
-const ECannotDisableCurrentVersion: u64 = 12;
-const EVersionNotEnabled: u64 = 13;
-const EMaxMarginManagersReached: u64 = 14;
+const EVersionNotEnabled: u64 = 12;
+const EMaxMarginManagersReached: u64 = 13;
+const EPauseCapNotValid: u64 = 14;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -52,6 +53,7 @@ public struct MarginRegistryInner has store {
     margin_pools: Table<TypeName, ID>,
     margin_managers: Table<address, VecSet<ID>>,
     allowed_maintainers: VecSet<ID>,
+    allowed_pause_caps: VecSet<ID>,
 }
 
 public struct PoolConfig has copy, drop, store {
@@ -78,6 +80,10 @@ public struct MarginAdminCap has key, store {
     id: UID,
 }
 
+public struct MarginPauseCap has key, store {
+    id: UID,
+}
+
 public struct MaintainerCap has key, store {
     id: UID,
 }
@@ -90,6 +96,12 @@ public struct MarginPoolCap has key, store {
 // === Events ===
 public struct MaintainerCapUpdated has copy, drop {
     maintainer_cap_id: ID,
+    allowed: bool,
+    timestamp: u64,
+}
+
+public struct PauseCapUpdated has copy, drop {
+    pause_cap_id: ID,
     allowed: bool,
     timestamp: u64,
 }
@@ -120,6 +132,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
         margin_pools: table::new(ctx),
         margin_managers: table::new(ctx),
         allowed_maintainers: vec_set::empty(),
+        allowed_pause_caps: vec_set::empty(),
     };
 
     let registry = MarginRegistry {
@@ -135,7 +148,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 /// Mint a `MaintainerCap`, only admin can mint a `MaintainerCap`.
 public fun mint_maintainer_cap(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MaintainerCap {
@@ -157,7 +170,7 @@ public fun mint_maintainer_cap(
 /// Revoke a `MaintainerCap`. Only the admin can revoke a `MaintainerCap`.
 public fun revoke_maintainer_cap(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     maintainer_cap_id: ID,
     clock: &Clock,
 ) {
@@ -175,7 +188,7 @@ public fun revoke_maintainer_cap(
 /// Register a margin pool for margin trading with existing margin pools
 public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     pool: &Pool<BaseAsset, QuoteAsset>,
     pool_config: PoolConfig,
     clock: &Clock,
@@ -195,7 +208,7 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
 /// Enables a deepbook pool for margin trading.
 public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
 ) {
@@ -217,7 +230,7 @@ public fun enable_deepbook_pool<BaseAsset, QuoteAsset>(
 /// Disables a deepbook pool from margin trading. Only reduce only orders, cancels, and withdraw settled amounts are allowed.
 public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     clock: &Clock,
 ) {
@@ -239,7 +252,7 @@ public fun disable_deepbook_pool<BaseAsset, QuoteAsset>(
 /// Updates risk params for a deepbook pool as the admin.
 public fun update_risk_params<BaseAsset, QuoteAsset>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     pool: &Pool<BaseAsset, QuoteAsset>,
     pool_config: PoolConfig,
     clock: &Clock,
@@ -293,7 +306,7 @@ public fun update_risk_params<BaseAsset, QuoteAsset>(
 /// Add Pyth Config to the MarginRegistry.
 public fun add_config<Config: store + drop>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     config: Config,
 ) {
     self.load_inner();
@@ -303,7 +316,7 @@ public fun add_config<Config: store + drop>(
 /// Remove Pyth Config from the MarginRegistry.
 public fun remove_config<Config: store + drop>(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
 ): Config {
     self.load_inner();
     self.id.remove(ConfigKey<Config> {})
@@ -312,7 +325,7 @@ public fun remove_config<Config: store + drop>(
 /// Enables a package version
 /// Only Admin can enable a package version
 /// This function does not have version restrictions
-public fun enable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+public fun enable_version(self: &mut MarginRegistry, version: u64, _admin_cap: &MarginAdminCap) {
     let self: &mut MarginRegistryInner = self.inner.load_value_mut();
     assert!(!self.allowed_versions.contains(&version), EVersionAlreadyEnabled);
     self.allowed_versions.insert(version);
@@ -321,11 +334,59 @@ public fun enable_version(self: &mut MarginRegistry, version: u64, _cap: &Margin
 /// Disables a package version
 /// Only Admin can disable a package version
 /// This function does not have version restrictions
-public fun disable_version(self: &mut MarginRegistry, version: u64, _cap: &MarginAdminCap) {
+public fun disable_version(self: &mut MarginRegistry, version: u64, _admin_cap: &MarginAdminCap) {
     let self: &mut MarginRegistryInner = self.inner.load_value_mut();
-    assert!(version != margin_constants::margin_version(), ECannotDisableCurrentVersion);
     assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
     self.allowed_versions.remove(&version);
+}
+
+/// Disables a package version
+/// Only Admin can disable a package version
+/// This function does not have version restrictions
+public fun disable_version_pause_cap(
+    self: &mut MarginRegistry,
+    version: u64,
+    pause_cap: &MarginPauseCap,
+) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(self.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+    assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
+    self.allowed_versions.remove(&version);
+}
+
+public fun mint_pause_cap(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): MarginPauseCap {
+    let id = object::new(ctx);
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    self.allowed_pause_caps.insert(id.to_inner());
+
+    event::emit(PauseCapUpdated {
+        pause_cap_id: id.to_inner(),
+        allowed: true,
+        timestamp: clock.timestamp_ms(),
+    });
+    MarginPauseCap { id }
+}
+
+public fun revoke_pause_cap(
+    self: &mut MarginRegistry,
+    _cap: &MarginAdminCap,
+    clock: &Clock,
+    pause_cap_id: ID,
+) {
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
+    assert!(self.allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
+    self.allowed_pause_caps.remove(&pause_cap_id);
+
+    event::emit(PauseCapUpdated {
+        pause_cap_id,
+        allowed: false,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 // === Public Helper Functions ===
@@ -615,6 +676,7 @@ public fun new_for_testing(ctx: &mut TxContext): MarginAdminCap {
         margin_pools: table::new(ctx),
         margin_managers: table::new(ctx),
         allowed_maintainers: vec_set::empty(),
+        allowed_pause_caps: vec_set::empty(),
     };
 
     let registry = MarginRegistry {
