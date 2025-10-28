@@ -145,6 +145,7 @@ fun init(_: MARGIN_REGISTRY, ctx: &mut TxContext) {
 
 // === Public Functions * ADMIN * ===
 /// Mint a `MaintainerCap`, only admin can mint a `MaintainerCap`.
+/// This function does not have version restrictions
 public fun mint_maintainer_cap(
     self: &mut MarginRegistry,
     _admin_cap: &MarginAdminCap,
@@ -167,6 +168,7 @@ public fun mint_maintainer_cap(
 }
 
 /// Revoke a `MaintainerCap`. Only the admin can revoke a `MaintainerCap`.
+/// This function does not have version restrictions
 public fun revoke_maintainer_cap(
     self: &mut MarginRegistry,
     _admin_cap: &MarginAdminCap,
@@ -353,6 +355,9 @@ public fun disable_version_pause_cap(
     self.allowed_versions.remove(&version);
 }
 
+/// Mint a pause cap
+/// Only Admin can mint a pause cap
+/// This function does not have version restrictions
 public fun mint_pause_cap(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
@@ -371,6 +376,9 @@ public fun mint_pause_cap(
     MarginPauseCap { id }
 }
 
+/// Revoke a pause cap
+/// Only Admin can revoke a pause cap
+/// This function does not have version restrictions
 public fun revoke_pause_cap(
     self: &mut MarginRegistry,
     _cap: &MarginAdminCap,
