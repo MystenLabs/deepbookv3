@@ -572,3 +572,69 @@ fun test_oracle_max_age_within_limit() {
     destroy(recent_price_info);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_disable_version_with_pause_cap_ok() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _usdt_pool_id,
+    ) = setup_test_with_margin_pools();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Mint a pause cap
+    let pause_cap = registry.mint_pause_cap(&admin_cap, &clock, scenario.ctx());
+
+    // Enable a new version so we can disable it
+    let new_version = margin_constants::margin_version() + 1;
+    registry.enable_version(new_version, &admin_cap);
+
+    // Should succeed: disable version with valid pause cap
+    registry.disable_version_pause_cap(new_version, &pause_cap);
+
+    destroy(pause_cap);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_registry::EPauseCapNotValid)]
+fun test_disable_version_with_revoked_pause_cap_fails() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _usdt_pool_id,
+    ) = setup_test_with_margin_pools();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // Mint a pause cap
+    let pause_cap = registry.mint_pause_cap(&admin_cap, &clock, scenario.ctx());
+    let pause_cap_id = sui::object::id(&pause_cap);
+
+    // Enable a new version so we can disable it
+    let new_version = margin_constants::margin_version() + 1;
+    registry.enable_version(new_version, &admin_cap);
+
+    // First disable succeeds with valid pause cap
+    registry.disable_version_pause_cap(new_version, &pause_cap);
+
+    // Re-enable the version so we can try to disable it again
+    registry.enable_version(new_version, &admin_cap);
+
+    // Revoke the pause cap
+    registry.revoke_pause_cap(&admin_cap, &clock, pause_cap_id);
+
+    // Should fail: trying to use a revoked pause cap
+    registry.disable_version_pause_cap(new_version, &pause_cap);
+
+    destroy(pause_cap);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}

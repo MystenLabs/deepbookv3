@@ -4,19 +4,18 @@
 /// Registry holds all margin pools.
 module deepbook_margin::margin_registry;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::pool::Pool;
+use deepbook::{constants, math, pool::Pool};
 use deepbook_margin::margin_constants;
-use std::string::String;
-use std::type_name::{Self, TypeName};
-use sui::clock::Clock;
-use sui::dynamic_field as df;
-use sui::event;
-use sui::table::{Self, Table};
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use std::{string::String, type_name::{Self, TypeName}};
+use sui::{
+    clock::Clock,
+    dynamic_field as df,
+    event,
+    table::{Self, Table},
+    vec_map::{Self, VecMap},
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
