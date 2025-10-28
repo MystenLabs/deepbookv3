@@ -11,11 +11,13 @@ pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
 // Package addresses for different environments
 const MAINNET_PACKAGES: &[&str] = &[
+    "0xb29d83c26cdd2a64959263abbcfc4a6937f0c9fccaf98580ca56faded65be244",
     "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
     "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
 ];
 
 const TESTNET_PACKAGES: &[&str] = &[
+    "0xcd40faffa91c00ce019bfe4a4b46f8d623e20bf331eb28990ee0305e9b9f3e3c",
     "0x16c4e050b9b19b25ce1365b96861bc50eb7e58383348a39ea8a8e1d063cfef73",
     "0xc483dba510597205749f2e8410c23f19be31a710aef251f353bc1b97755efd4d",
     "0x5da5bbf6fb097d108eaf2c2306f88beae4014c90a44b95c7e76a6bfccec5f5ee",
