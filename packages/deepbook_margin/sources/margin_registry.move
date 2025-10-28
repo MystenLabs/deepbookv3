@@ -151,7 +151,7 @@ public fun mint_maintainer_cap(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MaintainerCap {
-    let self = self.load_inner_mut();
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
     let id = object::new(ctx);
     self.allowed_maintainers.insert(id.to_inner());
 
@@ -173,7 +173,7 @@ public fun revoke_maintainer_cap(
     maintainer_cap_id: ID,
     clock: &Clock,
 ) {
-    let self = self.load_inner_mut();
+    let self: &mut MarginRegistryInner = self.inner.load_value_mut();
     assert!(self.allowed_maintainers.contains(&maintainer_cap_id), EMaintainerCapNotValid);
     self.allowed_maintainers.remove(&maintainer_cap_id);
 
