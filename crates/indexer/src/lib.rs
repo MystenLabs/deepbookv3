@@ -31,8 +31,10 @@ const TESTNET_PACKAGES: &[&str] = &[
 // This will cause the indexer to fail fast if margin modules are requested on mainnet
 // When the margin package is deployed on mainnet, replace this with the actual address
 const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
-const TESTNET_MARGIN_PACKAGES: &[&str] =
-    &["0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54"];
+const TESTNET_MARGIN_PACKAGES: &[&str] = &[
+    "0x3f44af8fcef3cd753a221a4f25a61d2d6c74b4ca0b6809f6e670764b9debf08a",
+    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+];
 
 // Module definitions
 /// Core DeepBook modules that handle trading, orders, and pool management
