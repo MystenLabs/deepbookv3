@@ -340,7 +340,7 @@ public fun disable_version(self: &mut MarginRegistry, version: u64, _admin_cap: 
 }
 
 /// Disables a package version
-/// Only Admin can disable a package version
+/// Pause Cap must be valid and can disable the version
 /// This function does not have version restrictions
 public fun disable_version_pause_cap(
     self: &mut MarginRegistry,
@@ -538,6 +538,16 @@ public fun user_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID):
 public fun pool_liquidation_reward(self: &MarginRegistry, deepbook_pool_id: ID): u64 {
     let config = self.get_pool_config(deepbook_pool_id);
     config.pool_liquidation_reward
+}
+
+public fun allowed_maintainers(self: &MarginRegistry): VecSet<ID> {
+    let inner = self.load_inner();
+    inner.allowed_maintainers
+}
+
+public fun allowed_pause_caps(self: &MarginRegistry): VecSet<ID> {
+    let inner = self.load_inner();
+    inner.allowed_pause_caps
 }
 
 // === Public-Package Functions ===
