@@ -21,25 +21,37 @@ fun test_referral_fees_setup() {
     test.next_tx(test_constants::admin());
     let mut protocol_fees = protocol_fees::default_protocol_fees(test.ctx());
     protocol_fees.increase_shares(option::none(), 100 * constants::float_scaling());
-    protocol_fees.increase_fees_accrued(2 * constants::float_scaling());
+    protocol_fees.increase_fees_accrued(
+        test_constants::test_margin_pool_id(),
+        2 * constants::float_scaling(),
+    );
     assert_eq!(protocol_fees.total_shares(), 100 * constants::float_scaling());
     assert_eq!(protocol_fees.fees_per_share(), 10_000_000);
 
     protocol_fees.increase_shares(option::none(), 100 * constants::float_scaling());
-    protocol_fees.increase_fees_accrued(4 * constants::float_scaling());
+    protocol_fees.increase_fees_accrued(
+        test_constants::test_margin_pool_id(),
+        4 * constants::float_scaling(),
+    );
     assert_eq!(protocol_fees.total_shares(), 200 * constants::float_scaling());
     assert_eq!(protocol_fees.fees_per_share(), 20_000_000);
 
     // so far we have 200 shares and 0.02 rewards per share
     // increase by 1000 and add 5 more rewards. 5 rewards distributed over 1200 total shares
     protocol_fees.increase_shares(option::none(), 1000 * constants::float_scaling());
-    protocol_fees.increase_fees_accrued(10 * constants::float_scaling());
+    protocol_fees.increase_fees_accrued(
+        test_constants::test_margin_pool_id(),
+        10 * constants::float_scaling(),
+    );
     assert_eq!(protocol_fees.total_shares(), 1200 * constants::float_scaling());
     assert_eq!(protocol_fees.fees_per_share(), 24_166_666);
 
     // decrease shares by 1100, add 10 rewards
     protocol_fees.decrease_shares(option::none(), 1100 * constants::float_scaling());
-    protocol_fees.increase_fees_accrued(20 * constants::float_scaling());
+    protocol_fees.increase_fees_accrued(
+        test_constants::test_margin_pool_id(),
+        20 * constants::float_scaling(),
+    );
     assert_eq!(protocol_fees.total_shares(), 100 * constants::float_scaling());
     assert_eq!(protocol_fees.fees_per_share(), 124_166_666);
 
@@ -67,7 +79,10 @@ fun test_referral_fees_ok() {
             option::some(referral_id),
             100 * constants::float_scaling(),
         );
-        protocol_fees.increase_fees_accrued(200 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            200 * constants::float_scaling(),
+        );
         let (current_shares, unclaimed_fees) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 100 * constants::float_scaling());
         assert_eq!(unclaimed_fees, 100 * constants::float_scaling());
@@ -101,7 +116,10 @@ fun test_referral_fees_ok() {
             option::some(referral_id),
             100 * constants::float_scaling(),
         );
-        protocol_fees.increase_fees_accrued(200 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            200 * constants::float_scaling(),
+        );
         let (current_shares, unclaimed_fees) = protocol_fees.referral_tracker(referral_id);
         assert_eq!(current_shares, 200 * constants::float_scaling());
         assert_eq!(unclaimed_fees, 100 * constants::float_scaling());
@@ -137,7 +155,10 @@ fun test_referral_fees_ok() {
             option::some(referral_id),
             100 * constants::float_scaling(),
         );
-        protocol_fees.increase_fees_accrued(200 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            200 * constants::float_scaling(),
+        );
         protocol_fees.decrease_shares(
             option::some(referral_id),
             100 * constants::float_scaling(),
@@ -173,7 +194,10 @@ fun test_referral_fees_ok() {
             1000 * constants::float_scaling(),
         );
         // current_shares went from 200 to 0 then to 1000. Then 2000 fees were accrued.
-        protocol_fees.increase_fees_accrued(2000 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            2000 * constants::float_scaling(),
+        );
         // 1000 rewards for 1000 shares. 1.833 -> 2.833
         assert_eq!(protocol_fees.fees_per_share(), 2_833_333_333);
     };
@@ -198,7 +222,10 @@ fun test_referral_fees_ok() {
     // referrer now has 1000 shares exposed. 1000 * (3.833 - 2.833) = 1000 * 1 = 1000
     test.next_tx(test_constants::user1());
     {
-        protocol_fees.increase_fees_accrued(2000 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            2000 * constants::float_scaling(),
+        );
         assert_eq!(protocol_fees.fees_per_share(), 3_833_333_333);
     };
 
@@ -247,7 +274,10 @@ fun test_referra_fees_many() {
     // add 5000 rewards. 10000 shares. 0 -> 0.5
     test.next_tx(test_constants::admin());
     {
-        protocol_fees.increase_fees_accrued(10000 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            10000 * constants::float_scaling(),
+        );
         assert_eq!(protocol_fees.fees_per_share(), 500_000_000);
     };
 
@@ -284,7 +314,10 @@ fun test_referra_fees_many() {
     // add 5000 rewards. 5000 outstanding shares. 0.5 -> 1.5
     test.next_tx(test_constants::admin());
     {
-        protocol_fees.increase_fees_accrued(10000 * constants::float_scaling());
+        protocol_fees.increase_fees_accrued(
+            test_constants::test_margin_pool_id(),
+            10000 * constants::float_scaling(),
+        );
         assert_eq!(protocol_fees.fees_per_share(), 1_500_000_000);
     };
 
@@ -338,13 +371,27 @@ fun test_referral_fees_not_owner_e() {
     abort
 }
 
-#[test, expected_failure(abort_code = protocol_fees::EInvalidFeesAccrued)]
-fun test_referral_fees_invalid_fees_accrued_e() {
+#[test]
+fun test_referral_fees_redistributed_when_no_shares() {
     let (mut test, _admin_cap) = test_helpers::setup_test();
 
     test.next_tx(test_constants::admin());
     let mut protocol_fees = protocol_fees::default_protocol_fees(test.ctx());
-    protocol_fees.increase_fees_accrued(2);
 
-    abort (0)
+    let fees_accrued = 1000;
+    protocol_fees.increase_fees_accrued(test_constants::test_margin_pool_id(), fees_accrued);
+
+    let expected_protocol = 500;
+    let expected_maintainer = 500;
+
+    let actual_protocol = protocol_fees.protocol_fees();
+    let actual_maintainer = protocol_fees.maintainer_fees();
+
+    assert_eq!(actual_protocol, expected_protocol);
+    assert_eq!(actual_maintainer, expected_maintainer);
+    assert_eq!(protocol_fees.total_shares(), 0);
+
+    destroy(protocol_fees);
+    destroy(_admin_cap);
+    test.end();
 }
