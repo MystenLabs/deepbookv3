@@ -360,7 +360,7 @@ public fun disable_version_pause_cap(
 /// This function does not have version restrictions
 public fun mint_pause_cap(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginPauseCap {
@@ -381,7 +381,7 @@ public fun mint_pause_cap(
 /// This function does not have version restrictions
 public fun revoke_pause_cap(
     self: &mut MarginRegistry,
-    _cap: &MarginAdminCap,
+    _admin_cap: &MarginAdminCap,
     clock: &Clock,
     pause_cap_id: ID,
 ) {
