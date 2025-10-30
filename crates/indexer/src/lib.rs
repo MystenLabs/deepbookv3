@@ -33,7 +33,7 @@ const TESTNET_PACKAGES: &[&str] = &[
 const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0x3f44af8fcef3cd753a221a4f25a61d2d6c74b4ca0b6809f6e670764b9debf08a",
-    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "0x8fe69c287d99f8873d5080bf74aec39c4b79536cdbbe260bf43a1b46fd553be0",
 ];
 
 // Module definitions
