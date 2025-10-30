@@ -65,6 +65,15 @@ public struct ManagerInitializer {
 
 // === Events ===
 /// Event emitted when a new margin manager is created.
+public struct MarginManagerCreatedEvent has copy, drop {
+    margin_manager_id: ID,
+    balance_manager_id: ID,
+    deepbook_pool_id: ID,
+    owner: address,
+    timestamp: u64,
+}
+
+#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
     balance_manager_id: ID,
@@ -724,9 +733,10 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
     registry.add_margin_manager(id.to_inner(), ctx);
 
-    event::emit(MarginManagerEvent {
+    event::emit(MarginManagerCreatedEvent {
         margin_manager_id,
         balance_manager_id: object::id(&balance_manager),
+        deepbook_pool_id: pool.id(),
         owner,
         timestamp: clock.timestamp_ms(),
     });
