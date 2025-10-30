@@ -621,6 +621,36 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     (base_debt, quote_debt)
 }
 
+/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset, base_debt, quote_debt)
+public fun manager_state<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+    clock: &Clock,
+): (ID, ID, u64, u64, u64, u64, u64) {
+    let manager_id = self.id();
+    let deepbook_pool_id = self.deepbook_pool;
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
+    let (base_debt, quote_debt) = if (self.margin_pool_id.is_some()) {
+        self.calculate_debts(margin_pool, clock)
+    } else {
+        (0, 0)
+    };
+    let risk_ratio = self.risk_ratio_int(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        margin_pool,
+        clock,
+    );
+
+    (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset, base_debt, quote_debt)
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
