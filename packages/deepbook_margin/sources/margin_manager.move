@@ -21,7 +21,7 @@ use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::calculate_target_currency
+    oracle::{calculate_target_currency, get_pyth_price}
 };
 use pyth::price_info::PriceInfoObject;
 use std::{string::String, type_name};
@@ -65,6 +65,15 @@ public struct ManagerInitializer {
 
 // === Events ===
 /// Event emitted when a new margin manager is created.
+public struct MarginManagerCreatedEvent has copy, drop {
+    margin_manager_id: ID,
+    balance_manager_id: ID,
+    deepbook_pool_id: ID,
+    owner: address,
+    timestamp: u64,
+}
+
+#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
 public struct MarginManagerEvent has copy, drop {
     margin_manager_id: ID,
     balance_manager_id: ID,
@@ -612,6 +621,69 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     (base_debt, quote_debt)
 }
 
+/// Returns comprehensive state information for a margin manager.
+/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
+///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
+///          quote_pyth_price, quote_pyth_decimals)
+public fun manager_state<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    clock: &Clock,
+): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8) {
+    let manager_id = self.id();
+    let deepbook_pool_id = self.deepbook_pool;
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
+    let (base_debt, quote_debt) = if (self.margin_pool_id.is_some()) {
+        if (self.has_base_debt()) {
+            self.calculate_debts(base_margin_pool, clock)
+        } else {
+            self.calculate_debts(quote_margin_pool, clock)
+        }
+    } else {
+        (0, 0)
+    };
+    let risk_ratio = self.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    // Get raw Pyth oracle prices and decimals
+    let (base_pyth_price, base_pyth_decimals) = get_pyth_price<BaseAsset>(
+        base_oracle,
+        registry,
+        clock,
+    );
+    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price<QuoteAsset>(
+        quote_oracle,
+        registry,
+        clock,
+    );
+
+    (
+        manager_id,
+        deepbook_pool_id,
+        risk_ratio,
+        base_asset,
+        quote_asset,
+        base_debt,
+        quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+    )
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
@@ -724,9 +796,10 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
     ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
     registry.add_margin_manager(id.to_inner(), ctx);
 
-    event::emit(MarginManagerEvent {
+    event::emit(MarginManagerCreatedEvent {
         margin_manager_id,
         balance_manager_id: object::id(&balance_manager),
+        deepbook_pool_id: pool.id(),
         owner,
         timestamp: clock.timestamp_ms(),
     });

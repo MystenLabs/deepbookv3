@@ -172,7 +172,7 @@ public(package) fun borrow_shares_to_amount(
         math::div(borrow, self.borrow_shares)
     };
 
-    math::mul(shares, ratio)
+    math::mul_round_up(shares, ratio)
 }
 
 /// Return the total supply of the margin pool.
