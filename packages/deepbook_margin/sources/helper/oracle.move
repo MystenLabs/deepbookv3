@@ -224,6 +224,35 @@ fun price_config<T>(
     }
 }
 
+/// Gets the raw Pyth price for a given asset
+/// Returns (pyth_price, pyth_decimals)
+public(package) fun get_pyth_price<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): (u64, u8) {
+    let config = registry.get_config<PythConfig>();
+    let type_config = registry.get_config_for_type<T>();
+
+    let price = pyth::get_price_no_older_than(
+        price_info_object,
+        clock,
+        config.max_age_secs,
+    );
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+
+    // verify that the price feed id matches the one we have in our config.
+    assert!(
+        price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
+        EPriceFeedIdMismatch,
+    );
+
+    let pyth_price = price.get_price().get_magnitude_if_positive();
+    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
+
+    (pyth_price, pyth_decimals)
+}
+
 /// Gets the configuration for a given currency type.
 fun get_config_for_type<T>(registry: &MarginRegistry): CoinTypeData {
     let config = registry.get_config<PythConfig>();
