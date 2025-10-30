@@ -621,7 +621,10 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
     (base_debt, quote_debt)
 }
 
-/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset, base_debt, quote_debt, base_pyth_price, base_pyth_decimals, quote_pyth_price, quote_pyth_decimals)
+/// Returns comprehensive state information for a margin manager.
+/// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
+///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
+///          quote_pyth_price, quote_pyth_decimals)
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
