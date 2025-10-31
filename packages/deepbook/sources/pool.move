@@ -1671,7 +1671,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
         .borrow_mut(
             constants::ewma_df_key(),
         );
-    ewma_state.update(clock, ctx);
+    ewma_state.update(self.id(), clock, ctx);
 
     ewma_state
 }
