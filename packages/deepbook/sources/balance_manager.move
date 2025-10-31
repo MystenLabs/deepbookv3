@@ -341,6 +341,17 @@ public fun register_manager(balance_manager: &BalanceManager, registry: &mut Reg
     registry.add_balance_manager(owner, manager_id);
 }
 
+/// Get the referral id from the balance manager.
+public fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
+    let ref_key = constants::referral_df_key();
+    if (!balance_manager.id.exists_(ref_key)) {
+        return option::none()
+    };
+    let referral_id: &ID = balance_manager.id.borrow(ref_key);
+
+    option::some(*referral_id)
+}
+
 public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
     assert!(object::id(balance_manager) == proof.balance_manager_id, EInvalidProof);
 }
@@ -377,17 +388,6 @@ public(package) fun mint_referral(ctx: &mut TxContext): ID {
     transfer::share_object(referral);
 
     referral_id
-}
-
-/// Get the referral id from the balance manager.
-public(package) fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
-    let ref_key = constants::referral_df_key();
-    if (!balance_manager.id.exists_(ref_key)) {
-        return option::none()
-    };
-    let referral_id: &ID = balance_manager.id.borrow(ref_key);
-
-    option::some(*referral_id)
 }
 
 public(package) fun assert_referral_owner(referral: &DeepBookReferral, ctx: &TxContext) {

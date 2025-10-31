@@ -5,7 +5,7 @@
 /// This state is used to calculate the smoothed mean and variance of gas prices
 /// and apply a penalty to taker fees based on the Z-score of the current gas price
 /// relative to the smoothed mean and variance.
-/// The state is enabled by default and can be configured with different parameters.
+/// The state is disabled by default and can be configured with different parameters.
 module deepbook::ewma;
 
 use deepbook::{constants, math};
