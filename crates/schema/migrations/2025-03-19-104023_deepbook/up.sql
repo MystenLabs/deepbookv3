@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS pools
 
 CREATE TABLE IF NOT EXISTS assets
 (
-    type                      TEXT         PRIMARY KEY,
+    asset_type                TEXT         PRIMARY KEY,
     name                      TEXT         NOT NULL,
     symbol                    TEXT         NOT NULL,
     decimals                  SMALLINT     NOT NULL,
