@@ -9,6 +9,9 @@ use std::unit_test::assert_eq;
 use sui::{clock, test_scenario::{begin, end, Scenario}, test_utils};
 
 #[test_only]
+const TEST_POOL_ID: address = @0x1234;
+
+#[test_only]
 public fun test_init_ewma_state(ctx: &TxContext): EWMAState {
     ewma::init_ewma_state(ctx)
 }
@@ -60,7 +63,7 @@ fun test_update_ewma_state() {
     advance_scenario_with_gas_price(&mut test, gas_price2, 1000);
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     assert_eq!(ewma_state.mean(), 1_010 * constants::float_scaling());
     assert_eq!(ewma_state.variance(), 1000000 * constants::float_scaling());
 
@@ -72,7 +75,7 @@ fun test_update_ewma_state() {
     let gas_price3 = 3_000;
     advance_scenario_with_gas_price(&mut test, gas_price3, 1000);
     clock.set_for_testing(1000 + 10);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     // mean = 0.99 * 1_010_000_000_000 + 0.01 * 3_000_000_000_000 = 1_029_900_000_000
     // difference = 3_000_000_000_000 - 1_010_000_000_000 = 1_990_000_000_000 (1990, using old mean)
     // diff squared = (1990 * 1990) = 3_960_100 * 10^9
@@ -89,7 +92,7 @@ fun test_update_ewma_state() {
     let gas_price4 = 4_000;
     advance_scenario_with_gas_price(&mut test, gas_price4, 1000);
     clock.set_for_testing(1000 + 20);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     // mean = 0.99 * 1_029_900_000_000 + 0.01 * 4_000_000_000_000 = 1059.601 * 10^9
     // difference = 4_000_000_000_000 - 1_029_900_000_000 = 2_970_100_000_000 (2970.1, using old mean)
     // diff squared = (2970.1 * 2970.1) = 8,821,494.01 * 10^9
@@ -119,7 +122,7 @@ fun test_update_ewma_state() {
     let low_gas_fee = 10;
     advance_scenario_with_gas_price(&mut test, low_gas_fee, 1000);
     clock.set_for_testing(1000 + 30);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee);
 
@@ -178,7 +181,7 @@ fun test_apply_taker_penalty_gas_below_mean() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Now use gas price below mean
     let low_gas = 500;
@@ -210,13 +213,13 @@ fun test_apply_taker_penalty_gas_above_mean_below_threshold() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Use gas price moderately above mean
     let moderate_gas = 1_500;
     advance_scenario_with_gas_price(&mut test, moderate_gas, 1000);
     clock.set_for_testing(2000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Gas is above mean but z-score is below threshold, no penalty
     let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
@@ -243,24 +246,24 @@ fun test_apply_taker_penalty_z_score_above_threshold() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Gradually increase gas price to build up variance
     let gas_price_2 = 200;
     advance_scenario_with_gas_price(&mut test, gas_price_2, 1000);
     clock.set_for_testing(2000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     let gas_price_3 = 400;
     advance_scenario_with_gas_price(&mut test, gas_price_3, 1000);
     clock.set_for_testing(3000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Now spike the gas price significantly
     let spike_gas = 10_000;
     advance_scenario_with_gas_price(&mut test, spike_gas, 1000);
     clock.set_for_testing(4000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Z-score should be high enough to trigger penalty
     let z_score = ewma_state.z_score(test.ctx());
@@ -288,13 +291,13 @@ fun test_dynamic_additional_taker_fee_changes() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Spike gas price
     let spike_gas = 5_000;
     advance_scenario_with_gas_price(&mut test, spike_gas, 1000);
     clock.set_for_testing(2000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // Apply penalty with first additional fee
     let fee_1 = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
@@ -327,20 +330,20 @@ fun test_ewma_state_timestamping() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(5000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     assert_eq!(ewma_state.last_updated_timestamp(), 5000);
 
     // Update at same timestamp should be no-op
     let mean_before = ewma_state.mean();
     let variance_before = ewma_state.variance();
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     assert_eq!(ewma_state.mean(), mean_before);
     assert_eq!(ewma_state.variance(), variance_before);
     assert_eq!(ewma_state.last_updated_timestamp(), 5000);
 
     // Update with new timestamp
     clock.set_for_testing(10000);
-    ewma_state.update(&clock, test.ctx());
+    ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     assert_eq!(ewma_state.last_updated_timestamp(), 10000);
 
     test_utils::destroy(clock);
@@ -377,12 +380,12 @@ fun test_alpha_parameter_effect() {
 
     let mut clock = clock::create_for_testing(test.ctx());
     clock.set_for_testing(1000);
-    ewma_high_alpha.update(&clock, test.ctx());
+    ewma_high_alpha.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     let new_gas = 2_000;
     advance_scenario_with_gas_price(&mut test, new_gas, 1000);
     clock.set_for_testing(2000);
-    ewma_high_alpha.update(&clock, test.ctx());
+    ewma_high_alpha.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // With alpha = 0.5: new_mean = 0.5 * 2000 + 0.5 * 1000 = 1500 * float_scaling
     assert_eq!(ewma_high_alpha.mean(), 1_500 * constants::float_scaling());
@@ -395,12 +398,12 @@ fun test_alpha_parameter_effect() {
     ewma_low_alpha.set_alpha(10_000_000); // 1% weight on current (default)
 
     clock.set_for_testing(3000);
-    ewma_low_alpha.update(&clock, test.ctx());
+    ewma_low_alpha.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     let new_gas_2 = 2_000;
     advance_scenario_with_gas_price(&mut test, new_gas_2, 1000);
     clock.set_for_testing(4000);
-    ewma_low_alpha.update(&clock, test.ctx());
+    ewma_low_alpha.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
 
     // With alpha = 0.01: new_mean = 0.01 * 2000 + 0.99 * 1000 = 1010 * float_scaling
     assert_eq!(ewma_low_alpha.mean(), 1_010 * constants::float_scaling());

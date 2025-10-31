@@ -1662,6 +1662,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): &mut EWMAState {
+    let pool_id = self.id();
     if (!self.id.exists_(constants::ewma_df_key())) {
         self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
     };
@@ -1671,7 +1672,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
         .borrow_mut(
             constants::ewma_df_key(),
         );
-    ewma_state.update(clock, ctx);
+    ewma_state.update(pool_id, clock, ctx);
 
     ewma_state
 }

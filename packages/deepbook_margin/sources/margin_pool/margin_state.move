@@ -175,6 +175,24 @@ public(package) fun borrow_shares_to_amount(
     math::mul_round_up(shares, ratio)
 }
 
+/// Return the supply ratio of the margin pool.
+public(package) fun supply_ratio(self: &State): u64 {
+    if (self.supply_shares == 0) {
+        constants::float_scaling()
+    } else {
+        math::div(self.total_supply, self.supply_shares)
+    }
+}
+
+/// Return the borrow ratio of the margin pool.
+public(package) fun borrow_ratio(self: &State): u64 {
+    if (self.borrow_shares == 0) {
+        constants::float_scaling()
+    } else {
+        math::div(self.total_borrow, self.borrow_shares)
+    }
+}
+
 /// Return the total supply of the margin pool.
 public(package) fun total_supply(self: &State): u64 {
     self.total_supply
@@ -218,22 +236,4 @@ fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
     self.last_update_timestamp = now;
 
     protocol_fees
-}
-
-/// Return the supply ratio of the margin pool.
-fun supply_ratio(self: &State): u64 {
-    if (self.supply_shares == 0) {
-        constants::float_scaling()
-    } else {
-        math::div(self.total_supply, self.supply_shares)
-    }
-}
-
-/// Return the borrow ratio of the margin pool.
-fun borrow_ratio(self: &State): u64 {
-    if (self.borrow_shares == 0) {
-        constants::float_scaling()
-    } else {
-        math::div(self.total_borrow, self.borrow_shares)
-    }
 }

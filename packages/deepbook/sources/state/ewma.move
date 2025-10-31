@@ -9,7 +9,7 @@
 module deepbook::ewma;
 
 use deepbook::{constants, math};
-use sui::clock::Clock;
+use sui::{clock::Clock, event};
 
 /// The EWMA state structure
 /// It contains the smoothed mean, variance, alpha, Z-score threshold,
@@ -22,6 +22,14 @@ public struct EWMAState has copy, drop, store {
     additional_taker_fee: u64,
     last_updated_timestamp: u64,
     enabled: bool,
+}
+
+public struct EWMAUpdate has copy, drop, store {
+    pool_id: ID,
+    gas_price: u64,
+    mean: u64,
+    variance: u64,
+    timestamp: u64,
 }
 
 public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
@@ -43,7 +51,7 @@ public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
 /// and the previous mean and variance using the EWMA formula.
 /// The alpha parameter controls the weight of the current gas price in the calculation.
 /// The mean and variance are updated in the state.
-public(package) fun update(self: &mut EWMAState, clock: &Clock, ctx: &TxContext) {
+public(package) fun update(self: &mut EWMAState, pool_id: ID, clock: &Clock, ctx: &TxContext) {
     let current_timestamp = clock.timestamp_ms();
     if (current_timestamp == self.last_updated_timestamp) {
         return
@@ -71,6 +79,14 @@ public(package) fun update(self: &mut EWMAState, clock: &Clock, ctx: &TxContext)
 
     self.mean = mean_new;
     self.variance = variance_new;
+
+    event::emit(EWMAUpdate {
+        pool_id,
+        gas_price,
+        mean: self.mean,
+        variance: self.variance,
+        timestamp: current_timestamp,
+    });
 }
 
 /// Returns the Z-score of the current gas price relative to the smoothed mean and variance.
