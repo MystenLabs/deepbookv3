@@ -9,7 +9,7 @@
 module deepbook::ewma;
 
 use deepbook::{constants, math};
-use sui::clock::Clock;
+use sui::{clock::Clock, event};
 
 /// The EWMA state structure
 /// It contains the smoothed mean, variance, alpha, Z-score threshold,
@@ -22,6 +22,13 @@ public struct EWMAState has copy, drop, store {
     additional_taker_fee: u64,
     last_updated_timestamp: u64,
     enabled: bool,
+}
+
+public struct EWMAUpdate has copy, drop, store {
+    gas_price: u64,
+    mean: u64,
+    variance: u64,
+    timestamp: u64,
 }
 
 public(package) fun init_ewma_state(ctx: &TxContext): EWMAState {
@@ -71,6 +78,13 @@ public(package) fun update(self: &mut EWMAState, clock: &Clock, ctx: &TxContext)
 
     self.mean = mean_new;
     self.variance = variance_new;
+
+    event::emit(EWMAUpdate {
+        gas_price,
+        mean: self.mean,
+        variance: self.variance,
+        timestamp: current_timestamp,
+    });
 }
 
 /// Returns the Z-score of the current gas price relative to the smoothed mean and variance.

@@ -463,12 +463,20 @@ public fun supply_shares<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.supply_shares()
 }
 
+public fun supply_ratio<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.supply_ratio()
+}
+
 public fun total_borrow<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.total_borrow()
 }
 
 public fun borrow_shares<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.borrow_shares()
+}
+
+public fun borrow_ratio<Asset>(self: &MarginPool<Asset>): u64 {
+    self.state.borrow_ratio()
 }
 
 public fun last_update_timestamp<Asset>(self: &MarginPool<Asset>): u64 {
@@ -501,6 +509,10 @@ public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
 
 public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: ID): u64 {
     self.positions.user_supply_shares(supplier_cap_id)
+}
+
+public fun vault_balance<Asset>(self: &MarginPool<Asset>): u64 {
+    self.vault.value()
 }
 
 public fun user_supply_amount<Asset>(
