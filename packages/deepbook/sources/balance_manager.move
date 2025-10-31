@@ -8,17 +8,16 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::{constants, registry::Registry};
+use deepbook::constants;
+use deepbook::registry::Registry;
 use std::type_name::{Self, TypeName};
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    coin::Coin,
-    dynamic_field as df,
-    event,
-    object::id_from_address,
-    vec_set::{Self, VecSet}
-};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::coin::Coin;
+use sui::dynamic_field as df;
+use sui::event;
+use sui::object::id_from_address;
+use sui::vec_set::{Self, VecSet};
 
 use fun df::borrow as UID.borrow;
 use fun df::exists_ as UID.exists_;
@@ -341,6 +340,17 @@ public fun register_manager(balance_manager: &BalanceManager, registry: &mut Reg
     registry.add_balance_manager(owner, manager_id);
 }
 
+/// Get the referral id from the balance manager.
+public fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
+    let ref_key = constants::referral_df_key();
+    if (!balance_manager.id.exists_(ref_key)) {
+        return option::none()
+    };
+    let referral_id: &ID = balance_manager.id.borrow(ref_key);
+
+    option::some(*referral_id)
+}
+
 public fun validate_proof(balance_manager: &BalanceManager, proof: &TradeProof) {
     assert!(object::id(balance_manager) == proof.balance_manager_id, EInvalidProof);
 }
@@ -377,17 +387,6 @@ public(package) fun mint_referral(ctx: &mut TxContext): ID {
     transfer::share_object(referral);
 
     referral_id
-}
-
-/// Get the referral id from the balance manager.
-public(package) fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
-    let ref_key = constants::referral_df_key();
-    if (!balance_manager.id.exists_(ref_key)) {
-        return option::none()
-    };
-    let referral_id: &ID = balance_manager.id.borrow(ref_key);
-
-    option::some(*referral_id)
 }
 
 public(package) fun assert_referral_owner(referral: &DeepBookReferral, ctx: &TxContext) {
