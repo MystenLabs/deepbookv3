@@ -413,6 +413,7 @@ public(package) fun deposit_with_proof<T>(
 }
 
 /// Deposit funds to a balance_manager. Pool will call this to deposit funds.
+/// This function is used by withdraw_settled_amounts_permissionless to deposit funds.
 public(package) fun deposit_permissionless<T>(
     balance_manager: &mut BalanceManager,
     to_deposit: Balance<T>,

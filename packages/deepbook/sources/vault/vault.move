@@ -119,15 +119,15 @@ public(package) fun settle_balance_manager_permissionless<BaseAsset, QuoteAsset>
     assert!(has_settled_balances, ENoBalanceToSettle);
 
     if (balances_out.base() > 0) {
-        let balance = self.base_balance.split(balances_out.base() - balances_in.base());
+        let balance = self.base_balance.split(balances_out.base());
         balance_manager.deposit_permissionless(balance);
     };
     if (balances_out.quote() > 0) {
-        let balance = self.quote_balance.split(balances_out.quote() - balances_in.quote());
+        let balance = self.quote_balance.split(balances_out.quote());
         balance_manager.deposit_permissionless(balance);
     };
     if (balances_out.deep() > 0) {
-        let balance = self.deep_balance.split(balances_out.deep() - balances_in.deep());
+        let balance = self.deep_balance.split(balances_out.deep());
         balance_manager.deposit_permissionless(balance);
     };
 }

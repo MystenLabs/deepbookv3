@@ -603,7 +603,7 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
-/// Withdraw settled amounts to the `balance_manager`.
+/// Withdraw settled amounts permissionlessly to the `balance_manager`.
 public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     balance_manager: &mut BalanceManager,
