@@ -304,6 +304,22 @@ public fun build_demo_usdc_price_info_object(
     )
 }
 
+/// Build a demo USDC price info object at $1.00
+public fun build_demo_usdc_price_info_object_with_price(
+    scenario: &mut Scenario,
+    price: u64,
+    clock: &Clock,
+): PriceInfoObject {
+    build_pyth_price_info_object(
+        scenario,
+        test_constants::usdc_price_feed_id(),
+        price,
+        50000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
 /// Build a demo USDT price info object at $1.00
 public fun build_demo_usdt_price_info_object(
     scenario: &mut Scenario,

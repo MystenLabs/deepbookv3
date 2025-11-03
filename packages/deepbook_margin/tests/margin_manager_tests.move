@@ -1697,3 +1697,280 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
     destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    clock.set_for_testing(1000000);
+
+    // Create USDC margin pool
+    let usdc_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create USDT margin pool (needed for the DeepBook pool)
+    let usdt_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create DeepBook pool
+    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDT, USDC>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    // Fund the USDC margin pool with exactly 10 USDC (10 * 10^6)
+    scenario.next_tx(test_constants::admin());
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+
+    usdc_pool.supply(
+        &registry,
+        &supplier_cap,
+        mint_coin<USDC>(10 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+    );
+
+    // Also fund USDT pool for completeness
+    usdt_pool.supply(
+        &registry,
+        &supplier_cap,
+        mint_coin<USDT>(10_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+    );
+
+    usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
+    usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+
+    test::return_shared(usdc_pool);
+    test::return_shared(usdt_pool);
+    test::return_shared(registry);
+    scenario.return_to_sender(usdt_pool_cap);
+    scenario.return_to_sender(usdc_pool_cap);
+    destroy(supplier_cap);
+
+    // Create oracle prices
+    scenario.next_tx(test_constants::admin());
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // User creates margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    test::return_shared(pool);
+    test::return_shared(registry);
+
+    // User deposits exactly 1 USDC (1 * 10^6)
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    let deposit_coin = mint_coin<USDC>(1 * test_constants::usdc_multiplier(), scenario.ctx());
+    mm.deposit<USDT, USDC, USDC>(&registry, deposit_coin, scenario.ctx());
+
+    test::return_shared(mm);
+    test::return_shared(registry);
+
+    // User borrows exactly 4 USDC (4 * 10^6)
+    // Risk ratio should be (1 + 4) / 4 = 1.25, exactly at the minimum
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+
+    mm.borrow_quote<USDT, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &usdt_price,
+        &usdc_price,
+        &pool,
+        4 * test_constants::usdc_multiplier(), // 4 USDC
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify risk ratio is exactly at the minimum (1.25 with 9 decimals = 1_250_000_000)
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let risk_ratio = mm.risk_ratio(
+        &registry,
+        &usdt_price,
+        &usdc_price,
+        &pool,
+        &base_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Risk ratio should be exactly the minimum borrow risk ratio (1.25)
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+
+    test::return_shared(base_pool);
+    return_shared_2!(mm, usdc_pool);
+    test::return_shared(pool);
+    destroy_2!(usdc_price, usdt_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    clock.set_for_testing(1000000);
+
+    // Create USDC margin pool
+    let usdc_pool_id = create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create USDT margin pool (needed for the DeepBook pool)
+    let usdt_pool_id = create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create DeepBook pool
+    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDT, USDC>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    // Fund the USDC margin pool with exactly 10 USDC (10 * 10^6)
+    scenario.next_tx(test_constants::admin());
+    let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+
+    usdc_pool.supply(
+        &registry,
+        &supplier_cap,
+        mint_coin<USDC>(10 * test_constants::usdc_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+    );
+
+    // Also fund USDT pool for completeness
+    usdt_pool.supply(
+        &registry,
+        &supplier_cap,
+        mint_coin<USDT>(10_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        option::none(),
+        &clock,
+    );
+
+    usdc_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdc_pool_cap, &clock);
+    usdt_pool.enable_deepbook_pool_for_loan(&registry, pool_id, &usdt_pool_cap, &clock);
+
+    test::return_shared(usdc_pool);
+    test::return_shared(usdt_pool);
+    test::return_shared(registry);
+    scenario.return_to_sender(usdt_pool_cap);
+    scenario.return_to_sender(usdc_pool_cap);
+    destroy(supplier_cap);
+
+    // Create oracle prices with custom USDC price of 0.99984495
+    scenario.next_tx(test_constants::admin());
+    let usdc_price = test_helpers::build_demo_usdc_price_info_object_with_price(
+        &mut scenario,
+        99984495, // $0.99984495 with 8 decimals
+        &clock,
+    );
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // User creates margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    test::return_shared(pool);
+    test::return_shared(registry);
+
+    // User deposits exactly 1 USDC (1 * 10^6)
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    let deposit_coin = mint_coin<USDC>(1 * test_constants::usdc_multiplier(), scenario.ctx());
+    mm.deposit<USDT, USDC, USDC>(&registry, deposit_coin, scenario.ctx());
+
+    test::return_shared(mm);
+    test::return_shared(registry);
+
+    // User borrows exactly 4 USDC (4 * 10^6)
+    // With USDC at 0.99984495 instead of 1.00, verify the operation still works
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+
+    mm.borrow_quote<USDT, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &usdt_price,
+        &usdc_price,
+        &pool,
+        4 * test_constants::usdc_multiplier(), // 4 USDC
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify risk ratio
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
+    let risk_ratio = mm.risk_ratio(
+        &registry,
+        &usdt_price,
+        &usdc_price,
+        &pool,
+        &base_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Risk ratio should still be approximately at the minimum
+    // With the price difference, it might be slightly different
+    // USDC at 0.99984495: (1 * 0.99984495 + 4 * 0.99984495) / (4 * 0.99984495) = 5/4 = 1.25
+    // The ratio should still be exactly 1.25 since both assets use the same price
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+
+    test::return_shared(base_pool);
+    return_shared_2!(mm, usdc_pool);
+    test::return_shared(pool);
+    destroy_2!(usdc_price, usdt_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
