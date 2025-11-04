@@ -115,6 +115,25 @@ public(package) fun decrease_borrow_shares(
     (amount, protocol_fees)
 }
 
+/// Update the supply and borrow with the interest and protocol fees.
+/// Returns the protocol fees accrued since last update.
+public(package) fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
+    let now = clock.timestamp_ms();
+    let elapsed = now - self.last_update_timestamp;
+
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+    self.total_supply = self.total_supply + interest - protocol_fees;
+    self.total_borrow = self.total_borrow + interest;
+    self.last_update_timestamp = now;
+
+    protocol_fees
+}
+
 /// Return the utilization rate of the margin pool.
 public(package) fun utilization_rate(self: &State): u64 {
     if (self.total_supply == 0) {
@@ -216,24 +235,4 @@ public(package) fun borrow_shares(self: &State): u64 {
 /// Return the last update timestamp of the margin pool.
 public(package) fun last_update_timestamp(self: &State): u64 {
     self.last_update_timestamp
-}
-
-// === Private Functions ===
-/// Update the supply and borrow with the interest and protocol fees.
-/// Returns the protocol fees accrued since last update.
-fun update(self: &mut State, config: &ProtocolConfig, clock: &Clock): u64 {
-    let now = clock.timestamp_ms();
-    let elapsed = now - self.last_update_timestamp;
-
-    let interest = config.calculate_interest_with_borrow(
-        self.utilization_rate(),
-        elapsed,
-        self.total_borrow,
-    );
-    let protocol_fees = math::mul(interest, config.protocol_spread());
-    self.total_supply = self.total_supply + interest - protocol_fees;
-    self.total_borrow = self.total_borrow + interest;
-    self.last_update_timestamp = now;
-
-    protocol_fees
 }

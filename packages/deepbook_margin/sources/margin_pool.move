@@ -215,6 +215,7 @@ public fun update_interest_params<Asset>(
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    self.state.update(&self.config, clock);
     self.config.set_interest_config(interest_config);
 
     event::emit(InterestParamsUpdated {
