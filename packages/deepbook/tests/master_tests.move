@@ -4,20 +4,16 @@
 #[test_only]
 module deepbook::master_tests;
 
-use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap},
-    balance_manager_tests::{Self, USDC, SPAM, USDT},
-    balances::{Self, Balances},
-    constants,
-    math,
-    pool::{Self, Pool},
-    pool_tests
-};
-use sui::{
-    clock::Clock,
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared, return_to_sender}
-};
+use deepbook::balance_manager::{Self, BalanceManager, TradeCap};
+use deepbook::balance_manager_tests::{Self, USDC, SPAM, USDT};
+use deepbook::balances::{Self, Balances};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::{Self, Pool};
+use deepbook::pool_tests;
+use sui::clock::Clock;
+use sui::sui::SUI;
+use sui::test_scenario::{Scenario, begin, end, return_shared, return_to_sender};
 use token::deep::{Self, DEEP, ProtectedTreasury};
 
 public struct ExpectedBalances has drop {
@@ -274,22 +270,7 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     // Alice now has settled balances (received SUI from the trade)
     // Bob (not the owner) calls withdraw_settled_amounts_permissionless for Alice
-    test.next_tx(BOB);
-    {
-        let mut alice_manager = test.take_shared_by_id<BalanceManager>(
-            alice_balance_manager_id,
-        );
-        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-
-        // This should work even though BOB is not the owner of alice_manager
-        pool::withdraw_settled_amounts_permissionless<SUI, USDC>(
-            &mut pool,
-            &mut alice_manager,
-        );
-
-        return_shared(alice_manager);
-        return_shared(pool);
-    };
+    withdraw_settled_amounts<SUI, USDC>(BOB, pool_id, alice_balance_manager_id, &mut test);
 
     // Verify Alice's balance increased by the traded quantity
     test.next_tx(ALICE);
