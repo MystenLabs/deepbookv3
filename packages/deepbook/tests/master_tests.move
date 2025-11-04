@@ -274,7 +274,12 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     // Alice now has settled balances (received SUI from the trade)
     // Bob (not the owner) calls withdraw_settled_amounts_permissionless for Alice
-    withdraw_settled_amounts<SUI, USDC>(BOB, pool_id, alice_balance_manager_id, &mut test);
+    withdraw_settled_amounts_permissionless<SUI, USDC>(
+        BOB,
+        pool_id,
+        alice_balance_manager_id,
+        &mut test,
+    );
 
     // Verify Alice's balance increased by the traded quantity
     test.next_tx(ALICE);
