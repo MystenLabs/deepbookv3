@@ -14,6 +14,7 @@ const MIN_MIN_BORROW: u64 = 1000;
 const MAX_MARGIN_MANAGERS: u64 = 100;
 const DEFAULT_REFERRAL: address = @0x0;
 const MAX_PROTOCOL_SPREAD: u64 = 200_000_000; // 20%
+const MIN_LIQUIDATION_REPAY: u64 = 1000;
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -57,4 +58,8 @@ public fun default_referral(): ID {
 
 public fun max_protocol_spread(): u64 {
     MAX_PROTOCOL_SPREAD
+}
+
+public fun min_liquidation_repay(): u64 {
+    MIN_LIQUIDATION_REPAY
 }
