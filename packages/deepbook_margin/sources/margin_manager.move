@@ -41,6 +41,7 @@ const ECannotLiquidate: u64 = 9;
 const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
+const ERepayAmountTooLow: u64 = 13;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -400,6 +401,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         clock,
     );
     assert!(registry.can_liquidate(pool.id(), risk_ratio), ECannotLiquidate);
+    assert!(repay_coin.value() >= margin_constants::min_liquidation_repay(), ERepayAmountTooLow);
     let trade_proof = self.trade_proof(ctx);
     pool.cancel_all_orders(&mut self.balance_manager, &trade_proof, clock, ctx);
 

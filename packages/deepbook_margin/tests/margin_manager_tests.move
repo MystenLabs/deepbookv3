@@ -1974,3 +1974,82 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     destroy_2!(usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test, expected_failure(abort_code = margin_manager::ERepayAmountTooLow)]
+fun test_liquidate_fails_with_too_low_repay_amount() {
+    let (
+        mut scenario,
+        mut clock,
+        _admin_cap,
+        _maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Set initial BTC price at $50,000
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Deposit 1 BTC worth $50k
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // Borrow $40k USDC (risk ratio = 50k/40k = 1.25)
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Advance time by 1 day to accrue interest
+    advance_time(&mut clock, 86_400_000); // 1 day in milliseconds
+
+    // Drop BTC price to $3k to make position underwater and liquidatable
+    // Assets: 1 BTC at $3k + $40k USDC = $43k
+    // Debt: $40k+ (with interest)
+    // Risk ratio: ~$43k / ~$40k = ~1.075 (107.5%) < 110% liquidation threshold
+    // Create new price object AFTER time advancement to ensure it's fresh
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 3000, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Try to liquidate with an extremely small repay amount (1 unit)
+    // This should fail with ERepayAmountTooLow
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(1, scenario.ctx()); // Just 1 unit - way too low
+
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Should never reach here
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    abort (0)
+}
