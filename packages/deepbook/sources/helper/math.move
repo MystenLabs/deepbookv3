@@ -55,7 +55,7 @@ public fun div_round_up(x: u64, y: u64): u64 {
     result + is_round_down
 }
 
-/// given a vector of u64, return the median
+/// given a vector of u128, return the median
 public fun median(v: vector<u128>): u128 {
     let n = v.length();
     if (n == 0) {
