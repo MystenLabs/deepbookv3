@@ -8,8 +8,9 @@ use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    protocol_fees::{Self, ProtocolFees, SupplyReferral}
+    protocol_config::{Self, InterestConfig, MarginPoolConfig, ProtocolConfig},
+    protocol_fees::{Self, ProtocolFees, SupplyReferral},
+    rate_limiter::{Self, RateLimiter}
 };
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
@@ -29,6 +30,7 @@ const EDeepbookPoolAlreadyAllowed: u64 = 4;
 const EDeepbookPoolNotAllowed: u64 = 5;
 const EInvalidMarginPoolCap: u64 = 6;
 const EBorrowAmountTooLow: u64 = 7;
+const ERateLimitExceeded: u64 = 8;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -39,6 +41,7 @@ public struct MarginPool<phantom Asset> has key, store {
     protocol_fees: ProtocolFees,
     positions: PositionManager,
     allowed_deepbook_pools: VecSet<ID>,
+    rate_limiter: RateLimiter,
     extra_fields: VecMap<String, u64>,
 }
 
@@ -142,6 +145,11 @@ public fun create_margin_pool<Asset>(
         protocol_fees: protocol_fees::default_protocol_fees(ctx),
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
+        rate_limiter: rate_limiter::new(
+            config.rate_limit_window_ms(),
+            config.max_net_withdrawal(),
+            config.rate_limit_enabled(),
+        ),
         extra_fields: vec_map::empty(),
     };
     transfer::share_object(margin_pool);
@@ -237,6 +245,13 @@ public fun update_margin_pool_config<Asset>(
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
     self.config.set_margin_pool_config(margin_pool_config);
+    self
+        .rate_limiter
+        .update_config(
+            protocol_config::rate_limit_window_ms_from_config(&margin_pool_config),
+            protocol_config::max_net_withdrawal_from_config(&margin_pool_config),
+            protocol_config::rate_limit_enabled_from_config(&margin_pool_config),
+        );
 
     event::emit(MarginPoolConfigUpdated {
         margin_pool_id: self.id(),
@@ -295,6 +310,7 @@ public fun supply<Asset>(
     self.vault.join(balance);
 
     assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
+    self.rate_limiter.record_deposit(supply_amount, clock);
 
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
@@ -326,6 +342,10 @@ public fun withdraw<Asset>(
     let withdraw_shares = math::mul_round_up(
         supplied_shares,
         math::div(withdraw_amount, supplied_amount),
+    );
+    assert!(
+        self.rate_limiter.check_and_record_withdrawal(withdraw_amount, clock),
+        ERateLimitExceeded,
     );
 
     let (_, protocol_fees) = self
@@ -593,4 +613,31 @@ public(package) fun borrow_shares_to_amount<Asset>(
     clock: &Clock,
 ): u64 {
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
+}
+
+// === Public View Functions ===
+
+/// Returns the maximum amount that can be withdrawn without hitting rate limits
+public fun get_available_withdrawal<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
+    self.rate_limiter.get_available_withdrawal(clock)
+}
+
+/// Returns the current net withdrawal amount in the sliding window
+public fun get_current_net_withdrawal<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
+    self.rate_limiter.current_net_withdrawal(clock)
+}
+
+/// Returns whether rate limiting is enabled
+public fun is_rate_limit_enabled<Asset>(self: &MarginPool<Asset>): bool {
+    self.rate_limiter.is_enabled()
+}
+
+/// Returns the rate limit window duration in milliseconds
+public fun rate_limit_window_ms<Asset>(self: &MarginPool<Asset>): u64 {
+    self.rate_limiter.window_duration_ms()
+}
+
+/// Returns the maximum net withdrawal allowed
+public fun max_net_withdrawal<Asset>(self: &MarginPool<Asset>): u64 {
+    self.rate_limiter.max_net_withdrawal()
 }

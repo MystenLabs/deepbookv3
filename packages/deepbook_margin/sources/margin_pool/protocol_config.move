@@ -21,6 +21,9 @@ public struct MarginPoolConfig has copy, drop, store {
     max_utilization_rate: u64,
     protocol_spread: u64,
     min_borrow: u64,
+    rate_limit_window_ms: u64,
+    max_net_withdrawal: u64,
+    rate_limit_enabled: bool,
 }
 
 public struct InterestConfig has copy, drop, store {
@@ -52,6 +55,29 @@ public fun new_margin_pool_config(
         max_utilization_rate,
         protocol_spread,
         min_borrow,
+        rate_limit_window_ms: 86_400_000, // 24 hours default
+        max_net_withdrawal: supply_cap / 10, // 10% of supply cap default
+        rate_limit_enabled: false, // Disabled by default
+    }
+}
+
+public fun new_margin_pool_config_with_rate_limit(
+    supply_cap: u64,
+    max_utilization_rate: u64,
+    protocol_spread: u64,
+    min_borrow: u64,
+    rate_limit_window_ms: u64,
+    max_net_withdrawal: u64,
+    rate_limit_enabled: bool,
+): MarginPoolConfig {
+    MarginPoolConfig {
+        supply_cap,
+        max_utilization_rate,
+        protocol_spread,
+        min_borrow,
+        rate_limit_window_ms,
+        max_net_withdrawal,
+        rate_limit_enabled,
     }
 }
 
@@ -152,4 +178,28 @@ public(package) fun optimal_utilization(self: &ProtocolConfig): u64 {
 
 public(package) fun excess_slope(self: &ProtocolConfig): u64 {
     self.interest_config.excess_slope
+}
+
+public(package) fun rate_limit_window_ms(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.rate_limit_window_ms
+}
+
+public(package) fun max_net_withdrawal(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.max_net_withdrawal
+}
+
+public(package) fun rate_limit_enabled(self: &ProtocolConfig): bool {
+    self.margin_pool_config.rate_limit_enabled
+}
+
+public(package) fun rate_limit_window_ms_from_config(config: &MarginPoolConfig): u64 {
+    config.rate_limit_window_ms
+}
+
+public(package) fun max_net_withdrawal_from_config(config: &MarginPoolConfig): u64 {
+    config.max_net_withdrawal
+}
+
+public(package) fun rate_limit_enabled_from_config(config: &MarginPoolConfig): bool {
+    config.rate_limit_enabled
 }
