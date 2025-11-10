@@ -4,7 +4,7 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
@@ -15,6 +15,7 @@ const EInvalidPythPrice: u64 = 1;
 const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
 const EInvalidPythPriceConf: u64 = 4;
+const EInvalidOracleConfig: u64 = 5;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -49,6 +50,13 @@ public fun new_coin_type_data<T>(
     max_conf_bps: u64,
     max_ewma_difference_bps: u64,
 ): CoinTypeData {
+    // Validate oracle configuration parameters
+    assert!(max_conf_bps < margin_constants::max_conf_bps(), EInvalidOracleConfig);
+    assert!(
+        max_ewma_difference_bps < margin_constants::max_ewma_difference_bps(),
+        EInvalidOracleConfig,
+    );
+
     let type_name = type_name::with_defining_ids<T>();
     CoinTypeData {
         decimals: coin_metadata.get_decimals(),
