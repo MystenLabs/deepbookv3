@@ -312,12 +312,7 @@ public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
 ) {
     registry.load_inner();
-    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let balance_manager = margin_manager.balance_manager_permissionless_mut();
-
-    pool.withdraw_settled_amounts_permissionless(
-        balance_manager,
-    );
+    margin_manager.withdraw_settled_amounts_permissionless_int(pool);
 }
 
 /// Stake DEEP tokens to the pool.

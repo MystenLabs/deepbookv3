@@ -733,12 +733,14 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
-/// Unwraps balance manager for permissionless operations (like settlement).
-/// No ownership check is performed.
-public(package) fun balance_manager_permissionless_mut<BaseAsset, QuoteAsset>(
+/// Withdraws settled amounts from the pool permissionlessly.
+/// Anyone can call this via the pool_proxy to settle balances.
+public(package) fun withdraw_settled_amounts_permissionless_int<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
-): &mut BalanceManager {
-    &mut self.balance_manager
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+    pool.withdraw_settled_amounts_permissionless(&mut self.balance_manager);
 }
 
 /// Unwraps balance manager for trading in deepbook.
