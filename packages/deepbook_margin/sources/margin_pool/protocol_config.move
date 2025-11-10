@@ -93,14 +93,10 @@ public(package) fun set_interest_config(self: &mut ProtocolConfig, config: Inter
 }
 
 public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: MarginPoolConfig) {
-    assert!(config.protocol_spread <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(config.max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
         config.max_utilization_rate >= self.interest_config.optimal_utilization,
         EInvalidRiskParam,
     );
-    assert!(config.min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
-    assert!(config.protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
     self.margin_pool_config = config;
 }
 
