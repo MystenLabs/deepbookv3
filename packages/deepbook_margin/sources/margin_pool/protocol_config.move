@@ -54,7 +54,6 @@ public fun new_margin_pool_config(
     min_borrow: u64,
 ): MarginPoolConfig {
     // Validate margin pool config parameters
-    assert!(protocol_spread <= constants::float_scaling(), EInvalidRiskParam);
     assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
     assert!(min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
     assert!(protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
