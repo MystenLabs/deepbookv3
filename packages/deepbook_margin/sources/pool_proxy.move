@@ -304,6 +304,22 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     );
 }
 
+/// Withdraw settled amounts to balance_manager permissionlessly.
+/// Anyone can call this function to settle balances for a margin manager.
+public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    registry.load_inner();
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let balance_manager = margin_manager.balance_manager_permissionless_mut();
+
+    pool.withdraw_settled_amounts_permissionless(
+        balance_manager,
+    );
+}
+
 /// Stake DEEP tokens to the pool.
 public fun stake<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,

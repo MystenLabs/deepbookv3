@@ -733,6 +733,14 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
+/// Unwraps balance manager for permissionless operations (like settlement).
+/// No ownership check is performed.
+public(package) fun balance_manager_permissionless_mut<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+): &mut BalanceManager {
+    &mut self.balance_manager
+}
+
 /// Unwraps balance manager for trading in deepbook.
 public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
