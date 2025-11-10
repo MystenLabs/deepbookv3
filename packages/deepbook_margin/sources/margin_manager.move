@@ -42,6 +42,7 @@ const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
 const ERepayAmountTooLow: u64 = 13;
+const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
@@ -453,6 +454,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             math::div(repay_amount, debt),
         )
     }; // Assume index 2, so borrowed_shares = 350/2 = 175. 97.087 / 350 = 0.2774 * 175 = 48.545 shares being repaid (97.087 USDC is repayment)
+    assert!(repay_shares > 0, ERepaySharesTooLow);
     let (debt_repaid, pool_reward, pool_default) = margin_pool.repay_liquidation(
         repay_shares,
         repay_coin.split(repay_amount_with_pool_reward, ctx),
