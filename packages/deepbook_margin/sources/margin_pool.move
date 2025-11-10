@@ -215,11 +215,13 @@ public fun update_interest_params<Asset>(
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
-    self.state.update(&self.config, clock);
+    let margin_pool_id = self.id();
+    let protocol_fees = self.state.update(&self.config, clock);
+    self.protocol_fees.increase_fees_accrued(margin_pool_id, protocol_fees);
     self.config.set_interest_config(interest_config);
 
     event::emit(InterestParamsUpdated {
-        margin_pool_id: self.id(),
+        margin_pool_id,
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         interest_config,
         timestamp: clock.timestamp_ms(),
