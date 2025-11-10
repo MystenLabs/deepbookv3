@@ -1535,7 +1535,7 @@ fun test_withdraw_settled_amounts_permissionless_no_balance_e() {
     abort 0
 }
 
-#[test, expected_failure(abort_code = pool_proxy::EIncorrectDeepBookPool)]
+#[test, expected_failure(abort_code = margin_manager::EIncorrectDeepBookPool)]
 fun test_withdraw_settled_amounts_permissionless_incorrect_pool_e() {
     let (
         mut scenario,
