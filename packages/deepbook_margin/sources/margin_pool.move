@@ -4,22 +4,24 @@
 module deepbook_margin::margin_pool;
 
 use deepbook::math;
-use deepbook_margin::{
-    margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
-    margin_state::{Self, State},
-    position_manager::{Self, PositionManager},
-    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
-    protocol_fees::{Self, ProtocolFees, SupplyReferral}
+use deepbook_margin::margin_registry::{
+    MarginRegistry,
+    MaintainerCap,
+    MarginAdminCap,
+    MarginPoolCap
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    event,
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
+use deepbook_margin::margin_state::{Self, State};
+use deepbook_margin::position_manager::{Self, PositionManager};
+use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
+use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
+use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const ENotEnoughAssetInPool: u64 = 1;
@@ -460,6 +462,10 @@ public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_
 
 public fun total_supply<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.total_supply()
+}
+
+public fun total_supply_with_interest<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
+    self.state.total_supply_with_interest(&self.config, clock)
 }
 
 public fun supply_shares<Asset>(self: &MarginPool<Asset>): u64 {

@@ -8,10 +8,12 @@
 /// amounts after interest and protocol fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::{constants, math};
+use deepbook::constants;
+use deepbook::math;
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::{clock::Clock, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::vec_map::{Self, VecMap};
 
 public struct State has drop, store {
     total_supply: u64,
@@ -215,6 +217,25 @@ public(package) fun borrow_ratio(self: &State): u64 {
 /// Return the total supply of the margin pool.
 public(package) fun total_supply(self: &State): u64 {
     self.total_supply
+}
+
+/// Return the total supply including accrued interest without updating state.
+public(package) fun total_supply_with_interest(
+    self: &State,
+    config: &ProtocolConfig,
+    clock: &Clock,
+): u64 {
+    let now = clock.timestamp_ms();
+    let elapsed = now - self.last_update_timestamp;
+
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+
+    self.total_supply + interest - protocol_fees
 }
 
 /// Return the total supply shares of the margin pool.
