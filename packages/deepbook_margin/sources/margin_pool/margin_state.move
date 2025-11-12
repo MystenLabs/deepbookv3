@@ -248,12 +248,6 @@ public(package) fun total_borrow(self: &State): u64 {
     self.total_borrow
 }
 
-public fun ERRORtotal_borrow_with_interest(
-    self: &State,
-    config: &ProtocolConfig,
-    clock: &Clock,
-): u64 {}
-
 /// Return the total borrow shares of the margin pool.
 public(package) fun borrow_shares(self: &State): u64 {
     self.borrow_shares

@@ -3,6 +3,7 @@
 
 module deepbook_margin::margin_pool;
 
+use deepbook::constants;
 use deepbook::math;
 use deepbook_margin::margin_registry::{
     MarginRegistry,
@@ -530,6 +531,13 @@ public fun min_borrow<Asset>(self: &MarginPool<Asset>): u64 {
 /// Return the current interest rate of the margin pool. Represented in 9 decimal places.
 public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.interest_rate(self.state.utilization_rate())
+}
+
+public fun true_interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
+    math::mul(
+        math::mul(self.interest_rate(), self.state.utilization_rate()),
+        constants::float_scaling() - self.protocol_spread(),
+    )
 }
 
 /// Return the current user supply shares of the margin pool.
