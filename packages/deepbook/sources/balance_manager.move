@@ -335,7 +335,12 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
     coin
 }
 
-public fun register_manager(balance_manager: &BalanceManager, registry: &mut Registry) {
+public fun register_manager(
+    balance_manager: &BalanceManager,
+    registry: &mut Registry,
+    ctx: &mut TxContext,
+) {
+    balance_manager.validate_owner(ctx);
     let owner = balance_manager.owner();
     let manager_id = balance_manager.id();
     registry.add_balance_manager(owner, manager_id);
