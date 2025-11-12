@@ -4,26 +4,23 @@
 #[test_only]
 module deepbook_margin::margin_pool_tests;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_pool::{Self, MarginPool};
-use deepbook_margin::margin_registry::{
-    Self,
-    MarginRegistry,
-    MarginAdminCap,
-    MaintainerCap,
-    MarginPoolCap
+use deepbook::{constants, math};
+use deepbook_margin::{
+    margin_constants,
+    margin_pool::{Self, MarginPool},
+    margin_registry::{Self, MarginRegistry, MarginAdminCap, MaintainerCap, MarginPoolCap},
+    protocol_config,
+    protocol_fees,
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{Self, mint_coin, advance_time}
 };
-use deepbook_margin::protocol_config;
-use deepbook_margin::protocol_fees;
-use deepbook_margin::test_constants::{Self, USDC, USDT};
-use deepbook_margin::test_helpers::{Self, mint_coin, advance_time};
 use std::unit_test::assert_eq;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::test_scenario::{Self as test, Scenario, return_shared};
-use sui::test_utils::destroy;
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    test_scenario::{Self as test, Scenario, return_shared},
+    test_utils::destroy
+};
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();

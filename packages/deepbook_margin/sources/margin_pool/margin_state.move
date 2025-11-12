@@ -8,12 +8,10 @@
 /// amounts after interest and protocol fees are applied.
 module deepbook_margin::margin_state;
 
-use deepbook::constants;
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::protocol_config::ProtocolConfig;
 use std::string::String;
-use sui::clock::Clock;
-use sui::vec_map::{Self, VecMap};
+use sui::{clock::Clock, vec_map::{Self, VecMap}};
 
 public struct State has drop, store {
     total_supply: u64,
