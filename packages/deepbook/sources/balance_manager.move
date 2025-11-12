@@ -340,7 +340,7 @@ public fun register_manager(
     registry: &mut Registry,
     ctx: &mut TxContext,
 ) {
-    assert!(ctx.sender() == balance_manager.owner(), EInvalidOwner);
+    balance_manager.validate_owner(ctx);
     let owner = balance_manager.owner();
     let manager_id = balance_manager.id();
     registry.add_balance_manager(owner, manager_id);
