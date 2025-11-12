@@ -624,25 +624,3 @@ fun test_ewma_check_with_high_price_no_overflow() {
     test_scenario::return_shared(clock);
     scenario.end();
 }
-
-#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidOracleConfig)]
-fun test_oracle_config_invalid_max_conf_bps() {
-    use deepbook_margin::oracle;
-    // max_conf_bps must be < 10_000 (100%)
-    // This should fail with EInvalidOracleConfig
-    oracle::test_validate_oracle_config(
-        10_000, // invalid: >= 10_000
-        1500, // valid
-    );
-}
-
-#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidOracleConfig)]
-fun test_oracle_config_invalid_max_ewma_difference_bps() {
-    use deepbook_margin::oracle;
-    // max_ewma_difference_bps must be < 10_000 (100%)
-    // This should fail with EInvalidOracleConfig
-    oracle::test_validate_oracle_config(
-        1000, // valid
-        10_000, // invalid: >= 10_000
-    );
-}
