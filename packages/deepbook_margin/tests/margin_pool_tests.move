@@ -1543,23 +1543,19 @@ fun test_total_supply_with_interest_high_utilization() {
     // Advance time by 1 year
     advance_time(&mut clock, margin_constants::year_ms());
 
-    // At 79% utilization (below optimal 80%):
-    // interest_rate = base_rate + (base_slope * utilization / optimal_utilization)
-    // interest_rate = 5% + (10% * 79% / 80%) = 5% + 9.875% = 14.875%
-    let raw_supply_after_year = pool.total_supply();
-    let supply_with_interest = pool.total_supply_with_interest(&clock);
-
     // Raw supply should not have changed
+    let raw_supply_after_year = pool.total_supply();
     assert_eq!(raw_supply_after_year, initial_supply);
 
-    // Supply with interest should be greater due to high utilization
-    assert!(supply_with_interest > initial_supply, 0);
+    // total_supply_with_interest should include accrued interest
+    let supply_with_interest = pool.total_supply_with_interest(&clock);
+    let true_interest_rate = pool.true_interest_rate();
 
-    // Calculate the actual supply increase
-    let actual_supply_increase = supply_with_interest - initial_supply;
-
-    // The actual interest should be positive and significant (more than 10% of borrow)
-    assert!(actual_supply_increase > borrow_amount / 10, 1);
+    // Verify exact calculation with true interest rate
+    assert_eq!(
+        supply_with_interest,
+        math::mul(raw_supply_after_year, constants::float_scaling() + true_interest_rate),
+    );
 
     destroy(borrowed_coin);
     destroy(supplier_cap);
@@ -1598,8 +1594,15 @@ fun test_total_supply_with_interest_vs_update() {
     advance_time(&mut clock, margin_constants::year_ms());
 
     // Get supply with interest (without updating state)
-    let supply_with_interest_before_update = pool.total_supply_with_interest(&clock);
     let raw_supply_before = pool.total_supply();
+    let supply_with_interest_before_update = pool.total_supply_with_interest(&clock);
+    let true_interest_rate = pool.true_interest_rate();
+
+    // Verify exact calculation with true interest rate
+    assert_eq!(
+        supply_with_interest_before_update,
+        math::mul(raw_supply_before, constants::float_scaling() + true_interest_rate),
+    );
 
     // Now actually update the state by withdrawing
     scenario.next_tx(test_constants::user1());
@@ -1611,25 +1614,13 @@ fun test_total_supply_with_interest_vs_update() {
         scenario.ctx(),
     );
 
-    // After update, raw supply should now include the interest
+    // After update, raw supply should now include the interest (minus withdrawn amount)
     let raw_supply_after = pool.total_supply();
-
-    // raw_supply_after should be very close to supply_with_interest_before_update
-    // (small difference due to the 1 unit withdrawn)
     let withdrawn_amount = withdrawn.value();
     let expected_supply_after = supply_with_interest_before_update - withdrawn_amount;
 
-    // Allow small rounding tolerance
-    let diff = if (raw_supply_after > expected_supply_after) {
-        raw_supply_after - expected_supply_after
-    } else {
-        expected_supply_after - raw_supply_after
-    };
-    let tolerance = expected_supply_after / 10000; // 0.01%
-    assert!(diff <= tolerance, 0);
-
-    // Verify that raw_supply_before was less than supply_with_interest_before_update
-    assert!(raw_supply_before < supply_with_interest_before_update, 1);
+    // Verify the supply after update matches our prediction
+    assert_eq!(raw_supply_after, expected_supply_after);
 
     destroy(withdrawn);
     destroy(borrowed_coin);
