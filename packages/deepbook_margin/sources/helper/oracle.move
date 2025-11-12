@@ -311,3 +311,14 @@ public fun test_coin_type_data<T>(decimals: u8, price_feed_id: vector<u8>): Coin
         max_ewma_difference_bps: 1500, // 15%
     }
 }
+
+#[test_only]
+/// Test-only function to validate oracle config parameters
+/// This allows testing the validation logic without needing CoinMetadata
+public fun test_validate_oracle_config(max_conf_bps: u64, max_ewma_difference_bps: u64) {
+    assert!(max_conf_bps < margin_constants::max_conf_bps(), EInvalidOracleConfig);
+    assert!(
+        max_ewma_difference_bps < margin_constants::max_ewma_difference_bps(),
+        EInvalidOracleConfig,
+    );
+}

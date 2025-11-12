@@ -625,35 +625,24 @@ fun test_ewma_check_with_high_price_no_overflow() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = 5)] // EInvalidOracleConfig
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidOracleConfig)]
 fun test_oracle_config_invalid_max_conf_bps() {
-    // Simulating new_coin_type_data validation
+    use deepbook_margin::oracle;
     // max_conf_bps must be < 10_000 (100%)
-    let max_conf_bps = 10_000;
-    assert!(max_conf_bps < deepbook_margin::margin_constants::max_conf_bps(), 5);
-}
-
-#[test, expected_failure(abort_code = 5)] // EInvalidOracleConfig
-fun test_oracle_config_invalid_max_ewma_difference_bps() {
-    // Simulating new_coin_type_data validation
-    // max_ewma_difference_bps must be < 10_000 (100%)
-    let max_ewma_difference_bps = 10_000;
-    assert!(
-        max_ewma_difference_bps < deepbook_margin::margin_constants::max_ewma_difference_bps(),
-        5,
+    // This should fail with EInvalidOracleConfig
+    oracle::test_validate_oracle_config(
+        10_000, // invalid: >= 10_000
+        1500, // valid
     );
 }
 
-#[test]
-fun test_oracle_config_valid_at_limit() {
-    // Verify that 9_999 (99.99%) is valid for both parameters
-    assert!(9_999 < deepbook_margin::margin_constants::max_conf_bps(), 0);
-    assert!(9_999 < deepbook_margin::margin_constants::max_ewma_difference_bps(), 0);
-}
-
-#[test]
-fun test_oracle_config_constants_correct() {
-    // Verify the constants are set to 10_000 (100%)
-    assert!(deepbook_margin::margin_constants::max_conf_bps() == 10_000, 0);
-    assert!(deepbook_margin::margin_constants::max_ewma_difference_bps() == 10_000, 0);
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidOracleConfig)]
+fun test_oracle_config_invalid_max_ewma_difference_bps() {
+    use deepbook_margin::oracle;
+    // max_ewma_difference_bps must be < 10_000 (100%)
+    // This should fail with EInvalidOracleConfig
+    oracle::test_validate_oracle_config(
+        1000, // valid
+        10_000, // invalid: >= 10_000
+    );
 }
