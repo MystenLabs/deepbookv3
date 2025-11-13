@@ -309,6 +309,7 @@ pub struct MarginManagerCreated {
     pub package: String,
     pub margin_manager_id: String,
     pub balance_manager_id: String,
+    pub deepbook_pool_id: Option<String>,
     pub owner: String,
     pub onchain_timestamp: i64,
 }
@@ -325,8 +326,7 @@ pub struct LoanBorrowed {
     pub margin_manager_id: String,
     pub margin_pool_id: String,
     pub loan_amount: i64,
-    pub total_borrow: i64,
-    pub total_shares: i64,
+    pub loan_shares: i64,
     pub onchain_timestamp: i64,
 }
 
