@@ -1410,4 +1410,108 @@ impl Reader {
         }
         res
     }
+
+    pub async fn get_margin_managers_info(
+        &self,
+    ) -> Result<
+        Vec<(
+            String,         // margin_manager_id
+            Option<String>, // deepbook_pool_id
+            Option<String>, // base_asset_id
+            Option<String>, // base_asset_symbol
+            Option<String>, // quote_asset_id
+            Option<String>, // quote_asset_symbol
+            Option<String>, // base_margin_pool_id
+            Option<String>, // quote_margin_pool_id
+        )>,
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+
+        let query = diesel::sql_query(
+            r#"
+            WITH managers_with_pools AS (
+                SELECT DISTINCT
+                    mmc.margin_manager_id,
+                    mmc.deepbook_pool_id,
+                    p.base_asset_id,
+                    p.base_asset_symbol,
+                    p.quote_asset_id,
+                    p.quote_asset_symbol,
+                    base_mp.margin_pool_id as base_margin_pool_id,
+                    quote_mp.margin_pool_id as quote_margin_pool_id
+                FROM margin_manager_created mmc
+                LEFT JOIN pools p ON mmc.deepbook_pool_id = p.pool_id
+                LEFT JOIN margin_pool_created base_mp
+                    ON ('0x' || base_mp.asset_type = p.base_asset_id OR base_mp.asset_type = p.base_asset_id)
+                LEFT JOIN margin_pool_created quote_mp
+                    ON ('0x' || quote_mp.asset_type = p.quote_asset_id OR quote_mp.asset_type = p.quote_asset_id)
+            )
+            SELECT DISTINCT
+                margin_manager_id::text,
+                deepbook_pool_id::text,
+                base_asset_id::text,
+                base_asset_symbol::text,
+                quote_asset_id::text,
+                quote_asset_symbol::text,
+                base_margin_pool_id::text,
+                quote_margin_pool_id::text
+            FROM managers_with_pools
+            ORDER BY margin_manager_id
+            "#,
+        );
+
+        let _guard = self.metrics.db_latency.start_timer();
+
+        #[derive(QueryableByName)]
+        struct ManagerInfo {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_manager_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            deepbook_pool_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_asset_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_asset_symbol: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_asset_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_asset_symbol: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_margin_pool_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_margin_pool_id: Option<String>,
+        }
+
+        let res = query
+            .load::<ManagerInfo>(&mut connection)
+            .await
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|item| {
+                        (
+                            item.margin_manager_id,
+                            item.deepbook_pool_id,
+                            item.base_asset_id,
+                            item.base_asset_symbol,
+                            item.quote_asset_id,
+                            item.quote_asset_symbol,
+                            item.base_margin_pool_id,
+                            item.quote_margin_pool_id,
+                        )
+                    })
+                    .collect()
+            })
+            .map_err(|_| {
+                DeepBookError::InternalError("Error fetching margin managers info".to_string())
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
 }
