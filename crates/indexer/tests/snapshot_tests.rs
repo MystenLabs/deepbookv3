@@ -134,7 +134,6 @@ async fn asset_supplied_test() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test]
-#[ignore] // TODO: Add checkpoint test data
 async fn asset_withdrawn_test() -> Result<(), anyhow::Error> {
     let handler = AssetWithdrawnHandler::new(DeepbookEnv::Testnet);
     data_test("asset_withdrawn", handler, ["asset_withdrawn"]).await?;

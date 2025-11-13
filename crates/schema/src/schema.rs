@@ -264,6 +264,7 @@ diesel::table! {
         package -> Text,
         margin_manager_id -> Text,
         balance_manager_id -> Text,
+        deepbook_pool_id -> Nullable<Text>,
         owner -> Text,
         onchain_timestamp -> Int8,
     }
@@ -281,8 +282,7 @@ diesel::table! {
         margin_manager_id -> Text,
         margin_pool_id -> Text,
         loan_amount -> Int8,
-        total_borrow -> Int8,
-        total_shares -> Int8,
+        loan_shares -> Int8,
         onchain_timestamp -> Int8,
     }
 }

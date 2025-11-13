@@ -1644,8 +1644,7 @@ async fn loan_borrowed(
                 margin_manager_id,
                 margin_pool_id,
                 loan_amount,
-                total_borrow,
-                total_shares,
+                loan_shares,
                 onchain_timestamp,
             )| {
                 HashMap::from([
@@ -1664,8 +1663,7 @@ async fn loan_borrowed(
                     ),
                     ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
                     ("loan_amount".to_string(), Value::from(loan_amount)),
-                    ("total_borrow".to_string(), Value::from(total_borrow)),
-                    ("total_shares".to_string(), Value::from(total_shares)),
+                    ("loan_shares".to_string(), Value::from(loan_shares)),
                     (
                         "onchain_timestamp".to_string(),
                         Value::from(onchain_timestamp),
