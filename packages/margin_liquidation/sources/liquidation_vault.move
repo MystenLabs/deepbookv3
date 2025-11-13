@@ -10,7 +10,7 @@ use deepbook_margin::{
     margin_registry::MarginRegistry
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, coin::Coin, event};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
@@ -191,6 +191,9 @@ fun deposit_int<T>(self: &mut LiquidationVault, balance: Balance<T>) {
 
 fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
     let key = BalanceKey<T> {};
+    if (!self.vault.contains(key)) {
+        self.vault.add(key, balance::zero<T>());
+    };
     let balance: &mut Balance<T> = &mut self.vault[key];
     assert!(balance.value() >= amount, ENotEnoughBalanceInVault);
 
