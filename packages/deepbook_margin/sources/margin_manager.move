@@ -46,6 +46,9 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
+/// Witness type for authorizing MarginManager to create BalanceManagers
+public struct MarginApp has drop {}
+
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
 public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
@@ -112,9 +115,6 @@ public struct LiquidationEvent has copy, drop {
     risk_ratio: u64,
     timestamp: u64,
 }
-
-// Authorization for the margin package for DeepBook core privileged functions
-public struct MarginApp has drop {}
 
 // === Public Functions - Margin Manager ===
 /// Creates a new margin manager and shares it.

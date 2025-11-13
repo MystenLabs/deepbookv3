@@ -5,36 +5,36 @@
 module deepbook_margin::margin_manager_tests;
 
 use deepbook::pool::Pool;
-use deepbook_margin::{
-    margin_constants,
-    margin_manager::{Self, MarginManager},
-    margin_pool::{Self, MarginPool},
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
-    test_helpers::{
-        Self,
-        setup_margin_registry,
-        create_margin_pool,
-        create_pool_for_testing,
-        enable_deepbook_margin_on_pool,
-        default_protocol_config,
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_demo_usdt_price_info_object,
-        build_btc_price_info_object,
-        setup_btc_usd_deepbook_margin,
-        setup_usdc_usdt_deepbook_margin,
-        destroy_2,
-        destroy_3,
-        return_shared_2,
-        return_shared_3,
-        advance_time,
-        get_margin_pool_caps,
-        return_to_sender_2
-    }
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool::{Self, MarginPool};
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
+use deepbook_margin::test_helpers::{
+    Self,
+    setup_margin_registry,
+    create_margin_pool,
+    create_pool_for_testing,
+    enable_deepbook_margin_on_pool,
+    default_protocol_config,
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_demo_usdt_price_info_object,
+    build_btc_price_info_object,
+    setup_btc_usd_deepbook_margin,
+    setup_usdc_usdt_deepbook_margin,
+    destroy_2,
+    destroy_3,
+    return_shared_2,
+    return_shared_3,
+    advance_time,
+    get_margin_pool_caps,
+    return_to_sender_2
 };
-use sui::{test_scenario::{Self as test, return_shared}, test_utils::destroy};
+use sui::test_scenario::{Self as test, return_shared};
+use sui::test_utils::destroy;
 use token::deep::DEEP;
 
 #[test]
@@ -55,7 +55,7 @@ fun test_margin_manager_creation() {
     );
 
     // Create DeepBook pool and enable margin trading on it
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -70,7 +70,15 @@ fun test_margin_manager_creation() {
     scenario.next_tx(test_constants::admin());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -85,12 +93,21 @@ fun test_deepbook_margin_with_oracle() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::admin());
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -135,6 +152,7 @@ fun test_btc_usd_deepbook_margin() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(
@@ -147,7 +165,15 @@ fun test_btc_usd_deepbook_margin() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -186,6 +212,7 @@ fun test_usd_deposit_btc_borrow() {
         btc_pool_id,
         _usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Set initial prices
@@ -199,7 +226,15 @@ fun test_usd_deposit_btc_borrow() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -265,7 +300,7 @@ fun test_margin_manager_creation_ok() {
     create_margin_pool<USDC>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
     create_margin_pool<USDT>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -280,7 +315,15 @@ fun test_margin_manager_creation_ok() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -298,13 +341,21 @@ fun test_margin_manager_creation_fails_when_not_enabled() {
     create_margin_pool<USDT>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
 
     // Create pool without margin trading
-    let _pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (_pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
     // should fail
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     abort
 }
@@ -318,7 +369,7 @@ fun test_deposit_with_base_quote_deep_assets() {
     create_margin_pool<USDC>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
     create_margin_pool<USDT>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -333,7 +384,15 @@ fun test_deposit_with_base_quote_deep_assets() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -367,7 +426,7 @@ fun test_deposit_with_invalid_asset_fails() {
     create_margin_pool<USDC>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
     create_margin_pool<USDT>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -382,7 +441,15 @@ fun test_deposit_with_invalid_asset_fails() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -407,12 +474,21 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -470,12 +546,21 @@ fun test_withdrawal_fails_when_risk_ratio_goes_below_limit() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -526,12 +611,21 @@ fun test_borrow_fails_from_both_pools() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -581,12 +675,21 @@ fun test_borrow_fails_with_zero_amount() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -624,12 +727,21 @@ fun test_borrow_fails_when_risk_ratio_below_150() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -672,12 +784,21 @@ fun test_repay_fails_wrong_pool() {
         usdc_pool_id,
         usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -727,13 +848,22 @@ fun test_repay_full_with_none() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     // Create margin manager and borrow
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -789,12 +919,21 @@ fun test_repay_exact_amount_no_rounding_errors() {
         usdc_pool_id,
         _usdt_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_usdc_usdt_deepbook_margin();
 
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
@@ -891,6 +1030,7 @@ fun test_liquidation_reward_calculations() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
@@ -899,7 +1039,15 @@ fun test_liquidation_reward_calculations() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -966,7 +1114,7 @@ fun test_risk_ratio_with_zero_assets() {
     create_margin_pool<USDC>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
     create_margin_pool<USDT>(&mut scenario, &maintainer_cap, default_protocol_config(), &clock);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -981,7 +1129,15 @@ fun test_risk_ratio_with_zero_assets() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1010,7 +1166,7 @@ fun test_risk_ratio_with_multiple_assets() {
     );
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -1054,7 +1210,15 @@ fun test_risk_ratio_with_multiple_assets() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1112,6 +1276,7 @@ fun test_risk_ratio_with_oracle_price_changes() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
@@ -1120,7 +1285,15 @@ fun test_risk_ratio_with_oracle_price_changes() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -1202,7 +1375,7 @@ fun test_max_leverage_enforcement() {
 
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -1233,7 +1406,15 @@ fun test_max_leverage_enforcement() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1285,7 +1466,7 @@ fun test_min_position_size_requirement() {
 
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -1316,7 +1497,15 @@ fun test_min_position_size_requirement() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1369,7 +1558,7 @@ fun test_repayment_rounding() {
 
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -1411,7 +1600,15 @@ fun test_repayment_rounding() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1499,7 +1696,7 @@ fun test_asset_rebalancing_between_pools() {
 
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDC, USDT>(
@@ -1541,7 +1738,15 @@ fun test_asset_rebalancing_between_pools() {
 
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<USDC, USDT>>();
-    margin_manager::new<USDC, USDT>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
@@ -1605,6 +1810,7 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
@@ -1613,7 +1819,15 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -1658,6 +1872,7 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
@@ -1666,7 +1881,15 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<BTC, USDC>>();
@@ -1721,7 +1944,7 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
     );
 
     // Create DeepBook pool
-    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDT, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDT, USDC>(
@@ -1777,7 +2000,15 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     test::return_shared(pool);
     test::return_shared(registry);
 
@@ -1856,7 +2087,7 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     );
 
     // Create DeepBook pool
-    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDT, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDT, USDC>(
@@ -1916,7 +2147,15 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     scenario.next_tx(test_constants::user1());
     let mut registry = scenario.take_shared<MarginRegistry>();
     let pool = scenario.take_shared<Pool<USDT, USDC>>();
-    margin_manager::new<USDT, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     test::return_shared(pool);
     test::return_shared(registry);
 
@@ -1985,6 +2224,7 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
         _btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Set initial BTC price at $50,000
@@ -1994,7 +2234,15 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();

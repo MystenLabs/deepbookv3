@@ -64,12 +64,12 @@ public struct BalanceManagerKey has copy, drop, store {}
 public struct AppKey<phantom App: drop> has copy, drop, store {}
 
 /// Authorize an application to access protected features of the SuiNS.
-public fun authorize_app<App: drop>(_: &DeepbookAdminCap, self: &mut Registry) {
+public fun authorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap) {
     self.id.add(AppKey<App> {}, true);
 }
 
 /// Deauthorize an application by removing its authorization key.
-public fun deauthorize_app<App: drop>(_: &DeepbookAdminCap, self: &mut Registry): bool {
+public fun deauthorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap): bool {
     self.id.remove(AppKey<App> {})
 }
 
