@@ -14,6 +14,10 @@ use sui::{
     versioned::{Self, Versioned}
 };
 
+use fun df::add as UID.add;
+use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
+
 // === Errors ===
 const EPoolAlreadyExists: u64 = 1;
 const EPoolDoesNotExist: u64 = 2;
@@ -25,10 +29,6 @@ const ECoinAlreadyWhitelisted: u64 = 7;
 const ECoinNotWhitelisted: u64 = 8;
 const EMaxBalanceManagersReached: u64 = 9;
 const EAppNotAuthorized: u64 = 10;
-
-use fun df::add as UID.add;
-use fun df::exists_ as UID.exists_;
-use fun df::remove as UID.remove;
 
 public struct REGISTRY has drop {}
 
