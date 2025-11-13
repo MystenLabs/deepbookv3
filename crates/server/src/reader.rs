@@ -491,7 +491,6 @@ impl Reader {
             i64,
             i64,
             i64,
-            i64,
         )>,
         DeepBookError,
     > {
@@ -509,8 +508,7 @@ impl Reader {
                 schema::loan_borrowed::margin_manager_id,
                 schema::loan_borrowed::margin_pool_id,
                 schema::loan_borrowed::loan_amount,
-                schema::loan_borrowed::total_borrow,
-                schema::loan_borrowed::total_shares,
+                schema::loan_borrowed::loan_shares,
                 schema::loan_borrowed::onchain_timestamp,
             ))
             .limit(limit)
@@ -534,7 +532,6 @@ impl Reader {
                 String,
                 String,
                 String,
-                i64,
                 i64,
                 i64,
                 i64,
