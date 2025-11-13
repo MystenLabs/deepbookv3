@@ -688,6 +688,10 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     )
 }
 
+public fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
+    self.id.to_inner()
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
@@ -751,10 +755,6 @@ public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): TradeProof {
     self.balance_manager.generate_proof_as_trader(&self.trade_cap, ctx)
-}
-
-public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
-    self.id.to_inner()
 }
 
 // === Private Functions ===
