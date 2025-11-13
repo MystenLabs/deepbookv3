@@ -167,9 +167,14 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
 
 public fun balance<T>(self: &LiquidationVault): u64 {
     let key = BalanceKey<T> {};
-    let balance: &Balance<T> = &self.vault[key];
 
-    balance.value()
+    if (self.vault.contains(key)) {
+        let balance: &Balance<T> = &self.vault[key];
+
+        balance.value()
+    } else {
+        0
+    }
 }
 
 // === Private Functions ===
