@@ -73,8 +73,7 @@ public fun deauthorize_app<App: drop>(self: &mut Registry, _admin_cap: &Deepbook
     self.id.remove(AppKey<App> {})
 }
 
-/// Assert that an application is authorized to access protected features of
-/// the SuiNS. Aborts with `EAppNotAuthorized` if not.
+/// Assert that an application is authorized to access protected features of DeepBook.
 public fun assert_app_is_authorized<App: drop>(self: &Registry) {
     assert!(self.id.exists_(AppKey<App> {}), EAppNotAuthorized);
 }
