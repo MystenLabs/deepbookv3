@@ -59,10 +59,8 @@ public struct BalanceManagerKey has copy, drop, store {}
 
 // === App Auth ===
 
-/// An authorization Key kept in the Registry - allows applications access
-/// protected features of the DeepBook (new_with_custom_owner)
-/// The `App` type parameter is a witness which should be defined in the
-/// original module
+/// An authorization Key kept in the Registry - allows applications access protected features of the DeepBook
+/// The `App` type parameter is a witness which should be defined in the original module
 public struct AppKey<phantom App: drop> has copy, drop, store {}
 
 /// Authorize an application to access protected features of the SuiNS.
