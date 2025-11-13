@@ -285,14 +285,6 @@ pub mod deepbook_margin {
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
-        pub struct MarginManagerEvent {
-            pub margin_manager_id: ObjectID,
-            pub balance_manager_id: ObjectID,
-            pub owner: Address,
-            pub timestamp: u64,
-        }
-
-        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct LoanBorrowedEvent {
             pub margin_manager_id: ObjectID,
             pub margin_pool_id: ObjectID,
@@ -324,11 +316,6 @@ pub mod deepbook_margin {
         impl MoveStruct for MarginManagerCreatedEvent {
             const MODULE: &'static str = "margin_manager";
             const NAME: &'static str = "MarginManagerCreatedEvent";
-        }
-
-        impl MoveStruct for MarginManagerEvent {
-            const MODULE: &'static str = "margin_manager";
-            const NAME: &'static str = "MarginManagerEvent";
         }
 
         impl MoveStruct for LoanBorrowedEvent {
