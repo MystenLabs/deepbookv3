@@ -6,11 +6,13 @@ module deepbook::registry;
 
 use deepbook::constants;
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::dynamic_field::{Self, Self as df};
-use sui::table::{Self, Table};
-use sui::vec_set::{Self, VecSet};
-use sui::versioned::{Self, Versioned};
+use sui::{
+    bag::{Self, Bag},
+    dynamic_field::{Self, Self as df},
+    table::{Self, Table},
+    vec_set::{Self, VecSet},
+    versioned::{Self, Versioned}
+};
 
 // === Errors ===
 const EPoolAlreadyExists: u64 = 1;
