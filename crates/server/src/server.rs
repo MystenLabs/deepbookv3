@@ -81,6 +81,7 @@ pub const MAINTAINER_CAP_UPDATED_PATH: &str = "/maintainer_cap_updated";
 pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
+pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -211,6 +212,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
             DEEPBOOK_POOL_CONFIG_UPDATED_PATH,
             get(deepbook_pool_config_updated),
         )
+        .route(MARGIN_MANAGERS_INFO_PATH, get(margin_managers_info))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2405,6 +2407,65 @@ async fn deepbook_pool_config_updated(
                     (
                         "onchain_timestamp".to_string(),
                         Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn margin_managers_info(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let results = state.reader.get_margin_managers_info().await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                margin_manager_id,
+                deepbook_pool_id,
+                base_asset_id,
+                base_asset_symbol,
+                quote_asset_id,
+                quote_asset_symbol,
+                base_margin_pool_id,
+                quote_margin_pool_id,
+            )| {
+                HashMap::from([
+                    (
+                        "margin_manager_id".to_string(),
+                        Value::from(margin_manager_id),
+                    ),
+                    (
+                        "deepbook_pool_id".to_string(),
+                        deepbook_pool_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_asset_id".to_string(),
+                        base_asset_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_asset_symbol".to_string(),
+                        base_asset_symbol.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_asset_id".to_string(),
+                        quote_asset_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_asset_symbol".to_string(),
+                        quote_asset_symbol.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_margin_pool_id".to_string(),
+                        base_margin_pool_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_margin_pool_id".to_string(),
+                        quote_margin_pool_id.map_or(Value::Null, Value::from),
                     ),
                 ])
             },
