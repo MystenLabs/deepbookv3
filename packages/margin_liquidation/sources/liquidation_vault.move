@@ -39,6 +39,8 @@ public struct LiquidationByVault has copy, drop {
     base_out: u64,
     quote_in: u64,
     quote_out: u64,
+    repay_balance_remaining: u64,
+    base_liquidation: bool,
 }
 
 fun init(_: LIQUIDATION_VAULT, ctx: &mut TxContext) {
@@ -96,7 +98,7 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         QuoteAsset,
         BaseAsset,
     >(registry, base_oracle, quote_oracle, margin_pool, pool, balance.into_coin(ctx), clock, ctx);
-    base_coin.join(base_repay_coin);
+    let repay_balance_remaining = base_repay_coin.value();
     let base_out = base_coin.value();
     let quote_out = quote_coin.value();
     event::emit(LiquidationByVault {
@@ -107,7 +109,11 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         quote_in: 0,
         base_out,
         quote_out,
+        repay_balance_remaining,
+        base_liquidation: true,
     });
+
+    base_coin.join(base_repay_coin);
     self.deposit_int(base_coin.into_balance());
     self.deposit_int(quote_coin.into_balance());
 }
@@ -139,7 +145,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
-    quote_coin.join(quote_repay_coin);
+    let repay_balance_remaining = quote_repay_coin.value();
     let base_out = base_coin.value();
     let quote_out = quote_coin.value();
     event::emit(LiquidationByVault {
@@ -150,7 +156,11 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         quote_in: repay_amount,
         base_out,
         quote_out,
+        repay_balance_remaining,
+        base_liquidation: false,
     });
+
+    quote_coin.join(quote_repay_coin);
     self.deposit_int(base_coin.into_balance());
     self.deposit_int(quote_coin.into_balance());
 }
