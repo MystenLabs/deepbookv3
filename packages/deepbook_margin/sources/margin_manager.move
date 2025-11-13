@@ -120,12 +120,12 @@ public struct LiquidationEvent has copy, drop {
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    deepbok_registry: &Registry,
+    deepbook_registry: &Registry,
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let manager = new_margin_manager(pool, deepbok_registry, margin_registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     transfer::share_object(manager);
 }
 
@@ -133,12 +133,12 @@ public fun new<BaseAsset, QuoteAsset>(
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    deepbok_registry: &Registry,
+    deepbook_registry: &Registry,
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
-    let manager = new_margin_manager(pool, deepbok_registry, margin_registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
@@ -797,7 +797,7 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    deepbok_registry: &Registry,
+    deepbook_registry: &Registry,
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -815,7 +815,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         withdraw_cap,
         trade_cap,
     ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
-        deepbok_registry,
+        deepbook_registry,
         id.to_address(),
         ctx,
     );
