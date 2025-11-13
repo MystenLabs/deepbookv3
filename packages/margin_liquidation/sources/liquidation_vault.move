@@ -9,7 +9,7 @@ use deepbook_margin::margin_manager::{MarginManager, liquidate};
 use deepbook_margin::margin_pool::MarginPool;
 use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
-use sui::bag::Bag;
+use sui::bag::{Self, Bag};
 use sui::balance::Balance;
 use sui::clock::Clock;
 use sui::coin::Coin;
@@ -71,6 +71,15 @@ public fun withdraw<T>(
     let balance = self.withdraw_int(amount);
 
     balance.into_coin(ctx)
+}
+
+public fun create_liquidation_vault(_liquidation_cap: &LiquidationAdminCap, ctx: &mut TxContext) {
+    let id = object::new(ctx);
+    let liquidation_vault = LiquidationVault {
+        id,
+        vault: bag::new(ctx),
+    };
+    transfer::share_object(liquidation_vault);
 }
 
 public fun liquidate_base<BaseAsset, QuoteAsset>(
