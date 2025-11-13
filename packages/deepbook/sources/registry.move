@@ -63,7 +63,7 @@ public struct BalanceManagerKey has copy, drop, store {}
 /// The `App` type parameter is a witness which should be defined in the original module
 public struct AppKey<phantom App: drop> has copy, drop, store {}
 
-/// Authorize an application to access protected features of the SuiNS.
+/// Authorize an application to access protected features of the DeepBook.
 public fun authorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap) {
     self.id.add(AppKey<App> {}, true);
 }
