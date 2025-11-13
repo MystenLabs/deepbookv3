@@ -46,7 +46,7 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
-/// Witness type for authorizing MarginManager to create BalanceManagers
+/// Witness type for authorizing MarginManager to call protected features of the DeepBook
 public struct MarginApp has drop {}
 
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
