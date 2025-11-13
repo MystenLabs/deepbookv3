@@ -165,6 +165,13 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
     self.deposit_int(quote_coin.into_balance());
 }
 
+public fun balance<T>(self: &LiquidationVault): u64 {
+    let key = BalanceKey<T> {};
+    let balance: &Balance<T> = &self.vault[key];
+
+    balance.value()
+}
+
 // === Private Functions ===
 fun deposit_int<T>(self: &mut LiquidationVault, balance: Balance<T>) {
     let key = BalanceKey<T> {};
@@ -181,6 +188,7 @@ fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
     let key = BalanceKey<T> {};
     let balance: &mut Balance<T> = &mut self.vault[key];
     assert!(balance.value() >= amount, ENotEnoughBalanceInVault);
+
     balance.split(amount)
 }
 
