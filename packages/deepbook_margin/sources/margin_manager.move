@@ -3,29 +3,30 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    pool::Pool
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name;
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -112,15 +113,19 @@ public struct LiquidationEvent has copy, drop {
     timestamp: u64,
 }
 
+// Authorization for the margin package for DeepBook core privileged functions
+public struct MarginApp has drop {}
+
 // === Public Functions - Margin Manager ===
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbok_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbok_registry, margin_registry, clock, ctx);
     transfer::share_object(manager);
 }
 
@@ -128,11 +133,12 @@ public fun new<BaseAsset, QuoteAsset>(
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbok_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbok_registry, margin_registry, clock, ctx);
     let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
@@ -791,12 +797,13 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbok_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginManager<BaseAsset, QuoteAsset> {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+    margin_registry.load_inner();
+    assert!(margin_registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
     let margin_manager_id = id.to_inner();
@@ -807,8 +814,12 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-    registry.add_margin_manager(id.to_inner(), ctx);
+    ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
+        deepbok_registry,
+        id.to_address(),
+        ctx,
+    );
+    margin_registry.add_margin_manager(id.to_inner(), ctx);
 
     event::emit(MarginManagerCreatedEvent {
         margin_manager_id,
