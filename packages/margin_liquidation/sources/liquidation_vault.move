@@ -1,19 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry holds all margin pools.
 module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
-use deepbook_margin::margin_manager::{MarginManager, liquidate};
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::{
+    margin_manager::{MarginManager, liquidate},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
-use sui::bag::{Self, Bag};
-use sui::balance::Balance;
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, coin::Coin, event};
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
@@ -51,8 +48,6 @@ fun init(_: LIQUIDATION_VAULT, ctx: &mut TxContext) {
 }
 
 // === Public Functions * ADMIN * ===
-/// Mint a `MaintainerCap`, only admin can mint a `MaintainerCap`.
-/// This function does not have version restrictions
 public fun deposit<T>(
     self: &mut LiquidationVault,
     _liquidation_cap: &LiquidationAdminCap,
@@ -82,6 +77,7 @@ public fun create_liquidation_vault(_liquidation_cap: &LiquidationAdminCap, ctx:
     transfer::share_object(liquidation_vault);
 }
 
+// === Public Functions * LIQUIDATION * ===
 public fun liquidate_base<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -159,6 +155,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
     self.deposit_int(quote_coin.into_balance());
 }
 
+// === Private Functions ===
 fun deposit_int<T>(self: &mut LiquidationVault, balance: Balance<T>) {
     let key = BalanceKey<T> {};
 
