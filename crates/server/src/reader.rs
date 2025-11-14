@@ -8,6 +8,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
+use diesel::sql_types::{BigInt, Double};
 use diesel::{
     BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
 };
@@ -21,17 +22,17 @@ use url::Url;
 
 #[derive(QueryableByName, Debug)]
 struct OhclvRow {
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    #[diesel(sql_type = BigInt)]
     timestamp_ms: i64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     open: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     high: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     low: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     close: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_volume: f64,
 }
 
@@ -1505,6 +1506,98 @@ impl Reader {
             })
             .map_err(|_| {
                 DeepBookError::InternalError("Error fetching margin managers info".to_string())
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_margin_manager_states(
+        &self,
+        max_risk_ratio: Option<f64>,
+        deepbook_pool_id_filter: Option<String>,
+    ) -> Result<Vec<serde_json::Value>, DeepBookError> {
+        use bigdecimal::BigDecimal;
+        use deepbook_schema::schema::margin_manager_state::dsl::*;
+        use diesel::PgSortExpressionMethods;
+        use serde_json::json;
+        use std::str::FromStr;
+
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let mut query = margin_manager_state.into_boxed();
+
+        if let Some(max_ratio) = max_risk_ratio {
+            let max_ratio_decimal = BigDecimal::from_str(&max_ratio.to_string()).unwrap();
+            query = query.filter(risk_ratio.is_null().or(risk_ratio.le(max_ratio_decimal)));
+        }
+        if let Some(pool_id) = deepbook_pool_id_filter {
+            query = query.filter(deepbook_pool_id.eq(pool_id));
+        }
+        query = query.order(risk_ratio.desc().nulls_last());
+
+        #[derive(diesel::Queryable)]
+        struct MarginManagerStateRow {
+            id: i32,
+            margin_manager_id: String,
+            deepbook_pool_id: String,
+            base_margin_pool_id: Option<String>,
+            quote_margin_pool_id: Option<String>,
+            base_asset_id: Option<String>,
+            base_asset_symbol: Option<String>,
+            quote_asset_id: Option<String>,
+            quote_asset_symbol: Option<String>,
+            risk_ratio: Option<BigDecimal>,
+            base_asset: Option<BigDecimal>,
+            quote_asset: Option<BigDecimal>,
+            base_debt: Option<BigDecimal>,
+            quote_debt: Option<BigDecimal>,
+            base_pyth_price: Option<i64>,
+            base_pyth_decimals: Option<i32>,
+            quote_pyth_price: Option<i64>,
+            quote_pyth_decimals: Option<i32>,
+            created_at: chrono::NaiveDateTime,
+            updated_at: chrono::NaiveDateTime,
+        }
+
+        let res = query
+            .load::<MarginManagerStateRow>(&mut connection)
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        json!({
+                            "id": row.id,
+                            "margin_manager_id": row.margin_manager_id,
+                            "deepbook_pool_id": row.deepbook_pool_id,
+                            "base_margin_pool_id": row.base_margin_pool_id,
+                            "quote_margin_pool_id": row.quote_margin_pool_id,
+                            "base_asset_id": row.base_asset_id,
+                            "base_asset_symbol": row.base_asset_symbol,
+                            "quote_asset_id": row.quote_asset_id,
+                            "quote_asset_symbol": row.quote_asset_symbol,
+                            "risk_ratio": row.risk_ratio.map(|v| v.to_string()),
+                            "base_asset": row.base_asset.map(|v| v.to_string()),
+                            "quote_asset": row.quote_asset.map(|v| v.to_string()),
+                            "base_debt": row.base_debt.map(|v| v.to_string()),
+                            "quote_debt": row.quote_debt.map(|v| v.to_string()),
+                            "base_pyth_price": row.base_pyth_price,
+                            "base_pyth_decimals": row.base_pyth_decimals,
+                            "quote_pyth_price": row.quote_pyth_price,
+                            "quote_pyth_decimals": row.quote_pyth_decimals,
+                            "created_at": row.created_at.to_string(),
+                            "updated_at": row.updated_at.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|_| {
+                DeepBookError::InternalError("Error fetching margin manager states".to_string())
             });
 
         if res.is_ok() {
