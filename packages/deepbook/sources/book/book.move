@@ -119,12 +119,23 @@ public(package) fun get_quantity_out(
 ): (u64, u64, u64) {
     assert!((base_quantity > 0) != (quote_quantity > 0), EInvalidAmountIn);
     let is_bid = quote_quantity > 0;
-    let mut quantity_out = 0;
-    let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
     let input_fee_rate = math::mul(
         constants::fee_penalty_multiplier(),
         taker_fee,
     );
+    if (base_quantity > 0) {
+        let trading_base_quantity = if (pay_with_deep) {
+            base_quantity
+        } else {
+            math::div(base_quantity, constants::float_scaling() + input_fee_rate)
+        };
+        if (trading_base_quantity < self.min_size) {
+            return (base_quantity, quote_quantity, 0)
+        }
+    };
+
+    let mut quantity_out = 0;
+    let mut quantity_in_left = if (is_bid) quote_quantity else base_quantity;
 
     let book_side = if (is_bid) &self.asks else &self.bids;
     let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
@@ -205,7 +216,11 @@ public(package) fun get_quantity_out(
     };
 
     if (is_bid) {
-        (quantity_out, quantity_in_left, deep_fee)
+        if (quantity_out < self.min_size) {
+            (base_quantity, quote_quantity, 0)
+        } else {
+            (quantity_out, quantity_in_left, deep_fee)
+        }
     } else {
         (quantity_in_left, quantity_out, deep_fee)
     }
