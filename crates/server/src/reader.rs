@@ -8,6 +8,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
+use diesel::sql_types::{BigInt, Double, Int4, Nullable, Text};
 use diesel::{
     BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
 };
@@ -21,17 +22,17 @@ use url::Url;
 
 #[derive(QueryableByName, Debug)]
 struct OhclvRow {
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    #[diesel(sql_type = BigInt)]
     timestamp_ms: i64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     open: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     high: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     low: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     close: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_volume: f64,
 }
 
@@ -1528,7 +1529,7 @@ impl Reader {
         // Build the WHERE clause dynamically
         let mut where_clauses = Vec::new();
         if let Some(max_ratio) = max_risk_ratio {
-            where_clauses.push(format!("(risk_ratio IS NULL OR risk_ratio <= {})", max_ratio));
+            where_clauses.push(format!("(risk_ratio IS NULL OR risk_ratio::double precision <= {})", max_ratio));
         }
         if let Some(pool_id) = &deepbook_pool_id_filter {
             where_clauses.push(format!("deepbook_pool_id = '{}'", pool_id));
@@ -1552,11 +1553,11 @@ impl Reader {
                 base_asset_symbol,
                 quote_asset_id,
                 quote_asset_symbol,
-                risk_ratio::text,
-                base_asset::text,
-                quote_asset::text,
-                base_debt::text,
-                quote_debt::text,
+                risk_ratio::double precision,
+                base_asset::double precision,
+                quote_asset::double precision,
+                base_debt::double precision,
+                quote_debt::double precision,
                 base_pyth_price,
                 base_pyth_decimals,
                 quote_pyth_price,
@@ -1572,45 +1573,45 @@ impl Reader {
 
         #[derive(QueryableByName)]
         struct MarginManagerStateRow {
-            #[diesel(sql_type = diesel::sql_types::Int4)]
+            #[diesel(sql_type = Int4)]
             id: i32,
-            #[diesel(sql_type = diesel::sql_types::Text)]
+            #[diesel(sql_type = Text)]
             margin_manager_id: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
+            #[diesel(sql_type = Text)]
             deepbook_pool_id: String,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             base_margin_pool_id: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             quote_margin_pool_id: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             base_asset_id: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             base_asset_symbol: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             quote_asset_id: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            #[diesel(sql_type = Nullable<Text>)]
             quote_asset_symbol: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-            risk_ratio: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-            base_asset: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-            quote_asset: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-            base_debt: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-            quote_debt: Option<String>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+            #[diesel(sql_type = Nullable<Double>)]
+            risk_ratio: Option<f64>,
+            #[diesel(sql_type = Nullable<Double>)]
+            base_asset: Option<f64>,
+            #[diesel(sql_type = Nullable<Double>)]
+            quote_asset: Option<f64>,
+            #[diesel(sql_type = Nullable<Double>)]
+            base_debt: Option<f64>,
+            #[diesel(sql_type = Nullable<Double>)]
+            quote_debt: Option<f64>,
+            #[diesel(sql_type = Nullable<BigInt>)]
             base_pyth_price: Option<i64>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Int4>)]
+            #[diesel(sql_type = Nullable<Int4>)]
             base_pyth_decimals: Option<i32>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+            #[diesel(sql_type = Nullable<BigInt>)]
             quote_pyth_price: Option<i64>,
-            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Int4>)]
+            #[diesel(sql_type = Nullable<Int4>)]
             quote_pyth_decimals: Option<i32>,
-            #[diesel(sql_type = diesel::sql_types::Text)]
+            #[diesel(sql_type = Text)]
             created_at: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
+            #[diesel(sql_type = Text)]
             updated_at: String,
         }
 
@@ -1639,8 +1640,8 @@ impl Reader {
                             "base_pyth_decimals": row.base_pyth_decimals,
                             "quote_pyth_price": row.quote_pyth_price,
                             "quote_pyth_decimals": row.quote_pyth_decimals,
-                            "created_at": row.created_at,
-                            "updated_at": row.updated_at,
+                            "created_at": row.created_at.to_string(),
+                            "updated_at": row.updated_at.to_string(),
                         })
                     })
                     .collect()

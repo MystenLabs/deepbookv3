@@ -541,6 +541,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     deepbook_pool_registered,
     deepbook_pool_updated_registry,
     deepbook_pool_config_updated,
-    // Margin Manager State
     margin_manager_state,
 );
