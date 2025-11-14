@@ -8,7 +8,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::sql_types::{BigInt, Double, Int4, Nullable, Text};
+use diesel::sql_types::{BigInt, Double};
 use diesel::{
     BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
 };
@@ -1521,101 +1521,51 @@ impl Reader {
         max_risk_ratio: Option<f64>,
         deepbook_pool_id_filter: Option<String>,
     ) -> Result<Vec<serde_json::Value>, DeepBookError> {
+        use bigdecimal::BigDecimal;
+        use deepbook_schema::schema::margin_manager_state::dsl::*;
+        use diesel::PgSortExpressionMethods;
         use serde_json::json;
+        use std::str::FromStr;
 
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        // Build the WHERE clause dynamically
-        let mut where_clauses = Vec::new();
+        let mut query = margin_manager_state.into_boxed();
+
         if let Some(max_ratio) = max_risk_ratio {
-            where_clauses.push(format!("(risk_ratio IS NULL OR risk_ratio::double precision <= {})", max_ratio));
+            let max_ratio_decimal = BigDecimal::from_str(&max_ratio.to_string()).unwrap();
+            query = query.filter(risk_ratio.is_null().or(risk_ratio.le(max_ratio_decimal)));
         }
-        if let Some(pool_id) = &deepbook_pool_id_filter {
-            where_clauses.push(format!("deepbook_pool_id = '{}'", pool_id));
+        if let Some(pool_id) = deepbook_pool_id_filter {
+            query = query.filter(deepbook_pool_id.eq(pool_id));
         }
+        query = query.order(risk_ratio.desc().nulls_last());
 
-        let where_clause = if where_clauses.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", where_clauses.join(" AND "))
-        };
-
-        let query_str = format!(
-            r#"
-            SELECT
-                id,
-                margin_manager_id,
-                deepbook_pool_id,
-                base_margin_pool_id,
-                quote_margin_pool_id,
-                base_asset_id,
-                base_asset_symbol,
-                quote_asset_id,
-                quote_asset_symbol,
-                risk_ratio::double precision,
-                base_asset::double precision,
-                quote_asset::double precision,
-                base_debt::double precision,
-                quote_debt::double precision,
-                base_pyth_price,
-                base_pyth_decimals,
-                quote_pyth_price,
-                quote_pyth_decimals,
-                created_at::text,
-                updated_at::text
-            FROM margin_manager_state
-            {}
-            ORDER BY risk_ratio DESC NULLS LAST
-            "#,
-            where_clause
-        );
-
-        #[derive(QueryableByName)]
+        #[derive(diesel::Queryable)]
         struct MarginManagerStateRow {
-            #[diesel(sql_type = Int4)]
             id: i32,
-            #[diesel(sql_type = Text)]
             margin_manager_id: String,
-            #[diesel(sql_type = Text)]
             deepbook_pool_id: String,
-            #[diesel(sql_type = Nullable<Text>)]
             base_margin_pool_id: Option<String>,
-            #[diesel(sql_type = Nullable<Text>)]
             quote_margin_pool_id: Option<String>,
-            #[diesel(sql_type = Nullable<Text>)]
             base_asset_id: Option<String>,
-            #[diesel(sql_type = Nullable<Text>)]
             base_asset_symbol: Option<String>,
-            #[diesel(sql_type = Nullable<Text>)]
             quote_asset_id: Option<String>,
-            #[diesel(sql_type = Nullable<Text>)]
             quote_asset_symbol: Option<String>,
-            #[diesel(sql_type = Nullable<Double>)]
-            risk_ratio: Option<f64>,
-            #[diesel(sql_type = Nullable<Double>)]
-            base_asset: Option<f64>,
-            #[diesel(sql_type = Nullable<Double>)]
-            quote_asset: Option<f64>,
-            #[diesel(sql_type = Nullable<Double>)]
-            base_debt: Option<f64>,
-            #[diesel(sql_type = Nullable<Double>)]
-            quote_debt: Option<f64>,
-            #[diesel(sql_type = Nullable<BigInt>)]
+            risk_ratio: Option<BigDecimal>,
+            base_asset: Option<BigDecimal>,
+            quote_asset: Option<BigDecimal>,
+            base_debt: Option<BigDecimal>,
+            quote_debt: Option<BigDecimal>,
             base_pyth_price: Option<i64>,
-            #[diesel(sql_type = Nullable<Int4>)]
             base_pyth_decimals: Option<i32>,
-            #[diesel(sql_type = Nullable<BigInt>)]
             quote_pyth_price: Option<i64>,
-            #[diesel(sql_type = Nullable<Int4>)]
             quote_pyth_decimals: Option<i32>,
-            #[diesel(sql_type = Text)]
-            created_at: String,
-            #[diesel(sql_type = Text)]
-            updated_at: String,
+            created_at: chrono::NaiveDateTime,
+            updated_at: chrono::NaiveDateTime,
         }
 
-        let res = diesel::sql_query(query_str)
+        let res = query
             .load::<MarginManagerStateRow>(&mut connection)
             .await
             .map(|rows| {
@@ -1631,11 +1581,11 @@ impl Reader {
                             "base_asset_symbol": row.base_asset_symbol,
                             "quote_asset_id": row.quote_asset_id,
                             "quote_asset_symbol": row.quote_asset_symbol,
-                            "risk_ratio": row.risk_ratio,
-                            "base_asset": row.base_asset,
-                            "quote_asset": row.quote_asset,
-                            "base_debt": row.base_debt,
-                            "quote_debt": row.quote_debt,
+                            "risk_ratio": row.risk_ratio.map(|v| v.to_string()),
+                            "base_asset": row.base_asset.map(|v| v.to_string()),
+                            "quote_asset": row.quote_asset.map(|v| v.to_string()),
+                            "base_debt": row.base_debt.map(|v| v.to_string()),
+                            "quote_debt": row.quote_debt.map(|v| v.to_string()),
                             "base_pyth_price": row.base_pyth_price,
                             "base_pyth_decimals": row.base_pyth_decimals,
                             "quote_pyth_price": row.quote_pyth_price,
