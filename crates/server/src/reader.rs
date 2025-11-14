@@ -1514,4 +1514,146 @@ impl Reader {
         }
         res
     }
+
+    pub async fn get_margin_manager_states(
+        &self,
+        max_risk_ratio: Option<f64>,
+        deepbook_pool_id_filter: Option<String>,
+    ) -> Result<Vec<serde_json::Value>, DeepBookError> {
+        use serde_json::json;
+
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // Build the WHERE clause dynamically
+        let mut where_clauses = Vec::new();
+        if let Some(max_ratio) = max_risk_ratio {
+            where_clauses.push(format!("(risk_ratio IS NULL OR risk_ratio <= {})", max_ratio));
+        }
+        if let Some(pool_id) = &deepbook_pool_id_filter {
+            where_clauses.push(format!("deepbook_pool_id = '{}'", pool_id));
+        }
+
+        let where_clause = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let query_str = format!(
+            r#"
+            SELECT
+                id,
+                margin_manager_id,
+                deepbook_pool_id,
+                base_margin_pool_id,
+                quote_margin_pool_id,
+                base_asset_id,
+                base_asset_symbol,
+                quote_asset_id,
+                quote_asset_symbol,
+                risk_ratio::text,
+                base_asset::text,
+                quote_asset::text,
+                base_debt::text,
+                quote_debt::text,
+                base_pyth_price,
+                base_pyth_decimals,
+                quote_pyth_price,
+                quote_pyth_decimals,
+                created_at::text,
+                updated_at::text
+            FROM margin_manager_state
+            {}
+            ORDER BY risk_ratio DESC NULLS LAST
+            "#,
+            where_clause
+        );
+
+        #[derive(QueryableByName)]
+        struct MarginManagerStateRow {
+            #[diesel(sql_type = diesel::sql_types::Int4)]
+            id: i32,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_manager_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            deepbook_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_margin_pool_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_margin_pool_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_asset_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_asset_symbol: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_asset_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_asset_symbol: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            risk_ratio: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_asset: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_asset: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            base_debt: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            quote_debt: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+            base_pyth_price: Option<i64>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Int4>)]
+            base_pyth_decimals: Option<i32>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+            quote_pyth_price: Option<i64>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Int4>)]
+            quote_pyth_decimals: Option<i32>,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            created_at: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            updated_at: String,
+        }
+
+        let res = diesel::sql_query(query_str)
+            .load::<MarginManagerStateRow>(&mut connection)
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        json!({
+                            "id": row.id,
+                            "margin_manager_id": row.margin_manager_id,
+                            "deepbook_pool_id": row.deepbook_pool_id,
+                            "base_margin_pool_id": row.base_margin_pool_id,
+                            "quote_margin_pool_id": row.quote_margin_pool_id,
+                            "base_asset_id": row.base_asset_id,
+                            "base_asset_symbol": row.base_asset_symbol,
+                            "quote_asset_id": row.quote_asset_id,
+                            "quote_asset_symbol": row.quote_asset_symbol,
+                            "risk_ratio": row.risk_ratio,
+                            "base_asset": row.base_asset,
+                            "quote_asset": row.quote_asset,
+                            "base_debt": row.base_debt,
+                            "quote_debt": row.quote_debt,
+                            "base_pyth_price": row.base_pyth_price,
+                            "base_pyth_decimals": row.base_pyth_decimals,
+                            "quote_pyth_price": row.quote_pyth_price,
+                            "quote_pyth_decimals": row.quote_pyth_decimals,
+                            "created_at": row.created_at,
+                            "updated_at": row.updated_at,
+                        })
+                    })
+                    .collect()
+            })
+            .map_err(|_| {
+                DeepBookError::InternalError("Error fetching margin manager states".to_string())
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
 }

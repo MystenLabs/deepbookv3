@@ -485,6 +485,31 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    margin_manager_state (id) {
+        id -> Int4,
+        margin_manager_id -> Varchar,
+        deepbook_pool_id -> Varchar,
+        base_margin_pool_id -> Nullable<Varchar>,
+        quote_margin_pool_id -> Nullable<Varchar>,
+        base_asset_id -> Nullable<Varchar>,
+        base_asset_symbol -> Nullable<Varchar>,
+        quote_asset_id -> Nullable<Varchar>,
+        quote_asset_symbol -> Nullable<Varchar>,
+        risk_ratio -> Nullable<Numeric>,
+        base_asset -> Nullable<Numeric>,
+        quote_asset -> Nullable<Numeric>,
+        base_debt -> Nullable<Numeric>,
+        quote_debt -> Nullable<Numeric>,
+        base_pyth_price -> Nullable<Int8>,
+        base_pyth_decimals -> Nullable<Int4>,
+        quote_pyth_price -> Nullable<Int8>,
+        quote_pyth_decimals -> Nullable<Int4>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     assets,
     balances,
@@ -516,4 +541,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     deepbook_pool_registered,
     deepbook_pool_updated_registry,
     deepbook_pool_config_updated,
+    // Margin Manager State
+    margin_manager_state,
 );

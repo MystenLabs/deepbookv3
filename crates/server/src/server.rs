@@ -82,6 +82,7 @@ pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
 pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
+pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -213,6 +214,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
             get(deepbook_pool_config_updated),
         )
         .route(MARGIN_MANAGERS_INFO_PATH, get(margin_managers_info))
+        .route(MARGIN_MANAGER_STATES_PATH, get(margin_manager_states))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2473,4 +2475,21 @@ async fn margin_managers_info(
         .collect();
 
     Ok(Json(data))
+}
+
+async fn margin_manager_states(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, DeepBookError> {
+    let max_risk_ratio = params
+        .get("max_risk_ratio")
+        .and_then(|v| v.parse::<f64>().ok());
+    let deepbook_pool_id = params.get("deepbook_pool_id").cloned();
+
+    let states = state
+        .reader
+        .get_margin_manager_states(max_risk_ratio, deepbook_pool_id)
+        .await?;
+
+    Ok(Json(states))
 }
