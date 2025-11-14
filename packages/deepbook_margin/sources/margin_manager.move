@@ -15,7 +15,8 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool
+    pool::Pool,
+    registry::Registry
 };
 use deepbook_margin::{
     margin_constants,
@@ -45,6 +46,9 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
+/// Witness type for authorizing MarginManager to call protected features of the DeepBook
+public struct MarginApp has drop {}
+
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
 public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
@@ -116,11 +120,12 @@ public struct LiquidationEvent has copy, drop {
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     transfer::share_object(manager);
 }
 
@@ -128,11 +133,12 @@ public fun new<BaseAsset, QuoteAsset>(
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
@@ -791,12 +797,13 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginManager<BaseAsset, QuoteAsset> {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+    margin_registry.load_inner();
+    assert!(margin_registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
     let margin_manager_id = id.to_inner();
@@ -807,8 +814,12 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-    registry.add_margin_manager(id.to_inner(), ctx);
+    ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
+        deepbook_registry,
+        id.to_address(),
+        ctx,
+    );
+    margin_registry.add_margin_manager(id.to_inner(), ctx);
 
     event::emit(MarginManagerCreatedEvent {
         margin_manager_id,

@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_margin::margin_manager_borrow_share_tests;
 
-use deepbook::pool::Pool;
+use deepbook::{pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_pool::MarginPool,
@@ -34,6 +34,7 @@ fun test_multiple_borrows_accumulate_shares_base() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Supply liquidity to BTC pool
@@ -54,7 +55,15 @@ fun test_multiple_borrows_accumulate_shares_base() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user1());
@@ -126,6 +135,7 @@ fun test_multiple_borrows_accumulate_shares_quote() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Supply liquidity to USDC pool
@@ -146,7 +156,15 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user1());
@@ -215,6 +233,7 @@ fun test_user_shares_isolated_from_other_users_base() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Supply liquidity to BTC pool
@@ -235,7 +254,15 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user1());
@@ -283,7 +310,15 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user2());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user2());
@@ -345,6 +380,7 @@ fun test_user_shares_isolated_from_other_users_quote() {
         btc_pool_id,
         usdc_pool_id,
         _pool_id,
+        registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
     // Supply liquidity to USDC pool
@@ -365,7 +401,15 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user1());
@@ -410,7 +454,15 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user2());
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
-    margin_manager::new<BTC, USDC>(&pool, &mut registry, &clock, scenario.ctx());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
     return_shared_2!(pool, registry);
 
     scenario.next_tx(test_constants::user2());

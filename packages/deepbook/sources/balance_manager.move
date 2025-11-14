@@ -140,10 +140,12 @@ public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceMa
     }
 }
 
-public fun new_with_custom_owner_and_caps(
+public fun new_with_custom_owner_and_caps<App: drop>(
+    deepbook_registry: &Registry,
     owner: address,
     ctx: &mut TxContext,
 ): (BalanceManager, DepositCap, WithdrawCap, TradeCap) {
+    deepbook_registry.assert_app_is_authorized<App>();
     let mut balance_manager = new_with_custom_owner(owner, ctx);
 
     let deposit_cap = mint_deposit_cap_internal(&mut balance_manager, ctx);
