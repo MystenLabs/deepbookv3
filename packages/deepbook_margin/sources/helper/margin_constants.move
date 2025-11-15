@@ -15,6 +15,8 @@ const MAX_MARGIN_MANAGERS: u64 = 100;
 const DEFAULT_REFERRAL: address = @0x0;
 const MAX_PROTOCOL_SPREAD: u64 = 200_000_000; // 20%
 const MIN_LIQUIDATION_REPAY: u64 = 1000;
+const MAX_CONF_BPS: u64 = 10_000; // 100% - maximum allowed confidence interval
+const MAX_EWMA_DIFFERENCE_BPS: u64 = 10_000; // 100% - maximum allowed EWMA price difference
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -62,4 +64,12 @@ public fun max_protocol_spread(): u64 {
 
 public fun min_liquidation_repay(): u64 {
     MIN_LIQUIDATION_REPAY
+}
+
+public fun max_conf_bps(): u64 {
+    MAX_CONF_BPS
+}
+
+public fun max_ewma_difference_bps(): u64 {
+    MAX_EWMA_DIFFERENCE_BPS
 }
