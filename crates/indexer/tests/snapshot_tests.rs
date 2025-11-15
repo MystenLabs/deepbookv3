@@ -13,12 +13,19 @@ use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
 use deepbook_indexer::handlers::loan_borrowed_handler::LoanBorrowedHandler;
 use deepbook_indexer::handlers::loan_repaid_handler::LoanRepaidHandler;
 use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::maintainer_fees_withdrawn_handler::MaintainerFeesWithdrawnHandler;
 use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
 use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
+use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
+use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
+use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
+use deepbook_indexer::handlers::supplier_cap_minted_handler::SupplierCapMintedHandler;
+use deepbook_indexer::handlers::supply_referral_minted_handler::SupplyReferralMintedHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use fastcrypto::hash::{HashFunction, Sha256};
@@ -228,6 +235,78 @@ async fn deepbook_pool_config_updated_test() -> Result<(), anyhow::Error> {
         ["deepbook_pool_config_updated"],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // TODO: Add checkpoint test data - Event does not exist on testnet yet (checked all package versions)
+async fn maintainer_fees_withdrawn_test() -> Result<(), anyhow::Error> {
+    let handler = MaintainerFeesWithdrawnHandler::new(DeepbookEnv::Testnet);
+    data_test(
+        "maintainer_fees_withdrawn",
+        handler,
+        ["maintainer_fees_withdrawn"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // TODO: Add checkpoint test data - Event does not exist on testnet yet (checked all package versions)
+async fn protocol_fees_withdrawn_test() -> Result<(), anyhow::Error> {
+    let handler = ProtocolFeesWithdrawnHandler::new(DeepbookEnv::Testnet);
+    data_test(
+        "protocol_fees_withdrawn",
+        handler,
+        ["protocol_fees_withdrawn"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn supplier_cap_minted_test() -> Result<(), anyhow::Error> {
+    let handler = SupplierCapMintedHandler::new(DeepbookEnv::Testnet);
+    data_test("supplier_cap_minted", handler, ["supplier_cap_minted"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn supply_referral_minted_test() -> Result<(), anyhow::Error> {
+    let handler = SupplyReferralMintedHandler::new(DeepbookEnv::Testnet);
+    data_test(
+        "supply_referral_minted",
+        handler,
+        ["supply_referral_minted"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // TODO: Add checkpoint test data - Event does not exist on testnet yet (checked all package versions)
+async fn pause_cap_updated_test() -> Result<(), anyhow::Error> {
+    let handler = PauseCapUpdatedHandler::new(DeepbookEnv::Testnet);
+    data_test("pause_cap_updated", handler, ["pause_cap_updated"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn protocol_fees_increased_test() -> Result<(), anyhow::Error> {
+    let handler = ProtocolFeesIncreasedHandler::new(DeepbookEnv::Testnet);
+    data_test(
+        "protocol_fees_increased",
+        handler,
+        ["protocol_fees_increased"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn referral_fees_claimed_test() -> Result<(), anyhow::Error> {
+    let handler = ReferralFeesClaimedHandler::new(DeepbookEnv::Testnet);
+    data_test("referral_fees_claimed", handler, ["referral_fees_claimed"]).await?;
     Ok(())
 }
 

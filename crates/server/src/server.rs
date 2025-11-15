@@ -78,6 +78,13 @@ pub const DEEPBOOK_POOL_UPDATED_PATH: &str = "/deepbook_pool_updated";
 pub const INTEREST_PARAMS_UPDATED_PATH: &str = "/interest_params_updated";
 pub const MARGIN_POOL_CONFIG_UPDATED_PATH: &str = "/margin_pool_config_updated";
 pub const MAINTAINER_CAP_UPDATED_PATH: &str = "/maintainer_cap_updated";
+pub const MAINTAINER_FEES_WITHDRAWN_PATH: &str = "/maintainer_fees_withdrawn";
+pub const PROTOCOL_FEES_WITHDRAWN_PATH: &str = "/protocol_fees_withdrawn";
+pub const SUPPLIER_CAP_MINTED_PATH: &str = "/supplier_cap_minted";
+pub const SUPPLY_REFERRAL_MINTED_PATH: &str = "/supply_referral_minted";
+pub const PAUSE_CAP_UPDATED_PATH: &str = "/pause_cap_updated";
+pub const PROTOCOL_FEES_INCREASED_PATH: &str = "/protocol_fees_increased";
+pub const REFERRAL_FEES_CLAIMED_PATH: &str = "/referral_fees_claimed";
 pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
@@ -204,6 +211,16 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
             get(margin_pool_config_updated),
         )
         .route(MAINTAINER_CAP_UPDATED_PATH, get(maintainer_cap_updated))
+        .route(
+            MAINTAINER_FEES_WITHDRAWN_PATH,
+            get(maintainer_fees_withdrawn),
+        )
+        .route(PROTOCOL_FEES_WITHDRAWN_PATH, get(protocol_fees_withdrawn))
+        .route(SUPPLIER_CAP_MINTED_PATH, get(supplier_cap_minted))
+        .route(SUPPLY_REFERRAL_MINTED_PATH, get(supply_referral_minted))
+        .route(PAUSE_CAP_UPDATED_PATH, get(pause_cap_updated))
+        .route(PROTOCOL_FEES_INCREASED_PATH, get(protocol_fees_increased))
+        .route(REFERRAL_FEES_CLAIMED_PATH, get(referral_fees_claimed))
         .route(DEEPBOOK_POOL_REGISTERED_PATH, get(deepbook_pool_registered))
         .route(
             DEEPBOOK_POOL_UPDATED_REGISTRY_PATH,
@@ -2246,6 +2263,414 @@ async fn maintainer_cap_updated(
                         Value::from(maintainer_cap_id),
                     ),
                     ("allowed".to_string(), Value::from(allowed)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn maintainer_fees_withdrawn(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+
+    let results = state
+        .reader
+        .get_maintainer_fees_withdrawn(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                margin_pool_id,
+                margin_pool_cap_id,
+                maintainer_fees,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
+                    (
+                        "margin_pool_cap_id".to_string(),
+                        Value::from(margin_pool_cap_id),
+                    ),
+                    ("maintainer_fees".to_string(), Value::from(maintainer_fees)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn protocol_fees_withdrawn(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+
+    let results = state
+        .reader
+        .get_protocol_fees_withdrawn(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                margin_pool_id,
+                protocol_fees,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
+                    ("protocol_fees".to_string(), Value::from(protocol_fees)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn supplier_cap_minted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let supplier_cap_id_filter = params.get("supplier_cap_id").cloned();
+
+    let results = state
+        .reader
+        .get_supplier_cap_minted(start_time, end_time, limit, supplier_cap_id_filter)
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                supplier_cap_id,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("supplier_cap_id".to_string(), Value::from(supplier_cap_id)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn supply_referral_minted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let owner_filter = params.get("owner").cloned();
+
+    let results = state
+        .reader
+        .get_supply_referral_minted(
+            start_time,
+            end_time,
+            limit,
+            margin_pool_id_filter,
+            owner_filter,
+        )
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                margin_pool_id,
+                supply_referral_id,
+                owner,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
+                    (
+                        "supply_referral_id".to_string(),
+                        Value::from(supply_referral_id),
+                    ),
+                    ("owner".to_string(), Value::from(owner)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn pause_cap_updated(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pause_cap_id_filter = params.get("pause_cap_id").cloned();
+
+    let results = state
+        .reader
+        .get_pause_cap_updated(start_time, end_time, limit, pause_cap_id_filter)
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                pause_cap_id,
+                allowed,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("pause_cap_id".to_string(), Value::from(pause_cap_id)),
+                    ("allowed".to_string(), Value::from(allowed)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn protocol_fees_increased(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+
+    let results = state
+        .reader
+        .get_protocol_fees_increased(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                margin_pool_id,
+                total_shares,
+                referral_fees,
+                maintainer_fees,
+                protocol_fees,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
+                    ("total_shares".to_string(), Value::from(total_shares)),
+                    ("referral_fees".to_string(), Value::from(referral_fees)),
+                    ("maintainer_fees".to_string(), Value::from(maintainer_fees)),
+                    ("protocol_fees".to_string(), Value::from(protocol_fees)),
+                    (
+                        "onchain_timestamp".to_string(),
+                        Value::from(onchain_timestamp),
+                    ),
+                ])
+            },
+        )
+        .collect();
+
+    Ok(Json(data))
+}
+
+async fn referral_fees_claimed(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let referral_id_filter = params.get("referral_id").cloned();
+    let owner_filter = params.get("owner").cloned();
+
+    let results = state
+        .reader
+        .get_referral_fees_claimed(
+            start_time,
+            end_time,
+            limit,
+            referral_id_filter,
+            owner_filter,
+        )
+        .await?;
+
+    let data: Vec<HashMap<String, Value>> = results
+        .into_iter()
+        .map(
+            |(
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                referral_id,
+                owner,
+                fees,
+                onchain_timestamp,
+            )| {
+                HashMap::from([
+                    ("event_digest".to_string(), Value::from(event_digest)),
+                    ("digest".to_string(), Value::from(digest)),
+                    ("sender".to_string(), Value::from(sender)),
+                    ("checkpoint".to_string(), Value::from(checkpoint)),
+                    (
+                        "checkpoint_timestamp_ms".to_string(),
+                        Value::from(checkpoint_timestamp_ms),
+                    ),
+                    ("package".to_string(), Value::from(package)),
+                    ("referral_id".to_string(), Value::from(referral_id)),
+                    ("owner".to_string(), Value::from(owner)),
+                    ("fees".to_string(), Value::from(fees)),
                     (
                         "onchain_timestamp".to_string(),
                         Value::from(onchain_timestamp),

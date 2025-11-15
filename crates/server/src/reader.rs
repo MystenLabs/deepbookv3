@@ -1239,6 +1239,471 @@ impl Reader {
         res
     }
 
+    pub async fn get_maintainer_fees_withdrawn(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+        )>,
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::maintainer_fees_withdrawn::table
+            .filter(
+                schema::maintainer_fees_withdrawn::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .order_by(schema::maintainer_fees_withdrawn::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::maintainer_fees_withdrawn::event_digest,
+                schema::maintainer_fees_withdrawn::digest,
+                schema::maintainer_fees_withdrawn::sender,
+                schema::maintainer_fees_withdrawn::checkpoint,
+                schema::maintainer_fees_withdrawn::checkpoint_timestamp_ms,
+                schema::maintainer_fees_withdrawn::package,
+                schema::maintainer_fees_withdrawn::margin_pool_id,
+                schema::maintainer_fees_withdrawn::margin_pool_cap_id,
+                schema::maintainer_fees_withdrawn::maintainer_fees,
+                schema::maintainer_fees_withdrawn::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::maintainer_fees_withdrawn::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            )>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching maintainer fees withdrawn events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_protocol_fees_withdrawn(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, i64, i64)>, DeepBookError>
+    {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::protocol_fees_withdrawn::table
+            .filter(
+                schema::protocol_fees_withdrawn::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .order_by(schema::protocol_fees_withdrawn::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::protocol_fees_withdrawn::event_digest,
+                schema::protocol_fees_withdrawn::digest,
+                schema::protocol_fees_withdrawn::sender,
+                schema::protocol_fees_withdrawn::checkpoint,
+                schema::protocol_fees_withdrawn::checkpoint_timestamp_ms,
+                schema::protocol_fees_withdrawn::package,
+                schema::protocol_fees_withdrawn::margin_pool_id,
+                schema::protocol_fees_withdrawn::protocol_fees,
+                schema::protocol_fees_withdrawn::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::protocol_fees_withdrawn::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching protocol fees withdrawn events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_supplier_cap_minted(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        supplier_cap_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::supplier_cap_minted::table
+            .filter(
+                schema::supplier_cap_minted::checkpoint_timestamp_ms.between(start_time, end_time),
+            )
+            .order_by(schema::supplier_cap_minted::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::supplier_cap_minted::event_digest,
+                schema::supplier_cap_minted::digest,
+                schema::supplier_cap_minted::sender,
+                schema::supplier_cap_minted::checkpoint,
+                schema::supplier_cap_minted::checkpoint_timestamp_ms,
+                schema::supplier_cap_minted::package,
+                schema::supplier_cap_minted::supplier_cap_id,
+                schema::supplier_cap_minted::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(cap_id) = supplier_cap_id_filter {
+            query = query.filter(schema::supplier_cap_minted::supplier_cap_id.eq(cap_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, i64)>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching supplier cap minted events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_supply_referral_minted(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+        owner_filter: Option<String>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            String,
+            i64,
+        )>,
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::supply_referral_minted::table
+            .filter(
+                schema::supply_referral_minted::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .order_by(schema::supply_referral_minted::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::supply_referral_minted::event_digest,
+                schema::supply_referral_minted::digest,
+                schema::supply_referral_minted::sender,
+                schema::supply_referral_minted::checkpoint,
+                schema::supply_referral_minted::checkpoint_timestamp_ms,
+                schema::supply_referral_minted::package,
+                schema::supply_referral_minted::margin_pool_id,
+                schema::supply_referral_minted::supply_referral_id,
+                schema::supply_referral_minted::owner,
+                schema::supply_referral_minted::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::supply_referral_minted::margin_pool_id.eq(pool_id));
+        }
+        if let Some(owner) = owner_filter {
+            query = query.filter(schema::supply_referral_minted::owner.eq(owner));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                String,
+                String,
+                i64,
+            )>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching supply referral minted events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_pause_cap_updated(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pause_cap_id_filter: Option<String>,
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, bool, i64)>, DeepBookError>
+    {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::pause_cap_updated::table
+            .filter(
+                schema::pause_cap_updated::checkpoint_timestamp_ms.between(start_time, end_time),
+            )
+            .order_by(schema::pause_cap_updated::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::pause_cap_updated::event_digest,
+                schema::pause_cap_updated::digest,
+                schema::pause_cap_updated::sender,
+                schema::pause_cap_updated::checkpoint,
+                schema::pause_cap_updated::checkpoint_timestamp_ms,
+                schema::pause_cap_updated::package,
+                schema::pause_cap_updated::pause_cap_id,
+                schema::pause_cap_updated::allowed,
+                schema::pause_cap_updated::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(cap_id) = pause_cap_id_filter {
+            query = query.filter(schema::pause_cap_updated::pause_cap_id.eq(cap_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(String, String, String, i64, i64, String, String, bool, i64)>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError("Error fetching pause cap updated events".to_string())
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_protocol_fees_increased(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_pool_id_filter: Option<String>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        )>,
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::protocol_fees_increased::table
+            .filter(
+                schema::protocol_fees_increased::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .order_by(schema::protocol_fees_increased::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::protocol_fees_increased::event_digest,
+                schema::protocol_fees_increased::digest,
+                schema::protocol_fees_increased::sender,
+                schema::protocol_fees_increased::checkpoint,
+                schema::protocol_fees_increased::checkpoint_timestamp_ms,
+                schema::protocol_fees_increased::package,
+                schema::protocol_fees_increased::margin_pool_id,
+                schema::protocol_fees_increased::total_shares,
+                schema::protocol_fees_increased::referral_fees,
+                schema::protocol_fees_increased::maintainer_fees,
+                schema::protocol_fees_increased::protocol_fees,
+                schema::protocol_fees_increased::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(pool_id) = margin_pool_id_filter {
+            query = query.filter(schema::protocol_fees_increased::margin_pool_id.eq(pool_id));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                i64,
+                i64,
+                i64,
+                i64,
+                i64,
+            )>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching protocol fees increased events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_referral_fees_claimed(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        referral_id_filter: Option<String>,
+        owner_filter: Option<String>,
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+        )>,
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::referral_fees_claimed::table
+            .filter(
+                schema::referral_fees_claimed::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .order_by(schema::referral_fees_claimed::checkpoint_timestamp_ms.desc())
+            .select((
+                schema::referral_fees_claimed::event_digest,
+                schema::referral_fees_claimed::digest,
+                schema::referral_fees_claimed::sender,
+                schema::referral_fees_claimed::checkpoint,
+                schema::referral_fees_claimed::checkpoint_timestamp_ms,
+                schema::referral_fees_claimed::package,
+                schema::referral_fees_claimed::referral_id,
+                schema::referral_fees_claimed::owner,
+                schema::referral_fees_claimed::fees,
+                schema::referral_fees_claimed::onchain_timestamp,
+            ))
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(ref_id) = referral_id_filter {
+            query = query.filter(schema::referral_fees_claimed::referral_id.eq(ref_id));
+        }
+        if let Some(owner) = owner_filter {
+            query = query.filter(schema::referral_fees_claimed::owner.eq(owner));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        let res = query
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            )>(&mut connection)
+            .await
+            .map_err(|_| {
+                DeepBookError::InternalError(
+                    "Error fetching referral fees claimed events".to_string(),
+                )
+            });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
     pub async fn get_deepbook_pool_registered(
         &self,
         start_time: i64,

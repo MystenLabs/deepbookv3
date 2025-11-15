@@ -54,7 +54,12 @@ pub const CORE_MODULES: &[&str] = &[
 ];
 
 /// Margin trading modules that handle lending and borrowing
-pub const MARGIN_MODULES: &[&str] = &["margin_manager", "margin_pool", "margin_registry"];
+pub const MARGIN_MODULES: &[&str] = &[
+    "margin_manager",
+    "margin_pool",
+    "margin_registry",
+    "protocol_fees",
+];
 
 /// SUI system modules
 pub const SUI_MODULES: &[&str] = &["sui"];
