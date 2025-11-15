@@ -414,6 +414,35 @@ pub mod deepbook_margin {
             pub timestamp: u64,
         }
 
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct MaintainerFeesWithdrawn {
+            pub margin_pool_id: ObjectID,
+            pub margin_pool_cap_id: ObjectID,
+            pub maintainer_fees: u64,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ProtocolFeesWithdrawn {
+            pub margin_pool_id: ObjectID,
+            pub protocol_fees: u64,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct SupplierCapMinted {
+            pub supplier_cap_id: ObjectID,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct SupplyReferralMinted {
+            pub margin_pool_id: ObjectID,
+            pub supply_referral_id: ObjectID,
+            pub owner: Address,
+            pub timestamp: u64,
+        }
+
         impl MoveStruct for MarginPoolCreated {
             const MODULE: &'static str = "margin_pool";
             const NAME: &'static str = "MarginPoolCreated";
@@ -442,6 +471,26 @@ pub mod deepbook_margin {
         impl MoveStruct for AssetWithdrawn {
             const MODULE: &'static str = "margin_pool";
             const NAME: &'static str = "AssetWithdrawn";
+        }
+
+        impl MoveStruct for MaintainerFeesWithdrawn {
+            const MODULE: &'static str = "margin_pool";
+            const NAME: &'static str = "MaintainerFeesWithdrawn";
+        }
+
+        impl MoveStruct for ProtocolFeesWithdrawn {
+            const MODULE: &'static str = "margin_pool";
+            const NAME: &'static str = "ProtocolFeesWithdrawn";
+        }
+
+        impl MoveStruct for SupplierCapMinted {
+            const MODULE: &'static str = "margin_pool";
+            const NAME: &'static str = "SupplierCapMinted";
+        }
+
+        impl MoveStruct for SupplyReferralMinted {
+            const MODULE: &'static str = "margin_pool";
+            const NAME: &'static str = "SupplyReferralMinted";
         }
     }
 
@@ -494,6 +543,13 @@ pub mod deepbook_margin {
             pub timestamp: u64,
         }
 
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PauseCapUpdated {
+            pub pause_cap_id: ObjectID,
+            pub allowed: bool,
+            pub timestamp: u64,
+        }
+
         impl MoveStruct for RiskRatios {
             const MODULE: &'static str = "margin_registry";
             const NAME: &'static str = "RiskRatios";
@@ -522,6 +578,41 @@ pub mod deepbook_margin {
         impl MoveStruct for DeepbookPoolConfigUpdated {
             const MODULE: &'static str = "margin_registry";
             const NAME: &'static str = "DeepbookPoolConfigUpdated";
+        }
+
+        impl MoveStruct for PauseCapUpdated {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "PauseCapUpdated";
+        }
+    }
+
+    pub mod protocol_fees {
+        use super::*;
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ProtocolFeesIncreasedEvent {
+            pub margin_pool_id: ObjectID,
+            pub total_shares: u64,
+            pub referral_fees: u64,
+            pub maintainer_fees: u64,
+            pub protocol_fees: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ReferralFeesClaimedEvent {
+            pub referral_id: ObjectID,
+            pub owner: Address,
+            pub fees: u64,
+        }
+
+        impl MoveStruct for ProtocolFeesIncreasedEvent {
+            const MODULE: &'static str = "protocol_fees";
+            const NAME: &'static str = "ProtocolFeesIncreasedEvent";
+        }
+
+        impl MoveStruct for ReferralFeesClaimedEvent {
+            const MODULE: &'static str = "protocol_fees";
+            const NAME: &'static str = "ReferralFeesClaimedEvent";
         }
     }
 }
