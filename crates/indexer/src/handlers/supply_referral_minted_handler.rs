@@ -82,3 +82,5 @@ impl Handler for SupplyReferralMintedHandler {
             .await?)
     }
 }
+
+
