@@ -82,5 +82,3 @@ impl Handler for ReferralFeesClaimedHandler {
             .await?)
     }
 }
-
-

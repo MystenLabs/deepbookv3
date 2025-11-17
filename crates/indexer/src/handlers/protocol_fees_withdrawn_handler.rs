@@ -84,5 +84,3 @@ impl Handler for ProtocolFeesWithdrawnHandler {
             .await?)
     }
 }
-
-

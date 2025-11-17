@@ -85,5 +85,3 @@ impl Handler for MaintainerFeesWithdrawnHandler {
             .await?)
     }
 }
-
-

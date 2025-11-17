@@ -81,5 +81,3 @@ impl Handler for PauseCapUpdatedHandler {
             .await?)
     }
 }
-
-
