@@ -486,6 +486,116 @@ diesel::table! {
 }
 
 diesel::table! {
+    maintainer_fees_withdrawn (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        margin_pool_cap_id -> Text,
+        maintainer_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    protocol_fees_withdrawn (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        protocol_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    supplier_cap_minted (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        supplier_cap_id -> Text,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    supply_referral_minted (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        supply_referral_id -> Text,
+        owner -> Text,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    pause_cap_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pause_cap_id -> Text,
+        allowed -> Bool,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    protocol_fees_increased (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        total_shares -> Int8,
+        referral_fees -> Int8,
+        maintainer_fees -> Int8,
+        protocol_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    referral_fees_claimed (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        referral_id -> Text,
+        owner -> Text,
+        fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     margin_manager_state (id) {
         id -> Int4,
         margin_manager_id -> Varchar,

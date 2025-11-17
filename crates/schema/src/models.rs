@@ -15,6 +15,8 @@ use crate::schema::{
     loan_repaid,
     // Margin Registry Events
     maintainer_cap_updated,
+    maintainer_fees_withdrawn,
+    pause_cap_updated,
     // Margin Manager Events
     margin_manager_created,
     margin_pool_config_updated,
@@ -25,8 +27,13 @@ use crate::schema::{
     pool_prices,
     pools,
     proposals,
+    protocol_fees_increased,
+    protocol_fees_withdrawn,
+    referral_fees_claimed,
     rebates,
     stakes,
+    supplier_cap_minted,
+    supply_referral_minted,
     sui_error_transactions,
     trade_params_update,
     votes,
@@ -515,5 +522,110 @@ pub struct DeepbookPoolConfigUpdated {
     pub package: String,
     pub pool_id: String,
     pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+// === Additional Margin Pool Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = maintainer_fees_withdrawn, primary_key(event_digest))]
+pub struct MaintainerFeesWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub margin_pool_cap_id: String,
+    pub maintainer_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = protocol_fees_withdrawn, primary_key(event_digest))]
+pub struct ProtocolFeesWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub protocol_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = supplier_cap_minted, primary_key(event_digest))]
+pub struct SupplierCapMinted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub supplier_cap_id: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = supply_referral_minted, primary_key(event_digest))]
+pub struct SupplyReferralMinted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub supply_referral_id: String,
+    pub owner: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = pause_cap_updated, primary_key(event_digest))]
+pub struct PauseCapUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pause_cap_id: String,
+    pub allowed: bool,
+    pub onchain_timestamp: i64,
+}
+
+// === Protocol Fees Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = protocol_fees_increased, primary_key(event_digest))]
+pub struct ProtocolFeesIncreasedEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub total_shares: i64,
+    pub referral_fees: i64,
+    pub maintainer_fees: i64,
+    pub protocol_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = referral_fees_claimed, primary_key(event_digest))]
+pub struct ReferralFeesClaimedEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub referral_id: String,
+    pub owner: String,
+    pub fees: i64,
     pub onchain_timestamp: i64,
 }
