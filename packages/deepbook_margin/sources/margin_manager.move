@@ -25,7 +25,7 @@ use deepbook_margin::{
     oracle::{calculate_target_currency, get_pyth_price}
 };
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name};
+use std::{string::String, type_name::{Self, TypeName}};
 use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
 use token::deep::DEEP;
 
@@ -113,6 +113,41 @@ public struct LiquidationEvent has copy, drop {
     pool_reward: u64,
     pool_default: u64,
     risk_ratio: u64,
+    remaining_base_asset: u64,
+    remaining_quote_asset: u64,
+    remaining_base_debt: u64,
+    remaining_quote_debt: u64,
+    base_pyth_price: u64,
+    base_pyth_decimals: u8,
+    quote_pyth_price: u64,
+    quote_pyth_decimals: u8,
+    timestamp: u64,
+}
+
+/// Event emitted when user deposits collateral asset (either base or quote) into margin manager
+public struct DepositCollateralEvent has copy, drop {
+    margin_manager_id: ID,
+    amount: u64,
+    asset: TypeName,
+    pyth_price: u64,
+    pyth_decimals: u8,
+    timestamp: u64,
+}
+
+/// Event emitted when user withdraws collateral asset (either base or quote) from margin manager
+public struct WithdrawCollateralEvent has copy, drop {
+    margin_manager_id: ID,
+    amount: u64,
+    asset: TypeName,
+    withdraw_base_asset: bool,
+    remaining_base_asset: u64,
+    remaining_quote_asset: u64,
+    remaining_base_debt: u64,
+    remaining_quote_debt: u64,
+    base_pyth_price: u64,
+    base_pyth_decimals: u8,
+    quote_pyth_price: u64,
+    quote_pyth_decimals: u8,
     timestamp: u64,
 }
 
@@ -183,26 +218,37 @@ public fun unset_referral<BaseAsset, QuoteAsset>(
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     coin: Coin<DepositAsset>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
     self.validate_owner(ctx);
 
+    let deposit_amount = coin.value();
+    self.deposit_int<BaseAsset, QuoteAsset, DepositAsset>(coin, ctx);
+
     let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
-    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
-    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
-    let deep_asset_type = type_name::with_defining_ids<DEEP>();
-    assert!(
-        deposit_asset_type == base_asset_type || deposit_asset_type == quote_asset_type ||
-        deposit_asset_type == deep_asset_type,
-        EInvalidDeposit,
-    );
+    let deposit_base_asset = deposit_asset_type == type_name::with_defining_ids<BaseAsset>();
+    let deposit_quote_asset = deposit_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    if (!deposit_base_asset && !deposit_quote_asset) return;
 
-    let balance_manager = &mut self.balance_manager;
-    let deposit_cap = &self.deposit_cap;
+    let (pyth_price, pyth_decimals) = if (deposit_base_asset) {
+        get_pyth_price<BaseAsset>(base_oracle, registry, clock)
+    } else {
+        get_pyth_price<QuoteAsset>(quote_oracle, registry, clock)
+    };
 
-    balance_manager.deposit_with_cap<DepositAsset>(deposit_cap, coin, ctx);
+    event::emit(DepositCollateralEvent {
+        margin_manager_id: self.id(),
+        amount: deposit_amount,
+        asset: deposit_asset_type,
+        pyth_price,
+        pyth_decimals,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
@@ -253,6 +299,49 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         assert!(registry.can_withdraw(pool.id(), risk_ratio), EWithdrawRiskRatioExceeded);
     };
 
+    let withdraw_asset_type = type_name::with_defining_ids<WithdrawAsset>();
+    let withdraw_base_asset = withdraw_asset_type == type_name::with_defining_ids<BaseAsset>();
+    let withdraw_quote_asset = withdraw_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    if (!withdraw_base_asset && !withdraw_quote_asset) return coin;
+
+    let (
+        _,
+        _,
+        _,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+    ) = self.manager_state(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    event::emit(WithdrawCollateralEvent {
+        margin_manager_id: self.id(),
+        amount: withdraw_amount,
+        asset: withdraw_asset_type,
+        withdraw_base_asset,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+        timestamp: clock.timestamp_ms(),
+    });
+
     coin
 }
 
@@ -278,7 +367,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     let (coin, borrowed_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
     self.borrowed_base_shares = self.borrowed_base_shares + borrowed_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
-    self.deposit(registry, coin, ctx);
+    self.deposit_int<BaseAsset, QuoteAsset, BaseAsset>(coin, ctx);
     let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
@@ -320,7 +409,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     let (coin, borrowed_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
     self.borrowed_quote_shares = self.borrowed_quote_shares + borrowed_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
-    self.deposit(registry, coin, ctx);
+    self.deposit_int<BaseAsset, QuoteAsset, QuoteAsset>(coin, ctx);
     let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
@@ -528,6 +617,23 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     };
     // We have 40 USDC which is used first in the second loop. Then SUI to reach the total of 101.941 USDC.
 
+    let (remaining_base_asset, remaining_quote_asset) = self.calculate_assets(pool);
+    let (remaining_base_debt, remaining_quote_debt) = if (self.margin_pool_id.is_some()) {
+        self.calculate_debts(margin_pool, clock)
+    } else {
+        (0, 0)
+    };
+    let (base_pyth_price, base_pyth_decimals) = get_pyth_price<BaseAsset>(
+        base_oracle,
+        registry,
+        clock,
+    );
+    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price<QuoteAsset>(
+        quote_oracle,
+        registry,
+        clock,
+    );
+
     event::emit(LiquidationEvent {
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
@@ -535,6 +641,14 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         pool_reward,
         pool_default,
         risk_ratio,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
         timestamp: clock.timestamp_ms(),
     });
 
@@ -761,6 +875,28 @@ public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): TradeProof {
     self.balance_manager.generate_proof_as_trader(&self.trade_cap, ctx)
+}
+
+/// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
+public(package) fun deposit_int<BaseAsset, QuoteAsset, DepositAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<DepositAsset>,
+    ctx: &TxContext,
+) {
+    let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
+    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
+    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
+    let deep_asset_type = type_name::with_defining_ids<DEEP>();
+    assert!(
+        deposit_asset_type == base_asset_type || deposit_asset_type == quote_asset_type ||
+        deposit_asset_type == deep_asset_type,
+        EInvalidDeposit,
+    );
+
+    let balance_manager = &mut self.balance_manager;
+    let deposit_cap = &self.deposit_cap;
+
+    balance_manager.deposit_with_cap<DepositAsset>(deposit_cap, coin, ctx);
 }
 
 // === Private Functions ===
