@@ -3409,7 +3409,7 @@ fun update_deepbook_referral_multiplier() {
 }
 
 #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidReferralOwner)]
-fun test_update_referral_multiplier_wrong_owner() {
+fun test_update_deepbook_referral_multiplier_wrong_owner() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
     let referral_id;
