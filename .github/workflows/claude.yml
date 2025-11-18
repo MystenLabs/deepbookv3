@@ -29,6 +29,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # For PR comments, checkout the PR branch instead of main
+          ref: ${{ github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
 
       - name: Run Claude Code
         id: claude
@@ -43,7 +45,7 @@ jobs:
           # Use review prompt for simple @claude mentions in PR comments, otherwise follow specific instructions
           prompt: |
             ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '@claude' &&
-            'Please review this pull request and provide feedback on:
+            format('Please review pull request #{0} and provide feedback on:
             - Code quality and best practices
             - Potential bugs or issues
             - Performance considerations
@@ -52,7 +54,7 @@ jobs:
 
             Use the repository''s CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.' || '' }}
+            Use `gh pr comment {0}` with your Bash tool to leave your review as a comment on the PR.', github.event.issue.number) || '' }}
 
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

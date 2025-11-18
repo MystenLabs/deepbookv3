@@ -264,6 +264,7 @@ diesel::table! {
         package -> Text,
         margin_manager_id -> Text,
         balance_manager_id -> Text,
+        deepbook_pool_id -> Nullable<Text>,
         owner -> Text,
         onchain_timestamp -> Int8,
     }
@@ -281,8 +282,7 @@ diesel::table! {
         margin_manager_id -> Text,
         margin_pool_id -> Text,
         loan_amount -> Int8,
-        total_borrow -> Int8,
-        total_shares -> Int8,
+        loan_shares -> Int8,
         onchain_timestamp -> Int8,
     }
 }
@@ -485,6 +485,141 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    maintainer_fees_withdrawn (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        margin_pool_cap_id -> Text,
+        maintainer_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    protocol_fees_withdrawn (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        protocol_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    supplier_cap_minted (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        supplier_cap_id -> Text,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    supply_referral_minted (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        supply_referral_id -> Text,
+        owner -> Text,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    pause_cap_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pause_cap_id -> Text,
+        allowed -> Bool,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    protocol_fees_increased (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_pool_id -> Text,
+        total_shares -> Int8,
+        referral_fees -> Int8,
+        maintainer_fees -> Int8,
+        protocol_fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    referral_fees_claimed (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        referral_id -> Text,
+        owner -> Text,
+        fees -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    margin_manager_state (id) {
+        id -> Int4,
+        margin_manager_id -> Varchar,
+        deepbook_pool_id -> Varchar,
+        base_margin_pool_id -> Nullable<Varchar>,
+        quote_margin_pool_id -> Nullable<Varchar>,
+        base_asset_id -> Nullable<Varchar>,
+        base_asset_symbol -> Nullable<Varchar>,
+        quote_asset_id -> Nullable<Varchar>,
+        quote_asset_symbol -> Nullable<Varchar>,
+        risk_ratio -> Nullable<Numeric>,
+        base_asset -> Nullable<Numeric>,
+        quote_asset -> Nullable<Numeric>,
+        base_debt -> Nullable<Numeric>,
+        quote_debt -> Nullable<Numeric>,
+        base_pyth_price -> Nullable<Int8>,
+        base_pyth_decimals -> Nullable<Int4>,
+        quote_pyth_price -> Nullable<Int8>,
+        quote_pyth_decimals -> Nullable<Int4>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     assets,
     balances,
@@ -516,4 +651,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     deepbook_pool_registered,
     deepbook_pool_updated_registry,
     deepbook_pool_config_updated,
+    margin_manager_state,
 );

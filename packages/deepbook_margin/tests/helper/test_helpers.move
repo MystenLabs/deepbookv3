@@ -6,6 +6,7 @@ module deepbook_margin::test_helpers;
 
 use deepbook::{constants, math, pool::{Self, Pool}, registry::{Self, Registry}};
 use deepbook_margin::{
+    margin_manager::MarginApp,
     margin_pool::{Self, MarginPool},
     margin_registry::{
         Self,
@@ -102,6 +103,16 @@ public fun setup_margin_registry(): (Scenario, Clock, MarginAdminCap, Maintainer
     (scenario, clock, admin_cap, maintainer_cap)
 }
 
+/// Authorize MarginApp to create balance managers with custom owners
+public fun authorize_margin_app(scenario: &mut Scenario, registry_id: ID) {
+    scenario.next_tx(test_constants::admin());
+    let deepbook_admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    registry.authorize_app<MarginApp>(&deepbook_admin_cap);
+    return_shared(registry);
+    destroy(deepbook_admin_cap);
+}
+
 public fun create_margin_pool<Asset>(
     test: &mut Scenario,
     maintainer_cap: &MaintainerCap,
@@ -184,9 +195,12 @@ public fun supply_to_pool<Asset>(
     supplier_cap
 }
 
-/// Create a DeepBook pool for testing
-public fun create_pool_for_testing<BaseAsset, QuoteAsset>(scenario: &mut Scenario): ID {
+/// Create a DeepBook pool for testing. Returns (pool_id, registry_id).
+public fun create_pool_for_testing<BaseAsset, QuoteAsset>(scenario: &mut Scenario): (ID, ID) {
     let registry_id = registry::test_registry(scenario.ctx());
+
+    // Authorize MarginApp to create BalanceManagers with custom owners
+    authorize_margin_app(scenario, registry_id);
 
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
@@ -201,7 +215,7 @@ public fun create_pool_for_testing<BaseAsset, QuoteAsset>(scenario: &mut Scenari
     );
 
     return_shared(registry);
-    pool_id
+    (pool_id, registry_id)
 }
 
 /// Enable margin trading on a DeepBook pool
@@ -304,6 +318,22 @@ public fun build_demo_usdc_price_info_object(
     )
 }
 
+/// Build a demo USDC price info object at $1.00
+public fun build_demo_usdc_price_info_object_with_price(
+    scenario: &mut Scenario,
+    price: u64,
+    clock: &Clock,
+): PriceInfoObject {
+    build_pyth_price_info_object(
+        scenario,
+        test_constants::usdc_price_feed_id(),
+        price,
+        50000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
 /// Build a demo USDT price info object at $1.00
 public fun build_demo_usdt_price_info_object(
     scenario: &mut Scenario,
@@ -387,7 +417,6 @@ public fun create_test_pyth_config(): PythConfig {
     oracle::new_pyth_config(
         coin_data_vec,
         60, // max age 60 seconds
-        100, // max confidence interval, 1%
     )
 }
 
@@ -396,6 +425,7 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     Clock,
     MarginAdminCap,
     MaintainerCap,
+    ID,
     ID,
     ID,
     ID,
@@ -419,7 +449,7 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     scenario.next_tx(test_constants::admin());
     let (usdc_pool_cap, usdt_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
-    let pool_id = create_pool_for_testing<USDT, USDC>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<USDT, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<USDT, USDC>(
@@ -462,16 +492,17 @@ public fun setup_usdc_usdt_deepbook_margin(): (
     scenario.return_to_sender(usdc_pool_cap);
     destroy(supplier_cap);
 
-    (scenario, clock, admin_cap, maintainer_cap, usdc_pool_id, usdt_pool_id, pool_id)
+    (scenario, clock, admin_cap, maintainer_cap, usdc_pool_id, usdt_pool_id, pool_id, registry_id)
 }
 
 /// Helper function to set up a complete BTC/USD margin trading environment
-/// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, deepbook_pool_id)
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, deepbook_pool_id, registry_id)
 public fun setup_btc_usd_deepbook_margin(): (
     Scenario,
     Clock,
     MarginAdminCap,
     MaintainerCap,
+    ID,
     ID,
     ID,
     ID,
@@ -495,7 +526,7 @@ public fun setup_btc_usd_deepbook_margin(): (
     scenario.next_tx(test_constants::admin());
     let (btc_pool_cap, usdc_pool_cap) = get_margin_pool_caps(&mut scenario, btc_pool_id);
 
-    let pool_id = create_pool_for_testing<BTC, USDC>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<BTC, USDC>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<BTC, USDC>(
@@ -538,16 +569,17 @@ public fun setup_btc_usd_deepbook_margin(): (
     scenario.return_to_sender(usdc_pool_cap);
     destroy(supplier_cap);
 
-    (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id)
+    (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, usdc_pool_id, pool_id, registry_id)
 }
 
 /// Helper function to set up a complete BTC/SUI margin trading environment
-/// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, deepbook_pool_id)
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, deepbook_pool_id, registry_id)
 public fun setup_btc_sui_deepbook_margin(): (
     Scenario,
     Clock,
     MarginAdminCap,
     MaintainerCap,
+    ID,
     ID,
     ID,
     ID,
@@ -571,7 +603,7 @@ public fun setup_btc_sui_deepbook_margin(): (
     scenario.next_tx(test_constants::admin());
     let (btc_pool_cap, sui_pool_cap) = get_margin_pool_caps(&mut scenario, btc_pool_id);
 
-    let pool_id = create_pool_for_testing<BTC, SUI>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<BTC, SUI>(&mut scenario);
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<BTC, SUI>(
@@ -614,7 +646,7 @@ public fun setup_btc_sui_deepbook_margin(): (
     scenario.return_to_sender(sui_pool_cap);
     destroy(supplier_cap);
 
-    (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, pool_id)
+    (scenario, clock, admin_cap, maintainer_cap, btc_pool_id, sui_pool_id, pool_id, registry_id)
 }
 
 public fun advance_time(clock: &mut Clock, ms: u64) {
@@ -642,12 +674,13 @@ public fun interest_rate(
 }
 
 /// Setup a complete margin trading environment with margin manager for pool proxy testing
-/// Returns: (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, deepbook_pool_id)
+/// Returns: (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, deepbook_pool_id, registry_id)
 public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     Scenario,
     Clock,
     MarginAdminCap,
     MaintainerCap,
+    ID,
     ID,
     ID,
     ID,
@@ -674,7 +707,7 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     let (base_pool_cap, quote_pool_cap) = get_margin_pool_caps(&mut scenario, base_pool_id);
 
     // Create DeepBook pool
-    let pool_id = create_pool_for_testing<BaseAsset, QuoteAsset>(&mut scenario);
+    let (pool_id, registry_id) = create_pool_for_testing<BaseAsset, QuoteAsset>(&mut scenario);
 
     // Enable margin trading
     scenario.next_tx(test_constants::admin());
@@ -718,5 +751,5 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     return_to_sender_2!(&scenario, base_pool_cap, quote_pool_cap);
     destroy(supplier_cap);
 
-    (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id)
+    (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id, registry_id)
 }

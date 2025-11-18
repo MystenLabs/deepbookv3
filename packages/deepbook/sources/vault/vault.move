@@ -17,6 +17,8 @@ const EInvalidLoanQuantity: u64 = 3;
 const EIncorrectLoanPool: u64 = 4;
 const EIncorrectTypeReturned: u64 = 5;
 const EIncorrectQuantityReturned: u64 = 6;
+const ENoBalanceToSettle: u64 = 7;
+const EHasOwedBalances: u64 = 8;
 
 // === Structs ===
 public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
@@ -96,6 +98,37 @@ public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
             false,
         );
         self.deep_balance.join(balance);
+    };
+}
+
+/// Transfer any settled amounts for the `balance_manager`.
+public(package) fun settle_balance_manager_permissionless<BaseAsset, QuoteAsset>(
+    self: &mut Vault<BaseAsset, QuoteAsset>,
+    balances_out: Balances,
+    balances_in: Balances,
+    balance_manager: &mut BalanceManager,
+) {
+    assert!(
+        balances_in.base() == 0 && balances_in.quote() == 0 && balances_in.deep() == 0,
+        EHasOwedBalances,
+    );
+    let has_settled_balances =
+        balances_out.base() > 0
+        || balances_out.quote() > 0
+        || balances_out.deep() > 0;
+    assert!(has_settled_balances, ENoBalanceToSettle);
+
+    if (balances_out.base() > 0) {
+        let balance = self.base_balance.split(balances_out.base());
+        balance_manager.deposit_permissionless(balance);
+    };
+    if (balances_out.quote() > 0) {
+        let balance = self.quote_balance.split(balances_out.quote());
+        balance_manager.deposit_permissionless(balance);
+    };
+    if (balances_out.deep() > 0) {
+        let balance = self.deep_balance.split(balances_out.deep());
+        balance_manager.deposit_permissionless(balance);
     };
 }
 

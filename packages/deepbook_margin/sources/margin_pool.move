@@ -3,7 +3,7 @@
 
 module deepbook_margin::margin_pool;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
@@ -215,10 +215,13 @@ public fun update_interest_params<Asset>(
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let margin_pool_id = self.id();
+    let protocol_fees = self.state.update(&self.config, clock);
+    self.protocol_fees.increase_fees_accrued(margin_pool_id, protocol_fees);
     self.config.set_interest_config(interest_config);
 
     event::emit(InterestParamsUpdated {
-        margin_pool_id: self.id(),
+        margin_pool_id,
         pool_cap_id: margin_pool_cap.pool_cap_id(),
         interest_config,
         timestamp: clock.timestamp_ms(),
@@ -447,74 +450,104 @@ public fun withdraw_protocol_fees<Asset>(
 }
 
 // === Public-View Functions ===
+/// Return the ID of the margin pool.
 public fun id<Asset>(self: &MarginPool<Asset>): ID {
     self.id.to_inner()
 }
 
+/// Return whether a margin manager for a given deepbook pool is allowed to borrow from the margin pool.
 public fun deepbook_pool_allowed<Asset>(self: &MarginPool<Asset>, deepbook_pool_id: ID): bool {
     self.allowed_deepbook_pools.contains(&deepbook_pool_id)
 }
 
+/// Return the current total supply of the margin pool.
 public fun total_supply<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.total_supply()
 }
 
+/// Return the current total supply of the margin pool including accrued interest.
+public fun total_supply_with_interest<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
+    self.state.total_supply_with_interest(&self.config, clock)
+}
+
+/// Return the current total supply shares of the margin pool.
 public fun supply_shares<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.supply_shares()
 }
 
+/// Return the current supply ratio of the margin pool.
 public fun supply_ratio<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.supply_ratio()
 }
 
+/// Return the current total borrow of the margin pool.
 public fun total_borrow<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.total_borrow()
 }
 
+/// Return the current total borrow shares of the margin pool.
 public fun borrow_shares<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.borrow_shares()
 }
 
+/// Return the current borrow ratio of the margin pool.
 public fun borrow_ratio<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.borrow_ratio()
 }
 
+/// Return the last update timestamp of the margin pool.
 public fun last_update_timestamp<Asset>(self: &MarginPool<Asset>): u64 {
     self.state.last_update_timestamp()
 }
 
+/// Return the supply cap of the margin pool.
 public fun supply_cap<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.supply_cap()
 }
 
+/// Return the current protocol fees of the margin pool.
 public fun protocol_fees<Asset>(self: &MarginPool<Asset>): &ProtocolFees {
     &self.protocol_fees
 }
 
+/// Return the current max utilization rate of the margin pool.
 public fun max_utilization_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.max_utilization_rate()
 }
 
+/// Return the current protocol spread of the margin pool.
 public fun protocol_spread<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.protocol_spread()
 }
 
+/// Return the current min borrow of the margin pool.
 public fun min_borrow<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.min_borrow()
 }
 
+/// Return the current interest rate of the margin pool. Represented in 9 decimal places.
 public fun interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
     self.config.interest_rate(self.state.utilization_rate())
 }
 
+public fun true_interest_rate<Asset>(self: &MarginPool<Asset>): u64 {
+    math::mul(
+        math::mul(self.interest_rate(), self.state.utilization_rate()),
+        constants::float_scaling() - self.protocol_spread(),
+    )
+}
+
+/// Return the current user supply shares of the margin pool.
 public fun user_supply_shares<Asset>(self: &MarginPool<Asset>, supplier_cap_id: ID): u64 {
     self.positions.user_supply_shares(supplier_cap_id)
 }
 
+/// Return the current vault balance of the margin pool.
 public fun vault_balance<Asset>(self: &MarginPool<Asset>): u64 {
     self.vault.value()
 }
 
+/// Return the current user supply amount of the margin pool.
 public fun user_supply_amount<Asset>(
     self: &MarginPool<Asset>,
     supplier_cap_id: ID,

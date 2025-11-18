@@ -603,6 +603,16 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     self.vault.settle_balance_manager(settled, owed, balance_manager, trade_proof);
 }
 
+/// Withdraw settled amounts permissionlessly to the `balance_manager`.
+public fun withdraw_settled_amounts_permissionless<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+) {
+    let self = self.load_inner_mut();
+    let (settled, owed) = self.state.withdraw_settled_amounts(balance_manager.id());
+    self.vault.settle_balance_manager_permissionless(settled, owed, balance_manager);
+}
+
 // === Public-Mutative Functions * GOVERNANCE * ===
 /// Stake DEEP tokens to the pool. The balance_manager must have enough DEEP
 /// tokens.
@@ -864,8 +874,21 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
-/// Update the multiplier for the referral.
+#[
+    deprecated(
+        note = b"This function is deprecated, use `update_deepbook_referral_multiplier` instead.",
+    ),
+]
 public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+) {
+    abort 1337
+}
+
+/// Update the multiplier for the referral.
+public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     multiplier: u64,
