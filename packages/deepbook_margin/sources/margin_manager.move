@@ -814,7 +814,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps<MarginApp>(
+    ) = balance_manager::new_with_custom_owner_caps<MarginApp>(
         deepbook_registry,
         id.to_address(),
         ctx,

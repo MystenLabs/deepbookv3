@@ -874,8 +874,21 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
-/// Update the multiplier for the referral.
+#[
+    deprecated(
+        note = b"This function is deprecated, use `update_deepbook_referral_multiplier` instead.",
+    ),
+]
 public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+) {
+    abort 1337
+}
+
+/// Update the multiplier for the referral.
+public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookReferral,
     multiplier: u64,

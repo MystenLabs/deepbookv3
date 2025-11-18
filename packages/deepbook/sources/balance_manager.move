@@ -140,7 +140,13 @@ public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceMa
     }
 }
 
-public fun new_with_custom_owner_and_caps<App: drop>(
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner_caps` instead.")]
+public fun new_with_custom_owner_and_caps(
+    _owner: address,
+    _ctx: &mut TxContext,
+): (BalanceManager, DepositCap, WithdrawCap, TradeCap) { abort 1337 }
+
+public fun new_with_custom_owner_caps<App: drop>(
     deepbook_registry: &Registry,
     owner: address,
     ctx: &mut TxContext,
@@ -337,7 +343,12 @@ public fun withdraw_all<T>(balance_manager: &mut BalanceManager, ctx: &mut TxCon
     coin
 }
 
-public fun register_manager(
+#[deprecated(note = b"This function is deprecated, use `register_balance_manager` instead.")]
+public fun register_manager(_balance_manager: &BalanceManager, _registry: &mut Registry) {
+    abort 1337
+}
+
+public fun register_balance_manager(
     balance_manager: &BalanceManager,
     registry: &mut Registry,
     ctx: &mut TxContext,
