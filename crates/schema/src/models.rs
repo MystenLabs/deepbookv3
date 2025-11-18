@@ -16,7 +16,6 @@ use crate::schema::{
     // Margin Registry Events
     maintainer_cap_updated,
     maintainer_fees_withdrawn,
-    pause_cap_updated,
     // Margin Manager Events
     margin_manager_created,
     margin_pool_config_updated,
@@ -24,17 +23,18 @@ use crate::schema::{
     margin_pool_created,
     order_fills,
     order_updates,
+    pause_cap_updated,
     pool_prices,
     pools,
     proposals,
     protocol_fees_increased,
     protocol_fees_withdrawn,
-    referral_fees_claimed,
     rebates,
+    referral_fees_claimed,
     stakes,
+    sui_error_transactions,
     supplier_cap_minted,
     supply_referral_minted,
-    sui_error_transactions,
     trade_params_update,
     votes,
 };
