@@ -51,9 +51,9 @@ public fun new_coin_type_data<T>(
     max_ewma_difference_bps: u64,
 ): CoinTypeData {
     // Validate oracle configuration parameters
-    assert!(max_conf_bps < margin_constants::max_conf_bps(), EInvalidOracleConfig);
+    assert!(max_conf_bps <= margin_constants::max_conf_bps(), EInvalidOracleConfig);
     assert!(
-        max_ewma_difference_bps < margin_constants::max_ewma_difference_bps(),
+        max_ewma_difference_bps <= margin_constants::max_ewma_difference_bps(),
         EInvalidOracleConfig,
     );
 
