@@ -3387,7 +3387,7 @@ fun mint_referral_not_multiple_of_multiplier_e() {
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
-fun update_deepbook_referral_multiplier() {
+fun test_update_deepbook_referral_multiplier_e() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
     let referral_id;
