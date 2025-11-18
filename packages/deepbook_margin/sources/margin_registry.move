@@ -105,8 +105,15 @@ public struct PauseCapUpdated has copy, drop {
     timestamp: u64,
 }
 
+#[deprecated(note = b"This event is deprecated, replaced by DeepbookPoolRegisteredV2.")]
 public struct DeepbookPoolRegistered has copy, drop {
     pool_id: ID,
+    timestamp: u64,
+}
+
+public struct DeepbookPoolRegisteredV2 has copy, drop {
+    pool_id: ID,
+    config: PoolConfig,
     timestamp: u64,
 }
 
@@ -200,8 +207,9 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
 
     inner.pool_registry.add(pool_id, pool_config);
 
-    event::emit(DeepbookPoolRegistered {
+    event::emit(DeepbookPoolRegisteredV2 {
         pool_id,
+        config: pool_config,
         timestamp: clock.timestamp_ms(),
     });
 }
