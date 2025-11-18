@@ -3387,7 +3387,7 @@ fun mint_referral_not_multiple_of_multiplier_e() {
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
-fun test_update_referral_multiplier_e() {
+fun update_deepbook_referral_multiplier() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
     let referral_id;
@@ -3402,7 +3402,7 @@ fun test_update_referral_multiplier_e() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_100_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 2_100_000_000, test.ctx());
     };
 
     abort (0)
@@ -3425,7 +3425,7 @@ fun test_update_referral_multiplier_wrong_owner() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 200_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 200_000_000, test.ctx());
     };
 
     abort (0)
@@ -3526,7 +3526,7 @@ fun test_process_order_referral_ok() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 2_000_000_000, test.ctx());
         return_shared(pool);
         return_shared(referral);
     };

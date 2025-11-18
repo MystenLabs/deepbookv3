@@ -140,7 +140,13 @@ public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceMa
     }
 }
 
-public fun new_with_custom_owner_and_caps<App: drop>(
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner_caps` instead.")]
+public fun new_with_custom_owner_and_caps(
+    _owner: address,
+    _ctx: &mut TxContext,
+): (BalanceManager, DepositCap, WithdrawCap, TradeCap) { abort 1337 }
+
+public fun new_with_custom_owner_caps<App: drop>(
     deepbook_registry: &Registry,
     owner: address,
     ctx: &mut TxContext,
