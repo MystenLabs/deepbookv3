@@ -417,7 +417,6 @@ public fun create_test_pyth_config(): PythConfig {
     oracle::new_pyth_config(
         coin_data_vec,
         60, // max age 60 seconds
-        100, // max confidence interval, 1%
     )
 }
 
