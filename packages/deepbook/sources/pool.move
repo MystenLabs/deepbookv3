@@ -874,7 +874,6 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
-/// depreacted
 #[
     deprecated(
         note = b"This function is deprecated, use `update_deepbook_referral_multiplier` instead.",
