@@ -1,0 +1,2 @@
+ALTER TABLE margin_manager_state
+DROP CONSTRAINT unique_margin_manager_id;
