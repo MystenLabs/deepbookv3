@@ -233,6 +233,9 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
     let deposit_base_asset = deposit_asset_type == type_name::with_defining_ids<BaseAsset>();
     let deposit_quote_asset = deposit_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    // We return early here, because there is no need to emit a deposit collateral event if neither the base asset
+    // nor the quote asset is deposited. This handles the case for DEEP deposits, when DEEP is not part of the base
+    // or quote assets.
     if (!deposit_base_asset && !deposit_quote_asset) return;
 
     let (pyth_price, pyth_decimals) = if (deposit_base_asset) {
@@ -302,6 +305,9 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     let withdraw_asset_type = type_name::with_defining_ids<WithdrawAsset>();
     let withdraw_base_asset = withdraw_asset_type == type_name::with_defining_ids<BaseAsset>();
     let withdraw_quote_asset = withdraw_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    // We return early here, because there is no need to emit a withdraw collateral event if neither the base asset
+    // nor the quote asset is withdrawn. This handles the case for DEEP withdrawals, when DEEP is not part of the base
+    // or quote assets.
     if (!withdraw_base_asset && !withdraw_quote_asset) return coin;
 
     let (
