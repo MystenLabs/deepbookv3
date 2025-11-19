@@ -581,6 +581,14 @@ public fun balance_manager<BaseAsset, QuoteAsset>(
     &self.balance_manager
 }
 
+public fun base_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<BaseAsset>()
+}
+
+public fun quote_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<QuoteAsset>()
+}
+
 /// Returns (base_asset, quote_asset) for margin manager.
 public fun calculate_assets<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
