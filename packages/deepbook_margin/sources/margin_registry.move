@@ -107,6 +107,7 @@ public struct PauseCapUpdated has copy, drop {
 
 public struct DeepbookPoolRegistered has copy, drop {
     pool_id: ID,
+    config: PoolConfig,
     timestamp: u64,
 }
 
@@ -202,6 +203,7 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
 
     event::emit(DeepbookPoolRegistered {
         pool_id,
+        config: pool_config,
         timestamp: clock.timestamp_ms(),
     });
 }
