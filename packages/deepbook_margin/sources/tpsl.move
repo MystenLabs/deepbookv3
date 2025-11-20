@@ -16,7 +16,7 @@ use deepbook_margin::margin_registry::{
 };
 use deepbook_margin::margin_state::{Self, State};
 use deepbook_margin::oracle::calculate_oracle_usd_price;
-use deepbook_margin::pool_proxy::place_limit_order_conditional;
+use deepbook_margin::pool_proxy::{place_limit_order_conditional, place_market_order_conditional};
 use deepbook_margin::position_manager::{Self, PositionManager};
 use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
 use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
@@ -50,14 +50,15 @@ public struct Condition has copy, drop, store {
 
 public struct PendingOrder has copy, drop, store {
     pool_id: ID,
+    is_limit_order: bool,
     client_order_id: u64,
-    order_type: u8,
+    order_type: Option<u8>,
     self_matching_option: u8,
-    price: u64,
+    price: Option<u64>,
     quantity: u64,
     is_bid: bool,
     pay_with_deep: bool,
-    expire_timestamp: u64,
+    expire_timestamp: Option<u64>,
 }
 
 // === Public Functions ===
@@ -86,7 +87,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self.pending_orders.insert(pending_order_identifier, pending_order);
 }
 
-public fun new_pending_order(
+public fun new_pending_limit_order(
     pool_id: ID,
     client_order_id: u64,
     order_type: u8,
@@ -99,14 +100,37 @@ public fun new_pending_order(
 ): PendingOrder {
     PendingOrder {
         pool_id,
+        is_limit_order: true,
         client_order_id,
-        order_type,
+        order_type: option::some(order_type),
         self_matching_option,
-        price,
+        price: option::some(price),
         quantity,
         is_bid,
         pay_with_deep,
-        expire_timestamp,
+        expire_timestamp: option::some(expire_timestamp),
+    }
+}
+
+public fun new_pending_market_order(
+    pool_id: ID,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+): PendingOrder {
+    PendingOrder {
+        pool_id,
+        is_limit_order: false,
+        client_order_id,
+        order_type: option::none(),
+        self_matching_option,
+        price: option::none(),
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp: option::none(),
     }
 }
 
@@ -193,21 +217,36 @@ fun place_pending_limit_order<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     assert!(pending_order.pool_id == pool.id(), EIncorrectPool);
 
-    place_limit_order_conditional<BaseAsset, QuoteAsset>(
-        registry,
-        margin_manager,
-        pool,
-        pending_order.client_order_id,
-        pending_order.order_type,
-        pending_order.self_matching_option,
-        pending_order.price,
-        pending_order.quantity,
-        pending_order.is_bid,
-        pending_order.pay_with_deep,
-        pending_order.expire_timestamp,
-        clock,
-        ctx,
-    )
+    if (pending_order.is_limit_order) {
+        place_limit_order_conditional<BaseAsset, QuoteAsset>(
+            registry,
+            margin_manager,
+            pool,
+            pending_order.client_order_id,
+            pending_order.order_type.destroy_some(),
+            pending_order.self_matching_option,
+            pending_order.price.destroy_some(),
+            pending_order.quantity,
+            pending_order.is_bid,
+            pending_order.pay_with_deep,
+            pending_order.expire_timestamp.destroy_some(),
+            clock,
+            ctx,
+        )
+    } else {
+        place_market_order_conditional<BaseAsset, QuoteAsset>(
+            registry,
+            margin_manager,
+            pool,
+            pending_order.client_order_id,
+            pending_order.self_matching_option,
+            pending_order.quantity,
+            pending_order.is_bid,
+            pending_order.pay_with_deep,
+            clock,
+            ctx,
+        )
+    }
 }
 
 fun new_condition(trigger_is_below: bool, trigger_price: u64): Condition {
