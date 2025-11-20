@@ -8,12 +8,8 @@ use deepbook::{
     balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, DeepBookReferral},
     registry
 };
-use sui::{
-    coin::mint_for_testing,
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
-};
+use std::unit_test::destroy;
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
@@ -570,7 +566,7 @@ fun test_referral_ok() {
         transfer::public_share_object(balance_manager);
         return_shared(referral1);
         return_shared(referral2);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
@@ -588,7 +584,7 @@ fun test_unset_no_referral_ok() {
         assert!(balance_manager.get_referral_id() == option::none(), 0);
 
         transfer::public_share_object(balance_manager);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
@@ -625,9 +621,9 @@ fun test_unauthorized_custom_owner_creation_e() {
         );
 
         transfer::public_share_object(balance_manager);
-        test_utils::destroy(deposit_cap);
-        test_utils::destroy(withdraw_cap);
-        test_utils::destroy(trade_cap);
+        destroy(deposit_cap);
+        destroy(withdraw_cap);
+        destroy(trade_cap);
         return_shared(deepbook_registry);
     };
 

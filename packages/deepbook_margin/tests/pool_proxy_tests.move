@@ -27,7 +27,8 @@ use deepbook_margin::{
         build_demo_usdt_price_info_object
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 use token::deep::DEEP;
 
 // === Place Limit Order Tests ===
@@ -59,13 +60,19 @@ fun test_place_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit some collateral
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Place a limit order successfully
     let order_info = pool_proxy::place_limit_order<USDC, USDT>(
@@ -188,12 +195,18 @@ fun test_place_limit_order_pool_not_enabled() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut non_margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(non_margin_pool_id);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Try to place order with non-enabled pool - should fail
     pool_proxy::place_limit_order<USDC, USDT>(
@@ -244,12 +257,18 @@ fun test_place_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let order_info = pool_proxy::place_market_order<USDC, USDT>(
         &registry,
@@ -356,12 +375,18 @@ fun test_place_market_order_pool_not_enabled() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let mut non_margin_pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(non_margin_pool_id);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     pool_proxy::place_market_order<USDC, USDT>(
         &registry,
@@ -411,17 +436,20 @@ fun test_place_reduce_only_limit_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit USDT as collateral
     mm.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
     // Borrow USDC to establish a base debt
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     mm.borrow_base<USDC, USDT>(
         &registry,
         &mut base_pool,
@@ -559,13 +587,19 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit some USDT to use as collateral
     mm.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
@@ -636,13 +670,19 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit some USDT to use as collateral
     mm.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
@@ -727,16 +767,18 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit some USDC to use as collateral
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
-
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     // Borrow some USDT
     mm.borrow_quote<USDC, USDT>(
         &registry,
@@ -820,16 +862,18 @@ fun test_place_reduce_only_market_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit USDT as collateral
     mm.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
-
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
     // Borrow USDC to establish a base debt
     mm.borrow_base<USDC, USDT>(
         &registry,
@@ -962,13 +1006,19 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit some USDT to use as collateral
     mm.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
@@ -1035,13 +1085,19 @@ fun test_stake_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<DEEP>(1000 * test_constants::deep_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Stake DEEP tokens - should work since this is not a DEEP margin manager
     pool_proxy::stake<USDC, USDT>(
@@ -1126,12 +1182,18 @@ fun test_modify_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // First place an order
     let order_info = pool_proxy::place_limit_order<USDC, USDT>(
@@ -1196,12 +1258,18 @@ fun test_cancel_order_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let order_info = pool_proxy::place_limit_order<USDC, USDT>(
         &registry,
@@ -1264,12 +1332,18 @@ fun test_cancel_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     let order_info1 = pool_proxy::place_limit_order<USDC, USDT>(
         &registry,
@@ -1346,12 +1420,18 @@ fun test_cancel_all_orders_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     pool_proxy::cancel_all_orders<USDC, USDT>(
         &registry,
@@ -1473,16 +1553,22 @@ fun test_submit_proposal_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<DEEP>(
             20000 * test_constants::deep_multiplier(),
             scenario.ctx(),
         ), // 20000 DEEP with 6 decimals
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Stake DEEP tokens (10000 DEEP to be safe)
     pool_proxy::stake<USDC, USDT>(
@@ -1542,16 +1628,22 @@ fun test_vote_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit DEEP tokens
     mm.deposit<USDC, USDT, DEEP>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<DEEP>(
             20000 * test_constants::deep_multiplier(),
             scenario.ctx(),
         ), // 20000 DEEP with 6 decimals
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Stake DEEP tokens (10000 DEEP to be safe)
     pool_proxy::stake<USDC, USDT>(
@@ -1666,13 +1758,19 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit USDC
     mm.deposit<USDC, USDT, USDC>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Place a sell order
     let order_info = pool_proxy::place_limit_order<USDC, USDT>(
@@ -1707,13 +1805,19 @@ fun test_withdraw_settled_amounts_permissionless_ok() {
 
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
 
     // Deposit USDT for user2
     mm2.deposit<USDC, USDT, USDT>(
         &registry,
+        &usdc_price,
+        &usdt_price,
         mint_coin<USDT>(10000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
+    destroy_2!(usdc_price, usdt_price);
 
     // Place a buy order that matches user1's sell order
     let order_info2 = pool_proxy::place_limit_order<USDC, USDT>(

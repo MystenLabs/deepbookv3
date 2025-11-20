@@ -10,8 +10,7 @@ use deepbook_margin::{
     protocol_config::{Self, ProtocolConfig, MarginPoolConfig, InterestConfig},
     test_constants
 };
-use std::unit_test::assert_eq;
-use sui::test_utils::destroy;
+use std::unit_test::{assert_eq, destroy};
 
 /// Create a test protocol config with default values
 public fun create_test_protocol_config(): ProtocolConfig {

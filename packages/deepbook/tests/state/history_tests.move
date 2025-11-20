@@ -5,7 +5,8 @@
 module deepbook::history_tests;
 
 use deepbook::{balances, constants, history, trade_params};
-use sui::{test_scenario::{begin, end}, test_utils};
+use std::unit_test::destroy;
+use sui::test_scenario::{begin, end};
 
 const EWrongRebateAmount: u64 = 0;
 
@@ -55,7 +56,7 @@ fun test_rebate_amount() {
     assert!(rebate.quote() == 450_000, EWrongRebateAmount);
     assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
-    test_utils::destroy(history);
+    destroy(history);
     end(test);
 }
 
@@ -124,7 +125,7 @@ fun test_epoch_skipped() {
     assert!(rebate_epoch_1_bob.quote() == 450_000, EWrongRebateAmount);
     assert!(rebate_epoch_1_bob.deep() == 180_000_000, EWrongRebateAmount);
 
-    test_utils::destroy(history);
+    destroy(history);
     end(test);
 }
 
@@ -173,7 +174,7 @@ fun test_other_maker_volume_above_phase_out() {
     assert!(rebate.quote() == 0, EWrongRebateAmount);
     assert!(rebate.deep() == 0, EWrongRebateAmount);
 
-    test_utils::destroy(history);
+    destroy(history);
     end(test);
 }
 
@@ -238,6 +239,6 @@ fun test_rebate_edge_epoch_ok() {
     assert!(rebate.quote() == 180_000, EWrongRebateAmount);
     assert!(rebate.deep() == 180_000_000, EWrongRebateAmount);
 
-    test_utils::destroy(history);
+    destroy(history);
     end(test);
 }

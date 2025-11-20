@@ -21,11 +21,11 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT, BTC, SUI}
 };
 use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
+use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
-    test_scenario::{Self as test, Scenario, begin, return_shared},
-    test_utils::destroy
+    test_scenario::{Self as test, Scenario, begin, return_shared}
 };
 use token::deep::DEEP;
 
