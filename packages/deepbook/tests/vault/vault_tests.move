@@ -11,7 +11,8 @@ use deepbook::{
     constants,
     vault
 };
-use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;

@@ -14,7 +14,8 @@ use deepbook::{
     pool::Pool,
     pool_tests::{setup_test, setup_pool_with_default_fees_and_reference_pool, place_limit_order}
 };
-use sui::{sui::SUI, test_scenario::{begin, end, return_shared}, test_utils};
+use std::unit_test::destroy;
+use sui::{sui::SUI, test_scenario::{begin, end, return_shared}};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -158,6 +159,6 @@ fun test_place_orders_ok() {
     assert!(orders.orders().length() == 5);
     assert!(orders.has_next_page() == true);
 
-    test_utils::destroy(pool);
+    destroy(pool);
     end(test);
 }

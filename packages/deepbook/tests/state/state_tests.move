@@ -12,8 +12,8 @@ use deepbook::{
     state,
     utils
 };
-use std::unit_test::assert_eq;
-use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}, test_utils::destroy};
+use std::unit_test::{assert_eq, destroy};
+use sui::{object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
