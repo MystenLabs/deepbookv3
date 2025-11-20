@@ -4,25 +4,33 @@
 #[test_only]
 module deepbook_margin::margin_manager_math_tests;
 
-use deepbook::{pool::Pool, registry::Registry};
-use deepbook_margin::{
-    margin_manager::{Self, MarginManager},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, BTC, SUI, btc_multiplier, sui_multiplier, usdc_multiplier},
-    test_helpers::{
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_btc_price_info_object,
-        build_sui_price_info_object,
-        setup_btc_usd_deepbook_margin,
-        setup_btc_sui_deepbook_margin,
-        destroy_3,
-        return_shared_3
-    }
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::test_constants::{
+    Self,
+    USDC,
+    BTC,
+    SUI,
+    btc_multiplier,
+    sui_multiplier,
+    usdc_multiplier
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use deepbook_margin::test_helpers::{
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_btc_price_info_object,
+    build_sui_price_info_object,
+    setup_btc_usd_deepbook_margin,
+    setup_btc_sui_deepbook_margin,
+    destroy_3,
+    return_shared_3
+};
+use sui::test_scenario::return_shared;
+use sui::test_utils::destroy;
 
 const ENoError: u64 = 0;
 const ECannotLiquidate: u64 = 1;
@@ -206,9 +214,6 @@ fun test_liquidation_quote_debt(error_code: u64) {
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
 
-    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
-
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -345,9 +350,6 @@ fun test_liquidation_quote_debt_partial() {
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
-
-    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
