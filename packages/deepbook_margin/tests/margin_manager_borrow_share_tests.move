@@ -76,7 +76,14 @@ fun test_multiple_borrows_accumulate_shares_base() {
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm, registry);
 
@@ -177,7 +184,14 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     // Deposit significant BTC as collateral
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm, registry);
 
@@ -280,7 +294,14 @@ fun test_user_shares_isolated_from_other_users_base() {
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm1.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm1.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm1, registry);
 
@@ -339,7 +360,14 @@ fun test_user_shares_isolated_from_other_users_base() {
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm2.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm2.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm2, registry);
 
@@ -430,7 +458,14 @@ fun test_user_shares_isolated_from_other_users_quote() {
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm1.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm1.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm1, registry);
 
@@ -486,7 +521,14 @@ fun test_user_shares_isolated_from_other_users_quote() {
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm2.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    mm2.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
     destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm2, registry);
 

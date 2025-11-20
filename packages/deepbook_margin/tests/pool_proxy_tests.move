@@ -4,31 +4,30 @@
 #[test_only]
 module deepbook_margin::pool_proxy_tests;
 
-use deepbook::constants;
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::MarginRegistry;
-use deepbook_margin::pool_proxy;
-use deepbook_margin::test_constants::{Self, USDC, USDT};
-use deepbook_margin::test_helpers::{
-    setup_pool_proxy_test_env,
-    setup_margin_registry,
-    create_margin_pool,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    default_protocol_config,
-    cleanup_margin_test,
-    mint_coin,
-    destroy_2,
-    return_shared_2,
-    return_shared_3,
-    build_demo_usdc_price_info_object,
-    build_demo_usdt_price_info_object
+use deepbook::{constants, pool::Pool, registry::Registry};
+use deepbook_margin::{
+    margin_manager::{Self, MarginManager},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    pool_proxy,
+    test_constants::{Self, USDC, USDT},
+    test_helpers::{
+        setup_pool_proxy_test_env,
+        setup_margin_registry,
+        create_margin_pool,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        default_protocol_config,
+        cleanup_margin_test,
+        mint_coin,
+        destroy_2,
+        return_shared_2,
+        return_shared_3,
+        build_demo_usdc_price_info_object,
+        build_demo_usdt_price_info_object
+    }
 };
-use sui::test_scenario::return_shared;
-use sui::test_utils::destroy;
+use sui::{test_scenario::return_shared, test_utils::destroy};
 use token::deep::DEEP;
 
 // === Place Limit Order Tests ===
