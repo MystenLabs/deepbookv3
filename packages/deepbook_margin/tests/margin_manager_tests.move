@@ -141,11 +141,9 @@ fun test_deepbook_margin_with_oracle() {
         scenario.ctx(),
     );
 
-    test::return_shared(mm);
     test::return_shared(usdc_pool);
     test::return_shared(pool);
-
-    destroy_2!(usdc_price, usdt_price);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -200,11 +198,9 @@ fun test_btc_usd_deepbook_margin() {
         scenario.ctx(),
     );
 
-    test::return_shared(mm);
     test::return_shared(usdc_pool);
     test::return_shared(pool);
-
-    destroy_2!(btc_price, usdc_price);
+    destroy_3!(mm, btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -292,11 +288,9 @@ fun test_usd_deposit_btc_borrow() {
     destroy(base_coin);
     destroy(quote_coin);
 
-    test::return_shared(mm);
     test::return_shared(btc_pool);
     test::return_shared(pool);
-
-    destroy_2!(btc_price, usdc_price);
+    destroy_3!(mm, btc_price, usdc_price);
     destroy(btc_increased);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -338,7 +332,8 @@ fun test_margin_manager_creation_ok() {
     scenario.next_tx(test_constants::user1());
     let mm = scenario.take_shared<MarginManager<USDC, USDT>>();
 
-    return_shared_2!(mm, pool);
+    destroy(mm);
+    test::return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -436,9 +431,8 @@ fun test_deposit_with_base_quote_deep_assets() {
         scenario.ctx(),
     );
 
-    destroy_2!(usdc_price, usdt_price);
-
-    return_shared_2!(mm, pool);
+    destroy_3!(mm, usdc_price, usdt_price);
+    test::return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -561,9 +555,10 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     assert!(withdrawn_coin.value() == withdraw_amount);
     destroy(withdrawn_coin);
 
-    return_shared_3!(mm, usdc_pool, pool);
+    test::return_shared(usdc_pool);
+    test::return_shared(pool);
     return_shared(usdt_pool);
-    destroy_2!(usdc_price, usdt_price);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -969,8 +964,9 @@ fun test_repay_full_with_none() {
     );
 
     assert!(repaid_amount > 0);
-    return_shared_3!(mm, usdc_pool, pool);
-    destroy_2!(usdc_price, usdt_price);
+    test::return_shared(usdc_pool);
+    test::return_shared(pool);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1092,8 +1088,9 @@ fun test_repay_exact_amount_no_rounding_errors() {
         };
     });
 
-    destroy_2!(usdc_price, usdt_price);
-    return_shared_3!(mm, usdc_pool, pool);
+    destroy_3!(mm, usdc_price, usdt_price);
+    test::return_shared(usdc_pool);
+    test::return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1178,7 +1175,9 @@ fun test_liquidation_reward_calculations() {
     assert!(liquidator_btc_reward > 0 || liquidator_usdc_reward > 0);
 
     destroy_3!(remaining_debt, base_coin, quote_coin);
-    return_shared_3!(mm, usdc_pool, pool);
+    destroy(mm);
+    test::return_shared(usdc_pool);
+    test::return_shared(pool);
     destroy_3!(btc_price, usdc_price, btc_price_dropped);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -1224,7 +1223,8 @@ fun test_risk_ratio_with_zero_assets() {
     assert!(mm.borrowed_base_shares() == 0);
     assert!(mm.borrowed_quote_shares() == 0);
 
-    return_shared_2!(mm, pool);
+    destroy(mm);
+    test::return_shared(pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1348,8 +1348,9 @@ fun test_risk_ratio_with_multiple_assets() {
     // Total debt: $2000 USDT
     // Risk ratio should be approximately 4.0 (400%)
 
-    return_shared_3!(mm, usdt_pool, pool);
-    destroy_2!(usdc_price, usdt_price);
+    test::return_shared(usdt_pool);
+    test::return_shared(pool);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1437,7 +1438,8 @@ fun test_risk_ratio_with_oracle_price_changes() {
     // Still above liquidation threshold (120%) but close
 
     return_shared_2!(btc_pool, usdc_pool);
-    return_shared_2!(mm, pool);
+    destroy(mm);
+    test::return_shared(pool);
     destroy_3!(btc_price, usdc_price, btc_price_increased);
     destroy(btc_price_dropped);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
@@ -1627,8 +1629,9 @@ fun test_min_position_size_requirement() {
     );
 
     // This should never be reached due to expected failure
-    return_shared_3!(mm, usdt_pool, pool);
-    destroy_2!(usdc_price, usdt_price);
+    test::return_shared(usdt_pool);
+    test::return_shared(pool);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1913,9 +1916,10 @@ fun test_asset_rebalancing_between_pools() {
     );
 
     destroy(usdc_withdrawn);
-    return_shared_3!(mm, usdc_pool, usdt_pool);
+    test::return_shared(usdc_pool);
+    test::return_shared(usdt_pool);
     return_shared(pool);
-    destroy_2!(usdc_price, usdt_price);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1978,8 +1982,8 @@ fun test_risk_ratio_returns_max_when_no_loan_but_has_assets() {
     assert!(risk_ratio == margin_constants::max_risk_ratio());
 
     return_shared_2!(btc_pool, usdc_pool);
-    return_shared_2!(mm, pool);
-    destroy_2!(btc_price, usdc_price);
+    test::return_shared(pool);
+    destroy_3!(mm, btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -2037,8 +2041,8 @@ fun test_risk_ratio_returns_max_when_completely_empty() {
     assert!(risk_ratio == margin_constants::max_risk_ratio());
 
     return_shared_2!(btc_pool, usdc_pool);
-    return_shared_2!(mm, pool);
-    destroy_2!(btc_price, usdc_price);
+    test::return_shared(pool);
+    destroy_3!(mm, btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -2144,9 +2148,7 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
         &clock,
         scenario.ctx(),
     );
-    destroy_2!(usdc_price, usdt_price);
-
-    test::return_shared(mm);
+    destroy_3!(mm, usdc_price, usdt_price);
     test::return_shared(registry);
 
     // User borrows exactly 4 USDC (4 * 10^6)
@@ -2186,9 +2188,9 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
     assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
 
     test::return_shared(base_pool);
-    return_shared_2!(mm, usdc_pool);
+    test::return_shared(usdc_pool);
     test::return_shared(pool);
-    destroy_2!(usdc_price, usdt_price);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -2294,9 +2296,7 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
         &clock,
         scenario.ctx(),
     );
-    destroy_2!(usdc_price, usdt_price);
-
-    test::return_shared(mm);
+    destroy_3!(mm, usdc_price, usdt_price);
     test::return_shared(registry);
 
     // User borrows exactly 4 USDC (4 * 10^6)
@@ -2343,9 +2343,9 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
 
     test::return_shared(base_pool);
-    return_shared_2!(mm, usdc_pool);
+    test::return_shared(usdc_pool);
     test::return_shared(pool);
-    destroy_2!(usdc_price, usdt_price);
+    destroy_3!(mm, usdc_price, usdt_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
