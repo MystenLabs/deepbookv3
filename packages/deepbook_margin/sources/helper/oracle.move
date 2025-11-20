@@ -4,10 +4,14 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
-use pyth::{price_info::PriceInfoObject, pyth};
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_registry::MarginRegistry;
+use pyth::price_info::PriceInfoObject;
+use pyth::pyth;
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::coin::CoinMetadata;
+use sui::vec_map::{Self, VecMap};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -16,6 +20,7 @@ const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
 const EInvalidPythPriceConf: u64 = 4;
 const EInvalidOracleConfig: u64 = 5;
+const EInvalidOracleBuffer: u64 = 6;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -120,6 +125,39 @@ public(package) fun calculate_usd_currency_amount(
         )) as u64;
 
     target_currency_amount
+}
+
+public(package) fun calculate_oracle_usd_price<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): u64 {
+    let config = price_config<T>(
+        price_info_object,
+        registry,
+        true,
+        clock,
+    );
+    config.calculate_usd_price_internal()
+}
+
+public(package) fun calculate_usd_price_internal(price_config: ConversionConfig): u64 {
+    let target_decimals = price_config.target_decimals;
+    let oracle_price = price_config.pyth_price;
+    let oracle_decimals = price_config.pyth_decimals;
+    assert!(BUFFER + target_decimals > oracle_decimals, EInvalidOracleBuffer);
+
+    let exponent_with_buffer = BUFFER + target_decimals - oracle_decimals;
+    assert!(exponent_with_buffer <= 18, EInvalidOracleBuffer); // prevent overflow
+
+    let target_usd_price =
+        (
+            ((oracle_price as u128) * 10u128.pow(exponent_with_buffer)) / (10u128.pow(
+            BUFFER,
+        )),
+        ) as u64;
+
+    target_usd_price
 }
 
 // Calculates the amount in target currency based on amount in asset A.

@@ -3,12 +3,12 @@
 
 module deepbook_margin::pool_proxy;
 
-use deepbook::{math, order_info::OrderInfo, pool::Pool};
-use deepbook_margin::{
-    margin_manager::MarginManager,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry
-};
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::Pool;
+use deepbook_margin::margin_manager::MarginManager;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
 use std::type_name;
 use sui::clock::Clock;
 use token::deep::DEEP;
@@ -39,6 +39,42 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+public(package) fun place_limit_order_conditional<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_unsafe_mut();
     assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
