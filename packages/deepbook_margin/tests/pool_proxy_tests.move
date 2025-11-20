@@ -27,7 +27,8 @@ use deepbook_margin::{
         build_demo_usdt_price_info_object
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 use token::deep::DEEP;
 
 // === Place Limit Order Tests ===

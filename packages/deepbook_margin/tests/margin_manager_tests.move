@@ -34,7 +34,8 @@ use deepbook_margin::{
         return_to_sender_2
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 use token::deep::DEEP;
 
 #[test]

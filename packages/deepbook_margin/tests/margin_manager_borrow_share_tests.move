@@ -22,7 +22,8 @@ use deepbook_margin::{
         supply_to_pool
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 
 #[test]
 fun test_multiple_borrows_accumulate_shares_base() {

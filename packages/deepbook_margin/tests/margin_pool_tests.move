@@ -14,13 +14,8 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT},
     test_helpers::{Self, mint_coin, advance_time}
 };
-use std::unit_test::assert_eq;
-use sui::{
-    clock::Clock,
-    coin::Coin,
-    test_scenario::{Self as test, Scenario, return_shared},
-    test_utils::destroy
-};
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock::Clock, coin::Coin, test_scenario::{Self as test, Scenario, return_shared}};
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();

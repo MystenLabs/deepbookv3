@@ -10,8 +10,8 @@ use deepbook_margin::{
     test_constants,
     test_helpers
 };
-use std::unit_test::assert_eq;
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::{assert_eq, destroy};
+use sui::test_scenario::return_shared;
 
 #[test]
 fun test_referral_fees_setup() {

@@ -22,7 +22,8 @@ use deepbook_margin::{
         return_shared_3
     }
 };
-use sui::{test_scenario::return_shared, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::test_scenario::return_shared;
 
 const ENoError: u64 = 0;
 const ECannotLiquidate: u64 = 1;

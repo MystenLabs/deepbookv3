@@ -17,7 +17,8 @@ use deepbook_margin::{
     test_helpers::{build_pyth_price_info_object, create_test_pyth_config}
 };
 use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
-use sui::{clock::{Self, Clock}, test_scenario::{Self, Scenario}, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::{clock::{Self, Clock}, test_scenario::{Self, Scenario}};
 
 #[test]
 fun test_calculate_usd_currency() {
