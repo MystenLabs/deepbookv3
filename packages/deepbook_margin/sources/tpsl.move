@@ -3,32 +3,16 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook::constants;
-use deepbook::math;
-use deepbook::order_info::OrderInfo;
-use deepbook::pool::Pool;
-use deepbook_margin::margin_manager::MarginManager;
-use deepbook_margin::margin_registry::{
-    MarginRegistry,
-    MaintainerCap,
-    MarginAdminCap,
-    MarginPoolCap
+use deepbook::{math, order_info::OrderInfo, pool::Pool};
+use deepbook_margin::{
+    margin_manager::MarginManager,
+    margin_registry::MarginRegistry,
+    oracle::calculate_oracle_usd_price,
+    pool_proxy::{place_limit_order_conditional, place_market_order_conditional}
 };
-use deepbook_margin::margin_state::{Self, State};
-use deepbook_margin::oracle::calculate_oracle_usd_price;
-use deepbook_margin::pool_proxy::{place_limit_order_conditional, place_market_order_conditional};
-use deepbook_margin::position_manager::{Self, PositionManager};
-use deepbook_margin::protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig};
-use deepbook_margin::protocol_fees::{Self, ProtocolFees, SupplyReferral};
 use pyth::price_info::PriceInfoObject;
 use std::string::String;
-use std::type_name::{Self, TypeName};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::vec_map::{Self, VecMap};
-use sui::vec_set::{Self, VecSet};
+use sui::{clock::Clock, vec_map::VecMap};
 
 // === Errors ===
 const EIncorrectPool: u64 = 1;
