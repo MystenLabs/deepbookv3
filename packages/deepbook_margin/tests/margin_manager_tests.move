@@ -28,7 +28,6 @@ use deepbook_margin::test_helpers::{
     destroy_2,
     destroy_3,
     return_shared_2,
-    return_shared_3,
     advance_time,
     get_margin_pool_caps,
     return_to_sender_2
@@ -2146,7 +2145,8 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
         &clock,
         scenario.ctx(),
     );
-    destroy_3!(mm, usdc_price, usdt_price);
+    destroy_2!(usdc_price, usdt_price);
+    test::return_shared(mm);
     test::return_shared(registry);
 
     // User borrows exactly 4 USDC (4 * 10^6)
@@ -2294,7 +2294,8 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
         &clock,
         scenario.ctx(),
     );
-    destroy_3!(mm, usdc_price, usdt_price);
+    destroy_2!(usdc_price, usdt_price);
+    test::return_shared(mm);
     test::return_shared(registry);
 
     // User borrows exactly 4 USDC (4 * 10^6)
