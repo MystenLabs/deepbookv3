@@ -69,12 +69,15 @@ fun test_multiple_borrows_accumulate_shares_base() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     // Deposit significant USDC as collateral
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm.deposit<BTC, USDC, USDC>(&registry, deposit_coin, scenario.ctx());
+    mm.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm, registry);
 
     // First borrow: 10 BTC when ratio is 1
@@ -170,9 +173,12 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     // Deposit significant BTC as collateral
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm.deposit<BTC, USDC, BTC>(&registry, deposit_coin, scenario.ctx());
+    mm.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm, registry);
 
     // First borrow: 10 USDC when ratio is 1
@@ -268,11 +274,14 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user1());
     let mut mm1 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm1.deposit<BTC, USDC, USDC>(&registry, deposit_coin, scenario.ctx());
+    mm1.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm1, registry);
 
     // User1 borrows 20 BTC
@@ -324,11 +333,14 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm2.deposit<BTC, USDC, USDC>(&registry, deposit_coin, scenario.ctx());
+    mm2.deposit<BTC, USDC, USDC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm2, registry);
 
     // User2 borrows 10 BTC when ratio is still 1
@@ -415,8 +427,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user1());
     let mut mm1 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm1.deposit<BTC, USDC, BTC>(&registry, deposit_coin, scenario.ctx());
+    mm1.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm1, registry);
 
     // User1 borrows 20 USDC
@@ -468,8 +483,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm2.deposit<BTC, USDC, BTC>(&registry, deposit_coin, scenario.ctx());
+    mm2.deposit<BTC, USDC, BTC>(&registry, &btc_price, &usdc_price, deposit_coin, &clock, scenario.ctx());
+    destroy_2!(btc_price, usdc_price);
     return_shared_2!(mm2, registry);
 
     // User2 borrows 10 USDC when ratio is still 1

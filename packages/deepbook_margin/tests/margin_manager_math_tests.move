@@ -109,7 +109,10 @@ fun test_liquidation(error_code: u64) {
     // Deposit 1 BTC worth $50
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -223,11 +226,16 @@ fun test_liquidation_quote_debt(error_code: u64) {
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     // Deposit 1 BTC worth $500
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -358,11 +366,16 @@ fun test_liquidation_quote_debt_partial() {
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     // Deposit 1 BTC worth $500
     mm.deposit<BTC, USDC, BTC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<BTC>(1 * btc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -497,7 +510,10 @@ fun test_liquidation_base_debt_default() {
     // Deposit 500 USDC
     mm.deposit<BTC, USDC, USDC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<USDC>(500 * usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -615,7 +631,10 @@ fun test_liquidation_base_debt() {
     // Deposit 500 USDC
     mm.deposit<BTC, USDC, USDC>(
         &registry,
+        &btc_price,
+        &usdc_price,
         mint_coin<USDC>(500 * usdc_multiplier(), scenario.ctx()),
+        &clock,
         scenario.ctx(),
     );
 
@@ -730,7 +749,10 @@ fun test_btc_sui_liquidation(error_code: u64) {
     // Deposit 0.1 BTC worth $5,000
     mm.deposit<BTC, SUI, BTC>(
         &registry,
+        &btc_price,
+        &sui_price,
         mint_coin<BTC>(10_000_000, scenario.ctx()), // 0.1 BTC (8 decimals)
+        &clock,
         scenario.ctx(),
     );
 
