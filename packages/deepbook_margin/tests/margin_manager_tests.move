@@ -1735,15 +1735,13 @@ fun test_repayment_rounding() {
 
     advance_time(&mut clock, 1000 * 100); // 100 seconds later
 
+    destroy_2!(usdc_price, usdt_price);
+
     // Recreate price objects after time advance (they become stale)
     // Create new ones in a new transaction to avoid stale price errors
     scenario.next_tx(test_constants::user1());
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
-    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let mut usdt_pool = scenario.take_shared_by_id<MarginPool<USDT>>(usdt_pool_id);
-    let registry = scenario.take_shared<MarginRegistry>();
-    let pool = scenario.take_shared<Pool<USDC, USDT>>();
 
     // Partial repayment
     mm.deposit<USDC, USDT, USDT>(
