@@ -412,6 +412,7 @@ impl Reader {
             String,
             String,
             String,
+            Option<String>,
             String,
             i64,
         )>,
@@ -433,6 +434,7 @@ impl Reader {
                 schema::margin_manager_created::package,
                 schema::margin_manager_created::margin_manager_id,
                 schema::margin_manager_created::balance_manager_id,
+                schema::margin_manager_created::deepbook_pool_id,
                 schema::margin_manager_created::owner,
                 schema::margin_manager_created::onchain_timestamp,
             ))
@@ -454,6 +456,7 @@ impl Reader {
                 String,
                 String,
                 String,
+                Option<String>,
                 String,
                 i64,
             )>(&mut connection)
