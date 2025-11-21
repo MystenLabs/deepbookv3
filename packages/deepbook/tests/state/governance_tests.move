@@ -5,12 +5,8 @@
 module deepbook::governance_tests;
 
 use deepbook::{constants, governance};
-use sui::{
-    address,
-    object::id_from_address,
-    test_scenario::{next_tx, begin, end},
-    test_utils::{destroy, assert_eq}
-};
+use std::unit_test::{assert_eq, destroy};
+use sui::{address, object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;
@@ -24,10 +20,11 @@ fun add_proposal_volatile_ok() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
-    assert!(gov.proposals().size() == 1, 0);
+    assert!(gov.proposals().length() == 1, 0);
     let (taker_fee, maker_fee, stake_required) = gov
         .proposals()
         .get(&id_from_address(alice))
@@ -46,8 +43,9 @@ fun add_proposal_volatile_taker_not_multiple_e() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500100, 200000, 10000, 1000, id_from_address(alice));
     abort 0
 }
@@ -58,8 +56,9 @@ fun add_proposal_volatile_low_taker_e() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(99000, 200000, 10000, 1000, id_from_address(alice));
     abort 0
 }
@@ -70,8 +69,9 @@ fun add_proposal_volatile_high_taker_e() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(1010000, 200000, 10000, 1000, id_from_address(alice));
     abort 0
 }
@@ -82,8 +82,9 @@ fun add_proposal_volatile_high_maker_e() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500000, 510000, 10000, 1000, id_from_address(alice));
     abort 0
 }
@@ -94,12 +95,13 @@ fun add_proposal_stable_ok() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = true;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(alice);
     gov.add_proposal(50000, 20000, 10000, 1000, id_from_address(alice));
-    assert!(gov.proposals().size() == 1, 0);
+    assert!(gov.proposals().length() == 1, 0);
 
     destroy(gov);
     end(test);
@@ -111,8 +113,9 @@ fun add_proposal_stable_taker_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = true;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(alice);
     gov.add_proposal(500000, 20000, 10000, 1000, id_from_address(alice));
@@ -125,8 +128,9 @@ fun add_proposal_stable_low_taker_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = true;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(alice);
     gov.add_proposal(9000, 20000, 10000, 10000, id_from_address(alice));
@@ -139,8 +143,9 @@ fun add_proposal_stable_high_taker_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = true;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(alice);
     gov.add_proposal(110000, 20000, 10000, 10000, id_from_address(alice));
@@ -153,47 +158,12 @@ fun add_proposal_stable_maker_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = true;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     test.next_tx(alice);
     gov.add_proposal(50000, 200000, 10000, 1000, id_from_address(alice));
     abort 0
-}
-
-#[test]
-fun set_whitelist_ok() {
-    let mut test = begin(OWNER);
-
-    test.next_tx(OWNER);
-    let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
-    gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(OWNER));
-    assert!(gov.proposals().size() == 1, 0);
-
-    // Setting whitelist to true removes all proposals,
-    // and sets all trade params to 0.
-    gov.set_whitelist(true);
-    assert!(gov.whitelisted(), 0);
-    assert!(!gov.stable(), 0);
-    assert!(gov.proposals().size() == 0, 0);
-    let trade_params = gov.trade_params();
-    assert!(trade_params.taker_fee() == 0, 0);
-    assert!(trade_params.maker_fee() == 0, 0);
-    assert!(trade_params.stake_required() == 0, 0);
-    assert_eq(trade_params, gov.next_trade_params());
-
-    // Setting whitelist to false resets params to default volatile values.
-    test.next_tx(OWNER);
-    gov.set_whitelist(false);
-    assert!(!gov.whitelisted(), 0);
-    assert!(!gov.stable(), 0);
-    let trade_params = gov.trade_params();
-    assert!(trade_params.taker_fee() == 1000000, 0);
-    assert!(trade_params.maker_fee() == 500000, 0);
-    assert!(trade_params.stake_required() == 0, 0);
-
-    destroy(gov);
-    end(test);
 }
 
 #[test, expected_failure(abort_code = governance::EWhitelistedPoolCannotChange)]
@@ -202,9 +172,9 @@ fun add_proposal_whitelisted_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = true;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
-    gov.set_whitelist(true);
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(ALICE);
     gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
@@ -218,8 +188,9 @@ fun adjust_voting_power_ok() {
     let mut alice_stake = 0;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     test.next_tx(alice);
     gov.adjust_voting_power(alice_stake, alice_stake + 1000);
@@ -258,12 +229,13 @@ fun update_ok() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     assert!(gov.voting_power() == 0, 0);
     assert!(gov.quorum() == 0, 0);
-    assert!(gov.proposals().size() == 0, 0);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert!(gov.proposals().length() == 0, 0);
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
     gov.adjust_voting_power(0, 1000);
     assert!(gov.voting_power() == 1000, 0);
 
@@ -276,7 +248,7 @@ fun update_ok() {
     test.next_tx(alice);
     gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
-    assert!(gov.proposals().size() == 1, 0);
+    assert!(gov.proposals().length() == 1, 0);
     assert!(gov.quorum() == 500, 0);
     let trade_params = gov.trade_params();
     assert!(trade_params.taker_fee() == 1000000, 0);
@@ -289,9 +261,9 @@ fun update_ok() {
 
     // update doesn't apply proposal yet since epoch hasn't changed
     gov.update(test.ctx());
-    assert_eq(trade_params, gov.trade_params());
-    assert_eq(next_trade_params, gov.next_trade_params());
-    assert!(gov.proposals().size() == 1, 0);
+    assert_eq!(trade_params, gov.trade_params());
+    assert_eq!(next_trade_params, gov.next_trade_params());
+    assert!(gov.proposals().length() == 1, 0);
     assert!(gov.voting_power() == 1000, 0);
     assert!(gov.quorum() == 500, 0);
 
@@ -302,8 +274,8 @@ fun update_ok() {
     assert!(trade_params.taker_fee() == 500000, 0);
     assert!(trade_params.maker_fee() == 200000, 0);
     assert!(trade_params.stake_required() == 10000, 0);
-    assert_eq(trade_params, gov.next_trade_params());
-    assert!(gov.proposals().size() == 0, 0);
+    assert_eq!(trade_params, gov.next_trade_params());
+    assert!(gov.proposals().length() == 0, 0);
     assert!(gov.voting_power() == 1000, 0);
     assert!(gov.quorum() == 500, 0);
 
@@ -318,8 +290,9 @@ fun adjust_vote_ok() {
     let bob = BOB;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.adjust_voting_power(0, 500);
     assert!(gov.voting_power() == 500, 0);
 
@@ -334,7 +307,7 @@ fun adjust_vote_ok() {
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 200);
     assert!(gov.proposals().get(&id_from_address(alice)).votes() == 200, 0);
     assert!(gov.next_trade_params().taker_fee() == 1000000, 0);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
 
     // bob proposes proposal 1, votes with 300 votes, over quorum
     test.next_tx(bob);
@@ -388,8 +361,9 @@ fun adjust_vote_e() {
     let alice = ALICE;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
     abort 0
 }
@@ -401,8 +375,9 @@ fun adjust_vote2_e() {
     let bob = BOB;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
     gov.adjust_vote(
@@ -420,8 +395,9 @@ fun adjust_vote_from_removed_proposal_ok() {
     let bob = BOB;
 
     test.next_tx(alice);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500000, 200000, 10000, 200, id_from_address(alice));
     gov.adjust_vote(
         option::some(id_from_address(bob)),
@@ -448,8 +424,9 @@ fun remove_proposal_vote_e() {
     let charlie = CHARLIE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.adjust_voting_power(0, 450000);
 
     test.next_epoch(OWNER);
@@ -480,12 +457,12 @@ fun remove_proposal_vote_e() {
         option::some(id_from_address(alice)),
         100000,
     );
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
     // Bob proposes and votes with 200000 stake, not enough to push proposal Bob
     // over quorum
     gov.add_proposal(600000, 300000, 20000, 200000, id_from_address(bob));
     gov.adjust_vote(option::none(), option::some(id_from_address(bob)), 200000);
-    assert_eq(gov.trade_params(), gov.next_trade_params());
+    assert_eq!(gov.trade_params(), gov.next_trade_params());
 
     // Charlie votes with 150000 stake, enough to push proposal ALICE over
     // quorum
@@ -500,7 +477,7 @@ fun remove_proposal_vote_e() {
     assert!(trade_params.maker_fee() == 200000, 0);
     assert!(trade_params.stake_required() == 10000, 0);
 
-    assert!(gov.proposals().size() == (100 as u64), 0);
+    assert!(gov.proposals().length() == (100 as u64), 0);
 
     // Charlie makes a new proposal, proposal ALICE should be removed, not BOB
     gov.adjust_vote(
@@ -530,8 +507,9 @@ fun remove_proposal_stake_too_low_e() {
     let alice = ALICE;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
 
     let mut i = 0;
     while (i < MAX_PROPOSALS) {
@@ -546,7 +524,7 @@ fun remove_proposal_stake_too_low_e() {
         i = i + 1;
     };
 
-    assert!(gov.proposals().size() == (MAX_PROPOSALS as u64), 0);
+    assert!(gov.proposals().length() == (MAX_PROPOSALS as u64), 0);
     gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
 
     abort 0
@@ -559,8 +537,9 @@ fun adjust_votes_remove_from_removed_ok() {
     let bob = BOB;
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.add_proposal(500000, 200000, 10000, 1000, id_from_address(alice));
     gov.adjust_vote(option::none(), option::some(id_from_address(alice)), 1000);
     assert!(gov.proposals().get(&id_from_address(alice)).votes() == 1000, 0);
@@ -576,7 +555,7 @@ fun adjust_votes_remove_from_removed_ok() {
         );
         i = i + 1;
     };
-    assert!(gov.proposals().size() == 100, 0);
+    assert!(gov.proposals().length() == 100, 0);
 
     test.next_tx(bob);
     gov.add_proposal(500000, 200000, 10000, 3000, id_from_address(bob));
@@ -598,8 +577,9 @@ fun adjust_voting_power_over_threshold_ok() {
     let mut test = begin(OWNER);
 
     test.next_tx(OWNER);
+    let whitelisted = false;
     let stable_pool = false;
-    let mut gov = governance::empty(stable_pool, test.ctx());
+    let mut gov = governance::empty(whitelisted, stable_pool, test.ctx());
     gov.adjust_voting_power(0, 100_000 * constants::deep_unit());
     assert!(gov.voting_power() == 100_000 * constants::deep_unit(), 0);
     test.next_epoch(OWNER);
