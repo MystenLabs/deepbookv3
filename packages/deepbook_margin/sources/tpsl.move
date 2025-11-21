@@ -3,21 +3,16 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook::{math, order_info::OrderInfo, pool::Pool};
-use deepbook_margin::{
-    margin_manager::MarginManager,
-    margin_registry::MarginRegistry,
-    oracle::calculate_oracle_usd_price,
-    pool_proxy::{place_limit_order_conditional, place_market_order_conditional}
-};
+use deepbook::math;
+use deepbook_margin::{margin_registry::MarginRegistry, oracle::calculate_oracle_usd_price};
 use pyth::price_info::PriceInfoObject;
 use std::string::String;
-use sui::{clock::Clock, vec_map::VecMap};
+use sui::{clock::Clock, vec_map::{Self, VecMap}};
 
 // === Errors ===
-const EIncorrectPool: u64 = 1;
 
 // === Structs ===
+// TODO: instead of key being a String, could be a u64 or client order id?
 public struct TakeProfitStopLoss<phantom BaseAsset, phantom QuoteAsset> has drop, store {
     pending_orders: VecMap<String, ConditionalOrder<BaseAsset, QuoteAsset>>,
 }
@@ -125,7 +120,14 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     self.pending_orders.remove(&pending_order_identifier);
 }
 
+public fun new<BaseAsset, QuoteAsset>(): TakeProfitStopLoss<BaseAsset, QuoteAsset> {
+    TakeProfitStopLoss {
+        pending_orders: vec_map::empty(),
+    }
+}
+
 /// Price of the base asset in the quote asset.
+/// TODO: account for decimals, so price matches the deepbook pool price, not just hardcoded to 9 decimals
 public fun current_price<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
@@ -146,93 +148,72 @@ public fun current_price<BaseAsset, QuoteAsset>(
     math::div(base_usd_price, quote_usd_price)
 }
 
-public fun execute_pending_orders<BaseAsset, QuoteAsset>(
-    self: &mut TakeProfitStopLoss<BaseAsset, QuoteAsset>,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    clock: &Clock,
-    ctx: &TxContext,
-): vector<OrderInfo> {
-    let current_price = current_price<BaseAsset, QuoteAsset>(
-        base_price_info_object,
-        quote_price_info_object,
-        registry,
-        clock,
-    );
-    let (keys, values) = self.pending_orders.into_keys_values();
-    let valid_indices = values.find_indices!(|value| {
-        (value.condition.trigger_is_below && current_price < value.condition.trigger_price) ||
-        (!value.condition.trigger_is_below && current_price > value.condition.trigger_price)
-    });
-
-    let mut order_infos = vector[];
-    valid_indices.do!(|index| {
-        let pending_order = values[index].pending_order;
-        let order_info = place_pending_limit_order<BaseAsset, QuoteAsset>(
-            registry,
-            margin_manager,
-            pool,
-            &pending_order,
-            clock,
-            ctx,
-        );
-        order_infos.push_back(order_info);
-    });
-
-    // remove the pending orders
-    valid_indices.do!(|index| {
-        let pending_order_identifier = keys[index];
-        self.pending_orders.remove(&pending_order_identifier);
-    });
-
-    order_infos
+// === Read-Only Functions ===
+public fun trigger_is_below<BaseAsset, QuoteAsset>(
+    self: &ConditionalOrder<BaseAsset, QuoteAsset>,
+): bool {
+    self.condition.trigger_is_below
 }
 
-fun place_pending_limit_order<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
-    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    pending_order: &PendingOrder,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    assert!(pending_order.pool_id == pool.id(), EIncorrectPool);
-
-    if (pending_order.is_limit_order) {
-        place_limit_order_conditional<BaseAsset, QuoteAsset>(
-            registry,
-            margin_manager,
-            pool,
-            pending_order.client_order_id,
-            pending_order.order_type.destroy_some(),
-            pending_order.self_matching_option,
-            pending_order.price.destroy_some(),
-            pending_order.quantity,
-            pending_order.is_bid,
-            pending_order.pay_with_deep,
-            pending_order.expire_timestamp.destroy_some(),
-            clock,
-            ctx,
-        )
-    } else {
-        place_market_order_conditional<BaseAsset, QuoteAsset>(
-            registry,
-            margin_manager,
-            pool,
-            pending_order.client_order_id,
-            pending_order.self_matching_option,
-            pending_order.quantity,
-            pending_order.is_bid,
-            pending_order.pay_with_deep,
-            clock,
-            ctx,
-        )
-    }
+public fun trigger_price<BaseAsset, QuoteAsset>(
+    self: &ConditionalOrder<BaseAsset, QuoteAsset>,
+): u64 {
+    self.condition.trigger_price
 }
 
+public fun pending_orders<BaseAsset, QuoteAsset>(
+    self: &TakeProfitStopLoss<BaseAsset, QuoteAsset>,
+): VecMap<String, ConditionalOrder<BaseAsset, QuoteAsset>> {
+    self.pending_orders
+}
+
+public fun pending_order<BaseAsset, QuoteAsset>(
+    self: &ConditionalOrder<BaseAsset, QuoteAsset>,
+): &PendingOrder {
+    &self.pending_order
+}
+
+public fun pool_id(pending_order: &PendingOrder): ID {
+    pending_order.pool_id
+}
+
+public fun client_order_id(pending_order: &PendingOrder): u64 {
+    pending_order.client_order_id
+}
+
+public fun order_type(pending_order: &PendingOrder): Option<u8> {
+    pending_order.order_type
+}
+
+public fun self_matching_option(pending_order: &PendingOrder): u8 {
+    pending_order.self_matching_option
+}
+
+public fun price(pending_order: &PendingOrder): Option<u64> {
+    pending_order.price
+}
+
+public fun quantity(pending_order: &PendingOrder): u64 {
+    pending_order.quantity
+}
+
+public fun is_bid(pending_order: &PendingOrder): bool {
+    pending_order.is_bid
+}
+
+public fun pay_with_deep(pending_order: &PendingOrder): bool {
+    pending_order.pay_with_deep
+}
+
+public fun expire_timestamp(pending_order: &PendingOrder): Option<u64> {
+    pending_order.expire_timestamp
+}
+
+public fun is_limit_order(pending_order: &PendingOrder): bool {
+    pending_order.is_limit_order
+}
+
+// === Private Functions ===
 fun new_condition(trigger_is_below: bool, trigger_price: u64): Condition {
     Condition {
         trigger_is_below,
