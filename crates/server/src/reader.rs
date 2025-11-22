@@ -1710,7 +1710,7 @@ impl Reader {
         end_time: i64,
         limit: i64,
         pool_id_filter: Option<String>,
-    ) -> Result<Vec<(String, String, String, i64, i64, String, String, i64)>, DeepBookError> {
+    ) -> Result<Vec<(String, String, String, i64, i64, String, String, serde_json::Value, i64)>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let mut query = schema::deepbook_pool_registered::table
             .filter(
@@ -1726,6 +1726,7 @@ impl Reader {
                 schema::deepbook_pool_registered::checkpoint_timestamp_ms,
                 schema::deepbook_pool_registered::package,
                 schema::deepbook_pool_registered::pool_id,
+                schema::deepbook_pool_registered::config_json,
                 schema::deepbook_pool_registered::onchain_timestamp,
             ))
             .limit(limit)

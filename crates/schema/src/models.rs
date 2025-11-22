@@ -494,6 +494,7 @@ pub struct DeepbookPoolRegistered {
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
     pub pool_id: String,
+    pub config_json: serde_json::Value,
     pub onchain_timestamp: i64,
 }
 

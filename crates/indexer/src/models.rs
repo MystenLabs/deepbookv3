@@ -530,6 +530,13 @@ pub mod deepbook_margin {
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct DeepbookPoolRegisteredV2 {
+            pub pool_id: ObjectID,
+            pub config: PoolConfig,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolUpdated {
             pub pool_id: ObjectID,
             pub enabled: bool,
@@ -568,6 +575,11 @@ pub mod deepbook_margin {
         impl MoveStruct for DeepbookPoolRegistered {
             const MODULE: &'static str = "margin_registry";
             const NAME: &'static str = "DeepbookPoolRegistered";
+        }
+
+        impl MoveStruct for DeepbookPoolRegisteredV2 {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "DeepbookPoolRegisteredV2";
         }
 
         impl MoveStruct for DeepbookPoolUpdated {
