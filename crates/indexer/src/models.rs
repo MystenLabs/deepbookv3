@@ -526,6 +526,7 @@ pub mod deepbook_margin {
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepbookPoolRegistered {
             pub pool_id: ObjectID,
+            pub config: PoolConfig,
             pub timestamp: u64,
         }
 
