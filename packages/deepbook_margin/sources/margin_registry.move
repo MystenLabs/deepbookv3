@@ -36,6 +36,7 @@ const EVersionAlreadyEnabled: u64 = 11;
 const EVersionNotEnabled: u64 = 12;
 const EMaxMarginManagersReached: u64 = 13;
 const EPauseCapNotValid: u64 = 14;
+const EMarginManagerNotRegistered: u64 = 15;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -598,6 +599,18 @@ public(package) fun add_margin_manager(
         margin_manager_ids.length() <= margin_constants::max_margin_managers(),
         EMaxMarginManagersReached,
     );
+}
+
+public(package) fun remove_margin_manager(
+    self: &mut MarginRegistry,
+    margin_manager_id: ID,
+    ctx: &TxContext,
+) {
+    let owner = ctx.sender();
+    let inner = self.load_inner_mut();
+    let margin_manager_ids = inner.margin_managers.borrow_mut(owner);
+    assert!(margin_manager_ids.contains(&margin_manager_id), EMarginManagerNotRegistered);
+    margin_manager_ids.remove(&margin_manager_id);
 }
 
 public(package) fun load_inner_mut(self: &mut MarginRegistry): &mut MarginRegistryInner {

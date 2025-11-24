@@ -194,6 +194,16 @@ public fun share<BaseAsset, QuoteAsset>(
     } = initializer;
 }
 
+/// Unregister the margin manager from the margin registry.
+public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_registry: &mut MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    margin_registry.remove_margin_manager(self.id(), ctx);
+}
+
 /// Set the referral for the margin manager.
 public fun set_referral<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
