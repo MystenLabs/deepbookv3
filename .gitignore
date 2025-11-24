@@ -20,6 +20,3 @@ package-lock.json
 **/benchmark_data/
 tx-data.txt
 example.ts
-
-# transaction
-scripts/tx/tx-data.txt
